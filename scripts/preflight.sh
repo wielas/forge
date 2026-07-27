@@ -243,7 +243,7 @@ if command -v gh >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-sect "4. Hermes config truths (burns down the README VERIFY list)"
+sect "4. GATEWAY config — the DEFAULT profile only. Lanes do NOT read this."
 # ---------------------------------------------------------------------------
 CFG="$HOME/.hermes/config.yaml"
 if [ "$HAVE_HERMES" = 0 ]; then
@@ -258,6 +258,9 @@ hcfg() { # $1=dotted.key -> value or empty; tries CLI then falls back to yaml gr
     | sed 's/.*: *//; s/ *#.*//'
 }
 [ -f "$CFG" ] && pass "config.yaml found" || fail "no ~/.hermes/config.yaml"
+info "everything in section 4 describes the GATEWAY's own profile. Every value"
+info "below is re-read PER LANE PROFILE in section 4b — that is the one that"
+info "decides whether an unattended run lives or dies."
 
 TMO="$(hcfg terminal.timeout)"
 if [ -z "$TMO" ]; then warn "terminal.timeout not readable — default is 180s"
@@ -293,6 +296,65 @@ esac
 [ "$(hcfg skills.write_approval)" = "true" ] \
   && pass "skills.write_approval on (L5 consent gate)" \
   || warn "skills.write_approval not confirmed on — the flywheel's consent gate (ADR-0005)"
+
+# ---------------------------------------------------------------------------
+sect "4b. LANE config, read PER PROFILE — this is what workers actually run on"
+# ---------------------------------------------------------------------------
+# Section 4 reads the default profile. Workers do not run there: every profile
+# is its own HERMES_HOME (~/.hermes/profiles/<name>) with its own config.yaml,
+# so a green section 4 can coexist with lanes that die at terminal.timeout and a
+# consent gate that is off. That is not hypothetical — it is exactly how a
+# 180s timeout and write_approval=false stayed invisible for a day.
+if [ "$HAVE_HERMES" = 0 ]; then
+  warn "hermes not on PATH — cannot read lane profiles"
+else
+  # The profiles that can actually receive a card. `kanban assignees` is the
+  # authority: an assignee that is not listed here strands its card silently.
+  LANE_PROFILES="$(hermes kanban assignees 2>/dev/null \
+    | grep -oE '\bforge-[a-z-]+\b' | sort -u)"
+  if [ -z "$LANE_PROFILES" ]; then
+    fail "no forge-* profiles are known assignees — run ./hermes/profiles-bootstrap.sh"
+  else
+    for prof in $LANE_PROFILES; do
+      say ""
+      info "── profile: $prof"
+      pcfg() { hermes -p "$prof" config get "$1" 2>/dev/null | tail -1; }
+
+      # terminal.timeout: `make check` runs SYNCHRONOUSLY in the lane. At 180s
+      # it is killed after the code is written and before it is verified.
+      v="$(pcfg terminal.timeout)"
+      if [ -z "$v" ]; then
+        fail "$prof: terminal.timeout unset → 180s default kills 'make check' mid-run"
+      elif ! printf '%s' "$v" | grep -qE '^[0-9]+$'; then
+        fail "$prof: terminal.timeout non-numeric ('$v')"
+      elif [ "$v" -lt 1800 ]; then
+        fail "$prof: terminal.timeout=${v}s (<1800) — a real chunk dies at 'make check'"
+      else
+        pass "$prof: terminal.timeout=${v}s"
+      fi
+
+      # skills.write_approval: ADR-0005's consent gate. Off means a lane's skill
+      # edits take effect unattended with nobody consenting to anything.
+      v="$(pcfg skills.write_approval)"
+      [ "$v" = "true" ] \
+        && pass "$prof: skills.write_approval=true (L5 consent gate)" \
+        || fail "$prof: skills.write_approval='${v:-unset}' — ADR-0005's gate does not exist"
+
+      # A profile with no external_dirs cannot see the forge skills at all;
+      # ~/.hermes/skills reaches only the DEFAULT profile.
+      v="$(pcfg skills.external_dirs)"
+      case "$v" in
+        *forge*) pass "$prof: skills.external_dirs points at a forge checkout";;
+        "")      fail "$prof: skills.external_dirs unset — this profile sees NO forge skills";;
+        *)       warn "$prof: skills.external_dirs='$v' — no forge path in it";;
+      esac
+
+      v="$(pcfg model.default)"
+      [ -n "$v" ] && info "$prof: model.default = $v" \
+                  || warn "$prof: model.default unset — inherits whatever is ambient"
+    done
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 sect "5. Kanban CLI surface — does the real CLI match what we designed against?"
