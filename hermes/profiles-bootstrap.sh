@@ -59,6 +59,33 @@ MODEL_DRIVER="${FORGE_MODEL_DRIVER:-deepseek/deepseek-v4-flash}"  # lane + preju
 # before it is verified, the most expensive possible place to fail.
 TERMINAL_TIMEOUT=1800
 
+# Which forge skills each profile may load. Everything else in skills/ is
+# DISABLED for that profile.
+#
+# WHY: external_dirs exposes the whole skills/ tree, so all eight ceremonies were
+# live in every profile — including start-chunk (which branches) and end-chunk
+# (which pushes and opens a PR), both of which duplicate what forge-lane already
+# does and collide with the Hermes worker lifecycle. Auto-invocation in the wrong
+# layer branches, pushes, or completes twice.
+#
+# The control is Hermes-side on purpose. `disable-model-invocation` is a
+# Claude-Code-only frontmatter key and ADR-0002 commits the portable skill core
+# to `name` + `description` only; using it would break a recorded decision to fix
+# a Hermes problem. `skills.disabled` is a per-profile YAML list read by
+# hermes_cli/skills_config.py, and card-level `--skill forge-lane` force-loading
+# is the second half of the same mechanism.
+#
+# The interactive ceremonies (scope, architect, start-chunk, end-chunk, judge,
+# retro) belong to Claude Code reading this repo directly — not to any unattended
+# profile.
+skills_allowed_for() {  # $1=profile -> space-separated skill names, or empty
+  case "$1" in
+    forge-codex-lane)   echo "forge-lane";;
+    forge-orchestrator) echo "roadmap";;
+    *)                  echo "";;
+  esac
+}
+
 # name | description (feeds kanban orchestrator routing) | core toolsets
 #
 # TOOLSET NAMES ARE NOT FREE TEXT. Every entry must be a real toolset — check
@@ -78,7 +105,7 @@ PROFILES=(
 # Keys this script owns end to end. Every one is written by write_config and
 # then verified by verify_config — if you add a key to the template, add it
 # here or it is not actually guaranteed.
-VERIFIED_KEYS=(model.default toolsets skills.external_dirs skills.write_approval terminal.timeout)
+VERIFIED_KEYS=(model.default toolsets skills.external_dirs skills.disabled skills.write_approval terminal.timeout)
 
 # `hermes config set` provably cannot write a YAML list — it stores it as a
 # quoted string and the value is then silently ignored (see
@@ -101,9 +128,23 @@ write_config() {  # $1=name $2=model $3=comma-separated toolsets $4=dest
     echo "  # nothing drifts out of version control."
     echo "  external_dirs:"
     echo "    - $FORGE_DIR/skills"
+    echo "  # Scoped per profile: everything this profile is not documented to"
+    echo "  # run is disabled, so nothing auto-invokes in the wrong layer."
+    echo "  disabled:"
+    printf '    - %s\n' $(disabled_skills_for "$name")
     echo "terminal:"
     echo "  timeout: $TERMINAL_TIMEOUT"
   } > "$dest"
+}
+
+# Every skill in the repo minus the ones this profile may load. Derived from the
+# checkout rather than hardcoded, so a new skill is disabled-by-default
+# everywhere instead of silently going live in all four profiles.
+disabled_skills_for() {  # $1=profile
+  local allowed=" $(skills_allowed_for "$1") " s
+  for s in $(cd "$FORGE_DIR/skills" && ls -d */ 2>/dev/null | tr -d '/'); do
+    case "$allowed" in *" $s "*) ;; *) echo "$s";; esac
+  done
 }
 
 # Read back through the CLI, not the file, so we verify what the RUNTIME sees.
@@ -118,6 +159,10 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets
 
   got=$(hermes -p "$name" config get skills.external_dirs 2>&1) || true
   [ "$got" = "- $FORGE_DIR/skills" ] || { echo "  FAIL skills.external_dirs: got '$got'" >&2; rc=1; }
+
+  want=$(printf -- '- %s\n' $(disabled_skills_for "$name"))
+  got=$(hermes -p "$name" config get skills.disabled 2>&1) || true
+  [ "$got" = "$want" ] || { echo "  FAIL skills.disabled: got '$got' want '$want'" >&2; rc=1; }
 
   got=$(hermes -p "$name" config get skills.write_approval 2>&1) || true
   [ "$got" = "true" ] || { echo "  FAIL skills.write_approval: got '$got' want 'true'" >&2; rc=1; }

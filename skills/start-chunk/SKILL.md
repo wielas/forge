@@ -22,8 +22,16 @@ log and adapt; contradiction → STOP, block the card with the reason
 (unattended lane) or ask the human (interactive).
 
 ## 3. Mark in progress & branch
+Branch only if you are not already on the chunk branch. In a Hermes worktree the
+dispatcher created the workspace and checked out the branch **before** the worker
+started, so `git switch -c` there fails on a branch that already exists.
+
 ```bash
-git fetch origin && git switch -c chunk/<id>-<slug> origin/main
+branch=chunk/<id>-<slug>
+git fetch origin
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "$branch" ]; then
+  git switch -c "$branch" origin/main 2>/dev/null || git switch "$branch"
+fi
 ```
 Interactive: tick the ROADMAP checkbox in your first commit.
 Unattended: the lane runner has already claimed the card — do not touch the board.
