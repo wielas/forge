@@ -13,10 +13,15 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    ```
    gh pr diff <n> < /dev/null
    ```
-3. Ask Codex for a structured verdict against the rubric, from a fresh context:
+3. Ask for a structured verdict against the rubric, from a fresh context. The
+   engine is `claude -p` per ADR-0004 D4.1; the schema file is real and absolute
+   (`install.sh` symlinks `~/.forge/rubrics` at the repo's `rubrics/`):
    ```
-   codex exec --model <pinned> --output-schema <verdict schema> "<diff + contract>" < /dev/null
+   claude -p --json-schema ~/.forge/rubrics/judge-verdict.schema.json \
+     "<diff + contract>" < /dev/null
    ```
+   The result validates against `forge.judge.v1`. Scoring and verdict logic live
+   in `~/.forge/rubrics/judge-rubric.md` — read it before scoring.
 4. `kanban_complete(summary=..., metadata=<verdict json>)`, or `kanban_block` with
    the findings verbatim if the verdict is `bounce`.
 

@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.local/rubrics/judge-verdict.schema.json",
+  "title": "forge.judge.v1",
+  "description": "Structured tier-1/tier-2 judge verdict. Generated from the forge.judge.v1 shape in rubrics/judge-rubric.md; the two must not drift. Consumed by the lane runner, the Telegram gate, and /retro.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "chunk_id",
+    "pr",
+    "verdict",
+    "scores",
+    "findings",
+    "nits_as_cards",
+    "spot_check_suggestion",
+    "judge_model",
+    "tokens_estimate"
+  ],
+  "properties": {
+    "schema": {
+      "const": "forge.judge.v1"
+    },
+    "chunk_id": {
+      "type": "string",
+      "description": "Chunk contract id, e.g. CHUNK-7."
+    },
+    "pr": {
+      "type": "string",
+      "description": "Full URL of the pull request under review."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["approve", "approve-with-nits", "bounce"]
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Six dimensions, 0-3 each. 3 exemplary, 2 acceptable, 1 deficient (fixable), 0 disqualifying. On a ci-red bounce, score every dimension 0.",
+      "required": [
+        "spec_fidelity",
+        "scenario_integrity",
+        "architectural_conformance",
+        "scope_discipline",
+        "debt_honesty",
+        "doc_reconciliation"
+      ],
+      "properties": {
+        "spec_fidelity": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "scenario_integrity": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "architectural_conformance": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "scope_discipline": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "debt_honesty": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "doc_reconciliation": { "type": "integer", "minimum": 0, "maximum": 3 }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "One entry per defect. A score below 3 with no corresponding finding is invalid.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dimension", "severity", "evidence", "action"],
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "spec_fidelity",
+              "scenario_integrity",
+              "architectural_conformance",
+              "scope_discipline",
+              "debt_honesty",
+              "doc_reconciliation",
+              "ci-red"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["nit", "fix", "block"]
+          },
+          "evidence": {
+            "type": "string",
+            "description": "file:line or a verbatim quote. A finding without evidence is invalid."
+          },
+          "action": {
+            "type": "string",
+            "description": "Executable by a fresh worker with no questions."
+          }
+        }
+      }
+    },
+    "nits_as_cards": {
+      "type": "array",
+      "description": "Follow-up card titles for non-blocking nits.",
+      "items": { "type": "string" }
+    },
+    "spot_check_suggestion": {
+      "type": "string",
+      "description": "The one hunk the operator should eyeball. Empty string if none."
+    },
+    "judge_model": {
+      "type": "string",
+      "description": "Model id that produced this verdict."
+    },
+    "tokens_estimate": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
