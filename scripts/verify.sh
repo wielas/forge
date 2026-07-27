@@ -188,6 +188,19 @@ run_cli_group() {
     [ -n "$d" ] || { bad "skill-description-budget" "$f has no description"; over=1; }
   done
   [ "$over" = 0 ] && ok "skill-description-budget (all <= $limit chars)"
+
+  # S2: the flywheel must have somewhere to record whether it worked, and
+  # /retro must still be pointed at it. Prose that stops referencing its own
+  # metric file is how a measured loop reverts to an accumulating one.
+  if [ ! -f docs/retro-metrics.md ]; then
+    bad "retro-metrics" "docs/retro-metrics.md is missing — /retro cannot report movement"
+  elif ! grep -q '| Retro date |' docs/retro-metrics.md; then
+    bad "retro-metrics" "docs/retro-metrics.md has no log table header"
+  elif ! grep -q 'retro-metrics' skills/retro/SKILL.md; then
+    bad "retro-metrics" "skills/retro/SKILL.md no longer references docs/retro-metrics.md"
+  else
+    ok "retro-metrics (log table present and referenced by /retro)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
