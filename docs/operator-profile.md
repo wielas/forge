@@ -29,7 +29,10 @@
   `approvals.mode=off`, `skills.write_approval=false`, `goals.max_turns=60`,
   one profile (`builder`). `claude`/`gh`/`git`/`make` reachable from the
   gateway's PATH; **`codex` is not**.
-- [ ] Hermes version on mini: still PENDING (the piped preflight run hid it).
+- [V] On the mini: **Hermes Agent v0.18.2** (2026.7.7.2), **Claude Code 2.1.204**
+  installed at `~/.hermes/node/bin/claude` (under Hermes's bundled node, not a
+  standalone install), **gh 2.92.0**, git/jq/uv via Homebrew, `copier` missing,
+  `codex` **not installed**. Claude Code is **not logged in** as `goonlab`.
 - [V] `forge/` is a git repo as of 2026-07-27, remote
   `git@github.com:wielas/forge.git`, push pending.
 
