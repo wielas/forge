@@ -41,9 +41,10 @@
   not AnkiAI/JobApp/HermesCoach.
 - [I] Two-week "done": one real unattended night-run that produced a mergeable
   PR, with the first tenant on the board. Not full daily-driver yet.
-- [I] Judge lane budget: NO metered API spend yet. Hold until Anthropic policy
-  dust settles. Judge must run on subscription/interactive or manually for now.
-  This supersedes ADR-0004's "Lane C = metered strong model" until revisited.
+- [I] Judge lane budget: NO metered API spend. Judge runs on subscription —
+  tier-1 `claude -p` with the OAuth token, tier-2 interactive. ADR-0004 was
+  rewritten on 2026-07-27 to match: its old "Lane C = metered strong model" is
+  withdrawn, so this is no longer an exception to the ADR but the ADR itself.
 - [I] Merge policy: auto-merge judge-approved PRs ONLY when the chunk was
   tagged low-risk at roadmap time; everything else waits for a human tap.
 - [I] Notification channel: iMessage (NOT Telegram as prior session assumed).
