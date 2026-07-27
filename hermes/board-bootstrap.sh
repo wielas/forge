@@ -59,7 +59,7 @@ if ! hermes kanban assignees 2>/dev/null | grep -q "$LANE_ASSIGNEE"; then
   exit 1
 fi
 
-create_card() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch
+create_card() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch [extra...]
   hermes kanban --board "$BOARD" create "$1" \
     --assignee "$3" \
     --body "$(cat "$2")" \
@@ -67,7 +67,26 @@ create_card() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch
     --branch "$5" \
     --max-retries 1 \
     --idempotency-key "$4" \
-    --skill forge-lane
+    --skill forge-lane \
+    "${@:6}"
+}
+
+# Same card, but --json so we can capture the id and link it. `create` is
+# idempotent on --idempotency-key: it returns the EXISTING id rather than
+# creating a duplicate, which is what makes re-running this script safe.
+create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch
+  create_card "$1" "$2" "$3" "$4" "$5" --json | jq -r '.id'
+}
+
+# A chunk a human drives. It gets a REAL card, blocked so the dispatcher cannot
+# pick it up, because a skipped chunk is invisible to the graph — and its
+# dependents would then have no unmet prerequisite and auto-promote to ready.
+create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key
+  hermes kanban --board "$BOARD" create "$1" \
+    --body "$(cat "$2")" \
+    --initial-status blocked \
+    --idempotency-key "$3" \
+    --json | jq -r '.id'
 }
 
 if [ "$MODE" = "--hello" ]; then
@@ -93,28 +112,66 @@ EOF
   exit 0
 fi
 
-# full mode: one card per chunk contract emitted by /roadmap
-shopt -s nullglob
-chunks=(docs/chunks/CHUNK-*.md)
-[ ${#chunks[@]} -gt 0 ] || { echo "no docs/chunks/CHUNK-*.md found — run /roadmap first"; exit 1; }
+# full mode: cards AND edges, both driven by docs/chunks/graph.json.
+#
+# The graph is the ONLY source of truth here. Parsing "Depends on" out of prose,
+# or printing link commands for a human to paste, loses edges silently — and a
+# child whose parent edge is missing is immediately dispatchable with its
+# prerequisite unbuilt. /roadmap emits graph.json for exactly this reason.
+GRAPH=docs/chunks/graph.json
+if [ ! -f "$GRAPH" ]; then
+  echo "no $GRAPH found — run /roadmap first (it emits the chunk specs AND the graph)" >&2
+  exit 1
+fi
+jq -e 'type == "array" and length > 0' "$GRAPH" >/dev/null \
+  || { echo "FATAL: $GRAPH is not a non-empty JSON array" >&2; exit 1; }
 
-for f in "${chunks[@]}"; do
-  id=$(basename "$f" .md)
+# chunk id -> created card id, so edges can be created from chunk ids.
+# A flat TSV file, not an associative array: /usr/bin/env bash on macOS is 3.2,
+# where `declare -A` does not exist.
+IDMAP=$(mktemp)
+trap 'rm -f "$IDMAP"' EXIT
+card_id_of() { awk -F'\t' -v k="$1" '$1==k{print $2; found=1} END{exit !found}' "$IDMAP"; }
+
+while IFS=$'\t' read -r id lane; do
+  f="docs/chunks/$id.md"
+  [ -f "$f" ] || { echo "FATAL: $GRAPH names $id but $f does not exist" >&2; exit 1; }
   title=$(head -1 "$f" | sed 's/^#* *//')
-  lane=$(grep -oE 'Lane:\*?\*? *(forge-codex-lane|claude-interactive)' "$f" \
-         | awk '{print $NF}' | head -1)
-  # claude-interactive chunks are for a human at a keyboard — no card is
-  # dispatched for them; they would strand exactly like a typo'd assignee.
-  if [ "${lane:-$LANE_ASSIGNEE}" = "claude-interactive" ]; then
-    echo "skip  $id (Lane: claude-interactive — run /start-chunk yourself)"
-    continue
-  fi
   slug=$(printf '%s' "$id" | tr 'A-Z' 'a-z')
-  create_card "${title:-$id}" "$f" "${lane:-$LANE_ASSIGNEE}" \
-              "$BOARD-$id" "chunk/${slug#chunk-}"
-done
+  if [ "$lane" = "claude-interactive" ]; then
+    cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id")
+    echo "blocked  $id -> $cid (Lane: claude-interactive — run /start-chunk yourself)"
+  else
+    cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" "chunk/${slug#chunk-}")
+    echo "ready    $id -> $cid ($lane)"
+  fi
+  [ -n "$cid" ] && [ "$cid" != "null" ] \
+    || { echo "FATAL: no card id returned for $id" >&2; exit 1; }
+  printf '%s\t%s\n' "$id" "$cid" >> "$IDMAP"
+done < <(jq -r --arg lane "$LANE_ASSIGNEE" '.[] | [.id, (.lane // $lane)] | @tsv' "$GRAPH")
 
-echo "cards created on board '$BOARD'. Now express the dependency graph:"
-echo "  hermes kanban --board $BOARD link <parent-id> <child-id>   # positional, in that order"
-echo "(Dependencies are listed in each chunk's 'Depends on' line — the /roadmap"
-echo " skill prints the exact link commands; paste them here.)"
+# Edges. Declared count comes from the graph; created count is incremented only
+# on a link that actually succeeded. The two must agree or the board is a lie.
+declared=$(jq '[.[].depends_on // [] | length] | add // 0' "$GRAPH")
+created=0
+while IFS=$'\t' read -r child parent; do
+  parent_card=$(card_id_of "$parent") \
+    || { echo "FATAL: $child depends on $parent, which is not in $GRAPH" >&2; exit 1; }
+  child_card=$(card_id_of "$child") \
+    || { echo "FATAL: no card was created for $child" >&2; exit 1; }
+  # link <parent-id> <child-id>, positional, in that order.
+  if hermes kanban --board "$BOARD" link "$parent_card" "$child_card" >/dev/null; then
+    created=$((created + 1))
+    echo "edge     $parent -> $child"
+  else
+    echo "FATAL: link failed: $parent -> $child" >&2; exit 1
+  fi
+done < <(jq -r '.[] | .id as $c | (.depends_on // [])[] | [$c, .] | @tsv' "$GRAPH")
+
+if [ "$created" != "$declared" ]; then
+  echo "FATAL: created $created edges but $GRAPH declares $declared." >&2
+  echo "       A missing edge lets a child dispatch before its prerequisite." >&2
+  exit 1
+fi
+
+echo "board '$BOARD': $(wc -l < "$IDMAP" | tr -d ' ') cards, $created/$declared edges created."
