@@ -44,7 +44,7 @@ project repeatedly.
 In this order: docs/handoff-2026-07-27.md (the brief — the only doc that is
 current) → README.md → docs/adr/0001..0005 → skills/*/SKILL.md → rubrics/* →
 hermes/profiles/*.SOUL.md → hermes/profiles-bootstrap.sh →
-hermes/config-snippets.yaml → templates/python-service/ → scripts/preflight.sh.
+hermes/config-examples.yaml → templates/python-service/ → scripts/preflight.sh.
 
 Also read `git log --stat` from the first commit. The corrections in that history
 are evidence about how this project fails — treat the pattern of mistakes as data.
