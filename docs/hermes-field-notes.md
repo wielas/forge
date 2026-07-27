@@ -60,6 +60,30 @@ which fails — the worker then exits without a terminator and is reaped as
 `crashed`. Land with `cd "$HERMES_KANBAN_WORKSPACE"` and fail hard if it is not a
 git checkout; never create it.
 
+**`skill_manage` CAN write external-dir skills; only `write_approval` stops it.**
+Measured 2026-07-27 by calling the real tool against a throwaway
+`skills.external_dirs` skill:
+
+```
+write_approval off → {"success": true, "message": "Skill 'probe-skill' updated
+                      (full rewrite)."}          # file mutated on disk
+write_approval on  → {"success": true, "staged": true, "pending_id": "7854a351",
+                      "message": "Staged for approval … Not yet saved."}
+```
+
+The curator's "DO NOT touch … external-dir skills" text
+(`agent/curator.py:434`) is a *prompt*, and the real guard next to it
+(`tools/skill_manager_tool.py:_background_review_write_guard`) fires only when
+the write origin is `background_review`. `get_current_write_origin()` documents
+its default `foreground` as "any tool call made by a regular (non-review) agent,
+from the CLI, **the gateway**, cron, or a subagent" — which is exactly a
+dispatched lane worker. So a lane is not covered by that prohibition.
+
+Two corollaries: the forge skills are protected by `skills.write_approval`
+alone, and a staged write does **not** hang the worker waiting for an approval
+it cannot get — it returns success immediately and the edit silently does not
+land. Anything relying on "the worker will block" is wrong.
+
 **Skills are per profile.** Every profile is its own `HERMES_HOME` with its own
 skills tree, so anything installed in `~/.hermes/skills` reaches only the
 **default** profile. A lane sees none of it. Verify per profile:

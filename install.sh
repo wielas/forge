@@ -7,15 +7,20 @@
 # Two mechanisms, because the harnesses differ:
 #   Claude Code / Codex / .agents  → symlinks into their personal skills dirs.
 #   Hermes                         → `skills.external_dirs` in each profile's
-#                                    config.yaml. NOT symlinks: Hermes runs a
-#                                    curator over its own skills dir, and the
-#                                    external-dir path is the one it is
-#                                    contractually forbidden to touch
-#                                    (agent/curator.py: "DO NOT touch bundled,
-#                                    hub-installed, or external-dir skills").
-#                                    Each Hermes profile is its own HERMES_HOME
-#                                    with its own skills tree, so ~/.hermes/skills
-#                                    would only reach the DEFAULT profile anyway.
+#                                    config.yaml. NOT symlinks: each Hermes
+#                                    profile is its own HERMES_HOME with its own
+#                                    skills tree, so ~/.hermes/skills would only
+#                                    reach the DEFAULT profile.
+#                                    NOTE: external_dirs is not a write guard.
+#                                    curator.py's "DO NOT touch … external-dir
+#                                    skills" is prompt text, and the real guard
+#                                    only fires for the autonomous background
+#                                    review fork — a dispatched worker is
+#                                    `foreground` and CAN rewrite these files
+#                                    via skill_manage (measured; see
+#                                    docs/hermes-field-notes.md). What actually
+#                                    protects them is skills.write_approval,
+#                                    which profiles-bootstrap.sh sets per profile.
 # =============================================================================
 set -euo pipefail
 FORGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
