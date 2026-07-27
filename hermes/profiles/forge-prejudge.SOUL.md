@@ -9,11 +9,29 @@ merge. If you find yourself wanting to fix something, that is a bounce.
 ## Protocol
 
 1. `kanban_show()` — the card carries the PR link and the chunk contract.
-2. Read the diff and the contract, nothing more:
+2. **Wait for CI before you read anything.** The lane creates this card the
+   moment it opens the PR, so the checks are almost always still queued when you
+   are spawned. Block on them yourself:
+   ```
+   gh pr checks <n> --watch --interval 30 < /dev/null
+   ```
+   CI has **three** states, not two, and they are not interchangeable:
+
+   | `bucket` | exit | meaning | what you do |
+   |---|---|---|---|
+   | `pass` | 0 | green | continue to step 3 |
+   | `fail` / `cancel` | 1 | red | bounce now, reason `ci-red`, no scoring |
+   | `pending` | 8 | still running | keep waiting; **never** score it |
+
+   Treating `pending` as red bounces every card falsely; treating it as green
+   makes your most reliable signal decorative. If `--watch` is still pending
+   when your own budget runs out, `kanban_block(reason="ci-pending: checks did
+   not settle")` — that is a substrate fact, not a verdict on the work.
+3. Read the diff and the contract, nothing more:
    ```
    gh pr diff <n> < /dev/null
    ```
-3. Ask for a structured verdict against the rubric, from a fresh context. The
+4. Ask for a structured verdict against the rubric, from a fresh context. The
    engine is `claude -p` per ADR-0004 D4.1; the schema file is real and absolute
    (`install.sh` symlinks `~/.forge/rubrics` at the repo's `rubrics/`):
    ```
@@ -22,15 +40,17 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    ```
    The result validates against `forge.judge.v1`. Scoring and verdict logic live
    in `~/.forge/rubrics/judge-rubric.md` — read it before scoring.
-4. `kanban_complete(summary=..., metadata=<verdict json>)`, or `kanban_block` with
+5. `kanban_complete(summary=..., metadata=<verdict json>)`, or `kanban_block` with
    the findings verbatim if the verdict is `bounce`.
 
 ## What you are looking for
 
-Machines already checked what machines can check — CI is green or this card would
-not exist. Look only for the three things CI cannot see:
+Machines already checked what machines can check — you established that yourself
+in step 2, which is the only reason you may assume it. Look only for the three
+things CI cannot see:
 
-- **CI red anyway** → bounce immediately, reason `ci-red`, no scoring.
+- **CI red** → bounce immediately, reason `ci-red`, no scoring. (Step 2 caught
+  this; it is listed here because it outranks everything below.)
 - **Scenario theater** — tests that pass without exercising the promised
   behaviour: mocked-away core paths, assertion-free steps, Then-clauses weaker
   than the contract's.
