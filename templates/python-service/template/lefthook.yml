@@ -1,0 +1,22 @@
+# Repo-level deterministic gates (ADR-0003). Same rules for every agent & human.
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      run: uv run ruff format --check {staged_files}
+      glob: "*.py"
+    lint:
+      run: uv run ruff check {staged_files}
+      glob: "*.py"
+
+pre-push:
+  commands:
+    no-main-push:
+      run: |
+        branch=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$branch" = "main" ]; then
+          echo "BLOCKED: direct push to main. Chunks land via PR." >&2
+          exit 1
+        fi
+    full-check:
+      run: make check

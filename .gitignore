@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# preflight reports are per-machine, per-moment evidence — keep them out of the
+# methodology repo. Write them outside the checkout (--out ../preflight-<date>.md)
+# and paste the interesting parts into a doc if they matter.
+preflight-*.md
+preflight.md
+
+# lane runtime artifacts (worktrees, logs) must never enter the forge repo
+.worktrees/
+*.log

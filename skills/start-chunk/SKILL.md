@@ -1,0 +1,56 @@
+---
+name: start-chunk
+description: Opening ceremony for implementing one chunk with BDD/TDD discipline. Use for /start-chunk <id>, "implement chunk X", or when a worker picks up a chunk card.
+---
+
+# start-chunk — implement exactly one chunk, fresh context, scenario by scenario
+
+You implement ONE chunk. Not two. Discoveries beyond this chunk become decision-log
+entries or new card proposals — never scope creep.
+
+## 1. Gather context (read, in order)
+1. `docs/chunks/CHUNK-<id>.md` (or the kanban card body — same text).
+2. `AGENTS.md` · the ADRs listed in the chunk · `docs/decision-log.md` (skim for
+   entries touching the same paths).
+3. `git log --oneline -15` on main, to see what recently landed.
+
+## 2. Restate & reconcile
+Write a 5-line restatement: goal, scenarios, files, what's out of scope, and the
+DONE condition. Compare against current code — if the chunk spec is stale
+(prereq changed, file moved), reconcile: small drift → note it in the decision
+log and adapt; contradiction → STOP, block the card with the reason
+(unattended lane) or ask the human (interactive).
+
+## 3. Mark in progress & branch
+```bash
+git fetch origin && git switch -c chunk/<id>-<slug> origin/main
+```
+Interactive: tick the ROADMAP checkbox in your first commit.
+Unattended: the lane runner has already claimed the card — do not touch the board.
+
+## 4. Scenarios first
+Translate the chunk's Given/When/Then lines into
+`tests/features/chunk_<id>.feature` + step definitions in `tests/steps/`.
+Run them; they MUST fail for the right reason before any implementation.
+Commit: `test(<id>): add failing scenarios`.
+
+## 5. Implement scenario-by-scenario
+For each scenario: red → green → refactor. Granular commits, imperative messages,
+scoped `type(<id>): message`. Never weaken a scenario to make it pass — if a
+scenario is wrong, that is a decision-log entry plus (interactive) human ping or
+(unattended) an explicit note in the PR body.
+
+## 6. Prove it
+```bash
+make check     # format + lint + full tests + BDD; THE definition of green
+```
+Paste the trailing summary into your notes. Not green = not done; no exceptions,
+no `--no-verify`, ever.
+
+## 7. Log the unexpected
+Append to `docs/decision-log.md` anything future sessions need: surprises,
+workarounds, deviations from the chunk spec, debt knowingly introduced
+(prefix `DEBT:`), follow-up ideas (prefix `CARD?:`).
+
+Then run /end-chunk. If the session must stop early: commit WIP on the branch,
+write a `HANDOFF:` entry in the decision log stating exact state and next step.

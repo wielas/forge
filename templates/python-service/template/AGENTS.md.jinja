@@ -1,0 +1,32 @@
+# {{ project_name }} — agent context (single source of truth)
+
+{{ description }}
+
+Hand-curated. Keep under ~120 lines; every line costs every session context.
+(Research consensus: human-curated context helps; auto-generated bloat hurts.)
+
+## Commands
+- `make setup` — install deps + hooks · `make check` — THE green proof
+- `make fmt` / `make lint` / `make test`
+
+## Workflow (Forge)
+This project runs the Forge methodology. Ceremony skills: /scope, /architect,
+/roadmap, /start-chunk, /end-chunk, /judge. Foundation docs:
+`docs/REQUIREMENTS.md`, `docs/ARCHITECTURE.md`, `docs/adr/`, `docs/ROADMAP.md`,
+chunk contracts in `docs/chunks/`, running notes in `docs/decision-log.md`.
+
+## Hard constraints (gates enforce these; listed here for orientation)
+- No direct pushes to main; one chunk = one branch `chunk/<id>-<slug>` = one PR.
+- `make check` green before any PR; never bypass hooks (`--no-verify` is a
+  fireable offense for agents).
+- New runtime dependency ⇒ new/updated ADR in the same branch.
+- Scenarios (`tests/features/`) are the living spec — never weaken a Then-clause
+  to make it pass; escalate instead.
+
+## Conventions
+- Python {{ python_version }}, uv-managed. src layout: `src/{{ package_name }}/`.
+- Commits: `type(<chunk-id>): imperative message`, granular.
+- Errors: raise specific exceptions; no bare except; log at boundaries only.
+
+## Gotchas
+(append via /end-chunk doc reconciliation — newest first)

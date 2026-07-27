@@ -1,0 +1,146 @@
+# Forge
+
+**Your development methodology as a versioned, self-improving artifact.**
+
+Forge is a personal AI-development operating system: the scope → architect → roadmap →
+chunked-BDD-implementation workflow, encoded as portable agent skills, enforced by
+repo-level gates, orchestrated by a Hermes kanban board on an always-on Mac mini, and
+improved by a consent-gated learning loop.
+
+This README doubles as the architecture document. Rationale for every major decision
+lives in [`docs/adr/`](docs/adr/).
+
+---
+
+## The five layers
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ L5  FLYWHEEL      Hermes learning loop, write_approval staging,  │
+│                   nightly self-evolution + guardrail cron, /retro│
+├──────────────────────────────────────────────────────────────────┤
+│ L4  ORCHESTRATION Hermes kanban (board per project)              │
+│                   Lane A: Codex unattended (codex exec, worktree)│
+│                   Lane B: Claude interactive (desk / phone RC)   │
+│                   Lane C: Judge, metered strong model            │
+├──────────────────────────────────────────────────────────────────┤
+│ L3  ADAPTERS      Thin per-harness sugar. Claude Code plugin     │
+│                   (hooks, judge-assist subagent), Codex config.  │
+│                   NO methodology lives here.                     │
+├──────────────────────────────────────────────────────────────────┤
+│ L2  ENFORCEMENT   Copier project template: uv, ruff, pytest+bdd, │
+│                   lefthook, CI, Makefile, AGENTS.md as SSOT.     │
+│                   Deterministic gates live in the REPO, not the  │
+│                   harness. Fire identically for any agent/human. │
+├──────────────────────────────────────────────────────────────────┤
+│ L1  METHODOLOGY   skills/*/SKILL.md (agentskills.io open format) │
+│                   + rubrics/. Read natively by Claude Code,      │
+│                   Codex, and Hermes via symlinks. The soul.      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Repository layout
+
+```
+forge/
+├── README.md                  ← you are here (architecture + quickstart)
+├── Makefile                   ← forge-level commands (install, new, check)
+├── install.sh                 ← symlink skills into every harness
+├── docs/adr/                  ← why the Forge is shaped this way
+├── skills/                    ← L1: the seven ceremony skills
+│   ├── scope/  architect/  roadmap/
+│   ├── start-chunk/  end-chunk/
+│   ├── judge/  retro/
+├── rubrics/
+│   ├── judge-rubric.md        ← scoring dimensions + verdict schema
+│   └── kanban-metadata-schema.md ← structured handoff contract
+├── templates/python-service/  ← L2: copier template ("Chunk 0 is dead")
+├── adapters/                  ← L3
+│   ├── claude/forge-claude-plugin/
+│   └── codex/
+├── hermes/                    ← L4/L5 config drafts + board bootstrap
+│   ├── config-snippets.yaml
+│   └── board-bootstrap.sh
+└── lanes/
+    └── codex-worker.sh        ← Lane A runner (cron/launchd on the mini)
+```
+
+## Quickstart
+
+```bash
+# 0. Prereqs on the mini + laptop: git, gh, uv, copier, jq, codex CLI, hermes
+uv tool install copier
+
+# 1. Install skills into every harness (idempotent symlinks)
+./install.sh
+
+# 2. Stamp a new project — Chunk 0 in one command
+make new NAME=my-project           # wraps: copier copy templates/python-service ../my-project
+cd ../my-project && make setup
+
+# 3. Plan interactively (Claude Code, subscription-covered, you present)
+claude                             # then: /scope → /architect → /roadmap
+                                   # /roadmap ends by emitting kanban cards
+
+# 4. Let the board work (on the mini)
+./hermes/board-bootstrap.sh my-project
+# lanes/codex-worker.sh runs on a schedule and drains ready cards
+
+# 5. Spot-check from anywhere
+# Judge verdicts land as card metadata → Telegram gate pings you.
+# Approve/bounce from your phone; steer live Claude sessions via /rc.
+```
+
+## Day-one risk burn-down: the hello-chunk test
+
+Before trusting Lane A with real work, run the deliberately tiny end-to-end path:
+
+1. `make new NAME=hello-forge` and push it to GitHub.
+2. Create ONE trivial card by hand (see `hermes/board-bootstrap.sh --hello`):
+   *"Add a `greet(name)` function with a BDD scenario. Chunk id: HELLO-1."*
+3. Run `lanes/codex-worker.sh --once` in the foreground and watch it:
+   claim → worktree → codex exec (start-chunk) → make check → push → PR →
+   kanban complete with metadata.
+4. Confirm the judge card spawns, the verdict lands, and Telegram pings you.
+
+Everything that can break (board CLI flags, worktree lifecycle, gh auth,
+codex auth, metadata plumbing) breaks here, cheaply. Fix, then scale.
+
+## Design commitments (summary — full rationale in ADRs)
+
+| # | Decision | ADR |
+|---|----------|-----|
+| 1 | Five-layer architecture; methodology strictly separated from harnesses | [0001](docs/adr/0001-layered-architecture.md) |
+| 2 | agentskills.io SKILL.md as the portable core; AGENTS.md as project SSOT, CLAUDE.md a thin pointer | [0002](docs/adr/0002-portable-skills-core.md) |
+| 3 | Deterministic enforcement lives in the repo (lefthook + CI), never in harness prompts | [0003](docs/adr/0003-enforcement-in-repo.md) |
+| 4 | Worker-lane auth: Codex headless, Claude interactive-only, judge metered | [0004](docs/adr/0004-worker-lane-auth.md) |
+| 5 | Hermes as orchestrator + flywheel; external worker lanes; write_approval on; two-cron self-evolution | [0005](docs/adr/0005-hermes-orchestrator-flywheel.md) |
+
+## Authoring rules for skills (keep the soul lean)
+
+- Frontmatter: `name` + `description` only (portable core). Descriptions are
+  trigger-rich but tight — Hermes house style prefers ≤60 chars and Codex
+  truncates long descriptions when its 2%-of-context skills budget fills.
+- Bodies stay well under ~150 lines; long material goes to `rubrics/` or a
+  skill-local `references/` dir (progressive disclosure).
+- If a rule MUST hold, it does not belong in a skill at all — move it down to
+  lefthook/CI (L2). Skills persuade; gates enforce.
+- Six sharp skills beat twenty exhaustive ones. Additions go through /retro.
+
+## VERIFY list (known integration unknowns)
+
+Run `make preflight` **on the mini** to burn most of this list down mechanically —
+it probes the live CLIs, the running gateway's environment, and headless auth,
+and reports PASS/WARN/FAIL. See `docs/handoff-2026-07-27.md` for what changed
+after the first review pass and what is still assumed.
+
+
+- [ ] Exact `hermes kanban` CLI flags & JSON output (lanes/codex-worker.sh
+      isolates all board I/O in four `board_*` functions — edit only there).
+- [ ] Hermes skills directory path for symlinks (`install.sh`, `HERMES_SKILLS_DIR`).
+- [ ] Hermes `config.yaml` schema for profiles/cron (`hermes/config-snippets.yaml`
+      is a commented draft to reconcile against current docs).
+- [ ] Claude Code hooks JSON schema in `adapters/claude/.../hooks/hooks.json`.
+- [ ] Codex non-interactive flags (`codex exec` invocation in the lane runner).
+- [ ] Current Anthropic programmatic-billing state before enabling any Claude
+      API/SDK judge lane (policy was in flux as of 2026-06; see ADR-0004).

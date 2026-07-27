@@ -1,0 +1,88 @@
+# =============================================================================
+# forge — Hermes config snippets (DRAFT — reconcile field names against YOUR
+# installed hermes version before merging into ~/.hermes/config.yaml).
+# Every block states INTENT precisely so reconciliation is mechanical.
+# =============================================================================
+
+# ---- profiles ----------------------------------------------------------------
+# INTENT: three roles with least-privilege toolsets (ADR-0005).
+profiles:
+
+  forge-orchestrator:
+    description: >
+      Routes forge work. Decomposes triage cards, links dependencies, assigns
+      lanes, judges parent completion. NEVER implements — board/gateway/memory
+      toolsets only, so it cannot execute code even if it tries.
+    # model: a cheap-strong router model via your provider of choice
+    toolsets: [kanban, gateway, memory]
+
+  forge-judge:
+    description: >
+      Reviews chunk PRs per the judge skill + rubrics/judge-rubric.md. Needs
+      read access to repos (gh CLI) and the board; no write access to code.
+    # model: STRONG model — this is the one metered per-token spend (ADR-0004).
+    #   Default: cheap-strong via OpenRouter; upgrade only if verdicts disappoint.
+    #   Re-check Anthropic programmatic-billing policy before wiring Claude here.
+    toolsets: [kanban, terminal, memory]     # terminal restricted: gh/git read-only
+    skills: [judge]                          # per-profile skill preload
+
+  forge-digest:
+    description: Morning summarizer. Reads board state, writes to Telegram.
+    toolsets: [kanban, gateway]
+
+# ---- kanban -------------------------------------------------------------------
+# INTENT: auto-decomposition OFF for forge boards — /roadmap produces the chunk
+# graph deliberately; the built-in decomposer is for ad-hoc non-forge tasks.
+kanban:
+  orchestrator_profile: forge-orchestrator
+  auto_decompose: false
+  # max_spawn: 3        # concurrency cap for Hermes-spawned workers (judge etc.)
+
+# ---- learning loop / flywheel (L5) ---------------------------------------------
+# INTENT: learning ON, but ALL skill writes staged for human approval —
+# the consent gate the retro skill depends on (ADR-0005).
+skills:
+  write_approval: true          # stage under ~/.hermes/pending/skills/
+memory:
+  enabled: true
+  # provider: builtin | honcho  # revisit if cross-project recall feels weak
+
+# ---- crons ----------------------------------------------------------------------
+# INTENT: three schedules. Syntax below is descriptive; port to your version's
+# cron format (`hermes cron --help`).
+crons:
+  - name: morning-digest
+    schedule: "0 7 * * *"
+    profile: forge-digest
+    deliver_to: telegram
+    prompt: >
+      Summarize the last 24h across all forge boards: chunks completed (with PR
+      links), judge verdicts awaiting my approval, blocked cards with reasons,
+      and anything the circuit breaker tripped. Max 12 lines. End with the
+      single most important action for me today.
+
+  - name: nightly-self-evolution
+    schedule: "0 2 * * *"
+    profile: forge-orchestrator
+    prompt: >
+      Review today's sessions and board exhaust. Stage (write_approval) any
+      skill/memory improvements you are confident about. Do not touch skills in
+      the forge repo directly — propose those via a note for the weekly retro.
+
+  - name: nightly-guardrail-audit          # the auditor is NOT the evolver
+    schedule: "30 2 * * *"
+    profile: forge-judge
+    deliver_to: telegram
+    prompt: >
+      Independently review everything staged in ~/.hermes/pending/skills/ in the
+      last 24h. Score each proposal for: evidence quality, risk of weakening a
+      verification gate, and optimization-loop gaming (self-serving edits).
+      Recommend approve/reject per item, one line each.
+
+  - name: weekly-retro
+    schedule: "0 9 * * 6"
+    profile: forge-orchestrator
+    deliver_to: telegram
+    prompt: >
+      Execute the retro skill across all forge boards. Open the PR against the
+      forge repo and send me the link with a 5-line summary of proposed changes.

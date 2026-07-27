@@ -1,0 +1,30 @@
+# Forge python-service template — `copier copy templates/python-service ../<name>`
+_subdirectory: template
+_min_copier_version: "9.0.0"
+
+project_name:
+  type: str
+  help: Human-readable project name
+project_slug:
+  type: str
+  help: Python package / repo slug
+  default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
+package_name:
+  type: str
+  help: Import name
+  default: "{{ project_slug | replace('-', '_') }}"
+description:
+  type: str
+  help: One-line description
+  default: "A Forge-managed project."
+python_version:
+  type: str
+  default: "3.12"
+coverage_floor:
+  type: int
+  help: CI fails below this coverage %
+  default: 85
+github_owner:
+  type: str
+  help: GitHub user/org for the repo
+  default: "CHANGE-ME"

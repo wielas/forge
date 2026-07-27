@@ -1,0 +1,21 @@
+# forge repo-level commands
+.PHONY: install new validate preflight
+
+preflight:                     ## revalidate the mini before unattended work (read-only)
+	./scripts/preflight.sh $(if $(OUT),--out $(OUT),)
+
+install:                       ## symlink skills into all harnesses
+	./install.sh
+
+new:                           ## make new NAME=my-project [DEST=..]
+	@test -n "$(NAME)" || { echo "usage: make new NAME=my-project"; exit 1; }
+	uvx copier copy templates/python-service $(or $(DEST),..)/$(NAME) --data project_name="$(NAME)"
+	@echo "→ cd $(or $(DEST),..)/$(NAME) && git init && make setup && claude (/scope)"
+
+validate:                      ## sanity-check skill frontmatter + shell syntax
+	@for f in skills/*/SKILL.md; do \
+	  head -1 $$f | grep -q '^---$$' || { echo "BAD frontmatter: $$f"; exit 1; }; \
+	  grep -q '^name:' $$f && grep -q '^description:' $$f || { echo "MISSING name/description: $$f"; exit 1; }; \
+	done
+	@bash -n install.sh lanes/codex-worker.sh hermes/board-bootstrap.sh
+	@echo "forge validate: OK"

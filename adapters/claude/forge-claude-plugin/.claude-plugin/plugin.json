@@ -1,0 +1,6 @@
+{
+  "name": "forge",
+  "version": "0.1.0",
+  "description": "Forge interactive-lane sugar: extra tripwires (hooks) and a judge-assist subagent. Methodology lives in the shared skills directory, NOT here (ADR-0001/0002).",
+  "author": { "name": "forge" }
+}
