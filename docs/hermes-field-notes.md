@@ -50,9 +50,15 @@ land somewhere you did not intend. `hermes kanban link` takes positionals:
 `link <parent-id> <child-id>`.
 
 **`scratch` workspaces are deleted on completion.** Chunk cards must use
-`--workspace worktree`, which is preserved. The worktree is created **worker-side**
-— the worker runs `git worktree add` itself from the main repo, using
-`$HERMES_KANBAN_BRANCH` when set.
+`--workspace worktree`, which is preserved. The worktree is created **dispatcher-side**,
+before the worker exists: the dispatch loop calls
+`_resolve_worktree_workspace` → `_ensure_git_worktree` (`kanban_db.py:8388`) and
+only then `_spawn` (`:8405`). By the time `$HERMES_KANBAN_WORKSPACE` is set it is
+already a checkout on `$HERMES_KANBAN_BRANCH`. A worker that runs `git worktree
+add` itself is adding a branch that is already checked out in that same path,
+which fails — the worker then exits without a terminator and is reaped as
+`crashed`. Land with `cd "$HERMES_KANBAN_WORKSPACE"` and fail hard if it is not a
+git checkout; never create it.
 
 **Skills are per profile.** Every profile is its own `HERMES_HOME` with its own
 skills tree, so anything installed in `~/.hermes/skills` reaches only the
