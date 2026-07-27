@@ -98,18 +98,28 @@ claude                             # then: /scope → /architect → /roadmap
 
 ## Day-one risk burn-down: the hello-chunk test
 
-Before trusting Lane A with real work, run the deliberately tiny end-to-end path:
+**This is the next thing to do, and nothing has been dispatched yet.** Everything
+else in this repo is verified; the one claim still untested is that a real card
+flows end to end. Run the deliberately tiny path before trusting the lane with
+real work:
 
-1. `make new NAME=hello-forge` and push it to GitHub.
-2. Create ONE trivial card by hand (see `hermes/board-bootstrap.sh --hello`):
-   *"Add a `greet(name)` function with a BDD scenario. Chunk id: HELLO-1."*
-3. Watch the dispatcher drive it: `hermes kanban watch --board <forge board>`.
-   claim → worktree → codex exec → make check → push → PR →
-   `kanban_complete` with metadata → prejudge card appears.
-4. Confirm the judge card spawns, the verdict lands, and Telegram pings you.
+```bash
+make preflight                      # must be FAIL 0 before anything is dispatched
+make new NAME=hello-forge           # then push it to GitHub
+cd ../hello-forge
+../forge/hermes/board-bootstrap.sh forge-hello --hello
+hermes kanban --board forge-hello watch
+hermes kanban --board forge-hello tail <task-id>    # live worker output
+```
 
-Everything that can break (board CLI flags, worktree lifecycle, gh auth,
-codex auth, metadata plumbing) breaks here, cheaply. Fix, then scale.
+Pass means the whole chain: claim → worktree → `codex exec` → `make check` green
+→ push → PR → `kanban_complete` with metadata → prejudge card appears.
+
+Everything that can break — board flag placement, worktree lifecycle, the codex
+sandbox, gh auth, the lane model holding the protocol, metadata plumbing — breaks
+here, cheaply. When it does, `hermes kanban runs <task-id>` shows how the run
+ended; a `crashed` reap means the worker exited without a terminator, which is a
+model problem, not a skill-text problem (see `docs/open-questions.md`).
 
 ## Design commitments (summary — full rationale in ADRs)
 
@@ -118,8 +128,15 @@ codex auth, metadata plumbing) breaks here, cheaply. Fix, then scale.
 | 1 | Five-layer architecture; methodology strictly separated from harnesses | [0001](docs/adr/0001-layered-architecture.md) |
 | 2 | agentskills.io SKILL.md as the portable core; AGENTS.md as project SSOT, CLAUDE.md a thin pointer | [0002](docs/adr/0002-portable-skills-core.md) |
 | 3 | Deterministic enforcement lives in the repo (lefthook + CI), never in harness prompts | [0003](docs/adr/0003-enforcement-in-repo.md) |
-| 4 | Worker-lane auth: Codex headless, Claude interactive-only, judge metered | [0004](docs/adr/0004-worker-lane-auth.md) |
-| 5 | Hermes as orchestrator + flywheel; external worker lanes; write_approval on; two-cron self-evolution | [0005](docs/adr/0005-hermes-orchestrator-flywheel.md) |
+| 4 | Worker-lane auth: subscriptions everywhere, metering as the justified exception | [0004](docs/adr/0004-worker-lane-auth.md) |
+| 5 | Hermes as orchestrator + flywheel; write_approval on; two-cron self-evolution (lane shape superseded by 0006) | [0005](docs/adr/0005-hermes-orchestrator-flywheel.md) |
+| 6 | A lane is a Hermes profile, not a program we write | [0006](docs/adr/0006-hermes-native-lanes.md) |
+| 7 | Two-tier judging: an unattended filter that can only bounce, then the operator | [0007](docs/adr/0007-two-tier-judge.md) |
+
+How the substrate actually behaves — the traps, with the commands that exposed
+them — is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md). What we
+have deliberately not decided yet is in
+[docs/open-questions.md](docs/open-questions.md).
 
 ## Authoring rules for skills (keep the soul lean)
 
@@ -136,17 +153,19 @@ codex auth, metadata plumbing) breaks here, cheaply. Fix, then scale.
 
 Run `make preflight` **on the mini** to burn most of this list down mechanically —
 it probes the live CLIs, the running gateway's environment, and headless auth,
-and reports PASS/WARN/FAIL. See `docs/handoff-2026-07-27.md` for what changed
-after the first review pass and what is still assumed.
+and reports PASS/WARN/FAIL. What each burnt-down item actually turned out to be
+is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md).
 
 
 - [x] Exact `hermes kanban` CLI flags & JSON output — burned down by
       `make preflight` §5 on 2026-07-27.
-- [ ] Hermes skills directory path for symlinks (`install.sh`, `HERMES_SKILLS_DIR`).
+- [x] Hermes skills discovery — skills are PER PROFILE; forge skills are declared
+      as `skills.external_dirs`, not symlinked (ADR-0006, preflight §9).
 - [ ] Hermes `config.yaml` schema for profiles/cron (`hermes/config-snippets.yaml`
       is a commented draft to reconcile against current docs).
 - [ ] Claude Code hooks JSON schema in `adapters/claude/.../hooks/hooks.json`.
 - [x] Codex non-interactive flags — codex-cli 0.145.0 has NO `--full-auto`;
       the lane uses `-s workspace-write` (`skills/forge-lane/SKILL.md`).
-- [ ] Current Anthropic programmatic-billing state before enabling any Claude
-      API/SDK judge lane (policy was in flux as of 2026-06; see ADR-0004).
+- [ ] Provider terms for automated subscription use, before this runs anywhere
+      but the operator's own machine. ADR-0004 settles what *works* headlessly
+      (measured); it deliberately does not answer what is *permitted*.
