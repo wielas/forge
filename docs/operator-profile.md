@@ -18,12 +18,20 @@
 - [V] gh authenticated as `wielas` (ssh, repo scope). Repos live under
   github.com/wielas (personal account).
 - [V] uv + jq present; `copier` and `lefthook` NOT installed on the MacBook.
-- [V] Always-on Mac mini: ssh alias `macmini` (user `goonlagoon`,
-  host goons-mac-mini). Non-interactive ssh from sandboxed sessions fails
-  (agent signing); ask operator to run `! ssh macmini '...'` for ground truth.
-- [ ] Hermes version on mini: PENDING (operator to run `! ssh macmini
-  'hermes --version'`). Fill in when known.
-- [V] The Forge working dir (`~/dev/The Forge`) is not yet a git repository.
+- [V] Always-on Mac mini: ssh alias **`macminlab`**, user **`goonlab`**, host
+  `Goons-Mac-mini.local`, arm64, Darwin 25.5. (Corrected 2026-07-27 — the
+  earlier `macmini`/`goonlagoon` entry was wrong.) Non-interactive ssh from
+  sandboxed sessions fails (agent signing); ask the operator to run
+  `! ssh macminlab '...'` for ground truth, and use a **login** shell
+  (`bash -lc`) or PATH will be bare.
+- [V] On the mini: hermes gateway running with the embedded dispatcher, a hermes
+  launchd job, `kanban.db` present, `terminal.timeout=1800`,
+  `approvals.mode=off`, `skills.write_approval=false`, `goals.max_turns=60`,
+  one profile (`builder`). `claude`/`gh`/`git`/`make` reachable from the
+  gateway's PATH; **`codex` is not**.
+- [ ] Hermes version on mini: still PENDING (the piped preflight run hid it).
+- [V] `forge/` is a git repo as of 2026-07-27, remote
+  `git@github.com:wielas/forge.git`, push pending.
 
 ## Decisions from onboarding interview (2026-07-10)
 - [I] First Forge tenant after hello-chunk: a FRESH project (no migration debt),
