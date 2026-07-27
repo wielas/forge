@@ -1,88 +1,60 @@
 # =============================================================================
-# forge — Hermes config snippets (DRAFT — reconcile field names against YOUR
-# installed hermes version before merging into ~/.hermes/config.yaml).
-# Every block states INTENT precisely so reconciliation is mechanical.
+# forge — settings for the DEFAULT Hermes profile (~/.hermes/config.yaml).
+#
+# Verified against Hermes v0.19.0 on 2026-07-27. Re-check after every
+# `hermes update`: config drifts across upgrades (0.18.2 → 0.19.0 silently
+# changed approvals.mode and goals.max_turns). `hermes config check`, then
+# `hermes config migrate`.
+#
+# NOTE: per-agent roles are NOT configured here. A Hermes profile is a separate
+# HERMES_HOME directory created with `hermes profile create` — see
+# hermes/profiles-bootstrap.sh. An earlier draft of this file had a `profiles:`
+# block; no such schema exists.
 # =============================================================================
 
-# ---- profiles ----------------------------------------------------------------
-# INTENT: three roles with least-privilege toolsets (ADR-0005).
-profiles:
-
-  forge-orchestrator:
-    description: >
-      Routes forge work. Decomposes triage cards, links dependencies, assigns
-      lanes, judges parent completion. NEVER implements — board/gateway/memory
-      toolsets only, so it cannot execute code even if it tries.
-    # model: a cheap-strong router model via your provider of choice
-    toolsets: [kanban, gateway, memory]
-
-  forge-judge:
-    description: >
-      Reviews chunk PRs per the judge skill + rubrics/judge-rubric.md. Needs
-      read access to repos (gh CLI) and the board; no write access to code.
-    # model: STRONG model — this is the one metered per-token spend (ADR-0004).
-    #   Default: cheap-strong via OpenRouter; upgrade only if verdicts disappoint.
-    #   Re-check Anthropic programmatic-billing policy before wiring Claude here.
-    toolsets: [kanban, terminal, memory]     # terminal restricted: gh/git read-only
-    skills: [judge]                          # per-profile skill preload
-
-  forge-digest:
-    description: Morning summarizer. Reads board state, writes to Telegram.
-    toolsets: [kanban, gateway]
-
-# ---- kanban -------------------------------------------------------------------
-# INTENT: auto-decomposition OFF for forge boards — /roadmap produces the chunk
-# graph deliberately; the built-in decomposer is for ad-hoc non-forge tasks.
 kanban:
-  orchestrator_profile: forge-orchestrator
-  auto_decompose: false
-  # max_spawn: 3        # concurrency cap for Hermes-spawned workers (judge etc.)
+  dispatch_in_gateway: true    # default; the dispatcher lives in the gateway
+  max_in_progress: 2           # cap concurrent lanes on one mini
+  auto_promote_children: false # /roadmap builds the graph deliberately; review
+                               # decomposed children before they go ready
 
-# ---- learning loop / flywheel (L5) ---------------------------------------------
-# INTENT: learning ON, but ALL skill writes staged for human approval —
-# the consent gate the retro skill depends on (ADR-0005).
+approvals:
+  # smart is the only mode that is both safe and unattended-viable:
+  #   manual → a dispatched worker waits for an approval nobody can give, burns
+  #            its runtime, and gets reclaimed
+  #   off    → nothing is checked; with the local backend and a reachable bot,
+  #            any inbound message can run anything as your user
+  mode: smart
+
 skills:
-  write_approval: true          # stage under ~/.hermes/pending/skills/
+  write_approval: true         # L5 consent gate: skill writes stage under
+                               # ~/.hermes/pending/skills/ for a human (ADR-0005)
+
+goals:
+  max_turns: 20                # per-chunk goal loops; raise deliberately — each
+                               # continuation turn is a full model call
+
+auxiliary:
+  goal_judge:                  # ~200 output tokens, once per turn. Never let it
+    provider: openrouter       # inherit an expensive main model.
+    model: ""                  # pick a cheap fast id via `hermes model`
+
 memory:
   enabled: true
-  # provider: builtin | honcho  # revisit if cross-project recall feels weak
 
-# ---- crons ----------------------------------------------------------------------
-# INTENT: three schedules. Syntax below is descriptive; port to your version's
-# cron format (`hermes cron --help`).
-crons:
-  - name: morning-digest
-    schedule: "0 7 * * *"
-    profile: forge-digest
-    deliver_to: telegram
-    prompt: >
-      Summarize the last 24h across all forge boards: chunks completed (with PR
-      links), judge verdicts awaiting my approval, blocked cards with reasons,
-      and anything the circuit breaker tripped. Max 12 lines. End with the
-      single most important action for me today.
+terminal:
+  timeout: 1800                # The 180s default kills a real chunk run. At 1800,
+                               # a synchronous delegation under ~30 min is safe:
+                               # the dispatcher only reclaims after
+                               # dispatch_stale_timeout_seconds (4h) with no
+                               # heartbeat in the last hour. Cap chunk size rather
+                               # than building background/poll machinery.
 
-  - name: nightly-self-evolution
-    schedule: "0 2 * * *"
-    profile: forge-orchestrator
-    prompt: >
-      Review today's sessions and board exhaust. Stage (write_approval) any
-      skill/memory improvements you are confident about. Do not touch skills in
-      the forge repo directly — propose those via a note for the weekly retro.
-
-  - name: nightly-guardrail-audit          # the auditor is NOT the evolver
-    schedule: "30 2 * * *"
-    profile: forge-judge
-    deliver_to: telegram
-    prompt: >
-      Independently review everything staged in ~/.hermes/pending/skills/ in the
-      last 24h. Score each proposal for: evidence quality, risk of weakening a
-      verification gate, and optimization-loop gaming (self-serving edits).
-      Recommend approve/reject per item, one line each.
-
-  - name: weekly-retro
-    schedule: "0 9 * * 6"
-    profile: forge-orchestrator
-    deliver_to: telegram
-    prompt: >
-      Execute the retro skill across all forge boards. Open the PR against the
-      forge repo and send me the link with a 5-line summary of proposed changes.
+# ---- crons live in the profile that runs them -------------------------------
+# Create them with natural language inside the owning profile, not here:
+#   forge-digest    cron  "every day at 07:00, run the digest skill"
+#   forge-prejudge  cron  "every day at 02:30, review everything staged in
+#                          ~/.hermes/pending/skills/ from the last 24h and
+#                          recommend approve/reject per item, one line each"
+# The auditor must not be the thing improving itself — keep the guardrail cron on
+# a different profile from any self-evolution cron (ADR-0005).

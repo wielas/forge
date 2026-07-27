@@ -58,8 +58,12 @@ forge/
 ├── adapters/                  ← L3
 │   ├── claude/forge-claude-plugin/
 │   └── codex/
-├── hermes/                    ← L4/L5 config drafts + board bootstrap
-│   ├── config-snippets.yaml
+├── scripts/
+│   └── preflight.sh           ← read-only revalidation of the mini (make preflight)
+├── hermes/                    ← L4/L5 config + profile definitions
+│   ├── config-snippets.yaml   ← settings for the DEFAULT profile
+│   ├── profiles-bootstrap.sh  ← creates the four forge-* profiles
+│   ├── profiles/*.SOUL.md     ← one identity file per profile
 │   └── board-bootstrap.sh
 └── lanes/
     └── codex-worker.sh        ← Lane A runner (cron/launchd on the mini)

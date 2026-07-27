@@ -326,7 +326,7 @@ sect "6. Profiles — the dispatcher silently fails on unknown assignees"
 # So every assignee the roadmap emits must exist here before any card is made.
 PROF=""
 [ "$HAVE_HERMES" = 1 ] && PROF="$( (hermes kanban assignees 2>/dev/null \
-         || hermes profiles list 2>/dev/null) | tr -d '\r')"
+         || hermes profile list 2>/dev/null) | tr -d '\r')"
 [ -z "$PROF" ] && PROF="$(ls -1 "$HOME/.hermes/profiles" 2>/dev/null | tr -d '\r')"
 if [ -n "$PROF" ]; then
   info "profiles/assignees visible to the board:"
