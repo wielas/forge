@@ -147,15 +147,23 @@ fi
 # ---------------------------------------------------------------------------
 sect "3. Headless auth — the load-bearing question"
 # ---------------------------------------------------------------------------
-# ADR-0004 assumed Claude OAuth does not survive a headless spawn. Current
-# docs say --bare skips OAuth/keychain reads, which implies plain -p performs
-# them. Two runs below: normal env, then a stripped env approximating what the
-# dispatcher hands a worker. Disagreement between them = environment problem,
-# not policy.
+# On macOS, Claude Code credentials live in the encrypted login Keychain. A
+# non-GUI session (SSH, LaunchDaemon) may not be able to unlock it, so `claude
+# -p` reports "Not logged in" even though the same binary works fine in a local
+# Terminal. That is NOT a policy block and NOT a missing login.
+#
+# The two probes below vary the ENV, not the session type, so they cannot tell
+# keychain-scope apart from a genuine logout — both fail identically. The
+# discriminator is running the same probe from a GUI session, or better: setting
+# CLAUDE_CODE_OAUTH_TOKEN, which is read from the environment and needs no
+# keychain at all. Checked explicitly below.
 llm_probe() { # $1=label  $2..=command
   local label="$1"; shift
   local out rc
-  out="$("$@" 2>&1)"; rc=$?
+  # </dev/null is MANDATORY. Both `claude -p` and `codex exec` read stdin, and
+  # when this script is piped in (`bash -s < preflight.sh`) stdin IS the rest of
+  # the script — the probe silently eats it and everything after §3 never runs.
+  out="$("$@" </dev/null 2>&1)"; rc=$?
   # -w so the "ok" inside "tokens" cannot fake a pass
   if [ $rc -eq 0 ] && printf '%s' "$out" | grep -qiw 'ok'; then
     pass "$label responded (rc=0)"
@@ -165,6 +173,18 @@ llm_probe() { # $1=label  $2..=command
     fail "$label failed (rc=$rc): $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
   fi
 }
+# CLAUDE_CODE_OAUTH_TOKEN is a subscription credential (`claude setup-token`,
+# one-year lifetime), NOT metered API access — it is the sanctioned way to
+# authenticate a headless run and does not violate the money invariant in §2.
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  pass "CLAUDE_CODE_OAUTH_TOKEN present — keychain-independent subscription auth"
+else
+  warn "CLAUDE_CODE_OAUTH_TOKEN not set. If the probes below say 'Not logged in'"
+  say  "      while a local Terminal works, this is the fix: run 'claude"
+  say  "      setup-token' once in a GUI session and export the token where the"
+  say  "      GATEWAY can see it (~/.hermes/.env). Do NOT pass --bare in the lane:"
+  say  "      bare mode does not read this variable."
+fi
 if [ "$SKIP_LLM" = 1 ]; then
   warn "--skip-llm: headless auth NOT tested (this is the check that matters most)"
 else
@@ -178,9 +198,13 @@ else
       claude -p "reply with exactly: OK" --output-format json
   fi
   if command -v codex >/dev/null 2>&1; then
-    llm_probe "codex exec (normal env)" codex exec "reply with exactly: OK"
+    # --skip-git-repo-check: codex refuses to run outside a trusted git repo.
+    # Real lane runs happen inside a worktree so they are fine; this probe is not.
+    llm_probe "codex exec (normal env)" \
+      codex exec --skip-git-repo-check "reply with exactly: OK"
     llm_probe "codex exec (stripped env, gateway-like)" \
-      env -i HOME="$HOME" PATH="$PATH" TERM=dumb codex exec "reply with exactly: OK"
+      env -i HOME="$HOME" PATH="$PATH" TERM=dumb \
+      codex exec --skip-git-repo-check "reply with exactly: OK"
   fi
 fi
 
@@ -284,7 +308,16 @@ sect "7. Dispatcher liveness and the env it will hand workers"
 # GWPID / GWPATH were resolved in section 0 so the binary probes could use them.
 if [ -n "$GWPID" ]; then
   pass "gateway running (pid $GWPID) — dispatcher should be ticking"
-  GWENV="$(ps eww -p "$GWPID" 2>/dev/null | tr ' ' '\n' | grep -E '^(PATH|HOME|TERMINAL_CWD|MESSAGING_CWD|HERMES_)' )"
+  GWENV="$(ps eww -p "$GWPID" 2>/dev/null | tr ' ' '\n' \
+    | grep -E '^(PATH|HOME|TERMINAL_CWD|MESSAGING_CWD|HERMES_|CLAUDE_CODE_OAUTH_TOKEN=)' \
+    | sed 's/^CLAUDE_CODE_OAUTH_TOKEN=.*/CLAUDE_CODE_OAUTH_TOKEN=<redacted, present>/')"
+  # The gateway's env is what a dispatched worker inherits. Whether YOUR shell
+  # has the token is irrelevant; this is the copy that matters.
+  printf '%s' "$GWENV" | grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' \
+    && pass "gateway env carries CLAUDE_CODE_OAUTH_TOKEN — workers can auth headlessly" \
+    || warn "gateway env has NO CLAUDE_CODE_OAUTH_TOKEN — a dispatched 'claude -p' will"
+  printf '%s' "$GWENV" | grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' \
+    || say  "      depend on the login keychain being unlockable from the gateway's session"
   [ -n "$GWENV" ] && { info "gateway env of interest:"; printf '%s\n' "$GWENV" | sed 's/^/      /' | while read -r l; do say "$l"; done; }
   if [ -n "$GWPATH" ]; then
     for b in claude codex gh git make; do
