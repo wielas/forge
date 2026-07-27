@@ -403,24 +403,47 @@ fi
 # ---------------------------------------------------------------------------
 sect "9. Skills: discovery, and the curator risk"
 # ---------------------------------------------------------------------------
-# Hermes now runs a curator that reviews, archives and rewrites agent-managed
-# skills. Forge skills are git-tracked. If the curator can edit them in place
-# through a symlink, methodology drifts OUTSIDE version control — silently.
+# Hermes runs a curator that reviews, archives and rewrites the skills in its
+# OWN skills dir. Forge skills are git-tracked, so they must not live there:
+# they are declared per profile as `skills.external_dirs`, which the curator is
+# contractually forbidden to touch (agent/curator.py). A symlink into the
+# curated dir is the failure mode — methodology drifting outside git, silently.
+#
+# Each profile is its own HERMES_HOME with its own skills tree, so the DEFAULT
+# profile's dir proves nothing about what a LANE can see. Check per profile.
 HSK="${HERMES_SKILLS_DIR:-$HOME/.hermes/skills}"
 if [ -d "$HSK" ]; then
   pass "hermes skills dir: $HSK"
-  LINKS="$(find "$HSK" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')"
-  info "symlinked skills in that dir: $LINKS"
-  for s in scope architect roadmap start-chunk end-chunk judge retro; do
-    if [ -L "$HSK/$s" ]; then
-      warn "forge skill '$s' is symlinked into the curated dir — verify the curator"
-      say  "      cannot rewrite it (hermes config: curator.*), or install a COPY instead"
-    fi
+  for s in scope architect roadmap start-chunk end-chunk judge retro forge-lane; do
+    [ -L "$HSK/$s" ] && warn "forge skill '$s' is SYMLINKED into the curated dir —"
+    [ -L "$HSK/$s" ] && say  "      remove it and use skills.external_dirs instead"
   done
-  [ "$LINKS" = 0 ] && pass "no forge symlinks in the curated dir yet (install.sh not run here)"
 else
   warn "hermes skills dir not found at $HSK — confirm with 'hermes skills list'"
 fi
+
+for pdir in "$HOME"/.hermes/profiles/forge-*/; do
+  [ -d "$pdir" ] || continue
+  pname="$(basename "$pdir")"
+  # A profile without the `skills` toolset cannot load skills at all — not a fault.
+  grep -qE '^[[:space:]]+- skills$' "$pdir/config.yaml" 2>/dev/null || continue
+  if grep -q 'external_dirs' "$pdir/config.yaml" 2>/dev/null; then
+    # Capture, THEN grep. `hermes … | grep -q` looks right and is not: grep -q
+    # exits on the first match, hermes takes SIGPIPE, and `set -o pipefail`
+    # reports 141 for a pipeline that actually succeeded.
+    SL=""
+    [ "$HAVE_HERMES" = 1 ] && SL="$(hermes -p "$pname" skills list 2>/dev/null)"
+    if printf '%s' "$SL" | grep -q 'forge-lane'; then
+      pass "$pname sees the forge skills (forge-lane resolved)"
+    else
+      fail "$pname declares external_dirs but 'forge-lane' does not resolve — a"
+      say  "      quoted string instead of a YAML list makes the dir silently skipped"
+    fi
+  else
+    fail "$pname has the skills toolset but no skills.external_dirs — it cannot"
+    say  "      see the lane protocol. Run ./install.sh and paste the block it prints."
+  fi
+done
 for d in "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.agents/skills"; do
   [ -d "$d" ] && info "harness skills dir present: $d" || info "absent: $d"
 done
