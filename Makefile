@@ -11,6 +11,8 @@ new:                           ## make new NAME=my-project [DEST=..]
 	@test -n "$(NAME)" || { echo "usage: make new NAME=my-project"; exit 1; }
 	uvx copier copy templates/python-service $(or $(DEST),..)/$(NAME) --data project_name="$(NAME)"
 	@echo "→ cd $(or $(DEST),..)/$(NAME) && git init && make setup && claude (/scope)"
+	@echo "→ then, once the GitHub repo exists: make protect"
+	@echo "   (branch protection is the ONLY merge gate — the pre-push hook is advisory)"
 
 validate:                      ## sanity-check skill frontmatter + shell syntax
 	@for f in skills/*/SKILL.md; do \

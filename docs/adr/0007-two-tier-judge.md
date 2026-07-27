@@ -28,11 +28,17 @@ judge report, spot-check the two things that smell" than any attempt to automate
 final approval. This is a deliberate choice to keep a human in the loop where
 judgement is actually required, not a stopgap until we can automate it away.
 
-**D7.3 — Auto-merge only where both signals agree.** A PR merges without a human
-tap only when it is judge-approved **and** the chunk was tagged low-risk at
-roadmap time. Risk is assigned before implementation exists, by whoever wrote the
-chunk contract — so the tag cannot be influenced by the diff that wants to merge.
+**D7.3 — Auto-merge only where both signals agree.** `planned — not implemented`
+*(status as of 2026-07-27; nothing in the repo implements this, and it must not
+be read as a property the system has.)* A PR would merge without a human tap only
+when it is judge-approved **and** the chunk was tagged low-risk at roadmap time.
+Risk is assigned before implementation exists, by whoever wrote the chunk
+contract — so the tag cannot be influenced by the diff that wants to merge.
 Everything else waits for a tap.
+
+Prerequisite: auto-merge is meaningless until a merge gate exists off the host.
+`make protect` (GitHub branch protection) is that gate; the local pre-push hook
+is advisory and bypassable.
 
 **D7.4 — The verdict is structured.** Tier-1 verdicts use `--output-schema`
 (`claude -p` takes `--json-schema`) so the result is machine-readable without

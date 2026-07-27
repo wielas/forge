@@ -11,6 +11,15 @@ pre-commit:
 
 pre-push:
   commands:
+    # ADVISORY, and deliberately labelled as such. This catches the common
+    # mistake (being on main and pushing) but CANNOT catch
+    # `git push origin HEAD:main` from a feature branch, because the destination
+    # refs arrive on git's stdin and lefthook 2.1.10 does not forward stdin to
+    # commands or scripts — measured: the hook's args come through
+    # ("origin <url>"), stdin is empty. `--no-verify` skips it entirely.
+    #
+    # The gate that actually holds is off the host: `make protect` (GitHub
+    # branch protection). Do not mistake this for it.
     no-main-push:
       run: |
         branch=$(git rev-parse --abbrev-ref HEAD)
