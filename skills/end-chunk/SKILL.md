@@ -27,10 +27,17 @@ leftovers, missing edge-case scenarios, naming drift from AGENTS.md. Fix now.
 
 ## 4. PR
 ```bash
+mkdir -p .forge
 git push -u origin HEAD
-gh pr create --title "CHUNK-<id>: <title>" --body-file .git/PR_BODY.md
+gh pr create --title "CHUNK-<id>: <title>" --body-file .forge/pr-body.md
 ```
-PR body (write `.git/PR_BODY.md`): chunk goal · scenario list with pass status ·
+Scratch files go in `.forge/`, never in `.git/`. Writing under `.git/` fails two
+independent ways, both measured: the Codex sandbox denies it under
+`-s workspace-write`, and in a linked worktree `.git` is a *file*, not a
+directory, so the path is not even addressable. `forge-lane` §5 already uses
+`.forge/pr-body.md`; these must not disagree.
+
+PR body (write `.forge/pr-body.md`): chunk goal · scenario list with pass status ·
 `make check` tail · decision-log entries added · doc reconciliation summary ·
 DEBT/CARD? items. The template in `.github/PULL_REQUEST_TEMPLATE.md` matches.
 
@@ -39,8 +46,8 @@ Produce the JSON defined in `rubrics/kanban-metadata-schema.md` and:
 - Unattended lane: you are inside a Hermes worker — pass it straight to
   `kanban_complete(metadata=…)`; the lane owns that call (see the `forge-lane`
   skill). Nothing scrapes stdout.
-- Interactive: save as `.git/chunk-<id>-metadata.json` and paste into the card's
-  completion if you have board access.
+- Interactive: save as `.forge/chunk-<id>-metadata.json` and paste into the
+  card's completion if you have board access.
 
 ## 6. Stop
 Do not merge. Do not start the next chunk. Merging happens after the judge
