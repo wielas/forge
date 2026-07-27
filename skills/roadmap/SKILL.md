@@ -33,12 +33,14 @@ Sizing rules:
    - **Scenarios:** Given/When/Then one-liners (these BECOME the .feature file)
    - **Out of scope:** what the implementer must NOT do
    - **Done when:** make check green + scenarios pass + docs updated
-   - **Lane:** codex-worker | claude-interactive  ·  **Risk:** low|med|high
+   - **Lane:** forge-codex-lane | claude-interactive  ·  **Risk:** low|med|high
    ```
 
    Lane heuristic: `claude-interactive` for chunks needing judgment or human
-   taste (API shape, UX, tricky refactors); `codex-worker` for well-bounded
-   build-out. Risk `high` ⇒ note "docker backend" for the lane runner.
+   taste (API shape, UX, tricky refactors); `forge-codex-lane` for well-bounded
+   build-out. The lane name IS the card's `--assignee`, so it must match a real
+   Hermes profile (`hermes kanban assignees`) — an unknown assignee leaves the
+   card stranded in `ready`, silently. Risk `high` ⇒ note "docker backend".
 3. **Self-review pass:** simulate being the implementer of the 3 gnarliest
    chunks; if you would need to ask a question, the spec is incomplete — fix it.
 4. **Emit the board.** Print (do not execute unless asked) the bootstrap
@@ -60,4 +62,4 @@ by ≥1 chunk; human sign-off; board bootstrap block printed.
 
 ## Handoff
 Human runs `hermes/board-bootstrap.sh <project>`; implementation proceeds via
-/start-chunk (interactive) or the codex-worker lane (unattended).
+/start-chunk (interactive) or the forge-codex-lane profile (unattended).

@@ -36,8 +36,9 @@ DEBT/CARD? items. The template in `.github/PULL_REQUEST_TEMPLATE.md` matches.
 
 ## 5. Emit metadata (the structured handoff)
 Produce the JSON defined in `rubrics/kanban-metadata-schema.md` and:
-- Unattended lane: print it between `FORGE_METADATA_BEGIN` / `FORGE_METADATA_END`
-  markers on stdout — the lane runner scrapes it into `kanban_complete`.
+- Unattended lane: you are inside a Hermes worker — pass it straight to
+  `kanban_complete(metadata=…)`; the lane owns that call (see the `forge-lane`
+  skill). Nothing scrapes stdout.
 - Interactive: save as `.git/chunk-<id>-metadata.json` and paste into the card's
   completion if you have board access.
 

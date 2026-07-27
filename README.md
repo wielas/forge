@@ -60,14 +60,15 @@ forge/
 │   └── codex/
 ├── scripts/
 │   └── preflight.sh           ← read-only revalidation of the mini (make preflight)
-├── hermes/                    ← L4/L5 config + profile definitions
-│   ├── config-snippets.yaml   ← settings for the DEFAULT profile
-│   ├── profiles-bootstrap.sh  ← creates the four forge-* profiles
-│   ├── profiles/*.SOUL.md     ← one identity file per profile
-│   └── board-bootstrap.sh
-└── lanes/
-    └── codex-worker.sh        ← Lane A runner (cron/launchd on the mini)
+└── hermes/                    ← L4/L5 config + profile definitions
+    ├── config-snippets.yaml   ← settings for the DEFAULT profile
+    ├── profiles-bootstrap.sh  ← creates the four forge-* profiles
+    ├── profiles/*.SOUL.md     ← one identity file per profile
+    └── board-bootstrap.sh
 ```
+
+There is no lane runner. The lane IS a Hermes profile (`forge-codex-lane`)
+that the kanban dispatcher spawns; its protocol is `skills/forge-lane/SKILL.md`.
 
 ## Quickstart
 
@@ -88,7 +89,7 @@ claude                             # then: /scope → /architect → /roadmap
 
 # 4. Let the board work (on the mini)
 ./hermes/board-bootstrap.sh my-project
-# lanes/codex-worker.sh runs on a schedule and drains ready cards
+# the gateway's embedded dispatcher spawns forge-codex-lane on each ready card
 
 # 5. Spot-check from anywhere
 # Judge verdicts land as card metadata → Telegram gate pings you.
@@ -102,9 +103,9 @@ Before trusting Lane A with real work, run the deliberately tiny end-to-end path
 1. `make new NAME=hello-forge` and push it to GitHub.
 2. Create ONE trivial card by hand (see `hermes/board-bootstrap.sh --hello`):
    *"Add a `greet(name)` function with a BDD scenario. Chunk id: HELLO-1."*
-3. Run `lanes/codex-worker.sh --once` in the foreground and watch it:
-   claim → worktree → codex exec (start-chunk) → make check → push → PR →
-   kanban complete with metadata.
+3. Watch the dispatcher drive it: `hermes kanban watch --board <forge board>`.
+   claim → worktree → codex exec → make check → push → PR →
+   `kanban_complete` with metadata → prejudge card appears.
 4. Confirm the judge card spawns, the verdict lands, and Telegram pings you.
 
 Everything that can break (board CLI flags, worktree lifecycle, gh auth,
@@ -139,12 +140,13 @@ and reports PASS/WARN/FAIL. See `docs/handoff-2026-07-27.md` for what changed
 after the first review pass and what is still assumed.
 
 
-- [ ] Exact `hermes kanban` CLI flags & JSON output (lanes/codex-worker.sh
-      isolates all board I/O in four `board_*` functions — edit only there).
+- [x] Exact `hermes kanban` CLI flags & JSON output — burned down by
+      `make preflight` §5 on 2026-07-27.
 - [ ] Hermes skills directory path for symlinks (`install.sh`, `HERMES_SKILLS_DIR`).
 - [ ] Hermes `config.yaml` schema for profiles/cron (`hermes/config-snippets.yaml`
       is a commented draft to reconcile against current docs).
 - [ ] Claude Code hooks JSON schema in `adapters/claude/.../hooks/hooks.json`.
-- [ ] Codex non-interactive flags (`codex exec` invocation in the lane runner).
+- [x] Codex non-interactive flags — codex-cli 0.145.0 has NO `--full-auto`;
+      the lane uses `-s workspace-write` (`skills/forge-lane/SKILL.md`).
 - [ ] Current Anthropic programmatic-billing state before enabling any Claude
       API/SDK judge lane (policy was in flux as of 2026-06; see ADR-0004).
