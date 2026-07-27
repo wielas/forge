@@ -35,6 +35,23 @@ export HERMES_KANBAN_BOARD="$BOARD"
 hermes kanban init 2>/dev/null || true      # idempotent
 hermes kanban boards create "$BOARD" 2>/dev/null || true   # `boards` ignores --board
 
+# A `--workspace worktree` card with no explicit workspace_path anchors on the
+# BOARD's default_workdir. Unset, `_resolve_worktree_workspace` raises; the
+# dispatcher catches that into _record_spawn_failure, and with --max-retries 1
+# below the first card auto-blocks on tick 1 — no worker output, no obvious
+# cause. Set it here and read it back; `boards create` above is a no-op when the
+# board already exists, so the flag on `create` cannot be relied on.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+hermes kanban boards set-default-workdir "$BOARD" "$REPO_ROOT"
+readback=$(hermes kanban boards list --json \
+  | jq -r --arg b "$BOARD" '.[]|select(.slug==$b)|.default_workdir // "null"')
+if [ "$readback" != "$REPO_ROOT" ]; then
+  echo "FATAL: board '$BOARD' default_workdir is '$readback', expected" >&2
+  echo "       '$REPO_ROOT'. Worktree cards would auto-block on tick 1." >&2
+  exit 1
+fi
+echo "board '$BOARD' default_workdir = $readback"
+
 # Fail loudly HERE rather than stranding a card an hour from now.
 if ! hermes kanban assignees 2>/dev/null | grep -q "$LANE_ASSIGNEE"; then
   echo "FATAL: '$LANE_ASSIGNEE' is not a known assignee. Run" >&2
