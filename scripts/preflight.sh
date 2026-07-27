@@ -176,14 +176,29 @@ llm_probe() { # $1=label  $2..=command
 # CLAUDE_CODE_OAUTH_TOKEN is a subscription credential (`claude setup-token`,
 # one-year lifetime), NOT metered API access — it is the sanctioned way to
 # authenticate a headless run and does not violate the money invariant in §2.
+# The token that matters is the one HERMES injects into the children it spawns,
+# which it reads from ~/.hermes/.env — not the one this SSH shell happens to
+# have. So: look in the env, then fall back to ~/.hermes/.env, and probe with
+# whatever we find. Otherwise an SSH run reports a false failure while the real
+# lane works fine (exactly what happened on 2026-07-27).
+TOKEN_SRC=""
 if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  pass "CLAUDE_CODE_OAUTH_TOKEN present — keychain-independent subscription auth"
+  TOKEN_SRC="this shell's env"
+elif [ -f "$HOME/.hermes/.env" ] \
+     && grep -q '^CLAUDE_CODE_OAUTH_TOKEN=.\+' "$HOME/.hermes/.env" 2>/dev/null; then
+  CLAUDE_CODE_OAUTH_TOKEN="$(grep -m1 '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.hermes/.env" \
+    | cut -d= -f2- | tr -d '"'"'"' \r')"
+  export CLAUDE_CODE_OAUTH_TOKEN
+  TOKEN_SRC="~/.hermes/.env (what Hermes gives its children)"
+fi
+if [ -n "$TOKEN_SRC" ]; then
+  pass "CLAUDE_CODE_OAUTH_TOKEN found in $TOKEN_SRC — keychain-independent auth"
 else
-  warn "CLAUDE_CODE_OAUTH_TOKEN not set. If the probes below say 'Not logged in'"
-  say  "      while a local Terminal works, this is the fix: run 'claude"
-  say  "      setup-token' once in a GUI session and export the token where the"
-  say  "      GATEWAY can see it (~/.hermes/.env). Do NOT pass --bare in the lane:"
-  say  "      bare mode does not read this variable."
+  warn "CLAUDE_CODE_OAUTH_TOKEN nowhere to be found. If the probes below say"
+  say  "      'Not logged in' while a local Terminal works, this is the fix: run"
+  say  "      'claude setup-token' once in a GUI session and put the token in"
+  say  "      ~/.hermes/.env so the gateway's children inherit it. Do NOT pass"
+  say  "      --bare in the lane: bare mode does not read this variable."
 fi
 if [ "$SKIP_LLM" = 1 ]; then
   warn "--skip-llm: headless auth NOT tested (this is the check that matters most)"
@@ -193,8 +208,10 @@ else
       claude -p "reply with exactly: OK" --output-format json
     # Stripped env ≈ dispatcher-spawned child. PATH is passed through because a
     # missing PATH tests nothing but PATH; we are testing credential reach.
+    # Pass the token through explicitly: this is what a Hermes-spawned child gets.
     llm_probe "claude -p (stripped env, gateway-like)" \
       env -i HOME="$HOME" PATH="$PATH" TERM=dumb \
+      CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}" \
       claude -p "reply with exactly: OK" --output-format json
   fi
   if command -v codex >/dev/null 2>&1; then
@@ -210,7 +227,11 @@ fi
 
 if command -v gh >/dev/null 2>&1; then
   if gh auth status >/dev/null 2>&1; then pass "gh authenticated"
-  else fail "gh NOT authenticated — end-chunk cannot open a PR"; fi
+  else
+    fail "gh NOT authenticated — end-chunk cannot open a PR. Fix on the mini with"
+    say  "      'gh auth login' (device flow works over SSH; needs repo scope). If the"
+    say  "      gateway's children need it too, put GH_TOKEN in ~/.hermes/.env."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -244,6 +265,23 @@ for k in approvals.mode kanban.dispatch_in_gateway kanban.max_in_progress \
          skills.write_approval goals.max_turns; do
   v="$(hcfg "$k")"; [ -n "$v" ] && info "$k = $v" || info "$k = (unset → built-in default)"
 done
+
+# approvals.mode cuts both ways for unattended work:
+#   manual → a flagged command waits for a human who is not there; the card
+#            burns its runtime and gets reclaimed. Safe, but it hangs lanes.
+#   off    → nothing is checked; a message to the bot can run anything.
+#   smart  → LLM auto-approves low-risk commands. The only mode that is both
+#            safe and unattended-viable.
+AM="$(hcfg approvals.mode | tr -d "\"' ")"
+case "$AM" in
+  smart) pass "approvals.mode=smart — safe and viable for unattended lanes";;
+  manual) warn "approvals.mode=manual — a dispatched worker hitting a flagged"
+          say  "      command will wait for an approval nobody is there to give."
+          say  "      Prefer 'smart' with a tight allowlist before the first night run.";;
+  off)   warn "approvals.mode=off (HERMES_YOLO_MODE) — nothing is checked. With the"
+         say  "      local backend and a reachable bot, any message can run anything.";;
+  *)     info "approvals.mode could not be read cleanly ('$AM')";;
+esac
 [ "$(hcfg skills.write_approval)" = "true" ] \
   && pass "skills.write_approval on (L5 consent gate)" \
   || warn "skills.write_approval not confirmed on — the flywheel's consent gate (ADR-0005)"
@@ -269,11 +307,15 @@ CH="$(hermes kanban create --help 2>&1)"
 #   --max-retries / --max-runtime  circuit breaker instead of bash `timeout`
 #   --idempotency-key  re-running board bootstrap must not duplicate cards
 #   --skill      pin judge/lane skills per card without editing the profile
-for fl in --workspace --branch --max-retries --max-runtime --idempotency-key --skill --assignee --body-file; do
+#   --body       there is NO --body-file; pass file contents with --body "$(cat f)"
+for fl in --workspace --branch --max-retries --max-runtime --idempotency-key --skill --assignee --body; do
   printf '%s' "$CH" | grep -q -- "$fl" \
     && pass "kanban create flag: $fl" \
     || fail "kanban create flag MISSING: $fl — the lane design assumes it"
 done
+printf '%s' "$CH" | grep -q -- '--body-file' \
+  && info "--body-file exists after all; board-bootstrap may use it directly" \
+  || info "no --body-file (expected) — bootstrap must use --body \"\$(cat …)\""
 fi
 
 # ---------------------------------------------------------------------------
@@ -347,6 +389,13 @@ else warn "no ~/.hermes/kanban.db yet — 'hermes kanban init' has not run"; fi
 if [ "$HAVE_HERMES" = 1 ]; then
   BL="$(hermes kanban boards list 2>&1 | head -20)"
   [ -n "$BL" ] && { info "boards:"; printf '%s\n' "$BL" | sed 's/^/      /' | while read -r l; do say "$l"; done; }
+  # Board resolution falls back to the persisted "current" board. A bootstrap
+  # script that omits --board silently lands its cards on whatever that is.
+  CUR="$(printf '%s' "$BL" | sed -n 's/^Current board: *//p' | head -1)"
+  if [ -n "$CUR" ] && [ "$CUR" != "default" ]; then
+    warn "current board is '$CUR' — any 'hermes kanban create' without --board"
+    say  "      lands there, NOT on a forge board. Always pass --board explicitly."
+  fi
   ST="$(hermes kanban stats 2>&1 | head -20)"
   [ -n "$ST" ] && { info "stats:"; printf '%s\n' "$ST" | sed 's/^/      /' | while read -r l; do say "$l"; done; }
 fi
