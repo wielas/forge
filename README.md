@@ -61,7 +61,7 @@ forge/
 ├── scripts/
 │   └── preflight.sh           ← read-only revalidation of the mini (make preflight)
 └── hermes/                    ← L4/L5 config + profile definitions
-    ├── config-snippets.yaml   ← settings for the DEFAULT profile
+    ├── config-examples.yaml   ← settings for the DEFAULT profile
     ├── profiles-bootstrap.sh  ← creates the four forge-* profiles
     ├── profiles/*.SOUL.md     ← one identity file per profile
     └── board-bootstrap.sh
@@ -161,7 +161,7 @@ is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md).
       `make preflight` §5 on 2026-07-27.
 - [x] Hermes skills discovery — skills are PER PROFILE; forge skills are declared
       as `skills.external_dirs`, not symlinked (ADR-0006, preflight §9).
-- [ ] Hermes `config.yaml` schema for profiles/cron (`hermes/config-snippets.yaml`
+- [ ] Hermes `config.yaml` schema for profiles/cron (`hermes/config-examples.yaml`
       is a commented draft to reconcile against current docs).
 - [ ] Claude Code hooks JSON schema in `adapters/claude/.../hooks/hooks.json`.
 - [x] Codex non-interactive flags — codex-cli 0.145.0 has NO `--full-auto`;
