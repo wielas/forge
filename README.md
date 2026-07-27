@@ -35,7 +35,7 @@ lives in [`docs/adr/`](docs/adr/).
 ├──────────────────────────────────────────────────────────────────┤
 │ L1  METHODOLOGY   skills/*/SKILL.md (agentskills.io open format) │
 │                   + rubrics/. Read natively by Claude Code,      │
-│                   Codex, and Hermes via symlinks. The soul.      │
+│                   Codex (symlinks) and Hermes (external_dirs).   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -45,9 +45,9 @@ lives in [`docs/adr/`](docs/adr/).
 forge/
 ├── README.md                  ← you are here (architecture + quickstart)
 ├── Makefile                   ← forge-level commands (install, new, check)
-├── install.sh                 ← symlink skills into every harness
+├── install.sh                 ← publish skills to every harness
 ├── docs/adr/                  ← why the Forge is shaped this way
-├── skills/                    ← L1: the seven ceremony skills
+├── skills/                    ← L1: the eight ceremony skills
 │   ├── scope/  architect/  roadmap/
 │   ├── start-chunk/  end-chunk/
 │   ├── judge/  retro/
@@ -76,7 +76,8 @@ that the kanban dispatcher spawns; its protocol is `skills/forge-lane/SKILL.md`.
 # 0. Prereqs on the mini + laptop: git, gh, uv, copier, jq, codex CLI, hermes
 uv tool install copier
 
-# 1. Install skills into every harness (idempotent symlinks)
+# 1. Publish skills to every harness (idempotent; symlinks for Claude/Codex,
+#    skills.external_dirs for Hermes — the curator must not own these files)
 ./install.sh
 
 # 2. Stamp a new project — Chunk 0 in one command
@@ -96,12 +97,37 @@ claude                             # then: /scope → /architect → /roadmap
 # Approve/bounce from your phone; steer live Claude sessions via /rc.
 ```
 
+## `make verify` — the only claim in this README that checks itself
+
+Forge tells every project it stamps that *skills persuade, gates enforce*
+(ADR-0003). `make verify` is that rule applied to Forge:
+
+```bash
+make verify                     # cli + config + substrate + template
+make verify SUITES="cli config" # one or more suites
+make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
+./scripts/verify.sh --list      # what it checks, without running it
+```
+
+| Suite | What it executes |
+|---|---|
+| `cli/` | every long flag named beside a command in `skills/`, `hermes/`, `docs/` must exist in that command's live `--help`; skill bodies carry no unverified-claim markers; descriptions fit the budget |
+| `config/` | timeout, consent gate, external dirs and skill scoping, read **per profile** — not from the gateway's profile, which no worker uses |
+| `substrate/` | behaviour we depend on and do not control: worktree ownership, `.git`-is-a-file, the codex sandbox commit |
+| `template/` | stamp → `make setup` → hooks really installed → `make check` green |
+
+Run it in CI, after every `hermes update`, and after every `codex`/`claude`
+upgrade. A tool version bump that changes a flag or a sandbox rule should fail a
+check, not a night run. When it disagrees with this README, **it is right and
+the prose is stale** — that is the whole point of having it.
+
 ## Day-one risk burn-down: the hello-chunk test
 
-**This is the next thing to do, and nothing has been dispatched yet.** Everything
-else in this repo is verified; the one claim still untested is that a real card
-flows end to end. Run the deliberately tiny path before trusting the lane with
-real work:
+**This is the next thing to do, and nothing has been dispatched yet.** What is
+verified is what `make verify` executes — run it, and read its output rather
+than this sentence. Everything outside that suite is a claim, including the big
+one: that a real card flows end to end. Run the deliberately tiny path before
+trusting the lane with real work:
 
 ```bash
 make preflight                      # must be FAIL 0 before anything is dispatched
@@ -118,8 +144,12 @@ Pass means the whole chain: claim → worktree → `codex exec` → `make check`
 Everything that can break — board flag placement, worktree lifecycle, the codex
 sandbox, gh auth, the lane model holding the protocol, metadata plumbing — breaks
 here, cheaply. When it does, `hermes kanban runs <task-id>` shows how the run
-ended; a `crashed` reap means the worker exited without a terminator, which is a
-model problem, not a skill-text problem (see `docs/open-questions.md`).
+ended; a `crashed` reap means the worker exited without a terminator. That is
+**not** automatically a model problem: skill text causes it too — a lane told to
+run a command that cannot succeed dies with no terminator and ticks the failure
+counter, which is exactly what the worktree-creation fallback did before F2
+removed it. Read the run output before blaming the model
+(see `docs/open-questions.md`).
 
 ## Design commitments (summary — full rationale in ADRs)
 
@@ -141,8 +171,12 @@ have deliberately not decided yet is in
 ## Authoring rules for skills (keep the soul lean)
 
 - Frontmatter: `name` + `description` only (portable core). Descriptions are
-  trigger-rich but tight — Hermes house style prefers ≤60 chars and Codex
-  truncates long descriptions when its 2%-of-context skills budget fills.
+  trigger-rich but tight: **≤170 chars**, which is what all eight actually are
+  (135–165 as of 2026-07-27). Hermes house style suggests ≤60; no forge skill has
+  ever met it, because the description is the only trigger surface a model sees
+  and 60 chars cannot carry both the "what" and the "when". If ≤60 is the real
+  rule, the skills are wrong and must be rewritten — pick one and let
+  `make verify` enforce it. A limit nothing meets is not a rule.
 - Bodies stay well under ~150 lines; long material goes to `rubrics/` or a
   skill-local `references/` dir (progressive disclosure).
 - If a rule MUST hold, it does not belong in a skill at all — move it down to
