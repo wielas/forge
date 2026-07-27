@@ -16,7 +16,7 @@ scraping.
   "project": "gym-coach",
   "branch": "chunk/7-sync-engine",
   "pr": "https://github.com/…/pull/42",
-  "lane": "codex-worker | claude-interactive",
+  "lane": "forge-codex-lane | claude-interactive",
   "scenarios": { "added": 4, "passing": 4, "feature_files": ["tests/features/chunk_7.feature"] },
   "check": { "green": true, "coverage_pct": 91.4 },
   "files_changed": 6,
@@ -33,8 +33,10 @@ scraping.
 ```
 
 `summary` (the human-readable sibling): one sentence of what landed + one of what
-to watch. The lane runner scrapes this JSON from worker stdout between
-`FORGE_METADATA_BEGIN` / `FORGE_METADATA_END` markers.
+to watch. The lane worker passes this JSON directly to
+`kanban_complete(metadata=…)` — there is no stdout scraping. Hermes's own
+recommended keys (`changed_files`, `tests_run`, `decisions`) are welcome
+alongside the forge keys; the dashboard renders them for free.
 
 ## Judge completion — `forge.judge.v1`
 Defined in `rubrics/judge-rubric.md`. Stored as the judge card's metadata.

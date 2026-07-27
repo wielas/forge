@@ -17,5 +17,5 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  head -1 $$f | grep -q '^---$$' || { echo "BAD frontmatter: $$f"; exit 1; }; \
 	  grep -q '^name:' $$f && grep -q '^description:' $$f || { echo "MISSING name/description: $$f"; exit 1; }; \
 	done
-	@bash -n install.sh lanes/codex-worker.sh hermes/board-bootstrap.sh
+	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh scripts/preflight.sh
 	@echo "forge validate: OK"

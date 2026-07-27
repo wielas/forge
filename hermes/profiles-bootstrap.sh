@@ -33,11 +33,19 @@ MODEL_ROUTER="${FORGE_MODEL_ROUTER:-}"      # orchestrator: decomposition qualit
 MODEL_DRIVER="${FORGE_MODEL_DRIVER:-}"      # lane + prejudge + digest: shell driver only
 
 # name | description (feeds kanban orchestrator routing) | core toolsets
+#
+# TOOLSET NAMES ARE NOT FREE TEXT. Every entry must be a real toolset — check
+# with `python -c 'import toolsets; print(toolsets.get_toolset_names())'` in the
+# hermes venv. An unknown name resolves to ZERO tools, silently: `toolsets:
+# [forge]` with a `custom_toolsets:` block gave all four profiles no tools at
+# all on 0.19.0, because nothing in the code reads `custom_toolsets` (it is
+# documented in website/docs/reference/toolsets-reference.md but unimplemented).
+# `messaging` is likewise not a toolset; the gateway platforms carry those tools.
 PROFILES=(
-  "forge-orchestrator|Routes forge work: decomposes chunks, links dependencies, assigns lanes. Never implements.|kanban,memory,messaging,clarify"
-  "forge-codex-lane|Implements one chunk contract by driving codex exec in a git worktree, verifies make check, opens the PR.|terminal,file,kanban,memory"
-  "forge-prejudge|Tier-1 PR filter: bounces ci-red, scenario theater and scope creep. Reads diffs, never edits code.|terminal,kanban,memory"
-  "forge-digest|Reads the forge boards and sends one short daily status message. Read-only.|kanban,messaging"
+  "forge-orchestrator|Routes forge work: decomposes chunks, links dependencies, assigns lanes. Never implements.|kanban,memory,skills"
+  "forge-codex-lane|Implements one chunk contract by driving codex exec in a git worktree, verifies make check, opens the PR.|terminal,file,kanban,memory,skills"
+  "forge-prejudge|Tier-1 PR filter: bounces ci-red, scenario theater and scope creep. Reads diffs, never edits code.|terminal,kanban,memory,skills"
+  "forge-digest|Reads the forge boards and sends one short daily status message. Read-only.|kanban,memory"
 )
 
 for spec in "${PROFILES[@]}"; do
@@ -67,19 +75,17 @@ for spec in "${PROFILES[@]}"; do
   esac
   [ -n "$m" ] && run hermes -p "$name" config set model.default "$m"
 
-  # Toolsets are a nested structure, so `config set` is the wrong tool. Emit the
-  # exact block instead of guessing — paste it into the profile's config.yaml.
+  # Toolsets are a list, so `config set` is the wrong tool. Emit the exact block
+  # instead of guessing — paste it into the profile's config.yaml. ONE REAL
+  # TOOLSET NAME PER LINE; see the warning above the PROFILES table.
   cfg="$HOME/.hermes/profiles/$name/config.yaml"
-  if [ -f "$cfg" ] && grep -qE '^custom_toolsets:' "$cfg" 2>/dev/null; then
-    echo "  custom_toolsets already present in $cfg — check it matches:"
+  if [ -f "$cfg" ] && grep -qE '^toolsets:' "$cfg" 2>/dev/null; then
+    echo "  toolsets already present in $cfg — check it matches:"
   else
     echo "  ADD to $cfg :"
   fi
-  echo "      custom_toolsets:"
-  echo "        forge:"
-  printf '          - %s\n' ${tools//,/ }
   echo "      toolsets:"
-  echo "        - forge"
+  printf '        - %s\n' ${tools//,/ }
 done
 
 cat <<'EOF'
@@ -87,8 +93,11 @@ cat <<'EOF'
 ── verify
   hermes profile list
   hermes kanban assignees          # every forge-* name must appear here BEFORE
-                                   # any card is assigned to it: an unknown
-                                   # assignee auto-blocks after two spawn failures
+                                   # any card is assigned to it. An unknown
+                                   # assignee is NOT an error: the card sits in
+                                   # `ready` forever with a skipped_nonspawnable
+                                   # event, and only surfaces ~30 min later in
+                                   # `hermes kanban diagnostics` as stranded.
 
 ── the lane profiles also need, in ~/.hermes/.env (the gateway injects it):
   CLAUDE_CODE_OAUTH_TOKEN=...      # subscription auth, keychain-independent
