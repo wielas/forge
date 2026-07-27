@@ -1,0 +1,23 @@
+name: verify
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # `make validate` is the cheap structural check (frontmatter, bash -n).
+  # `make verify` executes the repo's claims. The suites that need a live
+  # Hermes install or model credentials degrade to `skip` rather than failing,
+  # so CI runs what it can and the operator runs the rest on the mini.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make validate
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: make verify SUITES="cli substrate template"

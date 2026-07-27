@@ -1,5 +1,8 @@
 # forge repo-level commands
-.PHONY: install new validate preflight
+.PHONY: install new validate verify preflight
+
+verify:                        ## execute this repo's own claims (see scripts/verify.sh)
+	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
 
 preflight:                     ## revalidate the mini before unattended work (read-only)
 	./scripts/preflight.sh $(if $(OUT),--out $(OUT),)
