@@ -4,4 +4,8 @@ __pycache__/
 .pytest_cache/
 .coverage
 dist/
-.git/PR_BODY.md
+# Agent scratch: PR bodies, chunk contracts, codex transcripts, metadata.
+# This used to read `.git/PR_BODY.md`, a pattern that can never match anything —
+# git does not track paths under .git/, and both lanes are forbidden from
+# writing there anyway (sandbox denial; .git is a file in a linked worktree).
+.forge/
