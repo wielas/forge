@@ -34,19 +34,21 @@ comment thread. **An operator comment overrides the card body.**
 
 ## 2. Land in the worktree
 
-```bash
-cd "$HERMES_KANBAN_WORKSPACE"
-```
-
-A `worktree` workspace is created **worker-side**, so it may not exist yet:
+The dispatcher created the worktree **before it spawned you** and checked it out
+on `$HERMES_KANBAN_BRANCH`. Do not create it. Land in it and verify:
 
 ```bash
-# if $HERMES_KANBAN_WORKSPACE has no .git, create it FROM THE MAIN REPO
-git -C "$REPO" fetch origin
-git -C "$REPO" worktree add "$HERMES_KANBAN_WORKSPACE" \
-    -b "${HERMES_KANBAN_BRANCH:-wt/$HERMES_KANBAN_TASK}" origin/main
-cd "$HERMES_KANBAN_WORKSPACE"
+cd "$HERMES_KANBAN_WORKSPACE" || exit 1
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "workspace $HERMES_KANBAN_WORKSPACE is not a git checkout" >&2
+  exit 1   # a substrate fault — block the card, do not try to repair it
+}
 ```
+
+If that check fails, the substrate is broken; report it via `kanban_block` and
+stop. Creating the worktree yourself cannot work — the branch is already checked
+out at that exact path, so any attempt to re-add it fails, and you then exit
+without a terminator, which is reaped as `crashed`.
 
 For a project-linked card the workspace is `<repo>/.worktrees/<task-id>` and the
 main repo is two levels up. Worktrees are **preserved** on completion (scratch
