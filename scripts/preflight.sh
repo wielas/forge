@@ -137,6 +137,14 @@ if [ -f "$HOME/.hermes/.env" ]; then
   grep -qE '^(ANTHROPIC|OPENAI)_API_KEY=.+' "$HOME/.hermes/.env" 2>/dev/null \
     && fail "~/.hermes/.env contains an ANTHROPIC/OPENAI key — workers inherit it" \
     || pass "~/.hermes/.env has no ANTHROPIC/OPENAI key"
+  # An EMPTY assignment is not a billing risk today and does not break `claude -p`
+  # (measured: is_error:false with ANTHROPIC_API_KEY="" alongside the OAuth token).
+  # It is a landmine: the day someone pastes a value into that waiting line, every
+  # lane silently starts metering, because the API key outranks the OAuth token.
+  grep -qE '^(ANTHROPIC|OPENAI)_API_KEY=[[:space:]]*$' "$HOME/.hermes/.env" 2>/dev/null \
+    && warn "~/.hermes/.env has an EMPTY ANTHROPIC/OPENAI key line — delete the line;"
+  grep -qE '^(ANTHROPIC|OPENAI)_API_KEY=[[:space:]]*$' "$HOME/.hermes/.env" 2>/dev/null \
+    && say  "      an empty slot invites a paste that silently breaks the money invariant"
   grep -q '^OPENROUTER_API_KEY=.\+' "$HOME/.hermes/.env" 2>/dev/null \
     && pass "OPENROUTER_API_KEY present (Hermes brain + aux judge)" \
     || warn "no OPENROUTER_API_KEY in ~/.hermes/.env — is Hermes on another provider?"
@@ -334,7 +342,7 @@ if [ -n "$PROF" ]; then
   for want in forge-orchestrator forge-codex-lane forge-prejudge forge-digest; do
     printf '%s' "$PROF" | grep -q "$want" \
       && pass "profile exists: $want" \
-      || warn "profile NOT yet created: $want (cards assigned to it will auto-block)"
+      || warn "profile NOT yet created: $want (its cards will sit stranded in ready)"
   done
 else
   warn "could not enumerate profiles — check 'hermes profiles --help'"
@@ -351,15 +359,30 @@ sect "7. Dispatcher liveness and the env it will hand workers"
 if [ -n "$GWPID" ]; then
   pass "gateway running (pid $GWPID) — dispatcher should be ticking"
   GWENV="$(ps eww -p "$GWPID" 2>/dev/null | tr ' ' '\n' \
-    | grep -E '^(PATH|HOME|TERMINAL_CWD|MESSAGING_CWD|HERMES_|CLAUDE_CODE_OAUTH_TOKEN=)' \
-    | sed 's/^CLAUDE_CODE_OAUTH_TOKEN=.*/CLAUDE_CODE_OAUTH_TOKEN=<redacted, present>/')"
-  # The gateway's env is what a dispatched worker inherits. Whether YOUR shell
-  # has the token is irrelevant; this is the copy that matters.
-  printf '%s' "$GWENV" | grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' \
-    && pass "gateway env carries CLAUDE_CODE_OAUTH_TOKEN — workers can auth headlessly" \
-    || warn "gateway env has NO CLAUDE_CODE_OAUTH_TOKEN — a dispatched 'claude -p' will"
-  printf '%s' "$GWENV" | grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' \
-    || say  "      depend on the login keychain being unlockable from the gateway's session"
+    | grep -E '^(PATH|HOME|TERMINAL_CWD|MESSAGING_CWD|HERMES_)' )"
+  # DO NOT ask ps whether the gateway has CLAUDE_CODE_OAUTH_TOKEN. On macOS
+  # `ps eww` reports the env a process was EXEC'd with; hermes loads
+  # ~/.hermes/.env at import via load_hermes_dotenv(), i.e. after exec, so the
+  # token is in the live os.environ (which the dispatcher copies with
+  # `env = dict(os.environ)` when it spawns a worker) but is invisible to ps.
+  # Measured 2026-07-27: a Python process that sets os.environ[X] post-exec
+  # shows zero matches in `ps eww`. The old check WARNed on a healthy gateway.
+  # What actually matters, in order:
+  #   1. the token is readable from the home the gateway was started with, and
+  #   2. each profile carries its own copy, so a hand-run worker also has it.
+  if [ -n "$TOKEN_SRC" ]; then
+    pass "token resolvable for gateway children (from $TOKEN_SRC)"
+  else
+    warn "no CLAUDE_CODE_OAUTH_TOKEN anywhere — a dispatched 'claude -p' falls back"
+    say  "      to the login keychain, which a non-GUI gateway session may not unlock"
+  fi
+  for pdir in "$HOME"/.hermes/profiles/forge-*/; do
+    [ -d "$pdir" ] || continue
+    grep -q '^CLAUDE_CODE_OAUTH_TOKEN=.\+' "$pdir/.env" 2>/dev/null \
+      || warn "$(basename "$pdir")/.env has no CLAUDE_CODE_OAUTH_TOKEN — fine while it"
+    grep -q '^CLAUDE_CODE_OAUTH_TOKEN=.\+' "$pdir/.env" 2>/dev/null \
+      || say  "      inherits the gateway's env, but a hand-run 'hermes -p <name>' will not"
+  done
   [ -n "$GWENV" ] && { info "gateway env of interest:"; printf '%s\n' "$GWENV" | sed 's/^/      /' | while read -r l; do say "$l"; done; }
   if [ -n "$GWPATH" ]; then
     for b in claude codex gh git make; do

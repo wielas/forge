@@ -24,8 +24,8 @@ Rules for this session:
 - Verify before asserting. --help beats your memory; the running CLI beats the
   docs; the docs beat your training data. Say which one you used.
 - Do not create kanban cards until `hermes kanban assignees` lists the forge-*
-  profiles. An unknown assignee does not get skipped — it auto-blocks the card
-  after two failed spawns.
+  profiles. An unknown assignee fails silently: the card sits in `ready` forever
+  and only shows up as stranded in `hermes kanban diagnostics` half an hour later.
 - Always pass --board explicitly. The current board is `digest`, which is not
   ours.
 - No metered API tokens, ever. If something seems to need one, stop and say so.
