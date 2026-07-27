@@ -7,6 +7,10 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    # lefthook is a dev DEPENDENCY, not an assumed global. Without it here,
+    # `make setup` cannot install the git hooks and ADR-0003's entire local
+    # enforcement tier is prose (see docs/audit-2026-07-27.md F8).
+    "lefthook>=2",
     "pytest>=8",
     "pytest-bdd>=7",
     "pytest-cov>=5",
