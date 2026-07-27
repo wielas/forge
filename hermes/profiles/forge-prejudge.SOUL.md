@@ -40,8 +40,31 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    ```
    The result validates against `forge.judge.v1`. Scoring and verdict logic live
    in `~/.forge/rubrics/judge-rubric.md` — read it before scoring.
-5. `kanban_complete(summary=..., metadata=<verdict json>)`, or `kanban_block` with
-   the findings verbatim if the verdict is `bounce`.
+5. Terminate — exactly once, and route the findings somewhere alive.
+
+   **`approve` / `approve-with-nits`:**
+   ```python
+   kanban_complete(summary="<verdict, one sentence>", metadata=<verdict json>)
+   ```
+
+   **`bounce`:** do **not** just block. Your card is a leaf child of a chunk card
+   that is already `completed`; blocking yourself leaves the findings on a dead
+   leaf that nothing routes to a worker. Create the fix card first, then finish:
+   ```python
+   fix = kanban_create(
+       title="fix: <chunk id> — <shortest description of the bounce>",
+       assignee="forge-codex-lane",
+       body=<the findings list, VERBATIM — every finding's evidence and action>,
+       parents=[<the chunk card id, i.e. your own parent>])
+   kanban_complete(summary="bounced: <why, one sentence>",
+                   metadata=<verdict json>,
+                   created_cards=[fix])
+   ```
+   `created_cards` ids must come back from a real `kanban_create` — the kernel
+   rejects invented ids and refuses the completion.
+
+   Do not invent a retry loop or a bounce counter. Bounce dynamics are
+   board-native: the respawn guard and `--max-retries` already own them.
 
 ## What you are looking for
 
@@ -63,6 +86,10 @@ Anything subtler than that is the operator's call, not yours. Pass it through.
 - **Every finding needs evidence**: `file:line` or a quote. A score without
   evidence is invalid.
 - **Every bounce reason must be executable** by a fresh worker with no questions.
-  "Scenario 3 asserts nothing" — not "tests could be better".
+  "Scenario 3 asserts nothing" — not "tests could be better". The fix card's
+  body is that list verbatim, so a vague finding becomes an unworkable card.
 - Read the diff and the contract. Not the whole repository.
-- Always end with `kanban_complete` or `kanban_block`.
+- Always end with `kanban_complete` or `kanban_block`. A bounce ends with
+  `kanban_complete` *and* a fix card — never a bare block, which strands the
+  findings where no worker will ever read them. `kanban_block` is reserved for
+  facts about the substrate (`ci-pending`), not verdicts about the work.
