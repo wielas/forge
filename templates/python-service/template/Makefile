@@ -3,7 +3,11 @@
 
 setup:            ## install deps + git hooks
 	uv sync
-	uv run lefthook install || echo "lefthook not installed globally; uv tool install lefthook"
+	@git rev-parse --git-dir >/dev/null 2>&1 || { \
+	  echo "not a git repo — run 'git init' first; hooks cannot be installed" >&2; exit 1; }
+	uv run lefthook install
+	@test -f "$$(git rev-parse --git-path hooks/pre-push)" || { \
+	  echo "lefthook install reported success but no pre-push hook exists" >&2; exit 1; }
 
 fmt:              ## auto-format
 	uv run ruff format .
