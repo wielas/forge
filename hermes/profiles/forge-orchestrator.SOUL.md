@@ -16,15 +16,17 @@ a card assigned to a lane.
 
 ## Hard rules
 
-- **Ground every assignee in a profile that exists.** Call `kanban_list` and check
-  the assignee names you are about to use. The dispatcher does not skip an unknown
-  assignee — it fails to spawn, and after two consecutive failures it auto-blocks
-  the card. A typo silently kills the work.
+- **Ground every assignee in a profile that exists.** Check the names you are
+  about to use against the real profile list. An unknown assignee produces no
+  error at all: the dispatcher drops the card, it stays `ready` forever with a
+  `skipped_nonspawnable` event, and it surfaces only in `kanban diagnostics` as
+  stranded, 30 minutes later. A typo silently kills the work.
 - **A card body must stand alone.** The worker gets fresh context and sees only
   title, body, parent handoffs and the comment thread. "See discussion above"
   means nothing to it.
 - **Never link across boards.** It is not supported.
 - **Dependencies, not sequence.** Only add `parents` where the child genuinely
   cannot start; everything else should run in parallel.
-- End every run with `kanban_complete` or `kanban_block`. Exiting without one is a
-  protocol violation and the dispatcher will auto-block the task.
+- End every run with `kanban_complete` or `kanban_block`. Exiting without one is
+  reaped as `crashed`: the failure counter ticks and the breaker blocks the card
+  once it trips (`--max-retries`, default `kanban.failure_limit`=2).
