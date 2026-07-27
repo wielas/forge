@@ -43,23 +43,42 @@ Sizing rules:
    card stranded in `ready`, silently. Risk `high` ⇒ note "docker backend".
 3. **Self-review pass:** simulate being the implementer of the 3 gnarliest
    chunks; if you would need to ask a question, the spec is incomplete — fix it.
-4. **Emit the board.** Print (do not execute unless asked) the bootstrap
-   commands, one per chunk, matching `hermes/board-bootstrap.sh` conventions:
+4. **Emit the board inputs — as files, not as prose to be retyped.**
 
-   ```bash
-   hermes kanban create "CHUNK-<id>: <title>" \
-     --assignee <lane> --tenant <project> \
-     --body-file docs/chunks/CHUNK-<id>.md        # exact flags: VERIFY vs docs
-   # + link commands expressing the Depends-on graph
+   Write each chunk spec to `docs/chunks/CHUNK-<id>.md` (the card body and the
+   ROADMAP entry must be the same text — generate both from one source).
+
+   Then write **`docs/chunks/graph.json`**, the machine-readable dependency
+   graph. This is the contract with `hermes/board-bootstrap.sh`, which creates
+   the cards and the edges itself. Do not print `hermes kanban` commands for a
+   human to paste; a graph rebuilt by hand from prose is a graph that silently
+   loses edges.
+
+   ```json
+   [
+     {"id": "CHUNK-1", "lane": "forge-codex-lane",   "depends_on": []},
+     {"id": "CHUNK-2", "lane": "claude-interactive", "depends_on": ["CHUNK-1"]},
+     {"id": "CHUNK-3", "lane": "forge-codex-lane",   "depends_on": ["CHUNK-2"]}
+   ]
    ```
 
-   Also write each chunk spec to `docs/chunks/CHUNK-<id>.md` (the card body and
-   the ROADMAP entry must be the same text — generate both from one source).
+   - `id` must match a `docs/chunks/<id>.md` file exactly.
+   - `lane` is the card's `--assignee` and must be a real Hermes profile, or the
+     literal `claude-interactive` for chunks a human drives.
+   - `depends_on` lists chunk ids, and must be acyclic. Every "Depends on" in
+     ROADMAP.md appears here; if the two disagree, this file is authoritative
+     and the prose is a bug.
+
+   Note `hermes kanban create` takes **`--body` only** — there is no file-taking
+   variant of that flag, however natural it looks. The bootstrap script passes
+   `--body "$(cat …)"`. Do not invent flags; check `--help` first.
 
 ## Definition of done
-ROADMAP.md + docs/chunks/* committed; dependency graph acyclic; every FR covered
-by ≥1 chunk; human sign-off; board bootstrap block printed.
+ROADMAP.md + docs/chunks/* + docs/chunks/graph.json committed; graph acyclic and
+its ids match the chunk files 1:1; every FR covered by ≥1 chunk; human sign-off.
 
 ## Handoff
-Human runs `hermes/board-bootstrap.sh <project>`; implementation proceeds via
-/start-chunk (interactive) or the forge-codex-lane profile (unattended).
+Human runs `hermes/board-bootstrap.sh <project>`, which reads `graph.json`,
+creates every card (interactive chunks included, blocked rather than skipped)
+and creates the edges. Implementation proceeds via /start-chunk (interactive) or
+the forge-codex-lane profile (unattended).
