@@ -7,9 +7,10 @@
 # or archives a kanban task, never writes to ~/.hermes, never pushes.
 #
 # Usage (on the Mac mini):
-#   ./scripts/preflight.sh                      # human-readable to stdout
+#   ./scripts/preflight.sh                      # inspection only — no model calls
+#   ./scripts/preflight.sh --probe              # + headless auth probes (spends tokens)
 #   ./scripts/preflight.sh --out ../preflight.md # also tee a markdown report
-#   ./scripts/preflight.sh --skip-llm           # no model calls at all
+#   ./scripts/preflight.sh --skip-llm           # alias for the default
 #
 # Exit code: 0 if no FAIL, 1 if any FAIL. WARN never fails the run.
 #
@@ -18,12 +19,17 @@
 # =============================================================================
 set -uo pipefail   # deliberately NOT -e: a failing probe is data, not a crash
 
-OUT=""; SKIP_LLM=0; FORGE_DIR_OPT=""
+# Probes are OPT-IN. Inspection (config reads, --help, --version) is free,
+# instant and safe; model probes cost tokens and can hang. Mixing them made the
+# default run both slow and billable. --skip-llm is kept as a no-op alias for
+# the default so existing invocations and docs keep working.
+OUT=""; PROBE=0; FORGE_DIR_OPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="${2:?--out needs a path}"; shift 2;;
     --forge-dir) FORGE_DIR_OPT="${2:?--forge-dir needs a path}"; shift 2;;
-    --skip-llm) SKIP_LLM=1; shift;;
+    --probe) PROBE=1; shift;;
+    --skip-llm) PROBE=0; shift;;
     -h|--help) sed -n '2,18p' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
@@ -165,20 +171,71 @@ sect "3. Headless auth — the load-bearing question"
 # discriminator is running the same probe from a GUI session, or better: setting
 # CLAUDE_CODE_OAUTH_TOKEN, which is read from the environment and needs no
 # keychain at all. Checked explicitly below.
-llm_probe() { # $1=label  $2..=command
-  local label="$1"; shift
-  local out rc
+# A hung probe must not hang the run. There is no timeout(1) on a stock macOS,
+# so bound it in pure shell: run in the background, poll, escalate TERM->KILL.
+# Sets BOUNDED_OUT; returns the command's rc, or 124 on timeout.
+PROBE_TIMEOUT="${FORGE_PROBE_TIMEOUT:-120}"
+bounded() { # $1=seconds  $2..=command
+  local secs="$1"; shift
+  local tmp pid waited=0 rc
+  tmp="$(mktemp)"
   # </dev/null is MANDATORY. Both `claude -p` and `codex exec` read stdin, and
   # when this script is piped in (`bash -s < preflight.sh`) stdin IS the rest of
   # the script — the probe silently eats it and everything after §3 never runs.
-  out="$("$@" </dev/null 2>&1)"; rc=$?
-  # -w so the "ok" inside "tokens" cannot fake a pass
-  if [ $rc -eq 0 ] && printf '%s' "$out" | grep -qiw 'ok'; then
-    pass "$label responded (rc=0)"
-    printf '%s' "$out" | grep -oE '"total_cost_usd":[0-9.e-]+' | head -1 \
-      | sed 's/^/      /' | while read -r l; do info "$l"; done
+  ( "$@" </dev/null >"$tmp" 2>&1 ) & pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$secs" ]; then
+      kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null
+      BOUNDED_OUT="$(cat "$tmp")"; rm -f "$tmp"; return 124
+    fi
+    sleep 1; waited=$((waited + 1))
+  done
+  wait "$pid"; rc=$?
+  BOUNDED_OUT="$(cat "$tmp")"; rm -f "$tmp"
+  return $rc
+}
+
+# Claude: judge by the STRUCTURED result, not by grepping prose. `grep -qiw ok`
+# passes on any transcript containing the word — including an error message that
+# happens to say "not ok". --output-format json carries `is_error`.
+llm_probe_claude() { # $1=label  $2..=command
+  local label="$1"; shift
+  local rc err
+  bounded "$PROBE_TIMEOUT" "$@"; rc=$?
+  if [ $rc -eq 124 ]; then
+    fail "$label TIMED OUT after ${PROBE_TIMEOUT}s (killed)"; return 0
+  fi
+  err="$(printf '%s' "$BOUNDED_OUT" | jq -r 'if type=="object" then (.is_error|tostring) else "unparseable" end' 2>/dev/null)"
+  if [ $rc -eq 0 ] && [ "$err" = "false" ]; then
+    pass "$label responded (rc=0, is_error=false)"
+    printf '%s' "$BOUNDED_OUT" | jq -r '"total_cost_usd: \(.total_cost_usd // "n/a")"' 2>/dev/null \
+      | while read -r l; do info "      $l"; done
+  elif [ "$err" = "unparseable" ]; then
+    fail "$label returned no parseable JSON (rc=$rc): $(printf '%s' "$BOUNDED_OUT" | head -2 | tr '\n' ' ')"
   else
-    fail "$label failed (rc=$rc): $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+    fail "$label failed (rc=$rc, is_error=$err): $(printf '%s' "$BOUNDED_OUT" | head -2 | tr '\n' ' ')"
+  fi
+}
+
+# Codex has no --output-format json, but it can write its FINAL message to a
+# file — which is structured enough to judge without grepping the transcript.
+# --ephemeral (no session files) and --ignore-user-config (no ambient
+# ~/.codex/config.toml) keep the probe from touching or reading operator state.
+llm_probe_codex() { # $1=label  $2..=command-prefix (env wrapper etc)
+  local label="$1"; shift
+  local rc last msg
+  last="$(mktemp)"
+  bounded "$PROBE_TIMEOUT" "$@" codex exec \
+    --ephemeral --ignore-user-config --skip-git-repo-check \
+    --output-last-message "$last" "reply with exactly: OK"
+  rc=$?
+  msg="$(tr -d '[:space:]' < "$last" 2>/dev/null)"; rm -f "$last"
+  if [ $rc -eq 124 ]; then
+    fail "$label TIMED OUT after ${PROBE_TIMEOUT}s (killed)"
+  elif [ $rc -eq 0 ] && printf '%s' "$msg" | grep -qix 'ok'; then
+    pass "$label responded (rc=0, final message = OK)"
+  else
+    fail "$label failed (rc=$rc, final message='$msg'): $(printf '%s' "$BOUNDED_OUT" | head -2 | tr '\n' ' ')"
   fi
 }
 # CLAUDE_CODE_OAUTH_TOKEN is a subscription credential (`claude setup-token`,
@@ -208,16 +265,18 @@ else
   say  "      ~/.hermes/.env so the gateway's children inherit it. Do NOT pass"
   say  "      --bare in the lane: bare mode does not read this variable."
 fi
-if [ "$SKIP_LLM" = 1 ]; then
-  warn "--skip-llm: headless auth NOT tested (this is the check that matters most)"
+if [ "$PROBE" = 0 ]; then
+  info "model probes skipped (inspection-only run). Add --probe to spend tokens and"
+  info "test headless auth for real — it is the check that matters most before a"
+  info "night run, and the only one that cannot be answered by reading config."
 else
   if command -v claude >/dev/null 2>&1; then
-    llm_probe "claude -p (normal env)" \
+    llm_probe_claude "claude -p (normal env)" \
       claude -p "reply with exactly: OK" --output-format json
     # Stripped env ≈ dispatcher-spawned child. PATH is passed through because a
     # missing PATH tests nothing but PATH; we are testing credential reach.
     # Pass the token through explicitly: this is what a Hermes-spawned child gets.
-    llm_probe "claude -p (stripped env, gateway-like)" \
+    llm_probe_claude "claude -p (stripped env, gateway-like)" \
       env -i HOME="$HOME" PATH="$PATH" TERM=dumb \
       CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}" \
       claude -p "reply with exactly: OK" --output-format json
@@ -225,11 +284,9 @@ else
   if command -v codex >/dev/null 2>&1; then
     # --skip-git-repo-check: codex refuses to run outside a trusted git repo.
     # Real lane runs happen inside a worktree so they are fine; this probe is not.
-    llm_probe "codex exec (normal env)" \
-      codex exec --skip-git-repo-check "reply with exactly: OK"
-    llm_probe "codex exec (stripped env, gateway-like)" \
-      env -i HOME="$HOME" PATH="$PATH" TERM=dumb \
-      codex exec --skip-git-repo-check "reply with exactly: OK"
+    llm_probe_codex "codex exec (normal env)"
+    llm_probe_codex "codex exec (stripped env, gateway-like)" \
+      env -i HOME="$HOME" PATH="$PATH" TERM=dumb
   fi
 fi
 
