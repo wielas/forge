@@ -73,6 +73,25 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    instead of disappearing into `done`. Same mechanism `board-bootstrap.sh`
    uses for interactive chunks.
 
+   **Read the card back before you complete. Do not skip this.**
+   ```python
+   got = kanban_show(review)            # or kanban_get — whatever reads one card
+   assert got["assignee"] in (None, ""), "tier-2 card has an assignee"
+   assert got["status"] == "blocked",    "tier-2 card is dispatchable"
+   ```
+   Measured 2026-07-28 on CHUNK-C3: the card above came back
+   `assignee="forge-prejudge", status="running"` — the dispatcher claimed the
+   human's review card and handed it straight back to *this profile*. Tier 2
+   collapsed into a second tier 1, by the same model that had just approved the
+   work, and the only thing that stopped a self-approval was that run noticing
+   and blocking itself. That is luck, not a gate.
+   The parameters are not the problem — `create … --initial-status blocked`
+   with no assignee really does yield `assignee: null, status: blocked`
+   (measured on the same board minutes later). Passing them is not enough; you
+   must confirm they took. If the read-back fails, repair it with
+   `kanban_update` (clear the assignee, set status `blocked`) and re-read
+   before completing. A tier-2 card any lane can claim is not a human gate.
+
    **`bounce`:** do **not** just block. Your card is a leaf child of a chunk card
    that is already `completed`; blocking yourself leaves the findings on a dead
    leaf that nothing routes to a worker. Create the fix card first, then finish:

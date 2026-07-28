@@ -319,6 +319,39 @@ run_substrate_group() {
     bad "worktree-gitfile" ".git in a linked worktree is not a file — assumption changed"
   fi
 
+  # The `--json` shapes are NOT uniform across subcommands, and jq answers a
+  # wrong path with `null` rather than an error — so a script reading the wrong
+  # one does not fail, it quietly reports nothing. Measured 2026-07-28 while
+  # watching CHUNK-C3: `.status` on `show --json` returned null for four
+  # minutes while the card was in fact running, and `.metadata` returned null
+  # while complete metadata sat under `.runs[]`. board-bootstrap.sh depends on
+  # two of these three shapes, so a Hermes change here breaks dispatch silently.
+  if ! command -v hermes >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    skip "kanban-json-shapes" "hermes or jq not on PATH"
+  else
+    local shape_err="" a_board a_task
+    a_board="$(hermes kanban boards list --json 2>/dev/null \
+               | jq -r 'if type=="array" and (.[0]|has("slug")) then "ok" else "bad" end' 2>/dev/null)"
+    [ "$a_board" = "ok" ] || shape_err="boards list --json is not an array of objects with .slug"
+    a_task="$(hermes kanban boards list --json 2>/dev/null \
+              | jq -r '.[0].slug // empty' 2>/dev/null)"
+    if [ -n "$a_task" ]; then
+      local one
+      one="$(HERMES_KANBAN_BOARD="$a_task" hermes kanban list --json 2>/dev/null \
+             | jq -r '(.tasks // .)[0].id // empty' 2>/dev/null)"
+      if [ -n "$one" ]; then
+        HERMES_KANBAN_BOARD="$a_task" hermes kanban show "$one" --json 2>/dev/null \
+          | jq -e '.task.status' >/dev/null 2>&1 \
+          || shape_err="${shape_err:+$shape_err; }show --json no longer nests the card under .task"
+      fi
+    fi
+    if [ -z "$shape_err" ]; then
+      ok "kanban-json-shapes (boards list = array; show = nested under .task)"
+    else
+      bad "kanban-json-shapes" "$shape_err"
+    fi
+  fi
+
   # F15: codex `workspace-write` cannot commit inside a worktree without
   # --add-dir on the git common dir. Costs tokens, so it is opt-in.
   if [ "$WITH_CODEX" != 1 ]; then
@@ -488,6 +521,7 @@ config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/board-default-workdir      every forge board has a worktree anchor
 substrate/worktree-ownership      dispatcher resolves the worktree before spawning
 substrate/worktree-gitfile        .git is a file in a linked worktree; writes fail
+substrate/kanban-json-shapes      the --json shapes board-bootstrap and monitoring read are unchanged
 substrate/codex-worktree-commit   codex can commit in a worktree with --add-dir (--with-codex)
 template/stamp,setup,hooks-installed,check-green
 template/gitignores-worktrees     .worktrees/ is ignored (dispatcher worktrees live in-repo)
@@ -502,6 +536,7 @@ lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not
 lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
+lane/prejudge-tier2-card-is-read-back   and confirms it is unassigned + blocked, not merely asked for
 lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
 EOF
   exit 0
@@ -577,12 +612,27 @@ run_lane_group() {
   # nothing on the board says a human still owes it a look (measured
   # 2026-07-28 on the first real chunk).
   local soul=hermes/profiles/forge-prejudge.SOUL.md
-  if sed -n '/approve` \/ `approve-with-nits/,/bounce`:/p' "$soul" \
-       | grep -q 'kanban_create' ; then
+  local approve_path
+  approve_path="$(sed -n '/approve` \/ `approve-with-nits/,/bounce`:/p' "$soul")"
+  if printf '%s' "$approve_path" | grep -q 'kanban_create'; then
     ok "prejudge-approve-routes-to-tier2"
   else
     bad "prejudge-approve-routes-to-tier2" \
         "prejudge's approve path must create a tier-2 card, or approved PRs strand"
+  fi
+
+  # Creating the card is not the same as parking it. Measured 2026-07-28 on
+  # CHUNK-C3: the tier-2 card came back assignee="forge-prejudge",
+  # status="running" despite the block above asking for neither, the dispatcher
+  # claimed the human's review card, and tier 2 became a second tier 1 run by
+  # the model that had just approved the work. Only that run noticing and
+  # blocking itself prevented a self-approval. The parameters are fine — the
+  # instruction has to demand proof they took.
+  if printf '%s' "$approve_path" | grep -qiE 'read (the card|it) back|kanban_show\(review\)'; then
+    ok "prejudge-tier2-card-is-read-back"
+  else
+    bad "prejudge-tier2-card-is-read-back" \
+        "approve path never re-reads the tier-2 card — a card a lane can claim is not a human gate"
   fi
 
   # A model cannot report its own id: the first real verdict claimed

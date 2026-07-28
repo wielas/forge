@@ -1,6 +1,8 @@
 # Forge — current state
 
-**Updated 2026-07-28, after the first successful end-to-end run.**
+**Updated 2026-07-28, after a second full climb of the ladder on a fresh
+project (`ladder-forge`). The first run proved the chain runs; this one
+attacked it.**
 
 This is the orientation doc for a session starting with no context. It says what
 is *proven*, what is merely *claimed*, and what to do next. `README.md` is the
@@ -16,9 +18,13 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 2. `README.md` — the five layers and why.
 3. `docs/hermes-field-notes.md` — how the substrate really behaves. Every trap
    here cost a run to find.
-4. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
+4. `docs/ladder-2026-07-28.md` — the second climb, on a fresh project. Eight
+   findings with the commands that produced them, including the two that
+   defeated a gate: a `make check` green that CI rejected, and a tier-2 human
+   card the dispatcher claimed.
+5. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
    record of what reading-only analysis can and cannot catch.
-5. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
+6. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
    improving".
 
 ---
@@ -35,19 +41,27 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | Branch protection is a real merge gate | a red or unreviewed merge is refused by GitHub, not by prose |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
-`make verify` — 34 cases — is the executable form of most of the above. Run it
+A second, independent climb on 2026-07-28 (`ladder-forge`, three chunks, one
+per rung) reproduced the whole chain and found eight more findings — see
+[`docs/ladder-2026-07-28.md`](ladder-2026-07-28.md). Both fixes from the first
+run were confirmed working under load: Codex never read `forge-lane`, and it
+hit zero sandbox denials because §3 had built the venv first.
+
+`make verify` — 43 cases — is the executable form of most of the above. Run it
 in CI, after every `hermes update`, and after every `codex`/`claude` upgrade.
 
 ## Not proven (do not write these into a skill body)
 
-- **Anything beyond n=1.** One chunk, six lines, written to be easy. The
-  protocol held; the *judgement* is untested.
+- **Anything beyond n=2.** Two board-driven chunks, both small and both
+  written to be easy. The protocol held twice; the *judgement* is still
+  untested, because nothing has yet been hard enough to judge.
 - **A bounce.** Tier 1 has never rejected anything. Until it does, its filtering
   is unproven in the only direction that matters.
 - **Retries, blocks, reclaims, the respawn guard.** No run has failed yet.
 - **Dependency graphs.** `graph.json` → `kanban link` has never run on a real
   multi-chunk roadmap.
-- **The flywheel.** `/retro` has never executed. `retro-metrics.md` has one row.
+- **The flywheel.** `/retro` has never executed. `retro-metrics.md` has two
+  rows, both written by hand after a run rather than by the ceremony.
 - **The Telegram approval flow.**
 - **Provider terms for automated subscription use** — settled for what *works*
   (ADR-0004), never for what is *permitted*.
@@ -65,6 +79,16 @@ can break**, so a failure names its own cause:
 | 2 | `codex exec`, driven by hand, no board | no network in sandbox; no `.venv`; reads not sandboxed |
 | 3 | the board and dispatcher | the driver model holds the protocol; approvals strand |
 
+Climbed a second time on 2026-07-28 against a fresh project, with the gates
+attacked rather than merely exercised. Eight more findings, again none
+catchable by reading or by `verify` as it stood:
+
+| Rung | New variable | Found |
+|---|---|---|
+| 1 | none — real repo, no agents | the branch guard failed open and asked the wrong remote; no interpreter pin, so local ran 3.14 and CI 3.12 |
+| 2 | `codex exec`, driven by hand, no board | a warm `.ruff_cache` returned a green CI rejected; `--add-dir` grants all of the shared `.git` |
+| 3 | the board and dispatcher | the tier-2 *human* card was dispatched to a lane |
+
 Ten findings. **None were catchable by reading**, and none by `make verify` as
 it then stood, because it never pushed, never invoked Codex on a real chunk, and
 never left the host. A day of careful analysis the day before found seventeen
@@ -78,15 +102,28 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 
 ## Known gaps — open, with the shape of the fix
 
+0. **The tier-2 card is not reliably a human gate.** Measured 2026-07-28: an
+   approval created the tier-2 card with `assignee="forge-prejudge"` and
+   `status="running"` despite the SOUL asking for neither, the dispatcher
+   claimed it, and tier 2 became a second tier 1 by the model that had just
+   approved. Only that run noticing and blocking itself prevented a
+   self-approval. The SOUL now requires reading the card back and repairing it;
+   **that mitigation is itself unproven** — it has not run yet. This is the
+   first thing to watch on the next board run.
 1. **Nothing sweeps merged worktrees.** `worktree` workspaces are preserved on
    completion, so each finished chunk leaves a full checkout plus a `.venv`
-   behind, holding its branch. Manual today (`docs/operator-guide.md`).
-2. **`forge-lane` is 194 lines** against README's "well under ~150". Pre-existing
-   and now wider. Either the budget moves and `verify` enforces the new one, or
+   behind, holding its branch — measured at **50 MB per chunk**, and
+   `gh pr merge --delete-branch` fails every time because the worktree still
+   holds the branch. Manual today (`docs/operator-guide.md`).
+2. **`forge-lane` is 220 lines** against README's "well under ~150". Was 194;
+   the 2026-07-28 ladder run added the `--add-dir` blast-radius note and the
+   ruff-cache warning, so this got worse rather than better. Either the budget moves and `verify` enforces the new one, or
    the skill splits into a body plus `references/`. Unresolved on purpose — it
    is a judgement call, not a defect.
 3. **Perfect scores are not yet distinguishable from an undiscriminating filter.**
-   First verdict was 3/3 on all six dimensions. Watch whether that persists.
+   Now 3/3 on all six dimensions **twice in two chunks** (2026-07-28). Both were
+   written to be easy, so this still is not evidence either way — but the
+   pattern is now a streak, and only a deliberate bounce will break the tie.
 4. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
 
@@ -108,6 +145,15 @@ value:
 
 Do **not** run these together. The whole reason the first run succeeded is that
 nothing was ever tested with two unknowns in play.
+
+Two things ride along free on whichever you pick, because they need only
+looking rather than a run of their own:
+
+- **Gap #0's mitigation.** The tier-2 read-back has never executed. It is
+  exercised by an *approve*, not a bounce — so if you run the bounce test
+  first, this stays unproven and must be checked on the next approval instead.
+- **Whether the rubric can say a number other than 3.** Two chunks, twelve
+  dimension scores, twelve 3s.
 
 ---
 
