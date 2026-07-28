@@ -41,6 +41,19 @@ in `ready` forever with a `skipped_nonspawnable` event and surfaces only in
 `kanban.stranded_threshold_seconds` (default 30 min). Every assignee must exist
 in `hermes kanban assignees` before a card names it.
 
+**A human card needs a real block event, not `initial_status=blocked`.** The
+`kanban_create` tool and CLI differ: the tool requires `assignee`; the CLI
+allows none. More subtly, `initial_status=blocked` records only a `created`
+event whose payload says blocked. `recompute_ready()` treats a blocked task as
+dependency-blocked unless its latest `blocked`/`unblocked` event is a real
+`blocked` event. Measured 2026-07-28: an unassigned probe created with
+`--initial-status blocked` was promoted on the next tick, assigned to
+`kanban.default_assignee=builder`, and dispatched. To park human work durably:
+create on a non-spawnable sentinel assignee, call `kanban block --kind
+needs_input` to make the state sticky, then `kanban assign <id> none` and read
+back `.task.assignee`, `.task.status`, and the `blocked` event. There is no
+`kanban_update` tool.
+
 **`--board` goes *before* the subcommand.** `hermes kanban --board <slug> create
 …` — the flag belongs to the kanban parser; after `create` it is an unrecognized
 argument. It works by pinning `HERMES_KANBAN_BOARD` for the call, so exporting
@@ -185,21 +198,20 @@ so the role boundary has to be **stated in the prompt** (`forge-lane` §4) and
 
 ## lefthook
 
-**A push with no changed files skips every pre-push command.** lefthook 2.1.10,
-measured 2026-07-28:
+**Pre-push commands without file templates run on an empty commit.** An earlier
+measurement claimed lefthook 2.1.10 skipped them:
 
 ```
-│  full-check   (skip) no matching push files
-│  no-main-push (skip) no matching push files
+│  lint (skip) no files for inspection     # pre-COMMIT, expected
+┃  full-check ❯ FORGE CHECK: GREEN         # pre-push RAN
+┃  no-main-push ❯                          # pre-push RAN
 ```
 
-Both commands reference no files at all and are skipped anyway, so an empty
-commit — or a merge with no diff — bypasses the branch guard *and* `make check`
-locally. **There is no config key for this.** 2.1.10 accepts only
-`env/exclude/fail_text/files/glob/interactive/only/priority/root/skip/
-stage_fixed/tags` per command; `skip_empty` is accepted by the YAML parser and
-silently dropped (`lefthook dump` shows it gone). It was added here on a
-misread test and removed the same day — do not add it back.
+The skipped line was the pre-commit `lint` command carrying a staged-file
+template, misread as the later pre-push result. `full-check` and
+`no-main-push` carry no file template and both ran on a genuinely empty commit,
+measured three times on 2026-07-28. Do not restore the old “known hole” comment
+or add `skip_empty`; there is no empty-commit bypass to close.
 
 One more reason the merge gate is `make protect`, not the hook.
 

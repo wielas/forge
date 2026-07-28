@@ -107,9 +107,13 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    `status="running"` despite the SOUL asking for neither, the dispatcher
    claimed it, and tier 2 became a second tier 1 by the model that had just
    approved. Only that run noticing and blocking itself prevented a
-   self-approval. The SOUL now requires reading the card back and repairing it;
-   **that mitigation is itself unproven** — it has not run yet. This is the
-   first thing to watch on the next board run.
+   self-approval. The first mitigation was itself impossible: the tool requires
+   an assignee, `kanban_update` does not exist, and an unassigned
+   `initial_status=blocked` probe was promoted and dispatched to the global
+   `builder` default. The SOUL now uses the CLI to create on a non-spawnable
+   sentinel, emits a sticky human block, unassigns, and reads the card back;
+   **that corrected mitigation is still unproven**. Re-run approval before
+   testing bounce.
 1. **Nothing sweeps merged worktrees.** `worktree` workspaces are preserved on
    completion, so each finished chunk leaves a full checkout plus a `.venv`
    behind, holding its branch — measured at **50 MB per chunk**, and

@@ -536,7 +536,8 @@ lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not
 lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
-lane/prejudge-tier2-card-is-read-back   and confirms it is unassigned + blocked, not merely asked for
+lane/prejudge-tier2-card-is-sticky      human card has a real block event and no final assignee
+lane/prejudge-schema-is-inline          Claude receives supported schema JSON, not a path
 lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
 EOF
   exit 0
@@ -614,25 +615,40 @@ run_lane_group() {
   local soul=hermes/profiles/forge-prejudge.SOUL.md
   local approve_path
   approve_path="$(sed -n '/approve` \/ `approve-with-nits/,/bounce`:/p' "$soul")"
-  if printf '%s' "$approve_path" | grep -q 'kanban_create'; then
+  if printf '%s' "$approve_path" \
+       | grep -q 'hermes kanban.*create "judge:'; then
     ok "prejudge-approve-routes-to-tier2"
   else
     bad "prejudge-approve-routes-to-tier2" \
         "prejudge's approve path must create a tier-2 card, or approved PRs strand"
   fi
 
-  # Creating the card is not the same as parking it. Measured 2026-07-28 on
-  # CHUNK-C3: the tier-2 card came back assignee="forge-prejudge",
-  # status="running" despite the block above asking for neither, the dispatcher
-  # claimed the human's review card, and tier 2 became a second tier 1 run by
-  # the model that had just approved the work. Only that run noticing and
-  # blocking itself prevented a self-approval. The parameters are fine — the
-  # instruction has to demand proof they took.
-  if printf '%s' "$approve_path" | grep -qiE 'read (the card|it) back|kanban_show\(review\)'; then
-    ok "prejudge-tier2-card-is-read-back"
+  # The tool rejects an omitted assignee. Worse, initial_status=blocked emits
+  # no sticky block event: the next sweep promoted the unassigned probe and
+  # kanban.default_assignee dispatched it to builder. The safe sequence parks
+  # on a non-spawnable sentinel, makes the block sticky, then unassigns and
+  # reads back the nested show --json shape.
+  if printf '%s' "$approve_path" | grep -q -- '--assignee forge-operator-handoff' \
+     && printf '%s' "$approve_path" | grep -q -- '--kind needs_input' \
+     && printf '%s' "$approve_path" | grep -q 'assign "\$review" none' \
+     && printf '%s' "$approve_path" | grep -q '.task.assignee == null' \
+     && printf '%s' "$approve_path" | grep -q '.kind == "blocked"'; then
+    ok "prejudge-tier2-card-is-sticky"
   else
-    bad "prejudge-tier2-card-is-read-back" \
-        "approve path never re-reads the tier-2 card — a card a lane can claim is not a human gate"
+    bad "prejudge-tier2-card-is-sticky" \
+        "tier-2 hand-off must create safely, emit a sticky block, unassign, and read all three facts back"
+  fi
+
+  # Claude Code 2.1.212 takes inline JSON at --json-schema and rejects the
+  # schema's draft declaration. Passing the file path failed immediately on
+  # CHUNK-C3; passing the whole file then failed on $schema.
+  if grep -Fq 'VERDICT_SCHEMA=' "$soul" \
+     && grep -Fq 'del(."$schema")' "$soul" \
+     && grep -Fq -- '--json-schema "$VERDICT_SCHEMA"' "$soul"; then
+    ok "prejudge-schema-is-inline"
+  else
+    bad "prejudge-schema-is-inline" \
+        "prejudge must pass inline supported JSON to Claude --json-schema, not a schema file path"
   fi
 
   # A model cannot report its own id: the first real verdict claimed
