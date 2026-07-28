@@ -75,6 +75,7 @@ One row per retro. Newest last.
 |---|---|---|---|---|---|---|
 | 2026-07-28 | hello-chunk (first run) | 0.00 (0/1) | 3.00 (1 verdict) | empty (0 blocked cards) | — (baseline row) | n/a — no prior period |
 | 2026-07-28 | ladder run, rung 3 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card misrouted, self-blocked) | 8 findings, 5 fixed — see `docs/ladder-2026-07-28.md` | n/a — no changes were proposed last period |
+| 2026-07-28 | ladder run, rung 4 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card on a ghost assignee) | 1 finding, detection added; the underlying gap left OPEN | **no** — the tier-2 SOUL fix did not produce the specified card shape |
 | 2026-07-28 | controlled bounce, PR #6 (`forge-ladder`) | 1.00 (1/1) | 2.33 (1 verdict) | empty (0 blocked cards) | worktree route, hard driver boundary, clean-worktree proof | yes for routing/role; clean proof awaits the next lane |
 | 2026-07-28 | dependency D1 → D2 (`forge-dependency-clone-20260728`) | 0.00 (0/2) | 3.00 (2 verdicts) | `failing-prereq` ×1 | atomic parent creation, merged-PR gate, no implicit stacks | no — 3/3 scope score missed D1 files in D2 PR |
 | 2026-07-28 | CI-red recovery, PR #10 (`forge-dependency-clone-20260728`) | n/a — observed bounce used noncanonical metadata | 3.00 (1 green verdict; red sentinel absent) | empty (0 blocked cards) | repo-independent `gh`; canonical CI-red verdict | yes — worktree repair and clean proof both held live |
@@ -97,18 +98,36 @@ Two things to watch specifically:
   a bounce happens the tier-1 filter is unproven in the direction that matters:
   we have never seen it reject anything.
 
-**Second row (2026-07-28, ladder run).** `CHUNK-C3` on board `forge-ladder`:
-card `t_01649280` completed on its first run, prejudge `t_4a0f55d3` returned
-`approve` with 3/3 on every dimension, PR #4 green and merged after a hand
-review at tier 2.
+**Rows two and three (2026-07-28, ladder run).** Two chunks on board
+`forge-ladder`, one per row: `CHUNK-C3` (card `t_01649280`, prejudge
+`t_4a0f55d3`, PR #4) and `CHUNK-C4` (card `t_c0f8f0bc`, prejudge `t_cfc13c3e`,
+PR #5). Both completed on their first run, both returned `approve` with 3/3 on
+every dimension, both green and merged after a hand review at tier 2.
 
 Both things the baseline said to watch got worse, not better:
 
-- **d1–3 is 3.00 for the second time — twelve dimension scores, twelve 3s.**
+- **d1–3 is 3.00 for the third time — eighteen dimension scores, eighteen 3s.**
   The baseline called a single 3.00 indistinguishable from an undiscriminating
-  filter. Two of them is not evidence of quality; it is the same non-evidence
-  twice, and the case for treating the score as decorative is now stronger.
-- **Bounce rate is still 0.00 (0/2).** Nothing has ever been rejected.
+  filter. Three of them is not evidence of quality; it is the same non-evidence
+  three times, and the case for treating the score as decorative is stronger
+  each time it repeats.
+- **Bounce rate is still 0.00 (0/3).** Nothing has ever been rejected.
+
+The `reason_class` bucket is `other` in the two rung rows, which is the
+vocabulary doing its job: "the tier-2 review card did not land as a human gate"
+is not `stale-spec`, `env` or `ci-red`. It happened **twice** — once dispatched
+to a lane, once parked on a ghost assignee — which was the stated bar for
+extending the vocabulary. The next retro should add a class for it
+(`gate-misrouted` or similar) rather than let `other` absorb a recurring
+failure.
+
+The rung-4 row is the one that earns its keep: it is the first row in this file
+to answer *"did last period's fix do what it claimed?"* with **no**. The
+read-back added after rung 3 stopped the tier collapse but still produced
+`assignee="forge-operator", status="ready"` instead of unassigned + blocked. It
+held only because that profile does not exist. That row is the reason the
+sticky-sentinel handoff below was built, and it is why the answer column is not
+decoration.
 
 The `reason_class` bucket is `other` ×1, which is the vocabulary doing its job:
 "the tier-2 review card was dispatched to a lane instead of a human" is not

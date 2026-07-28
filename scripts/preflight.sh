@@ -540,6 +540,35 @@ if [ "$HAVE_HERMES" = 1 ]; then
   fi
   ST="$(hermes kanban stats 2>&1 | head -20)"
   [ -n "$ST" ] && { info "stats:"; printf '%s\n' "$ST" | sed 's/^/      /' | while read -r l; do say "$l"; done; }
+
+  # A card assigned to a profile that does not exist is NOT an error anywhere:
+  # the dispatcher records skipped_nonspawnable and the card sits in `ready`
+  # forever. `board-bootstrap.sh` warns about this and refuses to create such a
+  # card, but nothing ever looked at cards created by an AGENT at runtime.
+  # Measured 2026-07-28: forge-prejudge parked a tier-2 review on the invented
+  # profile `forge-operator`. The human gate held — but only because that name
+  # happens not to exist, which stops being true the day someone creates it.
+  # `hermes kanban assignees` already prints ON DISK per assignee; read it.
+  # `assignees` is BOARD-SCOPED — reading it without a board only ever inspects
+  # the persisted current board, which is exactly the board a forge card is
+  # least likely to be on. Walk every board.
+  GHOSTS=""
+  for b in $(hermes kanban boards list --json 2>/dev/null | jq -r '.[].slug' 2>/dev/null); do
+    for g in $(HERMES_KANBAN_BOARD="$b" hermes kanban assignees 2>/dev/null \
+               | awk 'NR>1 && $2=="no" && NF>=3 {print $1}'); do
+      GHOSTS="$GHOSTS $b/$g"
+    done
+  done
+  if [ -n "$GHOSTS" ]; then
+    for g in $GHOSTS; do
+      warn "cards on board '${g%%/*}' are assigned to '${g##*/}', which has no profile on disk"
+      say  "      they will never be dispatched and never fail — they just sit in"
+      say  "      'ready'. Either create the profile or reassign/park the cards."
+      say  "      A ghost assignee is a card parked by luck, not by design."
+    done
+  else
+    pass "every assignee with cards has a profile on disk (all boards)"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

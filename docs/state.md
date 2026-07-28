@@ -43,6 +43,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | Crash-after-push recovers idempotently | `t_6e2b8528` run 8 died by signal 9 after pushing `88ad60f`; run 9 reused the same worktree/SHA and opened exactly one green PR in 55s |
 | CI-red reaches a repair and returns green | PR #10 failed the injected check; `t_78f86ed9` routed `t_0a443d25` to the same worktree; Codex removed only the probe and the same PR passed |
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
+| A card parked on a non-existent profile is detectable | `make preflight` walks every board and WARNs; caught `forge-operator` on `forge-ladder`, the shape the first two tier-2 attempts produced |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
 | Branch protection is a real merge gate | a red or unreviewed merge is refused by GitHub, not by prose |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
@@ -122,7 +123,7 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    ruff-cache warning, so this got worse rather than better. Either the budget moves and `verify` enforces the new one, or
    the skill splits into a body plus `references/`. Unresolved on purpose — it
    is a judgement call, not a defect.
-4. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
+3. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
 
 ---
