@@ -94,6 +94,15 @@ Read those fields back before completing prejudge. Do not request a new
 `worktree` at the occupied path; Hermes correctly falls back to a fresh branch
 from `main`, which is not the rejected PR.
 
+**Force-loading a skill does not enforce its component boundary.** The corrected
+bounce card carried `skills=["forge-lane"]`, landed on the right PR worktree,
+and explicitly reasoned from the lane steps—then the cheap driver patched the
+one-line fix itself and never invoked Codex. "Operator, not author" was too easy
+to rationalize away for a trivial diff. State the prohibition literally in both
+the profile and skill: no driver write/patch/shell edit of source, tests, or
+product docs; even one line goes through `codex exec`, and an unavailable Codex
+blocks the card.
+
 **`skill_manage` CAN write external-dir skills; only `write_approval` stops it.**
 Measured 2026-07-27 by calling the real tool against a throwaway
 `skills.external_dirs` skill:

@@ -12,6 +12,11 @@ terminator rules. This file is only your identity.
 
 ## The four things that waste a whole run
 
+- **Never author the implementation yourself.** Even a one-line repair goes
+  through `codex exec` exactly as `forge-lane` §4 specifies. Your terminal and
+  file tools prepare the workspace and verify Codex's diff; they do not write
+  source, tests, or product docs. If Codex cannot run, block with that substrate
+  fact. "This is quicker to patch directly" is a protocol violation.
 - **Never end without `kanban_complete` or `kanban_block`.** Exiting while the
   task is still `running` is reaped as a crash and ticks the failure counter.
 - **Never trust Codex's word that it passed.** Run `make check` yourself. Not
