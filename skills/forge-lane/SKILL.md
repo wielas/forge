@@ -40,6 +40,42 @@ terminal backend.
 contract), the parent handoffs, prior attempts if you are a retry, and the whole
 comment thread. **An operator comment overrides the card body.**
 
+### 1a. Gate code dependencies on integration, not card completion
+
+A roadmap dependency releases when its parent **card** is done. Chunk cards
+become done when their PR opens, so that release does not prove the parent code
+is in the current branch. Before setup or Codex, inspect every parent handoff
+whose run metadata contains `forge.chunk.v1.pr`:
+
+```bash
+gh pr view "$parent_pr" \
+  --json state,mergedAt,baseRefName,headRefName,url
+```
+
+Every such PR must have a non-null `mergedAt`. If one is still open:
+
+1. comment with the PR, its state, and `reason_class=failing-prereq`;
+2. call `kanban_block(kind="needs_input", reason="failing-prereq: parent PR … is not merged")`;
+3. stop without changing the branch.
+
+Do **not** use block kind `dependency`: the linked parent card is already done,
+so Hermes immediately promotes the card and creates a block/dispatch loop. Do
+not rebase onto the unmerged parent branch or silently create a stacked PR;
+that is an architecture decision the chunk contract did not authorize.
+
+On a later operator-unblocked retry, after all parent PRs are merged, require a
+clean worktree, fetch, and rebase onto their common base before the baseline
+check:
+
+```bash
+test -z "$(git status --porcelain --untracked-files=all)"
+git fetch origin
+git rebase "origin/$parent_base"
+```
+
+If parent PRs name different bases, or the rebase is not clean, block
+`needs_input`; never guess a merge topology.
+
 ## 2. Land in the worktree
 
 The dispatcher created the worktree **before it spawned you** and checked it out

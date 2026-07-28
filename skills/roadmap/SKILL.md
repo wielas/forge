@@ -16,6 +16,9 @@ Sizing rules:
 - Fits comfortably in a single session INCLUDING tests and doc updates
   (heuristic: ≤ ~400 lines changed, ≤ ~6 files, ≤ 5 BDD scenarios).
 - Independently green: after merge, `make check` passes and the system still runs.
+- Code dependencies integrate through `main`: a dependent lane waits until each
+  parent PR is merged (ADR-0008). Do not assume Forge silently creates stacked
+  branches.
 - States its own context: everything the implementer needs is IN the chunk spec
   or explicitly linked (ADR ids, file paths). Never "see discussion above".
 
@@ -68,6 +71,8 @@ Sizing rules:
    - `depends_on` lists chunk ids, and must be acyclic. Every "Depends on" in
      ROADMAP.md appears here; if the two disagree, this file is authoritative
      and the prose is a bug.
+   - The bootstrap attaches these parents in the card's create transaction.
+     It never creates a ready child and links it in a later pass.
 
    Note `hermes kanban create` takes **`--body` only** — there is no file-taking
    variant of that flag, however natural it looks. The bootstrap script passes

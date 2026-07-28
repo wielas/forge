@@ -534,6 +534,8 @@ lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/final-worktree-is-clean      hook drift and untracked leftovers block the handoff
+lane/dependent-pr-must-be-merged  parent card completion cannot substitute for code integration
+lane/graph-parents-are-atomic     dependent cards carry --parent before the dispatcher can claim them
 lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not ~/.cache/uv
 lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
@@ -609,6 +611,40 @@ run_lane_group() {
   else
     bad "lane-final-worktree-is-clean" \
         "forge-lane must hash shared hooks and refuse a dirty final worktree"
+  fi
+
+  # A parent chunk is marked done when its PR opens. Measured on D1 -> D2:
+  # D2 promoted immediately, blocked because key.py was absent, auto-promoted
+  # again when it used kind=dependency, then invented a stacked-branch rebase.
+  # Code dependencies need the parent PR integrated, and the wait must be
+  # sticky because the board-level parent is already done.
+  if grep -Fq 'mergedAt' "$lane" \
+     && grep -Fq 'reason_class=failing-prereq' "$lane" \
+     && grep -Fq 'kanban_block(kind="needs_input"' "$lane" \
+     && grep -Fq 'Do **not** use block kind `dependency`' "$lane" \
+     && grep -Fq 'unmerged parent branch or silently create a stacked PR' "$lane" \
+     && grep -Fq 'git rebase "origin/$parent_base"' "$lane"; then
+    ok "dependent-pr-must-be-merged"
+  else
+    bad "dependent-pr-must-be-merged" \
+        "a done parent card must not release implementation until its PR is merged; wait sticky and never invent a stacked branch"
+  fi
+
+  # The first real graph was created in two passes: both cards were briefly
+  # ready, then `kanban link` demoted the child. A dispatcher tick between
+  # those writes can claim the child without its prerequisite. The corrected
+  # bootstrap creates in topological order and passes every --parent in the
+  # card's create transaction, then reads the parents back.
+  local bootstrap=hermes/board-bootstrap.sh
+  if grep -Fq 'parent_args+=(--parent "$parent_card")' "$bootstrap" \
+     && grep -Fq '"${@:6}" --json' "$bootstrap" \
+     && grep -Fq '.parents[]?' "$bootstrap" \
+     && ! sed -n '/# full mode:/,$p' "$bootstrap" \
+          | grep -Eq 'hermes kanban( --board "[^"]+")? link '; then
+    ok "graph-parents-are-atomic"
+  else
+    bad "graph-parents-are-atomic" \
+        "board-bootstrap must attach graph parents during create and read them back, never create ready children before a later link pass"
   fi
 
   # `uv run` writes a cache and ~/.cache/uv is outside the sandbox. Unset,

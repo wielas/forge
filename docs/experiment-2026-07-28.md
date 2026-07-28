@@ -24,6 +24,7 @@ sample is large enough to know what to collect.
 |---|---|---:|---:|---:|---:|
 | Tier-2 approval | successful rerun `t_180c38a1`: 3m53s | 0 | 2/3 | 3 — human card sticky, unassigned, provenance verified by completion kernel | 3 — held implementation constant; normalized verdict provenance |
 | Deliberate bounce | corrected prejudge `t_97716519`: 3m32s; worktree fix `t_d159a76e`: 56s; Codex role probe `t_d36ec44e`: 2m51s | 0 in each successful run | 3/3 | 2 — route and role proven; new clean-worktree guard is static/deployed but not yet live-proven | 3 — PR #6 now has a real assertion, with observed mutation failure |
+| Dependency-linked D1 → D2 | D1 `t_86aa3f8d`: 3m02s; D2 first block: 59s; unintended stacked retry: 4m16s | 1 operator comment after dispatch; merge remains a human gate | 4/5 | 1 measured — card gate worked, integration gate did not; ADR-0008 correction is static/deployed | 3 — both chunks have executable BDD; D2 review diff was polluted by D1 |
 
 ### How to read the correction rate
 
@@ -34,6 +35,11 @@ These are adversarial commissioning runs designed to find seams, so 2/3 and
   then for CLI creator provenance and fail-closed completion.
 - Bounce needed corrections for scratch routing, then direct driver authorship,
   then a false clean-worktree proof that left `.orig`/`.rej` artifacts.
+- Dependency commissioning evaluated graph bootstrap, forced-skill delivery,
+  D1 lane, D2 lane, and D2 judge. Four needed correction: duplicate skill
+  delivery crashed before work, bootstrap had a create-then-link race, D2
+  treated PR-open as integration and auto-looped, and Tier 1 gave scope 3/3 to
+  a six-file D1+D2 diff.
 
 The files were moved intact to
 `/private/tmp/forge-b1-leftovers-t_d36ec44e`; the PR worktree is clean.

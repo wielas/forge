@@ -39,6 +39,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict |
 | Tier-1 discriminates | deliberate PR #6 was CI-green but assertion-free; prejudge `t_624586d7` scored scenario integrity 1 and bounced |
 | A bounce reaches the rejected PR | corrected fix `t_d159a76e` resumed the completed chunk's linked worktree; role probe `t_d36ec44e` made Codex author the repair |
+| Dependency gating holds at card level | D1 `t_86aa3f8d` ran while D2 `t_b9fa41cc` stayed `todo`; D2 promoted exactly when D1 completed |
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
 | Branch protection is a real merge gate | a red or unreviewed merge is refused by GitHub, not by prose |
@@ -59,8 +60,10 @@ in CI, after every `hermes update`, and after every `codex`/`claude` upgrade.
   written to be easy. The protocol held twice; the *judgement* is still
   untested, because nothing has yet been hard enough to judge.
 - **Retries, blocks, reclaims, the respawn guard.** No run has failed yet.
-- **Dependency graphs.** `graph.json` → `kanban link` has never run on a real
-  multi-chunk roadmap.
+- **The corrected integration gate.** The first real graph proved card-level
+  gating but also proved `done` means PR-open, not merged. ADR-0008 and the
+  atomic-parent/merged-PR guards are static and deployed to the lane; a fresh
+  graph still needs to prove the corrected path live.
 - **The flywheel.** `/retro` has never executed. `retro-metrics.md` has two
   rows, both written by hand after a run rather than by the ceremony.
 - **The Telegram approval flow.**
@@ -123,10 +126,11 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 The next run should introduce **exactly one** new variable. In rough order of
 value:
 
-1. **Two chunks with a real dependency edge**, to exercise `graph.json` →
-   `kanban link` and gated promotion.
-2. **Crash-after-push and CI-red recovery**, without combining the two faults.
-3. **A chunk with genuine ambiguity**, to test judgement rather than protocol.
+1. **Crash-after-push recovery**, on an isolated branch with a deliberate
+   post-push process kill.
+2. **CI-red recovery**, as a separate fault after crash recovery is closed.
+3. **A genuine idea through the full lifecycle**, including a fresh live proof
+   of ADR-0008's corrected dependency path.
 
 Do **not** run these together. The whole reason the first run succeeded is that
 nothing was ever tested with two unknowns in play.
