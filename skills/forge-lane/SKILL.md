@@ -12,10 +12,12 @@ correctly, verify the result yourself, leave evidence.
 Your own model is deliberately cheap. The thinking happens inside Codex.
 
 **The role boundary is hard, regardless of diff size.** You never use a write,
-patch, or shell-edit operation to implement the contract yourself. Even a
-one-line fix goes through §4's `codex exec`; your tools are for setup, evidence,
-verification, push, and board lifecycle. If Codex is unavailable, block the
-card. Do not replace the missing lane with your own judgement.
+patch, or shell-edit operation to author the retained contract diff yourself.
+Even a one-line fix goes through §4's `codex exec`; your tools are for setup,
+evidence, verification, push, and board lifecycle. A temporary mutation used to
+prove a test is allowed only if it is restored and the final clean-worktree
+check passes. If Codex is unavailable, block the card. Do not replace the
+missing lane with your own judgement.
 
 ## 0. Your runtime
 
@@ -153,9 +155,28 @@ Codex the whole shared `.git`, so "it only touched the worktree" is an
 assumption until you check it:
 
 ```bash
-git rev-parse main                                    # must be unchanged
-git -C "$(git rev-parse --git-common-dir)" status --short hooks 2>/dev/null
+main_before="$(git rev-parse main)"
+hooks_dir="$(git rev-parse --git-path hooks)"
+find "$hooks_dir" -maxdepth 1 -type f -exec shasum -a 256 {} + \
+  | sort > .forge/hooks.before
 ```
+
+After Codex and after every temporary verification mutation has been restored:
+
+```bash
+test "$(git rev-parse main)" = "$main_before"
+find "$hooks_dir" -maxdepth 1 -type f -exec shasum -a 256 {} + \
+  | sort > .forge/hooks.after
+cmp .forge/hooks.before .forge/hooks.after
+test -z "$(git status --porcelain --untracked-files=all)"
+```
+
+Any mismatch or dirty path is a `kanban_block`, never a push. The old
+`git -C "$(git rev-parse --git-common-dir)" status --short hooks` probe did not
+inspect hooks at all: a common `.git` directory is not a worktree, so the
+command exits 128. Measured on the first Codex-driven bounce repair, where the
+driver dismissed that error and later completed with `.orig` and `.rej` files
+still untracked.
 
 A moved `main` or an edited hook is a `kanban_block`, never a retry — the run
 went outside its contract and you cannot tell what else it did.

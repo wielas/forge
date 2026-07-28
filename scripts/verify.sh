@@ -533,6 +533,7 @@ template/python-pinned            .python-version is stamped and the venv actual
 lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox has no network
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
+lane/final-worktree-is-clean      hook drift and untracked leftovers block the handoff
 lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not ~/.cache/uv
 lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
@@ -587,15 +588,27 @@ run_lane_group() {
   # driver still patched the one-line fix itself because the prohibition was
   # only implied by "operator". Diff size must not change component ownership.
   local lane_soul=hermes/profiles/forge-codex-lane.SOUL.md
-  if grep -Fq 'Never author the implementation yourself' "$lane_soul" \
-     && grep -Fq 'Even a one-line repair goes' "$lane_soul" \
-     && grep -Fq 'through `codex exec`' "$lane_soul" \
+  if grep -Fq 'Never author the retained implementation yourself' "$lane_soul" \
+     && grep -Fq 'Even a one-line repair' "$lane_soul" \
+     && grep -Fq 'goes through `codex exec`' "$lane_soul" \
      && grep -Fq 'never use a write,' "$lane" \
      && grep -Fq 'patch, or shell-edit operation' "$lane"; then
     ok "driver-never-authors-diff"
   else
     bad "driver-never-authors-diff" \
         "forge-codex-lane must prohibit direct implementation even for one-line fixes"
+  fi
+
+  # The first Codex-driven role rerun dismissed the old hook check's exit 128
+  # and completed with .orig/.rej files untracked. A green test is not a clean
+  # handoff; hash the hooks and fail on any final worktree dirt.
+  if grep -Fq 'shasum -a 256' "$lane" \
+     && grep -Fq 'cmp .forge/hooks.before .forge/hooks.after' "$lane" \
+     && grep -Fq 'git status --porcelain --untracked-files=all' "$lane"; then
+    ok "lane-final-worktree-is-clean"
+  else
+    bad "lane-final-worktree-is-clean" \
+        "forge-lane must hash shared hooks and refuse a dirty final worktree"
   fi
 
   # `uv run` writes a cache and ~/.cache/uv is outside the sandbox. Unset,
