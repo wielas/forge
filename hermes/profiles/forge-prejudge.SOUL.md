@@ -33,17 +33,21 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    ```
 4. Ask for a structured verdict against the rubric, from a fresh context. The
    engine is `claude -p` per ADR-0004 D4.1; the schema file is real and absolute
-   (`install.sh` symlinks `~/.forge/rubrics` at the repo's `rubrics/`). Pass the
-   model **explicitly**, so you know which one answered:
+   (`install.sh` symlinks `~/.forge/rubrics` at the repo's `rubrics/`). Claude
+   Code's `--json-schema` takes the JSON itself, **not a file path**, and its
+   structured-output subset rejects the top-level `$schema` declaration. Build
+   the supported schema once, then pass the model **explicitly**:
    ```
-   claude -p --model <model> \
-     --json-schema ~/.forge/rubrics/judge-verdict.schema.json \
+   VERDICT_SCHEMA="$(jq -c 'del(."$schema")' \
+     ~/.forge/rubrics/judge-verdict.schema.json)"
+   claude -p --model opus \
+     --json-schema "$VERDICT_SCHEMA" \
      "<diff + contract>" < /dev/null
    ```
    The result validates against `forge.judge.v1`. Scoring and verdict logic live
    in `~/.forge/rubrics/judge-rubric.md` — read it before scoring.
 
-   **Overwrite `judge_model` with the string you passed to `--model`.** A model
+   **Overwrite `judge_model` with `opus`, the string passed to `--model`.** A model
    cannot reliably report its own id: on 2026-07-28 the first real verdict came
    back claiming `claude-opus-4-8`, which is not a model that exists. The field
    is required by the schema, so an invented value silently poisons every
@@ -54,43 +58,62 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    approval is a hand-off to the operator, not an ending. Completing without
    creating anything strands the PR: both cards go `done`, the PR sits at
    `REVIEW_REQUIRED`, and nothing on the board says a human still owes it a
-   look. Measured 2026-07-28 on the first real chunk. Create the tier-2 card,
-   then finish:
+   look. Measured 2026-07-28 on the first real chunk. The `kanban_create` tool
+   cannot express this hand-off: its runtime rejects a missing assignee. Use the
+   CLI, which does allow an unassigned card, and make the human block sticky
+   before you complete:
+   ```bash
+   set -euo pipefail
+   review_body="<PR url>
+
+   tier-1: approve — scores <d1..d6>
+   spot-check: <the one thing you would look at first>
+   Run /judge, then merge or bounce."
+
+   review_json="$(
+     hermes kanban --board "$HERMES_KANBAN_BOARD" create "judge: <chunk id>" \
+       --assignee forge-operator-handoff \
+       --body "$review_body" \
+       --parent "<the chunk card id, i.e. your own parent>" \
+       --idempotency-key "tier2-$HERMES_KANBAN_TASK" \
+       --json
+   )"
+   review="$(printf '%s' "$review_json" | jq -er '.id')"
+
+   # `initial_status=blocked` writes no sticky `blocked` event. The next
+   # dispatcher sweep promotes it, then kanban.default_assignee can route it
+   # to a real profile. Start ready on a deliberately non-existent sentinel
+   # assignee, block it through the real state transition, then unassign it.
+   got="$(hermes kanban --board "$HERMES_KANBAN_BOARD" show "$review" --json)"
+   if [ "$(printf '%s' "$got" | jq -r '.task.status')" != "blocked" ]; then
+     hermes kanban --board "$HERMES_KANBAN_BOARD" block --kind needs_input \
+       "$review" \
+       "tier-2 operator review required: run /judge, then merge or bounce"
+   fi
+   hermes kanban --board "$HERMES_KANBAN_BOARD" assign "$review" none
+
+   got="$(hermes kanban --board "$HERMES_KANBAN_BOARD" show "$review" --json)"
+   printf '%s' "$got" | jq -e '
+     .task.assignee == null
+     and .task.status == "blocked"
+     and any(.events[]; .kind == "blocked")
+   ' >/dev/null
+   ```
+   Then finish with the real id returned above:
    ```python
-   review = kanban_create(
-       title="judge: <chunk id>",
-       body="<PR url>\n\ntier-1: approve — scores <d1..d6>\n"
-            "spot-check: <the one thing you would look at first>\n"
-            "Run /judge, then merge or bounce.",
-       initial_status="blocked",   # no assignee: a human owns this, not a lane
-       parents=[<the chunk card id, i.e. your own parent>])
    kanban_complete(summary="<verdict, one sentence>",
                    metadata=<verdict json>,
                    created_cards=[review])
    ```
-   `initial_status="blocked"` with **no assignee** is the board-native way to
-   park work for a person: the dispatcher cannot claim it, and it stays visible
-   instead of disappearing into `done`. Same mechanism `board-bootstrap.sh`
-   uses for interactive chunks.
 
-   **Read the card back before you complete. Do not skip this.**
-   ```python
-   got = kanban_show(review)            # or kanban_get — whatever reads one card
-   assert got["assignee"] in (None, ""), "tier-2 card has an assignee"
-   assert got["status"] == "blocked",    "tier-2 card is dispatchable"
-   ```
-   Measured 2026-07-28 on CHUNK-C3: the card above came back
-   `assignee="forge-prejudge", status="running"` — the dispatcher claimed the
-   human's review card and handed it straight back to *this profile*. Tier 2
-   collapsed into a second tier 1, by the same model that had just approved the
-   work, and the only thing that stopped a self-approval was that run noticing
-   and blocking itself. That is luck, not a gate.
-   The parameters are not the problem — `create … --initial-status blocked`
-   with no assignee really does yield `assignee: null, status: blocked`
-   (measured on the same board minutes later). Passing them is not enough; you
-   must confirm they took. If the read-back fails, repair it with
-   `kanban_update` (clear the assignee, set status `blocked`) and re-read
-   before completing. A tier-2 card any lane can claim is not a human gate.
+   Every odd-looking line is measured. On CHUNK-C3 the tool first rejected the
+   instructed unassigned call, so the worker chose `forge-prejudge`; the card
+   was promoted and dispatched back to the same model that had just approved
+   it. A later unassigned `initial_status=blocked` probe was also promoted,
+   assigned to the global `builder` default, and dispatched. `kanban_update`
+   does not exist. The sentinel closes the create→block race, the real block
+   event makes the state sticky, `assign … none` restores human ownership, and
+   the read-back fails closed if any of those substrate facts change.
 
    **`bounce`:** do **not** just block. Your card is a leaf child of a chunk card
    that is already `completed`; blocking yourself leaves the findings on a dead
