@@ -73,9 +73,22 @@ One row per retro. Newest last.
 
 | Retro date | Period | Bounce rate | Mean score d1–3 | `reason_class` distribution | Changes proposed | Did last period's changes move their number? |
 |---|---|---|---|---|---|---|
-| _(none yet)_ | — | n/a | n/a | n/a | — | — |
+| 2026-07-28 | hello-chunk (first run) | 0.00 (0/1) | 3.00 (1 verdict) | empty (0 blocked cards) | — (baseline row) | n/a — no prior period |
 
-**Baseline (2026-07-27):** no chunk card has ever completed, so all three are
-`n/a` by measurement, not by omission. The first real row comes from the
-hello-chunk run and whatever follows it. Until then there is no baseline, and
-any claim that Forge is improving is unfalsifiable.
+**Baseline (2026-07-28).** `CHUNK-HELLO-1` on board `forge-hello`: card
+`t_1b7be3bb` completed on its first run, prejudge `t_1570a10e` returned
+`approve` with 3/3 on every dimension, PR #1 green, nothing blocked.
+
+Read this row with more suspicion than pride. **n = 1, on a six-line function
+written to be easy.** A perfect score on the first measurement is exactly what
+a filter that is not discriminating would also produce, so this row cannot yet
+distinguish "the work was good" from "tier 1 approves everything". The second
+and third rows are what make it a metric rather than a number.
+
+Two things to watch specifically:
+
+- **If d1–3 stays at 3.00 across the next few chunks, the score is decorative**
+  and the rubric needs sharper discrimination, not congratulation.
+- **Bounce rate of 0.00 is only meaningful once something has bounced.** Until
+  a bounce happens the tier-1 filter is unproven in the direction that matters:
+  we have never seen it reject anything.

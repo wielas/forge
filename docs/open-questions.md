@@ -27,12 +27,19 @@ and keep the forge keys as extras, so the dashboard reads our cards for free.
 *Settled by:* looking at the dashboard after the first completed chunk — it will
 be obvious which keys it renders and which it ignores.
 
-**Does the lane's model hold the protocol?** The driver profile is deliberately
-cheap on the theory that Codex does the thinking, but the driver still has to
-heartbeat, verify honestly, and terminate correctly. Hermes itself flags this
-family as needing tool-use enforcement.
-*Settled by:* the first run. A `crashed` reap in `kanban runs` means the model is
-the problem, not the skill text; the fix is per-card (`--model`, or `--goal`).
+**~~Does the lane's model hold the protocol?~~ SETTLED 2026-07-28 — yes.**
+`deepseek/deepseek-v4-flash` drove `CHUNK-HELLO-1` through all seven sections of
+`forge-lane` on the first run: it tracked its own position ("*step 3 — make it
+usable*"), ran the environment prep, appended the role boundary, backgrounded
+Codex, re-verified with a plain `make check`, read the diff as a hostile
+reviewer ("*no dead code, no scope creep*"), checked for a pre-existing PR
+because Codex *might* have ignored the boundary, and terminated once with valid
+`created_cards`. No `crashed` reap, no retry. The cheap-driver bet in ADR-0004
+is correct, and the run cost 4 minutes.
+
+Caveat worth keeping: this was a six-line function. The protocol held; whether
+the *judgement* holds on a chunk with real ambiguity is a different question,
+and `docs/retro-metrics.md` is where it gets answered.
 
 **Should the lane keep `skill_manage`?** The `skills` toolset is needed to load
 `forge-lane`, but it also grants `skill_manage` — write access. The two

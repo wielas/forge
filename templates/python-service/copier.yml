@@ -24,7 +24,7 @@ coverage_floor:
   type: int
   help: CI fails below this coverage %
   default: 85
-github_owner:
-  type: str
-  help: GitHub user/org for the repo
-  default: "CHANGE-ME"
+# github_owner was removed on 2026-07-28: no template file consumed it, so it
+# only ever asked a question and discarded the answer — stamping CHANGE-ME into
+# nothing. `make protect` resolves the repo at runtime with
+# `gh repo view --json nameWithOwner`, which is correct after a rename too.

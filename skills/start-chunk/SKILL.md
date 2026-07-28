@@ -26,6 +26,11 @@ Branch only if you are not already on the chunk branch. In a Hermes worktree the
 dispatcher created the workspace and checked out the branch **before** the worker
 started, so `git switch -c` there fails on a branch that already exists.
 
+This skill assumes **network and a built `.venv`** — it is for an operator
+driving the repo directly. Inside a `codex exec` sandbox neither holds: the
+fetch below fails with `Could not resolve hostname` (measured 2026-07-28), and
+`forge-lane` §3 is what makes the worktree usable before Codex ever sees it.
+
 ```bash
 branch=chunk/<id>-<slug>
 git fetch origin

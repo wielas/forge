@@ -24,6 +24,9 @@
 #   config/     documented invariants, read PER PROFILE              (F3, F11, F13, F14)
 #   substrate/  throwaway-lab probes of behaviour we depend on        (F2, F9, F15)
 #   template/   stamp -> make setup -> hooks installed -> make check   (F8)
+#   lane/       preconditions the unattended lane needs and cannot create for
+#               itself. Every case was a real failure seen on 2026-07-28 while
+#               driving `codex exec` by hand against a live chunk (rung 2).
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -39,11 +42,11 @@ while [ $# -gt 0 ]; do
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
-    cli|config|substrate|template) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -234,6 +237,20 @@ run_config_group() {
       *"$REPO_ROOT/skills"*) ok "external-dirs/$p";;
       *) bad "external-dirs/$p" "does not point at $REPO_ROOT/skills (got '${v:-unset}')";;
     esac
+
+    # A SOUL edited in git does NOT reach the worker: profiles-bootstrap.sh
+    # copies it into ~/.hermes/profiles/<p>/SOUL.md. Nothing else notices the
+    # drift, so a fix can look committed and merged while every run still uses
+    # the old identity. Measured 2026-07-28: the prejudge tier-2 fix was dead
+    # in the repo until the bootstrap was re-run.
+    if [ -f "hermes/profiles/$p.SOUL.md" ]; then
+      if diff -q "$HOME/.hermes/profiles/$p/SOUL.md" "hermes/profiles/$p.SOUL.md" \
+           >/dev/null 2>&1; then
+        ok "soul-in-sync/$p"
+      else
+        bad "soul-in-sync/$p" "live SOUL differs from git — run ./hermes/profiles-bootstrap.sh"
+      fi
+    fi
   done
 
   # F13: the unattended lane must not have the interactive ceremonies loaded.
@@ -337,11 +354,22 @@ run_template_group() {
     skip "stamp-setup-check" "uvx not on PATH"; return
   fi
   local dest="$TMPROOT/probe"
+  # --defaults, and only project_name: every other question must have a usable
+  # default, or `make new` cannot run unattended (copier demands a TTY).
   if ! uvx copier copy --defaults --data project_name="verify-probe" \
         templates/python-service "$dest" >"$TMPROOT/copier.log" 2>&1; then
     bad "stamp" "copier failed: $(tail -2 "$TMPROOT/copier.log" | tr '\n' ' ')"; return
   fi
   ok "stamp"
+
+  # Dispatcher worktrees live at <repo>/.worktrees/<task-id>. Git does not
+  # ignore them on its own, so without this they are untracked content that a
+  # `git add -A` inside a lane will stage.
+  if grep -q '^\.worktrees/' "$dest/.gitignore"; then
+    ok "gitignores-worktrees"
+  else
+    bad "gitignores-worktrees" ".worktrees/ not ignored — dispatcher worktrees are untracked content"
+  fi
 
   git -C "$dest" init -q -b main >/dev/null 2>&1
   if ! make -C "$dest" setup >"$TMPROOT/setup.log" 2>&1; then
@@ -360,6 +388,41 @@ run_template_group() {
   else
     bad "check-green" "make check not green: $(tail -3 "$TMPROOT/check.log" | tr '\n' ' ')"
   fi
+
+  # The pre-push gate, exercised against a real bare remote rather than read.
+  # Two states, opposite verdicts: the FIRST push to main is what creates the
+  # branch (no PR path exists yet) and must be allowed; once main exists on the
+  # remote every direct push must be refused. Measured 2026-07-28: without the
+  # bootstrap exception a freshly stamped project cannot be published at all.
+  local bare="$TMPROOT/origin.git"
+  git init -q --bare "$bare" >/dev/null 2>&1
+  git -C "$dest" remote add origin "$bare"
+  git -C "$dest" add -A >/dev/null 2>&1
+  if ! git -C "$dest" -c user.email=v@v -c user.name=v commit -qm stamp \
+        >"$TMPROOT/commit.log" 2>&1; then
+    skip "push-gate" "probe commit failed: $(tail -2 "$TMPROOT/commit.log" | tr '\n' ' ')"
+    return
+  fi
+
+  if git -C "$dest" push -q -u origin main >"$TMPROOT/push1.log" 2>&1; then
+    ok "bootstrap-push-allowed"
+  else
+    bad "bootstrap-push-allowed" \
+        "the push that creates main was blocked — a new project cannot be published: $(tail -2 "$TMPROOT/push1.log" | tr '\n' ' ')"
+  fi
+
+  # A real file change, NOT --allow-empty. lefthook 2.1.10 skips every pre-push
+  # command when the push carries no changed files (measured 2026-07-28; there
+  # is no config key to disable it — see the template lefthook.yml), so an
+  # empty push tests the hole rather than the gate. Push what people push.
+  echo "# second" >> "$dest/README.md"
+  git -C "$dest" add -A >/dev/null 2>&1
+  git -C "$dest" -c user.email=v@v -c user.name=v commit -qm second >/dev/null 2>&1
+  if git -C "$dest" push origin main >"$TMPROOT/push2.log" 2>&1; then
+    bad "main-push-blocked" "direct push to an existing main succeeded — the pre-push guard is inert"
+  else
+    ok "main-push-blocked"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -370,12 +433,23 @@ cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim marke
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
 config/external-dirs/<profile>    points at this checkout's skills/
+config/soul-in-sync/<profile>     live ~/.hermes SOUL matches the one in git
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/board-default-workdir      every forge board has a worktree anchor
 substrate/worktree-ownership      dispatcher resolves the worktree before spawning
 substrate/worktree-gitfile        .git is a file in a linked worktree; writes fail
 substrate/codex-worktree-commit   codex can commit in a worktree with --add-dir (--with-codex)
 template/stamp,setup,hooks-installed,check-green
+template/gitignores-worktrees     .worktrees/ is ignored (dispatcher worktrees live in-repo)
+template/bootstrap-push-allowed   the push that CREATES main is allowed (real bare remote)
+template/main-push-blocked        every later direct push to main is refused
+lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox has no network
+lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
+lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not ~/.cache/uv
+lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
+lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
+lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
+lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
 EOF
   exit 0
 fi
@@ -387,6 +461,88 @@ wants cli       && run_cli_group
 wants config    && run_config_group
 wants substrate && run_substrate_group
 wants template  && run_template_group
+
+# ---------------------------------------------------------------------------
+# lane/ — what the unattended lane must do FOR Codex, because Codex cannot do
+# it for itself. All four cases below are regressions of failures measured on
+# 2026-07-28 driving `codex exec` by hand on hello-forge.
+# ---------------------------------------------------------------------------
+run_lane_group() {
+  group lane
+  local lane=skills/forge-lane/SKILL.md
+  local agents=templates/python-service/template/AGENTS.md.jinja
+
+  # `-s workspace-write` grants NO network. A dispatcher worktree is a fresh
+  # checkout with no .venv, so unless the lane builds it while it still has a
+  # network, `make check` cannot run inside the sandbox at all.
+  if sed -n '/^## 3\./,/^## 4\./p' "$lane" | grep -q 'make setup'; then
+    ok "env-prepared-before-codex"
+  else
+    bad "env-prepared-before-codex" \
+        "forge-lane §3 must run 'make setup' — the lane has a network, the codex sandbox does not"
+  fi
+
+  # Measured: codex followed AGENTS.md to skills/forge-lane and start-chunk,
+  # read both in full, and announced it was "using the Forge lane protocol" —
+  # i.e. the caller's playbook, including push / PR / board operations.
+  if grep -qi 'do NOT push' "$lane" && grep -qi 'do NOT read or follow' "$lane"; then
+    ok "role-boundary-prepended"
+  else
+    bad "role-boundary-prepended" \
+        "forge-lane must append an explicit role boundary to every contract (reads are not sandboxed)"
+  fi
+
+  # `uv run` writes a cache and ~/.cache/uv is outside the sandbox. Unset,
+  # Codex reroutes it mid-run to a path of its own choosing (measured twice,
+  # 2026-07-28) — so hand it a deterministic one inside the worktree.
+  if grep -q 'UV_CACHE_DIR=.*\.forge/uv-cache' "$lane"; then
+    ok "uv-cache-dir-is-deterministic"
+  else
+    bad "uv-cache-dir-is-deterministic" \
+        "forge-lane must set UV_CACHE_DIR under .forge/ — ~/.cache/uv is not writable in the sandbox"
+  fi
+
+  # Codex's workaround for the missing venv was UV_CACHE_DIR + UV_OFFLINE.
+  # That green is not the command CI runs, so the lane must re-verify plainly.
+  if sed -n '/^## 5\./,/^## 6\./p' "$lane" | grep -q 'UV_OFFLINE'; then
+    ok "verification-is-plain-make-check"
+  else
+    bad "verification-is-plain-make-check" \
+        "forge-lane §5 must require a plain 'make check' (no UV_OFFLINE/UV_CACHE_DIR green)"
+  fi
+
+  # The template's own AGENTS.md is what sent Codex to the ceremony skills.
+  if grep -q 'interactive operator' "$agents" && grep -q 'implement exactly it and stop' "$agents"; then
+    ok "template-agents-scopes-ceremonies"
+  else
+    bad "template-agents-scopes-ceremonies" \
+        "AGENTS.md.jinja must scope ceremony skills to the interactive operator"
+  fi
+
+  # An approval is a hand-off, not an ending. Without a tier-2 card the chunk
+  # and review cards both go `done`, the PR sits at REVIEW_REQUIRED, and
+  # nothing on the board says a human still owes it a look (measured
+  # 2026-07-28 on the first real chunk).
+  local soul=hermes/profiles/forge-prejudge.SOUL.md
+  if sed -n '/approve` \/ `approve-with-nits/,/bounce`:/p' "$soul" \
+       | grep -q 'kanban_create' ; then
+    ok "prejudge-approve-routes-to-tier2"
+  else
+    bad "prejudge-approve-routes-to-tier2" \
+        "prejudge's approve path must create a tier-2 card, or approved PRs strand"
+  fi
+
+  # A model cannot report its own id: the first real verdict claimed
+  # `claude-opus-4-8`, which does not exist. judge_model is schema-REQUIRED, so
+  # an invented value poisons provenance silently.
+  if grep -q -- '--model' "$soul" && grep -q 'Overwrite `judge_model`' "$soul"; then
+    ok "prejudge-judge-model-is-observed"
+  else
+    bad "prejudge-judge-model-is-observed" \
+        "prejudge must pass --model explicitly and stamp judge_model from it, not trust self-report"
+  fi
+}
+wants lane      && run_lane_group
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1
