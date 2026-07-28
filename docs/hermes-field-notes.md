@@ -54,6 +54,15 @@ needs_input` to make the state sticky, then `kanban assign <id> none` and read
 back `.task.assignee`, `.task.status`, and the `blocked` event. There is no
 `kanban_update` tool.
 
+**Nested CLI creation needs explicit provenance.** The CLI defaults
+`created_by=user`, even when a profile invokes it inside a dispatched task.
+`kanban_complete(created_cards=[...])` then rejects the card because the
+completion kernel cannot prove that worker created it. Pass
+`--created-by "$HERMES_KANBAN_TASK"`; the kernel accepts the current task id as
+provenance. If manifest verification still fails, block with the evidence.
+Never retry completion without `created_cards` — that turns an unverified
+hand-off into apparent success.
+
 **`--board` goes *before* the subcommand.** `hermes kanban --board <slug> create
 …` — the flag belongs to the kanban parser; after `create` it is an unrecognized
 argument. It works by pinning `HERMES_KANBAN_BOARD` for the call, so exporting
