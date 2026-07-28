@@ -74,6 +74,7 @@ One row per retro. Newest last.
 | Retro date | Period | Bounce rate | Mean score d1–3 | `reason_class` distribution | Changes proposed | Did last period's changes move their number? |
 |---|---|---|---|---|---|---|
 | 2026-07-28 | hello-chunk (first run) | 0.00 (0/1) | 3.00 (1 verdict) | empty (0 blocked cards) | — (baseline row) | n/a — no prior period |
+| 2026-07-28 | ladder run, rung 3 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card misrouted, self-blocked) | 8 findings, 5 fixed — see `docs/ladder-2026-07-28.md` | n/a — no changes were proposed last period |
 
 **Baseline (2026-07-28).** `CHUNK-HELLO-1` on board `forge-hello`: card
 `t_1b7be3bb` completed on its first run, prejudge `t_1570a10e` returned
@@ -92,3 +93,21 @@ Two things to watch specifically:
 - **Bounce rate of 0.00 is only meaningful once something has bounced.** Until
   a bounce happens the tier-1 filter is unproven in the direction that matters:
   we have never seen it reject anything.
+
+**Second row (2026-07-28, ladder run).** `CHUNK-C3` on board `forge-ladder`:
+card `t_01649280` completed on its first run, prejudge `t_4a0f55d3` returned
+`approve` with 3/3 on every dimension, PR #4 green and merged after a hand
+review at tier 2.
+
+Both things the baseline said to watch got worse, not better:
+
+- **d1–3 is 3.00 for the second time — twelve dimension scores, twelve 3s.**
+  The baseline called a single 3.00 indistinguishable from an undiscriminating
+  filter. Two of them is not evidence of quality; it is the same non-evidence
+  twice, and the case for treating the score as decorative is now stronger.
+- **Bounce rate is still 0.00 (0/2).** Nothing has ever been rejected.
+
+The `reason_class` bucket is `other` ×1, which is the vocabulary doing its job:
+"the tier-2 review card was dispatched to a lane instead of a human" is not
+`stale-spec`, `env` or `ci-red`. One occurrence does not justify extending the
+vocabulary; a second would.
