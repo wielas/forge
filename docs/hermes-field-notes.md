@@ -99,9 +99,17 @@ bounce card carried `skills=["forge-lane"]`, landed on the right PR worktree,
 and explicitly reasoned from the lane steps—then the cheap driver patched the
 one-line fix itself and never invoked Codex. "Operator, not author" was too easy
 to rationalize away for a trivial diff. State the prohibition literally in both
-the profile and skill: no driver write/patch/shell edit of source, tests, or
-product docs; even one line goes through `codex exec`, and an unavailable Codex
-blocks the card.
+the profile and skill: no driver-authored retained implementation diff; even one
+line goes through `codex exec`, and an unavailable Codex blocks the card.
+
+**A verification probe that exits nonzero proved nothing.** The lane used
+`git -C <common .git dir> status --short hooks`; Git exits 128 because that is
+not a worktree. The driver noticed, called it "fine", and completed with
+Codex-created `.orig` and `.rej` files still untracked. Snapshot hook hashes
+before/after with `shasum`, compare them, and require an empty
+`git status --porcelain --untracked-files=all` after all temporary mutations
+are restored. A driver may mutate a file temporarily to prove a test, but no
+driver-authored byte or test artifact may survive into the push.
 
 **`skill_manage` CAN write external-dir skills; only `write_approval` stops it.**
 Measured 2026-07-27 by calling the real tool against a throwaway
