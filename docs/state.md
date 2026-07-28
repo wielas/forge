@@ -37,6 +37,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | The cheap driver holds the 7-section lane protocol | `deepseek-v4-flash` executed every section in order, narrating its position |
 | Both metadata schemas populate | `forge.chunk.v1` and `forge.judge.v1` complete on the real cards |
 | Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict |
+| Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
 | Branch protection is a real merge gate | a red or unreviewed merge is refused by GitHub, not by prose |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
@@ -102,21 +103,6 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 
 ## Known gaps — open, with the shape of the fix
 
-0. **The tier-2 card is not reliably a human gate.** Measured 2026-07-28: an
-   approval created the tier-2 card with `assignee="forge-prejudge"` and
-   `status="running"` despite the SOUL asking for neither, the dispatcher
-   claimed it, and tier 2 became a second tier 1 by the model that had just
-   approved. Only that run noticing and blocking itself prevented a
-   self-approval. The first mitigation was itself impossible: the tool requires
-   an assignee, `kanban_update` does not exist, and an unassigned
-   `initial_status=blocked` probe was promoted and dispatched to the global
-   `builder` default. The SOUL now uses the CLI to create on a non-spawnable
-   sentinel, emits a sticky human block, unassigns, and reads the card back.
-   The first live rerun proved that state was durable, then found that nested
-   CLI creation stamped `created_by=user`; the completion kernel rejected the
-   hand-off manifest and the worker improperly retried without it. Creation now
-   stamps the current task id and a rejected manifest must fail closed.
-   **Re-run approval once more before testing bounce.**
 1. **Nothing sweeps merged worktrees.** `worktree` workspaces are preserved on
    completion, so each finished chunk leaves a full checkout plus a `.venv`
    behind, holding its branch — measured at **50 MB per chunk**, and
@@ -153,14 +139,9 @@ value:
 Do **not** run these together. The whole reason the first run succeeded is that
 nothing was ever tested with two unknowns in play.
 
-Two things ride along free on whichever you pick, because they need only
-looking rather than a run of their own:
-
-- **Gap #0's mitigation.** The tier-2 read-back has never executed. It is
-  exercised by an *approve*, not a bounce — so if you run the bounce test
-  first, this stays unproven and must be checked on the next approval instead.
-- **Whether the rubric can say a number other than 3.** Two chunks, twelve
-  dimension scores, twelve 3s.
+One thing rides along free on whichever you pick, because it needs only looking
+rather than a run of its own: **whether the rubric can say a number other than
+3.** Two chunks, twelve dimension scores, twelve 3s.
 
 ---
 
