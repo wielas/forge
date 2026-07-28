@@ -106,12 +106,16 @@ every dimension, both green and merged after a hand review at tier 2.
 
 Both things the baseline said to watch got worse, not better:
 
-- **d1–3 is 3.00 for the third time — eighteen dimension scores, eighteen 3s.**
+- **d1–3 was 3.00 for the third time here — eighteen dimension scores, eighteen
+  3s.** Superseded later the same day: the controlled-bounce row below scored
+  **2.33**, the first non-3 this rubric has ever produced. The worry recorded
+  here was answered by injecting a fault, not by waiting.
   The baseline called a single 3.00 indistinguishable from an undiscriminating
   filter. Three of them is not evidence of quality; it is the same non-evidence
   three times, and the case for treating the score as decorative is stronger
   each time it repeats.
-- **Bounce rate is still 0.00 (0/3).** Nothing has ever been rejected.
+- **Bounce rate was still 0.00 (0/3) at this point.** Also answered below: the
+  controlled bounce made it 1.00 (1/1) for that period.
 
 The `reason_class` bucket is `other` in the two rung rows, which is the
 vocabulary doing its job: "the tier-2 review card did not land as a human gate"
