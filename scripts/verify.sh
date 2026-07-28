@@ -537,6 +537,7 @@ lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
 lane/prejudge-tier2-card-is-sticky      human card has a real block event and no final assignee
+lane/prejudge-bounce-reuses-worktree    a bounced fix resumes the rejected PR in its completed chunk worktree
 lane/prejudge-schema-is-inline          Claude receives supported schema JSON, not a path
 lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
 EOF
@@ -651,6 +652,25 @@ run_lane_group() {
   else
     bad "prejudge-handoff-manifest-is-verifiable" \
         "tier-2 CLI creation must carry task provenance, and a rejected manifest must fail closed"
+  fi
+
+  # A tool-created child defaults to scratch and carries no forced skills.
+  # Measured on the first real bounce: the cheap driver cloned the repo,
+  # authored the fix itself, hit an HTTPS push failure, and spent 57 tool calls
+  # on one changed line. Reuse the completed chunk's linked worktree explicitly.
+  local bounce_path
+  bounce_path="$(sed -n '/\*\*`bounce`:/,/Do not invent a retry loop/p' "$soul")"
+  if printf '%s' "$bounce_path" | grep -Fq 'git -C "$chunk_workspace" rev-parse' \
+     && printf '%s' "$bounce_path" | grep -Fq 'workspace_kind="dir"' \
+     && printf '%s' "$bounce_path" | grep -Fq 'workspace_path=chunk_workspace' \
+     && printf '%s' "$bounce_path" | grep -Fq 'skills=["forge-lane"]' \
+     && printf '%s' "$bounce_path" | grep -Fq '.task.workspace_kind == "dir"' \
+     && printf '%s' "$bounce_path" | grep -Fq '.task.workspace_path == $workspace' \
+     && printf '%s' "$bounce_path" | grep -Fq 'index("forge-lane")'; then
+    ok "prejudge-bounce-reuses-worktree"
+  else
+    bad "prejudge-bounce-reuses-worktree" \
+        "a bounce must resume the completed chunk's real PR worktree with forge-lane forced, never default to scratch"
   fi
 
   # Claude Code 2.1.212 takes inline JSON at --json-schema and rejects the
