@@ -13,9 +13,20 @@ fmt:              ## auto-format
 	uv run ruff format .
 	uv run ruff check --fix .
 
-lint:             ## no mutations
-	uv run ruff format --check .
-	uv run ruff check .
+# --no-cache is load-bearing, not tidiness. `make check` is the verdict the
+# lane trusts instead of Codex's word (forge-lane §5), and a verdict read from
+# a cache is not a verdict. Measured 2026-07-28 in a lane worktree: `ruff check`
+# answered "All checks passed!", the same bytes in a cold clone and in CI
+# answered "Found 1 error", and deleting .ruff_cache in that very directory
+# flipped it to the error. A chunk shipped green and CI caught it — which is
+# the wrong way round, because §5 exists so CI never has to.
+# CI is always cold, so this is also what makes local and CI the same command
+# in fact and not just in spelling. Ruff is milliseconds here; the cache buys
+# nothing worth a false green. `fmt` keeps its cache — it mutates, it does not
+# judge.
+lint:             ## no mutations — and no cached verdicts
+	uv run ruff format --check --no-cache .
+	uv run ruff check --no-cache .
 
 test:             ## full suite incl. BDD features, coverage floor enforced
 	uv run pytest

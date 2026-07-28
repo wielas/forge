@@ -442,6 +442,22 @@ run_template_group() {
   fi
   git -C "$dest" config --unset branch.main.remote
 
+  # `make check` is the verdict forge-lane §5 trusts in place of Codex's word,
+  # so it must not be able to answer from a cache. Measured 2026-07-28: a lane
+  # worktree's warm .ruff_cache returned "All checks passed!" for bytes that a
+  # cold clone and CI both rejected. This is a config assertion, deliberately:
+  # the staleness could not be reproduced synthetically (forcing size+mtime did
+  # not fool ruff), so there is no honest behavioural test to write — but the
+  # flag going missing is exactly how the false green comes back.
+  local lint_body
+  lint_body="$(awk '/^lint:/{f=1;next} /^[a-z]/{f=0} f' "$dest/Makefile")"
+  if [ "$(printf '%s' "$lint_body" | grep -c -- '--no-cache')" -ge 2 ]; then
+    ok "check-reads-no-cache"
+  else
+    bad "check-reads-no-cache" \
+        "make lint can answer from a cache — a cached verdict is not a verdict (forge-lane §5)"
+  fi
+
   # ADR-0003 says CI runs exactly what local runs. That holds for the command;
   # it holds for the runtime underneath it only if the interpreter is pinned.
   # Measured 2026-07-28: with only `requires-python = ">=3.12"` the local venv
@@ -478,6 +494,7 @@ template/gitignores-worktrees     .worktrees/ is ignored (dispatcher worktrees l
 template/bootstrap-push-allowed   the push that CREATES main is allowed (real bare remote)
 template/main-push-blocked        every later direct push to main is refused
 template/main-push-guard-fails-closed  an unreachable tracked remote does not unlock the bootstrap exception
+template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
 lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox has no network
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
