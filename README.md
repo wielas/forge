@@ -222,7 +222,8 @@ is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md).
 - [x] GitHub branch protection as the merge gate — active, and it refused a
       merge until `required_approving_review_count` was corrected to 0 (the lane
       pushes as the operator, who cannot approve their own PR).
-- [ ] The bounce path. Tier 1 has approved once and rejected nothing.
+- [x] The bounce path. Tier 1 rejected deliberate scenario theater, and the
+      fix resumed the original PR worktree (`docs/ladder-2026-07-28.md` R3-F4).
 - [ ] The Telegram approval flow.
 - [ ] Provider terms for automated subscription use, before this runs anywhere
       but the operator's own machine. ADR-0004 settles what *works* headlessly

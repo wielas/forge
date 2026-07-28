@@ -75,6 +75,7 @@ One row per retro. Newest last.
 |---|---|---|---|---|---|---|
 | 2026-07-28 | hello-chunk (first run) | 0.00 (0/1) | 3.00 (1 verdict) | empty (0 blocked cards) | — (baseline row) | n/a — no prior period |
 | 2026-07-28 | ladder run, rung 3 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card misrouted, self-blocked) | 8 findings, 5 fixed — see `docs/ladder-2026-07-28.md` | n/a — no changes were proposed last period |
+| 2026-07-28 | controlled bounce, PR #6 (`forge-ladder`) | 1.00 (1/1) | 2.33 (1 verdict) | empty (0 blocked cards) | worktree route, hard driver boundary, clean-worktree proof | yes for routing/role; clean proof awaits the next lane |
 
 **Baseline (2026-07-28).** `CHUNK-HELLO-1` on board `forge-hello`: card
 `t_1b7be3bb` completed on its first run, prejudge `t_1570a10e` returned
@@ -111,3 +112,11 @@ The `reason_class` bucket is `other` ×1, which is the vocabulary doing its job:
 "the tier-2 review card was dispatched to a lane instead of a human" is not
 `stale-spec`, `env` or `ci-red`. One occurrence does not justify extending the
 vocabulary; a second would.
+
+**Controlled bounce row.** This is fault injection, not a production-quality
+sample. The PR was deliberately CI-green while its Then step returned a boolean
+that pytest-bdd ignores. Prejudge scored d1–3 as 3/1/3 and emitted an executable
+bounce. The first fix route defaulted to scratch; the corrected route resumed
+the rejected branch's preserved linked worktree. See
+`docs/experiment-2026-07-28.md` for the operator-time and correction ledger;
+the three retro numbers above are diagnostic exhaust, not the success criteria.
