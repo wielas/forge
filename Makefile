@@ -10,9 +10,13 @@ preflight:                     ## revalidate the mini before unattended work (re
 install:                       ## symlink skills into all harnesses
 	./install.sh
 
+# --defaults is not a convenience: without it copier demands a TTY, so this
+# target could not run from a script, a CI job or an agent (measured
+# 2026-07-28 — `make new` failed with "Interactive session required").
 new:                           ## make new NAME=my-project [DEST=..]
-	@test -n "$(NAME)" || { echo "usage: make new NAME=my-project"; exit 1; }
-	uvx copier copy templates/python-service $(or $(DEST),..)/$(NAME) --data project_name="$(NAME)"
+	@test -n "$(NAME)" || { echo "usage: make new NAME=my-project [DEST=..]"; exit 1; }
+	uvx copier copy templates/python-service $(or $(DEST),..)/$(NAME) --defaults \
+	  --data project_name="$(NAME)"
 	@echo "→ cd $(or $(DEST),..)/$(NAME) && git init && make setup && claude (/scope)"
 	@echo "→ then, once the GitHub repo exists: make protect"
 	@echo "   (branch protection is the ONLY merge gate — the pre-push hook is advisory)"

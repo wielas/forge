@@ -10,6 +10,21 @@ pre-commit:
       glob: "*.py"
 
 pre-push:
+  # KNOWN HOLE, measured 2026-07-28 on lefthook 2.1.10. When a push carries no
+  # changed files, lefthook skips EVERY command in this hook — including the
+  # two below, neither of which references a file:
+  #   │  full-check   (skip) no matching push files
+  #   │  no-main-push (skip) no matching push files
+  # So an empty commit, or a merge with no diff, bypasses both the branch guard
+  # and `make check` locally. There is no config key that turns this off:
+  # 2.1.10 accepts only env/exclude/fail_text/files/glob/interactive/only/
+  # priority/root/skip/stage_fixed/tags per command (`skip_empty` is silently
+  # DROPPED — confirmed with `lefthook dump`). Do not add one back believing
+  # it works.
+  #
+  # This is one more reason the real merge gate is `make protect` (GitHub
+  # branch protection), which no local trick can reach. These commands catch
+  # the ordinary mistake; they are not the wall.
   commands:
     # ADVISORY, and deliberately labelled as such. This catches the common
     # mistake (being on main and pushing) but CANNOT catch
@@ -23,9 +38,18 @@ pre-push:
     no-main-push:
       run: |
         branch=$(git rev-parse --abbrev-ref HEAD)
-        if [ "$branch" = "main" ]; then
+        [ "$branch" = "main" ] || exit 0
+        remote=$(git config "branch.$branch.remote" 2>/dev/null || true)
+        [ -n "$remote" ] || remote=origin
+        # Bootstrap exception. The FIRST push to a new repo is what creates
+        # main on the remote; there is no PR path to take yet, and without
+        # this branch `gh repo create --push` and `git push -u origin main`
+        # are both blocked — a fresh project cannot be published at all.
+        # Measured 2026-07-28 on hello-forge.
+        if git ls-remote --exit-code --heads "$remote" main >/dev/null 2>&1; then
           echo "BLOCKED: direct push to main. Chunks land via PR." >&2
           exit 1
         fi
+        echo "bootstrap: $remote has no main yet — allowing the push that creates it" >&2
     full-check:
       run: make check
