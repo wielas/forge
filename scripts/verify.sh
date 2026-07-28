@@ -542,6 +542,8 @@ lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the opera
 lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
 lane/prejudge-tier2-card-is-sticky      human card has a real block event and no final assignee
 lane/prejudge-bounce-reuses-worktree    a bounced fix resumes the rejected PR in its completed chunk worktree
+lane/prejudge-gh-is-repo-independent    scratch review uses canonical PR URL, not cwd repository context
+lane/prejudge-ci-red-is-canonical       CI-red skips the model, not forge.judge.v1 metadata
 lane/prejudge-schema-is-inline          Claude receives supported schema JSON, not a path
 lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
 EOF
@@ -736,6 +738,32 @@ run_lane_group() {
   else
     bad "prejudge-bounce-reuses-worktree" \
         "a bounce must resume the completed chunk's real PR worktree with forge-lane forced, never default to scratch"
+  fi
+
+  # Review cards intentionally run in scratch. On the first CI-red probe,
+  # `gh pr checks 10` failed outside a repository and the worker spent a minute
+  # searching unrelated workspaces for any clone. A canonical PR URL gives gh
+  # complete repository context from any directory.
+  if grep -Fq 'gh pr checks "$pr_url"' "$soul" \
+     && grep -Fq 'gh pr diff "$pr_url"' "$soul" \
+     && grep -Fq 'current directory to give `gh` repository context' "$soul"; then
+    ok "prejudge-gh-is-repo-independent"
+  else
+    bad "prejudge-gh-is-repo-independent" \
+        "scratch prejudge must pass the canonical PR URL to gh checks and diff"
+  fi
+
+  # The first live CI-red bounce emitted one-off `forge.prejudge.v1.*` keys.
+  # Retro counts `.verdict == "bounce"` in forge.judge.v1, so the most
+  # objective bounce disappeared from the very metric meant to track it.
+  if grep -Fq 'does **not** skip the verdict' "$soul" \
+     && grep -Fq 'all six scores set to zero' "$soul" \
+     && grep -Fq '`judge_model: "ci"`' "$soul" \
+     && grep -Fq 'without a model call' rubrics/judge-rubric.md; then
+    ok "prejudge-ci-red-is-canonical"
+  else
+    bad "prejudge-ci-red-is-canonical" \
+        "CI-red must emit deterministic forge.judge.v1 metadata so retro can count the bounce"
   fi
 
   # Claude Code 2.1.212 takes inline JSON at --json-schema and rejects the

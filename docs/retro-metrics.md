@@ -77,6 +77,7 @@ One row per retro. Newest last.
 | 2026-07-28 | ladder run, rung 3 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card misrouted, self-blocked) | 8 findings, 5 fixed — see `docs/ladder-2026-07-28.md` | n/a — no changes were proposed last period |
 | 2026-07-28 | controlled bounce, PR #6 (`forge-ladder`) | 1.00 (1/1) | 2.33 (1 verdict) | empty (0 blocked cards) | worktree route, hard driver boundary, clean-worktree proof | yes for routing/role; clean proof awaits the next lane |
 | 2026-07-28 | dependency D1 → D2 (`forge-dependency-clone-20260728`) | 0.00 (0/2) | 3.00 (2 verdicts) | `failing-prereq` ×1 | atomic parent creation, merged-PR gate, no implicit stacks | no — 3/3 scope score missed D1 files in D2 PR |
+| 2026-07-28 | CI-red recovery, PR #10 (`forge-dependency-clone-20260728`) | n/a — observed bounce used noncanonical metadata | 3.00 (1 green verdict; red sentinel absent) | empty (0 blocked cards) | repo-independent `gh`; canonical CI-red verdict | yes — worktree repair and clean proof both held live |
 
 **Baseline (2026-07-28).** `CHUNK-HELLO-1` on board `forge-hello`: card
 `t_1b7be3bb` completed on its first run, prejudge `t_1570a10e` returned
@@ -127,3 +128,12 @@ opened PR #7. Its first `dependency` block immediately auto-promoted because
 the linked card was already done; its retry invented a stack, and PR #8 showed
 six D1+D2 files against `main`. Tier 1 still returned 3/3 scope discipline.
 ADR-0008 moves the gate to parent `mergedAt` and keeps the wait sticky.
+
+**CI-red row.** The operational loop worked: Tier 1 saw red, created fix card
+`t_0a443d25` in the rejected branch's worktree, the lane removed only the
+injected failure, PR #10 turned green, and the second Tier 1 run handed off to
+the operator. The metric did not: the first review stored custom
+`forge.prejudge.v1.*` keys instead of `forge.judge.v1`, so the definition above
+cannot count its real bounce. The row stays `n/a` rather than being backfilled
+from prose. The corrected protocol emits zero-score canonical metadata without
+calling the judging model.
