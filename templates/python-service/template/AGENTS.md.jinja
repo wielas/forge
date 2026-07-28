@@ -10,10 +10,18 @@ Hand-curated. Keep under ~120 lines; every line costs every session context.
 - `make fmt` / `make lint` / `make test`
 
 ## Workflow (Forge)
-This project runs the Forge methodology. Ceremony skills: /scope, /architect,
-/roadmap, /start-chunk, /end-chunk, /judge. Foundation docs:
-`docs/REQUIREMENTS.md`, `docs/ARCHITECTURE.md`, `docs/adr/`, `docs/ROADMAP.md`,
-chunk contracts in `docs/chunks/`, running notes in `docs/decision-log.md`.
+Foundation docs: `docs/REQUIREMENTS.md`, `docs/ARCHITECTURE.md`, `docs/adr/`,
+`docs/ROADMAP.md`, chunk contracts in `docs/chunks/`, running notes in
+`docs/decision-log.md`.
+
+**If you were handed one chunk contract, implement exactly it and stop.** Do
+not push, open a PR, or touch a kanban board — whoever invoked you owns those.
+
+The ceremony skills (/scope, /architect, /roadmap, /start-chunk, /end-chunk,
+/judge) are for an **interactive operator driving this repo directly**. They
+are not instructions for a sub-agent working a contract: they describe the
+calling agent's lifecycle, and following them from inside a worktree produces
+duplicate pushes and double-completed cards. Measured 2026-07-28.
 
 ## Hard constraints (gates enforce these; listed here for orientation)
 - No direct pushes to main; one chunk = one branch `chunk/<id>-<slug>` = one PR.
