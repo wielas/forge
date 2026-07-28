@@ -128,19 +128,63 @@ merge. If you find yourself wanting to fix something, that is a bounce.
 
    **`bounce`:** do **not** just block. Your card is a leaf child of a chunk card
    that is already `completed`; blocking yourself leaves the findings on a dead
-   leaf that nothing routes to a worker. Create the fix card first, then finish:
+   leaf that nothing routes to a worker. A default `kanban_create` child is a
+   disposable scratch directory. It has neither the rejected PR branch nor the
+   lane protocol, so it can only improvise a clone and may author code directly.
+   Resolve the completed chunk's preserved linked worktree first:
+   ```bash
+   chunk="<the chunk card id, i.e. your own parent>"
+   chunk_json="$(
+     hermes kanban --board "$HERMES_KANBAN_BOARD" show "$chunk" --json
+   )"
+   chunk_workspace="$(
+     printf '%s' "$chunk_json" | jq -er '
+       .task.workspace_path
+       | select(type == "string" and length > 0)
+     '
+   )"
+   git -C "$chunk_workspace" rev-parse --is-inside-work-tree \
+     | grep -Fx true >/dev/null
+   ```
+   If that fails, `kanban_block(reason="bounce-workspace: completed chunk has
+   no reusable git worktree")`. Do not create a scratch substitute.
+
+   The parent is complete, so deliberately share that inactive linked worktree
+   as a `dir` workspace. This keeps the original PR branch checked out without
+   asking Hermes to create a fresh branch from `main`. Create the fix card, pin
+   the real lane skill, and carry the PR plus findings:
    ```python
    fix = kanban_create(
        title="fix: <chunk id> — <shortest description of the bounce>",
        assignee="forge-codex-lane",
-       body=<the findings list, VERBATIM — every finding's evidence and action>,
-       parents=[<the chunk card id, i.e. your own parent>])
+       body="<PR url>\n\nRepair this existing PR branch only.\n\n"
+            + <the findings list, VERBATIM — every finding's evidence and action>,
+       parents=[chunk],
+       workspace_kind="dir",
+       workspace_path=chunk_workspace,
+       skills=["forge-lane"],
+       idempotency_key="bounce-<your task id>",
+       max_runtime_seconds=900)
+   ```
+   Read the fix card back before completing:
+   ```bash
+   got="$(hermes kanban --board "$HERMES_KANBAN_BOARD" show "$fix" --json)"
+   printf '%s' "$got" | jq -e --arg workspace "$chunk_workspace" '
+     .task.workspace_kind == "dir"
+     and .task.workspace_path == $workspace
+     and (.task.skills | index("forge-lane")) != null
+   ' >/dev/null
+   ```
+   Then finish:
+   ```python
    kanban_complete(summary="bounced: <why, one sentence>",
                    metadata=<verdict json>,
                    created_cards=[fix])
    ```
    `created_cards` ids must come back from a real `kanban_create` — the kernel
-   rejects invented ids and refuses the completion.
+   rejects invented ids and refuses the completion. If the workspace read-back
+   or completion manifest fails, block with the evidence; never route the fix
+   to scratch.
 
    Do not invent a retry loop or a bounce counter. Bounce dynamics are
    board-native: the respawn guard and `--max-retries` already own them.

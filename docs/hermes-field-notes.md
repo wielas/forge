@@ -82,6 +82,18 @@ which fails — the worker then exits without a terminator and is reaped as
 `crashed`. Land with `cd "$HERMES_KANBAN_WORKSPACE"` and fail hard if it is not a
 git checkout; never create it.
 
+**A bounce must return to the rejected branch, not just to a worker.** A
+`kanban_create` follow-up defaults to isolated `scratch` and does not inherit
+the parent's forced skills. Measured 2026-07-28: the first real fix card cloned
+the repo into scratch, the cheap driver authored the change itself instead of
+driving Codex, its first HTTPS push failed, and it spent 57 tool calls on a
+one-line repair. For a completed chunk, sharing its preserved linked worktree
+is intentional and safe: create the fix with `workspace_kind="dir"`,
+`workspace_path=<completed chunk worktree>`, and `skills=["forge-lane"]`.
+Read those fields back before completing prejudge. Do not request a new
+`worktree` at the occupied path; Hermes correctly falls back to a fresh branch
+from `main`, which is not the rejected PR.
+
 **`skill_manage` CAN write external-dir skills; only `write_approval` stops it.**
 Measured 2026-07-27 by calling the real tool against a throwaway
 `skills.external_dirs` skill:
