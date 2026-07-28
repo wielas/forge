@@ -10,46 +10,62 @@ pre-commit:
       glob: "*.py"
 
 pre-push:
-  # KNOWN HOLE, measured 2026-07-28 on lefthook 2.1.10. When a push carries no
-  # changed files, lefthook skips EVERY command in this hook — including the
-  # two below, neither of which references a file:
-  #   │  full-check   (skip) no matching push files
-  #   │  no-main-push (skip) no matching push files
-  # So an empty commit, or a merge with no diff, bypasses both the branch guard
-  # and `make check` locally. There is no config key that turns this off:
-  # 2.1.10 accepts only env/exclude/fail_text/files/glob/interactive/only/
-  # priority/root/skip/stage_fixed/tags per command (`skip_empty` is silently
-  # DROPPED — confirmed with `lefthook dump`). Do not add one back believing
-  # it works.
+  # What a pre-push command can and cannot see, measured on lefthook 2.1.10
+  # (2026-07-28, by pushing a probe command and printing everything):
+  #   {1}, {2}   the remote NAME and URL git is pushing to — substituted from
+  #              git's hook argv. Available. Used by no-main-push below.
+  #   $1, $@     empty. lefthook does not set shell positionals.
+  #   stdin      empty. git puts the destination refs there; lefthook does not
+  #              forward it. This is why `git push origin HEAD:main` from a
+  #              feature branch cannot be caught here — the guard can see the
+  #              remote, never the refs.
+  # Commands with no file template (both below) run even when the push carries
+  # no changed files. An earlier version of this comment claimed the opposite
+  # and told you not to look into it; that was the pre-COMMIT skip
+  # ("no files for inspection") being misread. Re-measured 2026-07-28.
   #
-  # This is one more reason the real merge gate is `make protect` (GitHub
-  # branch protection), which no local trick can reach. These commands catch
-  # the ordinary mistake; they are not the wall.
+  # None of this makes these commands a wall. `--no-verify` and `LEFTHOOK=0`
+  # skip the hook outright. The gate that holds is off the host: `make protect`
+  # (GitHub branch protection). Do not mistake this for it.
   commands:
-    # ADVISORY, and deliberately labelled as such. This catches the common
-    # mistake (being on main and pushing) but CANNOT catch
-    # `git push origin HEAD:main` from a feature branch, because the destination
-    # refs arrive on git's stdin and lefthook 2.1.10 does not forward stdin to
-    # commands or scripts — measured: the hook's args come through
-    # ("origin <url>"), stdin is empty. `--no-verify` skips it entirely.
-    #
-    # The gate that actually holds is off the host: `make protect` (GitHub
-    # branch protection). Do not mistake this for it.
+    # ADVISORY. Catches the common mistake — being on main and pushing.
     no-main-push:
       run: |
         branch=$(git rev-parse --abbrev-ref HEAD)
         [ "$branch" = "main" ] || exit 0
-        remote=$(git config "branch.$branch.remote" 2>/dev/null || true)
+        # The remote being pushed to, NOT the one this branch tracks. Those
+        # differ as soon as a second remote exists, and the old code asked
+        # branch.<b>.remote (falling back to origin) — so it answered a
+        # question about a remote it was not pushing to. When the hook is run
+        # by hand with no args lefthook leaves the template unsubstituted, so a
+        # leading brace means "unknown" and we fall back. (The sentinel cannot
+        # be written out literally here: lefthook would substitute it too.)
+        remote='{1}'
+        case "$remote" in '{'*) remote=$(git config "branch.$branch.remote" 2>/dev/null || true) ;; esac
         [ -n "$remote" ] || remote=origin
         # Bootstrap exception. The FIRST push to a new repo is what creates
         # main on the remote; there is no PR path to take yet, and without
         # this branch `gh repo create --push` and `git push -u origin main`
         # are both blocked — a fresh project cannot be published at all.
         # Measured 2026-07-28 on hello-forge.
-        if git ls-remote --exit-code --heads "$remote" main >/dev/null 2>&1; then
-          echo "BLOCKED: direct push to main. Chunks land via PR." >&2
+        #
+        # FAIL CLOSED. `ls-remote` exits non-zero for "no such remote",
+        # "network down" and "auth failed" exactly as readily as for "this
+        # remote has no main". The old code treated every one of them as
+        # "must be a bootstrap" — measured 2026-07-28, an unreachable origin
+        # let a direct push to an existing main straight through. Only an
+        # ANSWER may unlock the exception; an error must never.
+        if heads=$(git ls-remote --heads "$remote" main 2>/dev/null); then
+          if [ -n "$heads" ]; then
+            echo "BLOCKED: direct push to main. Chunks land via PR." >&2
+            exit 1
+          fi
+          echo "bootstrap: $remote has no main yet — allowing the push that creates it" >&2
+        else
+          echo "BLOCKED: cannot reach '$remote' to tell whether main exists, so" >&2
+          echo "  this push cannot be shown to be a bootstrap. Refusing to guess." >&2
+          echo "  Push a branch and open a PR." >&2
           exit 1
         fi
-        echo "bootstrap: $remote has no main yet — allowing the push that creates it" >&2
     full-check:
       run: make check

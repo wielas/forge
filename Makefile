@@ -17,7 +17,11 @@ new:                           ## make new NAME=my-project [DEST=..]
 	@test -n "$(NAME)" || { echo "usage: make new NAME=my-project [DEST=..]"; exit 1; }
 	uvx copier copy templates/python-service $(or $(DEST),..)/$(NAME) --defaults \
 	  --data project_name="$(NAME)"
-	@echo "→ cd $(or $(DEST),..)/$(NAME) && git init && make setup && claude (/scope)"
+	@# `-b main` is not a style preference: the pre-push guard, ci.yml's
+	@# `push: branches: [main]` and `make protect` all hardcode main. On a host
+	@# where init.defaultBranch is not main, plain `git init` yields a repo in
+	@# which every one of those gates is silently inert.
+	@echo "→ cd $(or $(DEST),..)/$(NAME) && git init -b main && make setup && claude (/scope)"
 	@echo "→ then, once the GitHub repo exists: make protect"
 	@echo "   (branch protection is the ONLY merge gate — the pre-push hook is advisory)"
 

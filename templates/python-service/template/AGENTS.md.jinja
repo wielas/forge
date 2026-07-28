@@ -32,7 +32,10 @@ duplicate pushes and double-completed cards. Measured 2026-07-28.
   to make it pass; escalate instead.
 
 ## Conventions
-- Python {{ python_version }}, uv-managed. src layout: `src/{{ package_name }}/`.
+- Python {{ python_version }}, pinned in `.python-version` so this machine and
+  CI agree on the minor version rather than each resolving the newest they can
+  find (measured: 3.14 local vs 3.12 in CI before the pin). Patch versions may
+  still differ. uv-managed. src layout: `src/{{ package_name }}/`.
 - Commits: `type(<chunk-id>): imperative message`, granular.
 - Errors: raise specific exceptions; no bare except; log at boundaries only.
 

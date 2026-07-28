@@ -411,10 +411,10 @@ run_template_group() {
         "the push that creates main was blocked — a new project cannot be published: $(tail -2 "$TMPROOT/push1.log" | tr '\n' ' ')"
   fi
 
-  # A real file change, NOT --allow-empty. lefthook 2.1.10 skips every pre-push
-  # command when the push carries no changed files (measured 2026-07-28; there
-  # is no config key to disable it — see the template lefthook.yml), so an
-  # empty push tests the hole rather than the gate. Push what people push.
+  # A real file change, NOT --allow-empty: push what people push. (An empty
+  # commit works too — pre-push commands with no file template run regardless,
+  # re-measured 2026-07-28. An earlier comment here claimed they were skipped;
+  # that was the pre-COMMIT skip being misread. See the template lefthook.yml.)
   echo "# second" >> "$dest/README.md"
   git -C "$dest" add -A >/dev/null 2>&1
   git -C "$dest" -c user.email=v@v -c user.name=v commit -qm second >/dev/null 2>&1
@@ -422,6 +422,40 @@ run_template_group() {
     bad "main-push-blocked" "direct push to an existing main succeeded — the pre-push guard is inert"
   else
     ok "main-push-blocked"
+  fi
+
+  # Same push, but with the branch's TRACKED remote pointing somewhere that
+  # cannot be reached. The guard must judge the remote it is pushing to (`{1}`),
+  # and must never read "I could not find out" as "must be a bootstrap".
+  # Measured 2026-07-28: the old guard asked branch.main.remote, got an error,
+  # and allowed a direct push to a main that already existed.
+  git -C "$dest" remote add unreachable /nonexistent/nope.git 2>/dev/null
+  git -C "$dest" config branch.main.remote unreachable
+  echo "# third" >> "$dest/README.md"
+  git -C "$dest" add -A >/dev/null 2>&1
+  git -C "$dest" -c user.email=v@v -c user.name=v commit -qm third >/dev/null 2>&1
+  if git -C "$dest" push origin main >"$TMPROOT/push3.log" 2>&1; then
+    bad "main-push-guard-fails-closed" \
+        "an unreachable tracked remote turned the bootstrap exception into a licence to push to main"
+  else
+    ok "main-push-guard-fails-closed"
+  fi
+  git -C "$dest" config --unset branch.main.remote
+
+  # ADR-0003 says CI runs exactly what local runs. That holds for the command;
+  # it holds for the runtime underneath it only if the interpreter is pinned.
+  # Measured 2026-07-28: with only `requires-python = ">=3.12"` the local venv
+  # resolved to 3.14.6 while AGENTS.md said 3.12 — the project's own SSOT
+  # describing a runtime the project was not using.
+  local want have
+  want="$(tr -d '[:space:]' < "$dest/.python-version" 2>/dev/null)"
+  have="$("$dest/.venv/bin/python" -V 2>&1 | awk '{print $2}')"
+  if [ -z "$want" ]; then
+    bad "python-pinned" "no .python-version stamped — local and CI resolve interpreters independently"
+  elif [ "${have#"$want"}" != "$have" ]; then
+    ok "python-pinned ($have)"
+  else
+    bad "python-pinned" ".python-version says $want but the venv is $have"
   fi
 }
 
@@ -443,6 +477,8 @@ template/stamp,setup,hooks-installed,check-green
 template/gitignores-worktrees     .worktrees/ is ignored (dispatcher worktrees live in-repo)
 template/bootstrap-push-allowed   the push that CREATES main is allowed (real bare remote)
 template/main-push-blocked        every later direct push to main is refused
+template/main-push-guard-fails-closed  an unreachable tracked remote does not unlock the bootstrap exception
+template/python-pinned            .python-version is stamped and the venv actually uses it
 lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox has no network
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
 lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not ~/.cache/uv
