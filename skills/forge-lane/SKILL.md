@@ -107,7 +107,14 @@ UV_CACHE_DIR="$PWD/.forge/uv-cache" codex exec \
 - **`< /dev/null` is mandatory.** `codex exec` reads stdin; without it, it
   consumes whatever the parent had queued.
 - **`--add-dir "$(git rev-parse --git-common-dir)"`** — in a worktree the real
-  `.git` lives in the main repo, so `workspace-write` alone cannot commit.
+  `.git` lives in the main repo, so `workspace-write` alone cannot commit. Be
+  clear about what this buys: the sandbox banner reads `workspace-write
+  [workdir, /tmp, $TMPDIR, <repo>/.git]`, so Codex can write **all** of the
+  shared `.git` — `hooks/` (the whole L2 local tier), `refs/heads/main`,
+  `config`, and every other worktree's admin dir. Narrower grants were not
+  attempted because git needs objects, refs and the worktree admin dir
+  together; a wrong guess breaks committing, which cost a rung to get working.
+  Treat it as bounded instead: §5 checks the blast radius afterwards.
 - **There is no `--full-auto`** in codex-cli 0.145; `-s workspace-write` is the
   sandbox flag. Never use `--dangerously-bypass-approvals-and-sandbox`.
 - **`UV_CACHE_DIR` inside the worktree** — `uv run` writes its cache, and
@@ -135,12 +142,31 @@ unrelated refactors; that is a `kanban_block`, not a retry.
 
 ## 5. Verify it yourself
 
+Capture these **before** §4 runs, and compare after — §4's `--add-dir` hands
+Codex the whole shared `.git`, so "it only touched the worktree" is an
+assumption until you check it:
+
+```bash
+git rev-parse main                                    # must be unchanged
+git -C "$(git rev-parse --git-common-dir)" status --short hooks 2>/dev/null
+```
+
+A moved `main` or an edited hook is a `kanban_block`, never a retry — the run
+went outside its contract and you cannot tell what else it did.
+
 ```bash
 make check
 ```
 
 Run it **plain** — no `UV_CACHE_DIR`, no `UV_OFFLINE`. If §3 did its job this
 is the same command CI runs, which is the only reason its green means anything.
+
+That equivalence is not free, and it has already failed once: on 2026-07-28 a
+warm `.ruff_cache` in the worktree answered "All checks passed!" for bytes that
+a cold clone and CI both rejected. The template's `lint` target now runs ruff
+with `--no-cache` so the verdict cannot come from a cache. If you are working a
+project whose `Makefile` predates that, `rm -rf .ruff_cache` before you believe
+this step — and a green you cannot reproduce in a cold checkout is not a green.
 
 Codex's claim that it passed is advisory. **Not green is not done** — no
 `--no-verify`, and never weaken a scenario to make it pass. Read
