@@ -179,6 +179,7 @@ before blaming the model.
 | 5 | Hermes as orchestrator + flywheel; write_approval on; two-cron self-evolution (lane shape superseded by 0006) | [0005](docs/adr/0005-hermes-orchestrator-flywheel.md) |
 | 6 | A lane is a Hermes profile, not a program we write | [0006](docs/adr/0006-hermes-native-lanes.md) |
 | 7 | Two-tier judging: an unattended filter that can only bounce, then the operator | [0007](docs/adr/0007-two-tier-judge.md) |
+| 8 | Code dependencies wait for merged parent PRs; no implicit stacks | [0008](docs/adr/0008-integrated-dependencies.md) |
 
 How the substrate actually behaves — the traps, with the commands that exposed
 them — is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md). What we

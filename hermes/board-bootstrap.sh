@@ -71,22 +71,42 @@ create_card() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch
     "${@:6}"
 }
 
-# Same card, but --json so we can capture the id and link it. `create` is
-# idempotent on --idempotency-key: it returns the EXISTING id rather than
-# creating a duplicate, which is what makes re-running this script safe.
-create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch
-  create_card "$1" "$2" "$3" "$4" "$5" --json | jq -r '.id'
+# Same card, but --json so we can capture the id and use it as an atomic
+# --parent on later cards. `create` is idempotent on --idempotency-key: it
+# returns the EXISTING id rather than creating a duplicate, which is what makes
+# re-running this script safe.
+create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch [extra...]
+  create_card "$1" "$2" "$3" "$4" "$5" "${@:6}" --json | jq -r '.id'
 }
 
 # A chunk a human drives. It gets a REAL card, blocked so the dispatcher cannot
 # pick it up, because a skipped chunk is invisible to the graph — and its
 # dependents would then have no unmet prerequisite and auto-promote to ready.
-create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key
-  hermes kanban --board "$BOARD" create "$1" \
+create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [parent args...]
+  local cid state
+  cid=$(hermes kanban --board "$BOARD" create "$1" \
     --body "$(cat "$2")" \
-    --initial-status blocked \
+    --assignee forge-operator-handoff \
+    --initial-status running \
     --idempotency-key "$3" \
-    --json | jq -r '.id'
+    "${@:4}" \
+    --json | jq -r '.id')
+  state=$(hermes kanban --board "$BOARD" show "$cid" --json)
+  if printf '%s' "$state" | jq -e '.task.status == "running"' >/dev/null; then
+    hermes kanban --board "$BOARD" block --kind needs_input "$cid" \
+      "interactive chunk: human implementation required" >/dev/null
+    hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
+    state=$(hermes kanban --board "$BOARD" show "$cid" --json)
+  fi
+  printf '%s' "$state" | jq -e '
+    .task.status == "blocked"
+    and .task.assignee == null
+    and any(.events[]; .kind == "blocked")
+  ' >/dev/null || {
+    echo "FATAL: interactive card $cid is not sticky-blocked and unassigned" >&2
+    exit 1
+  }
+  printf '%s\n' "$cid"
 }
 
 if [ "$MODE" = "--hello" ]; then
@@ -126,52 +146,88 @@ fi
 jq -e 'type == "array" and length > 0' "$GRAPH" >/dev/null \
   || { echo "FATAL: $GRAPH is not a non-empty JSON array" >&2; exit 1; }
 
-# chunk id -> created card id, so edges can be created from chunk ids.
+# chunk id -> created card id. Cards are created in topological order so every
+# dependency can be passed as --parent in the SAME create transaction. The old
+# two-pass "create every card ready, then link" sequence left a dispatcher race:
+# a child could be claimed before its edge existed.
 # A flat TSV file, not an associative array: /usr/bin/env bash on macOS is 3.2,
 # where `declare -A` does not exist.
 IDMAP=$(mktemp)
 trap 'rm -f "$IDMAP"' EXIT
 card_id_of() { awk -F'\t' -v k="$1" '$1==k{print $2; found=1} END{exit !found}' "$IDMAP"; }
 
-while IFS=$'\t' read -r id lane; do
-  f="docs/chunks/$id.md"
-  [ -f "$f" ] || { echo "FATAL: $GRAPH names $id but $f does not exist" >&2; exit 1; }
-  title=$(head -1 "$f" | sed 's/^#* *//')
-  slug=$(printf '%s' "$id" | tr 'A-Z' 'a-z')
-  if [ "$lane" = "claude-interactive" ]; then
-    cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id")
-    echo "blocked  $id -> $cid (Lane: claude-interactive — run /start-chunk yourself)"
-  else
-    cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" "chunk/${slug#chunk-}")
-    echo "ready    $id -> $cid ($lane)"
-  fi
-  [ -n "$cid" ] && [ "$cid" != "null" ] \
-    || { echo "FATAL: no card id returned for $id" >&2; exit 1; }
-  printf '%s\t%s\n' "$id" "$cid" >> "$IDMAP"
-done < <(jq -r --arg lane "$LANE_ASSIGNEE" '.[] | [.id, (.lane // $lane)] | @tsv' "$GRAPH")
-
-# Edges. Declared count comes from the graph; created count is incremented only
-# on a link that actually succeeded. The two must agree or the board is a lie.
 declared=$(jq '[.[].depends_on // [] | length] | add // 0' "$GRAPH")
 created=0
-while IFS=$'\t' read -r child parent; do
-  parent_card=$(card_id_of "$parent") \
-    || { echo "FATAL: $child depends on $parent, which is not in $GRAPH" >&2; exit 1; }
-  child_card=$(card_id_of "$child") \
-    || { echo "FATAL: no card was created for $child" >&2; exit 1; }
-  # link <parent-id> <child-id>, positional, in that order.
-  if hermes kanban --board "$BOARD" link "$parent_card" "$child_card" >/dev/null; then
-    created=$((created + 1))
-    echo "edge     $parent -> $child"
-  else
-    echo "FATAL: link failed: $parent -> $child" >&2; exit 1
-  fi
-done < <(jq -r '.[] | .id as $c | (.depends_on // [])[] | [$c, .] | @tsv' "$GRAPH")
+total=$(jq 'length' "$GRAPH")
+while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$total" ]; do
+  progress=0
+  while IFS= read -r id; do
+    card_id_of "$id" >/dev/null 2>&1 && continue
+
+    lane=$(jq -r --arg id "$id" --arg lane "$LANE_ASSIGNEE" \
+      '.[] | select(.id == $id) | (.lane // $lane)' "$GRAPH")
+    deps=$(jq -r --arg id "$id" \
+      '.[] | select(.id == $id) | (.depends_on // [])[]' "$GRAPH")
+    parent_args=()
+    expected_parents=""
+    parents_ready=1
+    for parent in $deps; do
+      parent_card=$(card_id_of "$parent" 2>/dev/null) || {
+        parents_ready=0
+        break
+      }
+      parent_args+=(--parent "$parent_card")
+      expected_parents="${expected_parents}${parent_card}"$'\n'
+    done
+    [ "$parents_ready" = 1 ] || continue
+
+    f="docs/chunks/$id.md"
+    [ -f "$f" ] || {
+      echo "FATAL: $GRAPH names $id but $f does not exist" >&2
+      exit 1
+    }
+    title=$(head -1 "$f" | sed 's/^#* *//')
+    slug=$(printf '%s' "$id" | tr 'A-Z' 'a-z')
+    if [ "$lane" = "claude-interactive" ]; then
+      cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id" \
+        "${parent_args[@]}")
+      echo "blocked  $id -> $cid (Lane: claude-interactive — run /start-chunk yourself)"
+    else
+      cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" \
+        "chunk/${slug#chunk-}" "${parent_args[@]}")
+      if [ -n "$deps" ]; then
+        echo "todo     $id -> $cid ($lane; waiting on parents)"
+      else
+        echo "ready    $id -> $cid ($lane)"
+      fi
+    fi
+    [ -n "$cid" ] && [ "$cid" != "null" ] \
+      || { echo "FATAL: no card id returned for $id" >&2; exit 1; }
+
+    actual_parents=$(hermes kanban --board "$BOARD" show "$cid" --json \
+      | jq -r '.parents[]?' | sort)
+    expected_sorted=$(printf '%s' "$expected_parents" | sed '/^$/d' | sort)
+    [ "$actual_parents" = "$expected_sorted" ] || {
+      echo "FATAL: $id parent readback differs from graph" >&2
+      echo "       expected: ${expected_sorted:-none}" >&2
+      echo "       actual:   ${actual_parents:-none}" >&2
+      exit 1
+    }
+
+    printf '%s\t%s\n' "$id" "$cid" >> "$IDMAP"
+    created=$((created + ${#parent_args[@]} / 2))
+    progress=$((progress + 1))
+  done < <(jq -r '.[].id' "$GRAPH")
+
+  [ "$progress" -gt 0 ] || {
+    echo "FATAL: $GRAPH has a cycle or names a missing dependency" >&2
+    exit 1
+  }
+done
 
 if [ "$created" != "$declared" ]; then
-  echo "FATAL: created $created edges but $GRAPH declares $declared." >&2
-  echo "       A missing edge lets a child dispatch before its prerequisite." >&2
+  echo "FATAL: attached $created parents but $GRAPH declares $declared." >&2
   exit 1
 fi
 
-echo "board '$BOARD': $(wc -l < "$IDMAP" | tr -d ' ') cards, $created/$declared edges created."
+echo "board '$BOARD': $(wc -l < "$IDMAP" | tr -d ' ') cards, $created/$declared parents attached atomically."

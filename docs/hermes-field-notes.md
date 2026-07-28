@@ -71,6 +71,26 @@ either, board resolution falls back to the *persisted current board*, and cards
 land somewhere you did not intend. `hermes kanban link` takes positionals:
 `link <parent-id> <child-id>`.
 
+**A done parent card is not merged code.** Chunk cards complete when their PR
+opens, and Hermes promotes children on card completion. Measured on D1 → D2:
+D2 promoted in the same second PR #7 opened, found its required file absent
+from `main`, used a `dependency` block, and was promoted again one second later
+because D1 was already done. The retry rebased onto the unmerged D1 branch and
+opened a green PR whose diff contained both chunks; Tier 1 still scored scope
+discipline 3/3. Attach graph parents atomically with `--parent`, but separately
+gate code dependencies on the parent PR's non-null `mergedAt`. Wait with a
+sticky `needs_input` block, never `dependency`, and never invent a stacked PR.
+
+**Local and external skills with the same name collide at force-load time.**
+`hermes skills list` presents the local copy as enabled, but
+`hermes --skills <name>` searches every configured root and refuses two
+matches. Measured when `forge-lane` existed both in the profile-local skills
+directory and `skills.external_dirs`: the dispatcher worker exited immediately
+with `Unknown skill(s): forge-lane`. Keep exactly one live source. During this
+isolated exercise the lane profile's external directory points at the exercise
+worktree; the recoverable local duplicate is at
+`/private/tmp/forge-lane-local-override.before-dependency-20260728`.
+
 **`scratch` workspaces are deleted on completion.** Chunk cards must use
 `--workspace worktree`, which is preserved. The worktree is created **dispatcher-side**,
 before the worker exists: the dispatch loop calls
