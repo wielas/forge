@@ -54,18 +54,49 @@ For a project-linked card the workspace is `<repo>/.worktrees/<task-id>` and the
 main repo is two levels up. Worktrees are **preserved** on completion (scratch
 workspaces are deleted — chunk cards must never use `scratch`).
 
-## 3. Hand Codex the contract
+## 3. Make the worktree usable — Codex cannot
 
-Write the contract to a file rather than interpolating it into a shell string:
+**You have a network. The `workspace-write` sandbox does not**, and a
+dispatcher worktree is a fresh checkout with **no `.venv`**. Build it here or
+Codex lands somewhere `make check` cannot run — and it will not stop, it will
+improvise an environment and hand you a green from a command CI never runs
+(`docs/hermes-field-notes.md` § Codex).
+
+```bash
+git fetch origin                 # sandbox cannot; start-chunk §3 assumes it
+make setup                       # creates .venv + hooks; needs the network
+make check                       # baseline: green BEFORE the chunk starts
+```
+
+`make setup` failing is a `kanban_block`, not something to hand to Codex. A
+lane that ships a broken environment gets back a fabricated green.
+
+## 4. Hand Codex the contract
+
+Write the contract to a file rather than interpolating it into a shell string,
+and append the role boundary — **always**, whatever the card body says:
 
 ```bash
 mkdir -p .forge && kanban_show body → .forge/contract.md
+cat >> .forge/contract.md << 'EOF'
+
+---
+You implement this contract inside this worktree. That is your whole job.
+Do NOT push, do NOT open a PR, do NOT run `hermes` or touch the kanban board,
+do NOT read or follow `forge-lane`, `start-chunk` or `end-chunk` — those are
+the calling agent's protocol, not yours. Commit in small scoped commits.
+Never use --no-verify. `make check` must be green when you stop.
+EOF
 ```
+
+Load-bearing, not boilerplate. Reads are **not** sandboxed: the project's
+`AGENTS.md` names the ceremony skills, Codex follows the pointer into
+`skills/`, and without this it adopts *your* role — push, PR, board included.
 
 Then, from inside the worktree:
 
 ```bash
-codex exec \
+UV_CACHE_DIR="$PWD/.forge/uv-cache" codex exec \
   -C "$HERMES_KANBAN_WORKSPACE" \
   -s workspace-write \
   --add-dir "$(git rev-parse --git-common-dir)" \
@@ -79,6 +110,10 @@ codex exec \
   `.git` lives in the main repo, so `workspace-write` alone cannot commit.
 - **There is no `--full-auto`** in codex-cli 0.145; `-s workspace-write` is the
   sandbox flag. Never use `--dangerously-bypass-approvals-and-sandbox`.
+- **`UV_CACHE_DIR` inside the worktree** — `uv run` writes its cache, and
+  `~/.cache/uv` is outside the sandbox. Unset, Codex notices mid-run and
+  reroutes it somewhere of its own choosing; give it a writable path under
+  `.forge/` (gitignored) so every run resolves the same way.
 - Model: the pin lives in `~/.codex/config.toml` (`gpt-5.6-sol`, reasoning
   `xhigh`). Override per card with `-m <model>`; record whichever you used in
   the completion metadata.
@@ -98,28 +133,32 @@ reclaims a task that has been silent for an hour (stale timeout 4h). Kill the
 lane if Codex asks for credentials, edits outside the worktree, or starts
 unrelated refactors; that is a `kanban_block`, not a retry.
 
-## 4. Verify it yourself
+## 5. Verify it yourself
 
 ```bash
 make check
 ```
+
+Run it **plain** — no `UV_CACHE_DIR`, no `UV_OFFLINE`. If §3 did its job this
+is the same command CI runs, which is the only reason its green means anything.
 
 Codex's claim that it passed is advisory. **Not green is not done** — no
 `--no-verify`, and never weaken a scenario to make it pass. Read
 `git diff origin/main...HEAD` as a hostile reviewer before you believe the diff:
 dead code, debug leftovers, scope beyond the contract.
 
-## 5. PR
+## 6. PR
 
 ```bash
 git push -u origin HEAD
 gh pr create --title "<chunk id>: <title>" --body-file .forge/pr-body.md
 ```
 
-Reuse the PR if one already exists (`gh pr view --json url`). Never push to
-`main`.
+Reuse the PR if one already exists (`gh pr view --json url`) — and check,
+because a Codex run that ignored §4's boundary may have opened one already.
+Never push to `main`.
 
-## 6. Terminate — exactly once
+## 7. Terminate — exactly once
 
 Success path: create the tier-1 review card, then complete.
 

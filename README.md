@@ -114,7 +114,8 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `cli/` | every long flag named beside a command in `skills/`, `hermes/`, `docs/` must exist in that command's live `--help`; skill bodies carry no unverified-claim markers; descriptions fit the budget |
 | `config/` | timeout, consent gate, external dirs and skill scoping, read **per profile** — not from the gateway's profile, which no worker uses |
 | `substrate/` | behaviour we depend on and do not control: worktree ownership, `.git`-is-a-file, the codex sandbox commit |
-| `template/` | stamp → `make setup` → hooks really installed → `make check` green |
+| `template/` | stamp → `make setup` → hooks really installed → `make check` green → the pre-push gate exercised against a real bare remote, both ways: the push that *creates* `main` is allowed, every later one is refused |
+| `lane/` | what the lane must do **for** Codex because Codex cannot: build the venv while a network still exists, and state the role boundary in the prompt (reads are not sandboxed) |
 
 Run it in CI, after every `hermes update`, and after every `codex`/`claude`
 upgrade. A tool version bump that changes a flag or a sandbox rule should fail a

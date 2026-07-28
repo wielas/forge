@@ -164,6 +164,45 @@ parent had queued. It also refuses to run outside a git repo (fine inside a
 worktree; `--skip-git-repo-check` otherwise), and takes `--output-schema` for
 structured verdicts.
 
+**`workspace-write` has NO network.** Measured 2026-07-28 on the first real
+chunk: `git fetch origin` dies with `ssh: Could not resolve hostname
+github.com: -65563`, and `uv` cannot fetch a package. This matters more than it
+sounds, because a dispatcher worktree is a fresh checkout with **no `.venv`** —
+so `make check` cannot run inside the sandbox unless someone built the
+environment first. Codex does not stop when it hits this; it improvises. Ours
+copied the whole 1.3 GB `~/.cache/uv` into `/tmp` (writable under
+`workspace-write`) and ran everything under `UV_CACHE_DIR=… UV_OFFLINE=1` — 29
+shell calls before writing any code, and a "green" from a command CI never
+runs. `forge-lane` §3 now runs `make setup` + `git fetch` before handing over.
+
+**Only WRITES are sandboxed; reads are not.** Same run: Codex read
+`/Users/goonlab/dev/forge/skills/forge-lane/SKILL.md` and `start-chunk`, then
+announced it was *"using the Forge lane protocol"* — the calling agent's
+playbook, including "push, open the PR, operate the board". It followed the
+pointer in the project's own `AGENTS.md`. Nothing in the sandbox prevents this,
+so the role boundary has to be **stated in the prompt** (`forge-lane` §4) and
+`AGENTS.md` must scope the ceremony skills to the interactive operator.
+
+## lefthook
+
+**A push with no changed files skips every pre-push command.** lefthook 2.1.10,
+measured 2026-07-28:
+
+```
+│  full-check   (skip) no matching push files
+│  no-main-push (skip) no matching push files
+```
+
+Both commands reference no files at all and are skipped anyway, so an empty
+commit — or a merge with no diff — bypasses the branch guard *and* `make check`
+locally. **There is no config key for this.** 2.1.10 accepts only
+`env/exclude/fail_text/files/glob/interactive/only/priority/root/skip/
+stage_fixed/tags` per command; `skip_empty` is accepted by the YAML parser and
+silently dropped (`lefthook dump` shows it gone). It was added here on a
+misread test and removed the same day — do not add it back.
+
+One more reason the merge gate is `make protect`, not the hook.
+
 ## Claude Code, headless
 
 **`claude -p` authenticates headlessly with `CLAUDE_CODE_OAUTH_TOKEN`** — proven
