@@ -21,7 +21,8 @@ Scoring: 3 exemplary · 2 acceptable · 1 deficient (fixable) · 0 disqualifying
 - Dimensions 1–3 all ≥2 AND none = 1 → `approve`.
 - Otherwise, if every 1-scored finding is a genuinely non-blocking nit →
   `approve-with-nits`; else `bounce`.
-- CI red → `bounce` (`ci-red`) without scoring.
+- CI red → `bounce` (`ci-red`) without a model call; emit zeroes in every score
+  field as the schema's deterministic sentinel.
 
 ## Verdict JSON (exact shape — consumed by lane runner, Telegram gate, /retro)
 

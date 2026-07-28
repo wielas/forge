@@ -180,6 +180,14 @@ hourly on long work — the dispatcher reclaims a task running past
 `kanban.dispatch_stale_timeout_seconds` (4h) with no heartbeat in the last hour.
 A reclaim re-queues without penalty but loses the run's progress.
 
+**Crash-after-push is recoverable when the worktree and intent are durable.**
+Measured on card `t_6e2b8528`: run 8 pushed SHA `88ad60f`, recorded that SHA in
+a card comment, then was killed with signal 9 before PR creation. The dispatcher
+recorded the crash and immediately started run 9 against the same linked
+worktree. The retry read the durable marker, verified the clean tree and remote
+SHA, skipped the one-shot pause, did not invoke Codex again, and opened exactly
+one PR in 55 seconds.
+
 **Long work does not need forge machinery.** `terminal.timeout` (1800s) caps a
 *synchronous* command, but the terminal tool takes `background=True, pty=True,
 notify_on_complete=True` and the `process` tool polls it. That is native, so cap
@@ -188,6 +196,18 @@ chunk size for good reasons — not to dodge a timeout.
 **Bounce dynamics are board-native.** The respawn guard already refuses re-spawn
 on `blocker_auth` (quota/auth), `recent_success` and `active_pr`. Use
 `--max-retries` per card; do not invent a bounce loop.
+
+**A prejudge scratch workspace has no GitHub repository context.** Numeric
+commands such as `gh pr checks 10` fail there. On the first CI-red probe the
+worker spent a minute searching unrelated board workspaces for a clone before
+it could inspect the check. Pass the canonical PR URL to `gh pr checks` and
+`gh pr diff`; it carries owner, repository and number and works from scratch.
+
+**CI-red still needs canonical verdict metadata.** "No scoring" means skip the
+judging model, not skip `forge.judge.v1`. The first live red review routed its
+fix correctly but emitted one-off `forge.prejudge.v1.*` keys; `/retro` therefore
+could not count the observed bounce. Emit the schema's deterministic all-zero
+CI sentinel with a `ci-red` finding, `judge_model: "ci"` and zero model tokens.
 
 **`approvals.mode` cuts both ways.** `manual` makes an unattended worker wait for
 an approval nobody is there to give; `off` checks nothing on a `local` backend
