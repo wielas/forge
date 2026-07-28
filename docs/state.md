@@ -37,6 +37,8 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | The cheap driver holds the 7-section lane protocol | `deepseek-v4-flash` executed every section in order, narrating its position |
 | Both metadata schemas populate | `forge.chunk.v1` and `forge.judge.v1` complete on the real cards |
 | Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict |
+| Tier-1 discriminates | deliberate PR #6 was CI-green but assertion-free; prejudge `t_624586d7` scored scenario integrity 1 and bounced |
+| A bounce reaches the rejected PR | corrected fix `t_d159a76e` resumed the completed chunk's linked worktree; role probe `t_d36ec44e` made Codex author the repair |
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
 | Branch protection is a real merge gate | a red or unreviewed merge is refused by GitHub, not by prose |
@@ -56,8 +58,6 @@ in CI, after every `hermes update`, and after every `codex`/`claude` upgrade.
 - **Anything beyond n=2.** Two board-driven chunks, both small and both
   written to be easy. The protocol held twice; the *judgement* is still
   untested, because nothing has yet been hard enough to judge.
-- **A bounce.** Tier 1 has never rejected anything. Until it does, its filtering
-  is unproven in the only direction that matters.
 - **Retries, blocks, reclaims, the respawn guard.** No run has failed yet.
 - **Dependency graphs.** `graph.json` → `kanban link` has never run on a real
   multi-chunk roadmap.
@@ -113,10 +113,6 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    ruff-cache warning, so this got worse rather than better. Either the budget moves and `verify` enforces the new one, or
    the skill splits into a body plus `references/`. Unresolved on purpose — it
    is a judgement call, not a defect.
-3. **Perfect scores are not yet distinguishable from an undiscriminating filter.**
-   Now 3/3 on all six dimensions **twice in two chunks** (2026-07-28). Both were
-   written to be easy, so this still is not evidence either way — but the
-   pattern is now a streak, and only a deliberate bounce will break the tie.
 4. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
 
@@ -127,21 +123,16 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 The next run should introduce **exactly one** new variable. In rough order of
 value:
 
-1. **A chunk that should bounce.** Deliberately ship scenario theater — an
-   assertion-free Then-clause — and confirm tier 1 catches it, creates the fix
-   card, and the fix card gets picked up. This exercises the whole bounce path,
-   which has never run, and it is the cheapest way to learn whether the rubric
-   discriminates.
-2. **Two chunks with a real dependency edge**, to exercise `graph.json` →
+1. **Two chunks with a real dependency edge**, to exercise `graph.json` →
    `kanban link` and gated promotion.
+2. **Crash-after-push and CI-red recovery**, without combining the two faults.
 3. **A chunk with genuine ambiguity**, to test judgement rather than protocol.
 
 Do **not** run these together. The whole reason the first run succeeded is that
 nothing was ever tested with two unknowns in play.
 
-One thing rides along free on whichever you pick, because it needs only looking
-rather than a run of its own: **whether the rubric can say a number other than
-3.** Two chunks, twelve dimension scores, twelve 3s.
+The deliberate bounce answered the old watch item: the rubric can say something
+other than 3. It scored scenario integrity 1 and routed an executable fix.
 
 ---
 
