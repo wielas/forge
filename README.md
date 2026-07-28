@@ -122,35 +122,51 @@ upgrade. A tool version bump that changes a flag or a sandbox rule should fail a
 check, not a night run. When it disagrees with this README, **it is right and
 the prose is stale** — that is the whole point of having it.
 
-## Day-one risk burn-down: the hello-chunk test
+## Day-one risk burn-down: the hello-chunk test — PASSED 2026-07-28
 
-**This is the next thing to do, and nothing has been dispatched yet.** What is
-verified is what `make verify` executes — run it, and read its output rather
-than this sentence. Everything outside that suite is a claim, including the big
-one: that a real card flows end to end. Run the deliberately tiny path before
-trusting the lane with real work:
+The chain has run end to end, unattended, on the first attempt:
+
+```
+card t_1b7be3bb → dispatcher worktree → make setup → codex exec → make check
+→ push → PR #1 → CI green (8s) → prejudge approve → operator judge → merged
+```
+
+`forge-hello` board, `wielas/hello-forge`, 4 minutes, one run, no retries, no
+`crashed` reap. Both metadata schemas populated (`forge.chunk.v1`,
+`forge.judge.v1`). The baseline row is in [`docs/retro-metrics.md`](docs/retro-metrics.md).
+
+Reproduce it on any new project:
 
 ```bash
 make preflight                      # must be FAIL 0 before anything is dispatched
-make new NAME=hello-forge           # then push it to GitHub
-cd ../hello-forge
+make new NAME=hello-forge
+cd ../hello-forge && git init -b main . && make setup
+gh repo create hello-forge --public --source=. --remote=origin --push
+make protect
 ../forge/hermes/board-bootstrap.sh forge-hello --hello
 hermes kanban --board forge-hello watch
-hermes kanban --board forge-hello tail <task-id>    # live worker output
 ```
 
-Pass means the whole chain: claim → worktree → `codex exec` → `make check` green
-→ push → PR → `kanban_complete` with metadata → prejudge card appears.
+**What this proved that reading could not.** The ladder that got here ran in
+three rungs — a real repo with no agents, then `codex exec` driven by hand with
+no board, then the board — and each rung found defects invisible to the one
+below. Ten findings came out of it, none catchable by `make verify` as it stood,
+because the suite never pushed, never invoked Codex on a real chunk, and never
+left the host. The two that would have quietly ruined everything:
 
-Everything that can break — board flag placement, worktree lifecycle, the codex
-sandbox, gh auth, the lane model holding the protocol, metadata plumbing — breaks
-here, cheaply. When it does, `hermes kanban runs <task-id>` shows how the run
-ended; a `crashed` reap means the worker exited without a terminator. That is
-**not** automatically a model problem: skill text causes it too — a lane told to
-run a command that cannot succeed dies with no terminator and ticks the failure
-counter, which is exactly what the worktree-creation fallback did before F2
-removed it. Read the run output before blaming the model
-(see `docs/open-questions.md`).
+- **`workspace-write` has no network, and a dispatcher worktree has no `.venv`.**
+  Codex does not stop when it cannot run `make check` — it improvises. Ours
+  copied 1.3 GB of `~/.cache/uv` into `/tmp` and reported a green from a command
+  CI never runs. The lane now builds the environment first (`forge-lane` §3).
+- **Reads are not sandboxed.** Codex followed the template's `AGENTS.md` into
+  `skills/`, read `forge-lane` in full, and announced it was "using the Forge
+  lane protocol" — the *caller's* playbook, push and board operations included.
+  The lane now states the role boundary in every contract (`forge-lane` §4).
+
+When a run does fail, `hermes kanban runs <task-id>` shows how it ended; a
+`crashed` reap means the worker exited without a terminator. That is **not**
+automatically a model problem — skill text causes it too. Read the run output
+before blaming the model.
 
 ## Design commitments (summary — full rationale in ADRs)
 
@@ -201,6 +217,15 @@ is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md).
 - [ ] Claude Code hooks JSON schema in `adapters/claude/.../hooks/hooks.json`.
 - [x] Codex non-interactive flags — codex-cli 0.145.0 has NO `--full-auto`;
       the lane uses `-s workspace-write` (`skills/forge-lane/SKILL.md`).
+- [x] A real card end to end — burned down 2026-07-28, PR #1 merged.
+- [x] The lane's model holds the protocol — `deepseek-v4-flash`, first run.
+- [x] GitHub branch protection as the merge gate — active, and it refused a
+      merge until `required_approving_review_count` was corrected to 0 (the lane
+      pushes as the operator, who cannot approve their own PR).
+- [ ] The bounce path. Tier 1 has approved once and rejected nothing.
+- [ ] The Telegram approval flow.
 - [ ] Provider terms for automated subscription use, before this runs anywhere
       but the operator's own machine. ADR-0004 settles what *works* headlessly
       (measured); it deliberately does not answer what is *permitted*.
+
+Current status, and what to test next, is in [`docs/state.md`](docs/state.md).

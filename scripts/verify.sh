@@ -237,6 +237,20 @@ run_config_group() {
       *"$REPO_ROOT/skills"*) ok "external-dirs/$p";;
       *) bad "external-dirs/$p" "does not point at $REPO_ROOT/skills (got '${v:-unset}')";;
     esac
+
+    # A SOUL edited in git does NOT reach the worker: profiles-bootstrap.sh
+    # copies it into ~/.hermes/profiles/<p>/SOUL.md. Nothing else notices the
+    # drift, so a fix can look committed and merged while every run still uses
+    # the old identity. Measured 2026-07-28: the prejudge tier-2 fix was dead
+    # in the repo until the bootstrap was re-run.
+    if [ -f "hermes/profiles/$p.SOUL.md" ]; then
+      if diff -q "$HOME/.hermes/profiles/$p/SOUL.md" "hermes/profiles/$p.SOUL.md" \
+           >/dev/null 2>&1; then
+        ok "soul-in-sync/$p"
+      else
+        bad "soul-in-sync/$p" "live SOUL differs from git — run ./hermes/profiles-bootstrap.sh"
+      fi
+    fi
   done
 
   # F13: the unattended lane must not have the interactive ceremonies loaded.
@@ -419,6 +433,7 @@ cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim marke
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
 config/external-dirs/<profile>    points at this checkout's skills/
+config/soul-in-sync/<profile>     live ~/.hermes SOUL matches the one in git
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/board-default-workdir      every forge board has a worktree anchor
 substrate/worktree-ownership      dispatcher resolves the worktree before spawning
@@ -433,6 +448,8 @@ lane/role-boundary-prepended      every contract states codex must not push/PR/t
 lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not ~/.cache/uv
 lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
+lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
+lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
 EOF
   exit 0
 fi
@@ -500,6 +517,29 @@ run_lane_group() {
   else
     bad "template-agents-scopes-ceremonies" \
         "AGENTS.md.jinja must scope ceremony skills to the interactive operator"
+  fi
+
+  # An approval is a hand-off, not an ending. Without a tier-2 card the chunk
+  # and review cards both go `done`, the PR sits at REVIEW_REQUIRED, and
+  # nothing on the board says a human still owes it a look (measured
+  # 2026-07-28 on the first real chunk).
+  local soul=hermes/profiles/forge-prejudge.SOUL.md
+  if sed -n '/approve` \/ `approve-with-nits/,/bounce`:/p' "$soul" \
+       | grep -q 'kanban_create' ; then
+    ok "prejudge-approve-routes-to-tier2"
+  else
+    bad "prejudge-approve-routes-to-tier2" \
+        "prejudge's approve path must create a tier-2 card, or approved PRs strand"
+  fi
+
+  # A model cannot report its own id: the first real verdict claimed
+  # `claude-opus-4-8`, which does not exist. judge_model is schema-REQUIRED, so
+  # an invented value poisons provenance silently.
+  if grep -q -- '--model' "$soul" && grep -q 'Overwrite `judge_model`' "$soul"; then
+    ok "prejudge-judge-model-is-observed"
+  else
+    bad "prejudge-judge-model-is-observed" \
+        "prejudge must pass --model explicitly and stamp judge_model from it, not trust self-report"
   fi
 }
 wants lane      && run_lane_group

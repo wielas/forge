@@ -29,14 +29,22 @@ check: lint test  ## THE green proof — CI runs exactly this
 # it forwards the hook's args but NOT git's stdin, where the destination refs
 # are). The only gate that holds off the host is this one. Run it once, after
 # the GitHub repo exists.
+# required_approving_review_count is 0 ON PURPOSE. The lane pushes as the
+# operator's own GitHub account, and GitHub forbids approving your own PR — so
+# a count of 1 makes every agent-authored PR permanently unmergeable, by the
+# only human who could approve it. Measured 2026-07-28: "the base branch policy
+# prohibits the merge", with enforce_admins:true blocking the override too.
+# Human review still happens — it is the /judge step (ADR-0007 tier 2), off
+# GitHub. What this gate must enforce is what a human cannot fake: a PR exists,
+# CI is green on the merge commit, and main is never force-pushed or deleted.
 protect:          ## make CI a real merge gate (run once, needs admin on the repo)
 	@repo=$$(gh repo view --json nameWithOwner -q .nameWithOwner) || \
 	  { echo "no GitHub repo yet — 'gh repo create' first" >&2; exit 1; }; \
 	printf '%s' '{"required_status_checks":{"strict":true,"contexts":["check"]},' \
 	  '"enforce_admins":true,' \
-	  '"required_pull_request_reviews":{"required_approving_review_count":1},' \
+	  '"required_pull_request_reviews":{"required_approving_review_count":0},' \
 	  '"restrictions":null,"allow_force_pushes":false,"allow_deletions":false}' \
 	  | gh api -X PUT "repos/$$repo/branches/main/protection" --input - >/dev/null || \
 	  { echo "branch protection FAILED (admin rights? private repo on a free plan?)" >&2; exit 1; }; \
 	gh api "repos/$$repo/branches/main/protection" >/dev/null && \
-	  echo "branch protection active on $$repo main: 'check' required, no force-push, no deletion"
+	  echo "branch protection active on $$repo main: PR + green 'check' required, no force-push, no deletion"

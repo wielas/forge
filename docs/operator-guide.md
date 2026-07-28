@@ -102,6 +102,20 @@ hermes kanban assignees          # who the board can actually route to
 you modified. **Re-run `make preflight` after every update** — v0.18.2 → v0.19.0
 silently changed `approvals.mode` and `goals.max_turns`.
 
+**Reclaim merged chunk worktrees — nothing else will.** `worktree` workspaces
+are *preserved* on completion (only `scratch` is deleted), so every finished
+chunk leaves `<repo>/.worktrees/<task-id>` behind, holding its branch. You
+notice when `gh pr merge --delete-branch` fails with *"cannot delete branch …
+used by worktree"* (measured 2026-07-28, PR #1). After a merge:
+
+```bash
+git worktree remove --force .worktrees/<task-id>
+git branch -D chunk/<id>-<slug>
+```
+
+They are cheap but not free — each is a full checkout plus a `.venv` the lane
+built. Sweep them when the board is idle.
+
 ## Learning to judge — the skill that makes this work
 
 The judge rubric is your curriculum. Six dimensions, but only three catch what CI
