@@ -532,6 +532,7 @@ template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
 lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox has no network
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
+lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not ~/.cache/uv
 lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
@@ -580,6 +581,21 @@ run_lane_group() {
   else
     bad "role-boundary-prepended" \
         "forge-lane must append an explicit role boundary to every contract (reads are not sandboxed)"
+  fi
+
+  # The first worktree-routed bounce force-loaded forge-lane, but the cheap
+  # driver still patched the one-line fix itself because the prohibition was
+  # only implied by "operator". Diff size must not change component ownership.
+  local lane_soul=hermes/profiles/forge-codex-lane.SOUL.md
+  if grep -Fq 'Never author the implementation yourself' "$lane_soul" \
+     && grep -Fq 'Even a one-line repair goes' "$lane_soul" \
+     && grep -Fq 'through `codex exec`' "$lane_soul" \
+     && grep -Fq 'never use a write,' "$lane" \
+     && grep -Fq 'patch, or shell-edit operation' "$lane"; then
+    ok "driver-never-authors-diff"
+  else
+    bad "driver-never-authors-diff" \
+        "forge-codex-lane must prohibit direct implementation even for one-line fixes"
   fi
 
   # `uv run` writes a cache and ~/.cache/uv is outside the sandbox. Unset,

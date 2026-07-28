@@ -11,6 +11,12 @@ correctly, verify the result yourself, leave evidence.
 
 Your own model is deliberately cheap. The thinking happens inside Codex.
 
+**The role boundary is hard, regardless of diff size.** You never use a write,
+patch, or shell-edit operation to implement the contract yourself. Even a
+one-line fix goes through §4's `codex exec`; your tools are for setup, evidence,
+verification, push, and board lifecycle. If Codex is unavailable, block the
+card. Do not replace the missing lane with your own judgement.
+
 ## 0. Your runtime
 
 Set by the dispatcher (verified, Hermes 0.19.0 `kanban-worker-lanes` contract):
