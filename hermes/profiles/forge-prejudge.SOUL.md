@@ -40,18 +40,27 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    ```
    VERDICT_SCHEMA="$(jq -c 'del(."$schema")' \
      ~/.forge/rubrics/judge-verdict.schema.json)"
-   claude -p --model opus \
-     --json-schema "$VERDICT_SCHEMA" \
-     "<diff + contract>" < /dev/null
+   prompt_file="$(mktemp "${TMPDIR:-/tmp}/forge-prejudge-prompt.XXXXXX")"
+   # Write the rubric, contract, and diff to $prompt_file. Do not interpolate a
+   # diff into a shell argument: code punctuation is shell syntax.
+   verdict="$(
+     claude -p --model opus \
+       --json-schema "$VERDICT_SCHEMA" \
+       < "$prompt_file" \
+     | jq -ce --arg pr "<canonical PR url>" \
+         '.pr = $pr | .judge_model = "opus"'
+   )"
    ```
    The result validates against `forge.judge.v1`. Scoring and verdict logic live
    in `~/.forge/rubrics/judge-rubric.md` — read it before scoring.
 
-   **Overwrite `judge_model` with `opus`, the string passed to `--model`.** A model
-   cannot reliably report its own id: on 2026-07-28 the first real verdict came
-   back claiming `claude-opus-4-8`, which is not a model that exists. The field
-   is required by the schema, so an invented value silently poisons every
-   provenance question later. Yours is the only trustworthy source.
+   The `jq` normalization is mandatory: it overwrites `judge_model` with
+   `opus`, the string passed to `--model`, and stamps the canonical PR URL. A
+   model cannot reliably report its own id: on 2026-07-28 real verdicts came
+   back claiming `claude-opus-4-8` and `claude-opus-4`, neither of which was the
+   observed CLI argument. The field is required by the schema, so an invented
+   value silently poisons every provenance question later. Yours is the only
+   trustworthy source.
 5. Terminate — exactly once, and route the findings somewhere alive.
 
    **`approve` / `approve-with-nits`:** you are a filter, not the judge — an
@@ -73,6 +82,7 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    review_json="$(
      hermes kanban --board "$HERMES_KANBAN_BOARD" create "judge: <chunk id>" \
        --assignee forge-operator-handoff \
+       --created-by "$HERMES_KANBAN_TASK" \
        --body "$review_body" \
        --parent "<the chunk card id, i.e. your own parent>" \
        --idempotency-key "tier2-$HERMES_KANBAN_TASK" \
@@ -112,8 +122,9 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    it. A later unassigned `initial_status=blocked` probe was also promoted,
    assigned to the global `builder` default, and dispatched. `kanban_update`
    does not exist. The sentinel closes the create→block race, the real block
-   event makes the state sticky, `assign … none` restores human ownership, and
-   the read-back fails closed if any of those substrate facts change.
+   event makes the state sticky, `assign … none` restores human ownership,
+   `--created-by` gives the completion kernel verifiable provenance, and the
+   read-back fails closed if any of those substrate facts change.
 
    **`bounce`:** do **not** just block. Your card is a leaf child of a chunk card
    that is already `completed`; blocking yourself leaves the findings on a dead
@@ -161,3 +172,8 @@ Anything subtler than that is the operator's call, not yours. Pass it through.
   `kanban_complete` *and* a fix card — never a bare block, which strands the
   findings where no worker will ever read them. `kanban_block` is reserved for
   facts about the substrate (`ci-pending`), not verdicts about the work.
+- A rejected `kanban_complete(created_cards=[...])` is a substrate failure.
+  **Never retry it with `created_cards` empty or omitted.** Preserve the
+  evidence with `kanban_block(reason="handoff-integrity: completion kernel
+  rejected <card id>")`. Dropping the manifest makes an unverifiable hand-off
+  look complete.

@@ -629,6 +629,7 @@ run_lane_group() {
   # on a non-spawnable sentinel, makes the block sticky, then unassigns and
   # reads back the nested show --json shape.
   if printf '%s' "$approve_path" | grep -q -- '--assignee forge-operator-handoff' \
+     && printf '%s' "$approve_path" | grep -Fq -- '--created-by "$HERMES_KANBAN_TASK"' \
      && printf '%s' "$approve_path" | grep -q -- '--kind needs_input' \
      && printf '%s' "$approve_path" | grep -q 'assign "\$review" none' \
      && printf '%s' "$approve_path" | grep -q '.task.assignee == null' \
@@ -636,7 +637,20 @@ run_lane_group() {
     ok "prejudge-tier2-card-is-sticky"
   else
     bad "prejudge-tier2-card-is-sticky" \
-        "tier-2 hand-off must create safely, emit a sticky block, unassign, and read all three facts back"
+        "tier-2 hand-off must have worker provenance, emit a sticky block, unassign, and read all three facts back"
+  fi
+
+  # The completion kernel rejects a CLI-created card unless its provenance
+  # matches the current task. The first corrected live run then retried without
+  # created_cards, making the unverified hand-off look complete.
+  if printf '%s' "$approve_path" \
+       | grep -Fq -- '--created-by "$HERMES_KANBAN_TASK"' \
+     && grep -Fq 'Never retry it with `created_cards` empty or omitted' "$soul" \
+     && grep -Fq 'handoff-integrity: completion kernel' "$soul"; then
+    ok "prejudge-handoff-manifest-is-verifiable"
+  else
+    bad "prejudge-handoff-manifest-is-verifiable" \
+        "tier-2 CLI creation must carry task provenance, and a rejected manifest must fail closed"
   fi
 
   # Claude Code 2.1.212 takes inline JSON at --json-schema and rejects the
@@ -654,11 +668,13 @@ run_lane_group() {
   # A model cannot report its own id: the first real verdict claimed
   # `claude-opus-4-8`, which does not exist. judge_model is schema-REQUIRED, so
   # an invented value poisons provenance silently.
-  if grep -q -- '--model' "$soul" && grep -q 'Overwrite `judge_model`' "$soul"; then
+  if grep -q -- '--model opus' "$soul" \
+     && grep -Fq '.judge_model = "opus"' "$soul" \
+     && grep -Fq '.pr = $pr' "$soul"; then
     ok "prejudge-judge-model-is-observed"
   else
     bad "prejudge-judge-model-is-observed" \
-        "prejudge must pass --model explicitly and stamp judge_model from it, not trust self-report"
+        "prejudge must normalize PR and judge_model from observed inputs, not trust self-report"
   fi
 }
 wants lane      && run_lane_group
