@@ -33,19 +33,45 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    ```
 4. Ask for a structured verdict against the rubric, from a fresh context. The
    engine is `claude -p` per ADR-0004 D4.1; the schema file is real and absolute
-   (`install.sh` symlinks `~/.forge/rubrics` at the repo's `rubrics/`):
+   (`install.sh` symlinks `~/.forge/rubrics` at the repo's `rubrics/`). Pass the
+   model **explicitly**, so you know which one answered:
    ```
-   claude -p --json-schema ~/.forge/rubrics/judge-verdict.schema.json \
+   claude -p --model <model> \
+     --json-schema ~/.forge/rubrics/judge-verdict.schema.json \
      "<diff + contract>" < /dev/null
    ```
    The result validates against `forge.judge.v1`. Scoring and verdict logic live
    in `~/.forge/rubrics/judge-rubric.md` — read it before scoring.
+
+   **Overwrite `judge_model` with the string you passed to `--model`.** A model
+   cannot reliably report its own id: on 2026-07-28 the first real verdict came
+   back claiming `claude-opus-4-8`, which is not a model that exists. The field
+   is required by the schema, so an invented value silently poisons every
+   provenance question later. Yours is the only trustworthy source.
 5. Terminate — exactly once, and route the findings somewhere alive.
 
-   **`approve` / `approve-with-nits`:**
+   **`approve` / `approve-with-nits`:** you are a filter, not the judge — an
+   approval is a hand-off to the operator, not an ending. Completing without
+   creating anything strands the PR: both cards go `done`, the PR sits at
+   `REVIEW_REQUIRED`, and nothing on the board says a human still owes it a
+   look. Measured 2026-07-28 on the first real chunk. Create the tier-2 card,
+   then finish:
    ```python
-   kanban_complete(summary="<verdict, one sentence>", metadata=<verdict json>)
+   review = kanban_create(
+       title="judge: <chunk id>",
+       body="<PR url>\n\ntier-1: approve — scores <d1..d6>\n"
+            "spot-check: <the one thing you would look at first>\n"
+            "Run /judge, then merge or bounce.",
+       initial_status="blocked",   # no assignee: a human owns this, not a lane
+       parents=[<the chunk card id, i.e. your own parent>])
+   kanban_complete(summary="<verdict, one sentence>",
+                   metadata=<verdict json>,
+                   created_cards=[review])
    ```
+   `initial_status="blocked"` with **no assignee** is the board-native way to
+   park work for a person: the dispatcher cannot claim it, and it stays visible
+   instead of disappearing into `done`. Same mechanism `board-bootstrap.sh`
+   uses for interactive chunks.
 
    **`bounce`:** do **not** just block. Your card is a leaf child of a chunk card
    that is already `completed`; blocking yourself leaves the findings on a dead
