@@ -192,6 +192,33 @@ run_cli_group() {
   done
   [ "$over" = 0 ] && ok "skill-description-budget (all <= $limit chars)"
 
+  # The BODY budget, split in two because one number never fitted both kinds of
+  # skill. README asked for "well under ~150" across the board. The seven
+  # ceremonies sit at 43–89 and always have; `forge-lane` reached 283 and every
+  # attempt to call that a defect stalled, because it is not one — the ceremonies
+  # are read by an interactive operator alongside a whole project's context,
+  # while `forge-lane` IS the entire job of one dedicated unattended profile,
+  # and its length is accumulated measured failures, not prose. Cutting it means
+  # deleting the evidence for a defect somebody paid a run to find.
+  # So: two budgets, both met, both enforced. The lane's headroom is deliberately
+  # thin so the next addition forces a decision instead of drifting again.
+  # (README "A limit nothing meets is not a rule" — this is its mirror image.)
+  local cer_limit=150 lane_limit=300 body_over=0 lines base
+  for f in skills/*/SKILL.md; do
+    lines=$(wc -l < "$f" | tr -d ' ')
+    base=$(basename "$(dirname "$f")")
+    if [ "$base" = "forge-lane" ]; then
+      [ "$lines" -le "$lane_limit" ] || {
+        bad "skill-body-budget" "$f is $lines lines (lane protocol limit $lane_limit) — split to references/ or re-argue the budget"
+        body_over=1; }
+    else
+      [ "$lines" -le "$cer_limit" ] || {
+        bad "skill-body-budget" "$f is $lines lines (ceremony limit $cer_limit) — long material goes to rubrics/ or references/"
+        body_over=1; }
+    fi
+  done
+  [ "$body_over" = 0 ] && ok "skill-body-budget (ceremonies <= $cer_limit, lane <= $lane_limit)"
+
   # S2: the flywheel must have somewhere to record whether it worked, and
   # /retro must still be pointed at it. Prose that stops referencing its own
   # metric file is how a measured loop reverts to an accumulating one.
@@ -513,6 +540,7 @@ if [ "$LIST_ONLY" = 1 ]; then
   cat <<'EOF'
 cli/flags-exist                   every long flag named beside a tracked command exists in its --help
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
+cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 300
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
 config/external-dirs/<profile>    points at this checkout's skills/

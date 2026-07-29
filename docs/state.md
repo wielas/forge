@@ -56,8 +56,8 @@ per rung) reproduced the whole chain and found eight more findings — see
 run were confirmed working under load: Codex never read `forge-lane`, and it
 hit zero sandbox denials because §3 had built the venv first.
 
-`make verify` — 53 cases — is the executable form of most of the above. On this
-checkout it reports **52 pass, 0 fail, 1 opt-in Codex skip**. (Run from a
+`make verify` — 54 cases — is the executable form of most of the above. On this
+checkout it reports **53 pass, 0 fail, 1 opt-in Codex skip**. (Run from a
 different worktree it will fail `config/external-dirs` for every profile, which
 is not a defect: the check is checkout-relative and the live profiles point at
 whichever checkout last ran `profiles-bootstrap.sh`.) Run it in CI,
@@ -121,11 +121,14 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    behind, holding its branch — measured at **50 MB per chunk**, and
    `gh pr merge --delete-branch` fails every time because the worktree still
    holds the branch. Manual today (`docs/operator-guide.md`).
-2. **`forge-lane` is 220 lines** against README's "well under ~150". Was 194;
-   the 2026-07-28 ladder run added the `--add-dir` blast-radius note and the
-   ruff-cache warning, so this got worse rather than better. Either the budget moves and `verify` enforces the new one, or
-   the skill splits into a body plus `references/`. Unresolved on purpose — it
-   is a judgement call, not a defect.
+2. ~~**`forge-lane` exceeds the skill body budget.**~~ **Resolved 2026-07-29**
+   by splitting the budget rather than the skill. The seven ceremonies are
+   43–89 lines against a 150 limit; `forge-lane` is 283 against a new 300. It
+   is not a ceremony — it is the whole job of one dedicated unattended profile,
+   so the context cost that justifies 150 barely applies, and its length is
+   accumulated measured failures rather than prose. `cli/skill-body-budget`
+   now enforces both numbers. The lane's 17 lines of headroom are deliberate:
+   the next addition has to argue for itself.
 3. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
 
