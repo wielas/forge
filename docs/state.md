@@ -20,13 +20,17 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 2. `README.md` — the five layers and why.
 3. `docs/hermes-field-notes.md` — how the substrate really behaves. Every trap
    here cost a run to find.
-4. `docs/ladder-2026-07-28.md` — the second climb, on a fresh project. Eight
+4. `docs/ladder-2026-07-28.md` — the second climb, on a fresh project. Sixteen
    findings with the commands that produced them, including the two that
    defeated a gate: a `make check` green that CI rejected, and a tier-2 human
    card the dispatcher claimed.
-5. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
+5. `docs/experiment-2026-07-28.md` — the four exercises that made the system
+   fail on purpose: the deliberate bounce, the dependency edge, a killed
+   worker, a red CI. Read with `docs/adr/0008-integrated-dependencies.md`,
+   which is what the dependency exercise cost.
+6. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
    record of what reading-only analysis can and cannot catch.
-6. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
+7. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
    improving".
 
 ---
