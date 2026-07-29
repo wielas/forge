@@ -173,7 +173,7 @@ Those, and the rest, are in
 [`docs/ladder-2026-07-28.md`](docs/ladder-2026-07-28.md) with the commands that
 produced them; the deliberate bounce, the dependency edge and the CI-red repair
 are in [`docs/experiment-2026-07-28.md`](docs/experiment-2026-07-28.md). The
-suite is 53 cases now, not because cases are good but because each one is a
+suite is 54 cases now, not because cases are good but because each one is a
 defect that got out.
 
 When a run does fail, `hermes kanban runs <task-id>` shows how it ended; a
@@ -208,8 +208,18 @@ have deliberately not decided yet is in
   and 60 chars cannot carry both the "what" and the "when". If ≤60 is the real
   rule, the skills are wrong and must be rewritten — pick one and let
   `make verify` enforce it. A limit nothing meets is not a rule.
-- Bodies stay well under ~150 lines; long material goes to `rubrics/` or a
-  skill-local `references/` dir (progressive disclosure).
+- Bodies have **two** budgets, because one number never fitted both kinds of
+  skill, and `make verify` enforces both:
+  - **Ceremonies ≤ 150 lines.** The seven are 43–89 and always have been. They
+    are read by an interactive operator alongside a whole project's context, so
+    every line competes with the work. Long material goes to `rubrics/` or a
+    skill-local `references/` dir (progressive disclosure).
+  - **`forge-lane` ≤ 300 lines** (283 today). It is not a ceremony: it is the
+    entire job of one dedicated unattended profile, so the context argument that
+    justifies 150 is at its weakest exactly there — and its length is
+    accumulated *measured failures*, not prose. Cutting it means deleting the
+    evidence for a defect somebody paid a run to find. The headroom is
+    deliberately thin: the next addition should force a decision, not a drift.
 - If a rule MUST hold, it does not belong in a skill at all — move it down to
   lefthook/CI (L2). Skills persuade; gates enforce.
 - Six sharp skills beat twenty exhaustive ones. Additions go through /retro.
