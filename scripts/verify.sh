@@ -770,6 +770,26 @@ run_lane_group() {
         "a bounce must resume the completed chunk's real PR worktree with forge-lane forced, never default to scratch"
   fi
 
+  # That intentionally open PR is the repair target, not an unmet upstream
+  # integration dependency. The lane exemption must be provenance-checked so a
+  # normal child cannot bypass the corrected merged-parent gate with prose.
+  local lane_gate
+  lane_gate="$(sed -n '/### 1a\./,/## 2\./p' "$lane")"
+  if printf '%s' "$lane_gate" | grep -Fq 'workspace_kind="dir"' \
+     && printf '%s' "$lane_gate" | grep -Fq 'Repair this existing PR branch only.' \
+     && printf '%s' "$lane_gate" | grep -Fq 'created_by' \
+     && printf '%s' "$lane_gate" | grep -Fq 'verdict="bounce"' \
+     && printf '%s' "$lane_gate" | grep -Fq 'names the same PR' \
+     && printf '%s' "$lane_gate" | grep -Fq 'Every other parent PR still requires' \
+     && printf '%s' "$lane_gate" | grep -Fq '`dir` workspace' \
+     && printf '%s' "$lane_gate" | grep -Fq 'not an exemption' \
+     && printf '%s' "$lane_gate" | grep -Fq 'do not fetch/rebase'; then
+    ok "lane/bounce-repair-skips-only-own-open-pr"
+  else
+    bad "lane/bounce-repair-skips-only-own-open-pr" \
+        "the lane may skip an open parent PR only for a provenance-checked bounce repair in that rejected worktree"
+  fi
+
   # Review cards intentionally run in scratch. On the first CI-red probe,
   # `gh pr checks 10` failed outside a repository and the worker spent a minute
   # searching unrelated workspaces for any clone. A canonical PR URL gives gh
