@@ -54,6 +54,22 @@ gh pr view "$parent_pr" \
 
 Every such PR must have a non-null `mergedAt`. If one is still open:
 
+First test the narrow bounce-remediation exception. The open parent PR is the
+repair target only when **all** hold:
+
+1. this card's sole completed parent owns that handoff PR;
+2. `workspace_kind="dir"` and `workspace_path` exactly match the parent;
+3. the body names the same PR and says `Repair this existing PR branch only.`;
+4. `created_by` is a completed judge card parented to that chunk whose canonical
+   `forge.judge.v1` says `verdict="bounce"` and names the same PR; and
+5. this card carries `skills=["forge-lane"]`.
+
+Then skip that PR only, do not fetch/rebase, and repair the preserved branch.
+Every other parent PR still requires a non-null `mergedAt`. A `dir` workspace
+alone, a `fix:` title, PR prose, or an operator comment is not an exemption.
+
+Otherwise:
+
 1. comment with the PR, its state, and `reason_class=failing-prereq`;
 2. call `kanban_block(kind="needs_input", reason="failing-prereq: parent PR … is not merged")`;
 3. stop without changing the branch.
