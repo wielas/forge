@@ -552,22 +552,53 @@ if [ "$HAVE_HERMES" = 1 ]; then
   # `assignees` is BOARD-SCOPED — reading it without a board only ever inspects
   # the persisted current board, which is exactly the board a forge card is
   # least likely to be on. Walk every board.
+  #
+  # Two refinements, both learned the moment this check met the tier-2 fix:
+  #   * Only `ready` counts. A ghost assignee on a `done` card is history, not a
+  #     stuck card; warning about it is noise that hides the real one.
+  #   * The tier-2 hand-off parks on a sentinel assignee that is SUPPOSED not to
+  #     exist — that is the whole mechanism keeping the human's card away from
+  #     the dispatcher. Warning about it would be backwards, so the sentinel is
+  #     read out of the SOUL (never hardcoded twice) and checked in reverse:
+  #     the failure is that name EXISTING.
+  # NOTE: $FORGE_DIR is resolved further down this script, so it is not usable
+  # here. Derive the checkout from this script's own location instead.
+  SELF_REPO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
+  SENTINEL="$(sed -n 's/.*--assignee \(forge-operator-handoff\).*/\1/p' \
+              "$SELF_REPO/hermes/profiles/forge-prejudge.SOUL.md" 2>/dev/null | head -1)"
   GHOSTS=""
   for b in $(hermes kanban boards list --json 2>/dev/null | jq -r '.[].slug' 2>/dev/null); do
     for g in $(HERMES_KANBAN_BOARD="$b" hermes kanban assignees 2>/dev/null \
-               | awk 'NR>1 && $2=="no" && NF>=3 {print $1}'); do
+               | awk -v s="$SENTINEL" \
+                 'NR>1 && $2=="no" && NF>=3 && $1!=s && $0 ~ /ready=/ {print $1}'); do
       GHOSTS="$GHOSTS $b/$g"
     done
   done
   if [ -n "$GHOSTS" ]; then
     for g in $GHOSTS; do
-      warn "cards on board '${g%%/*}' are assigned to '${g##*/}', which has no profile on disk"
+      warn "board '${g%%/*}' has READY cards assigned to '${g##*/}', which has no profile on disk"
       say  "      they will never be dispatched and never fail — they just sit in"
       say  "      'ready'. Either create the profile or reassign/park the cards."
       say  "      A ghost assignee is a card parked by luck, not by design."
     done
   else
-    pass "every assignee with cards has a profile on disk (all boards)"
+    pass "no ready card is parked on a non-existent profile (all boards)"
+  fi
+
+  # The sentinel, inverted. If a profile is ever created under this name, every
+  # tier-2 card the hand-off has parked becomes claimable and ADR-0007's second
+  # tier silently collapses into the first — the exact 2026-07-28 failure, but
+  # with no code change to blame it on.
+  if [ -z "$SENTINEL" ]; then
+    warn "could not read the tier-2 sentinel assignee out of forge-prejudge.SOUL.md"
+    say  "      the hand-off may have been rewritten; re-check it by hand."
+  elif [ -d "$HOME/.hermes/profiles/$SENTINEL" ]; then
+    fail "a profile exists at ~/.hermes/profiles/$SENTINEL"
+    say  "      that name MUST stay unspawnable: it is what keeps parked tier-2"
+    say  "      review cards away from the dispatcher. Delete it, or the human"
+    say  "      gate becomes claimable by a lane again (ADR-0007)."
+  else
+    pass "tier-2 sentinel '$SENTINEL' is correctly absent from disk"
   fi
 fi
 
