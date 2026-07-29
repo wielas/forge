@@ -164,14 +164,17 @@ left the host. The two that would have quietly ruined everything:
   The lane now states the role boundary in every contract (`forge-lane` §4).
 
 **The ladder was climbed a second time on 2026-07-28**, on a fresh project and
-with the gates attacked rather than merely exercised — eight more findings, and
+with the gates attacked rather than merely exercised. Sixteen more findings, and
 again not one of them catchable by reading or by `make verify` as it then stood.
 Two defeated a gate outright: a warm `.ruff_cache` returned a `make check` green
-that CI rejected, and the *human* tier-2 review card was dispatched to a lane,
-collapsing ADR-0007's two tiers into one. Both, and the six others, are in
+that CI rejected, and the *human* tier-2 review card was dispatched to a lane —
+handing the operator's review to the model that had just approved the work.
+Those, and the rest, are in
 [`docs/ladder-2026-07-28.md`](docs/ladder-2026-07-28.md) with the commands that
-produced them. The suite is 43 cases now, not because cases are good but
-because each one is a defect that got out.
+produced them; the deliberate bounce, the dependency edge and the CI-red repair
+are in [`docs/experiment-2026-07-28.md`](docs/experiment-2026-07-28.md). The
+suite is 53 cases now, not because cases are good but because each one is a
+defect that got out.
 
 When a run does fail, `hermes kanban runs <task-id>` shows how it ended; a
 `crashed` reap means the worker exited without a terminator. That is **not**
