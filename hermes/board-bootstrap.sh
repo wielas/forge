@@ -169,6 +169,7 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$total" ]; do
     deps=$(jq -r --arg id "$id" \
       '.[] | select(.id == $id) | (.depends_on // [])[]' "$GRAPH")
     parent_args=()
+    parent_count=0
     expected_parents=""
     parents_ready=1
     for parent in $deps; do
@@ -177,6 +178,7 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$total" ]; do
         break
       }
       parent_args+=(--parent "$parent_card")
+      parent_count=$((parent_count + 1))
       expected_parents="${expected_parents}${parent_card}"$'\n'
     done
     [ "$parents_ready" = 1 ] || continue
@@ -189,12 +191,21 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$total" ]; do
     title=$(head -1 "$f" | sed 's/^#* *//')
     slug=$(printf '%s' "$id" | tr 'A-Z' 'a-z')
     if [ "$lane" = "claude-interactive" ]; then
-      cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id" \
-        "${parent_args[@]}")
+      if [ "$parent_count" -eq 0 ]; then
+        cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id")
+      else
+        cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id" \
+          "${parent_args[@]}")
+      fi
       echo "blocked  $id -> $cid (Lane: claude-interactive — run /start-chunk yourself)"
     else
-      cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" \
-        "chunk/${slug#chunk-}" "${parent_args[@]}")
+      if [ "$parent_count" -eq 0 ]; then
+        cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" \
+          "chunk/${slug#chunk-}")
+      else
+        cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" \
+          "chunk/${slug#chunk-}" "${parent_args[@]}")
+      fi
       if [ -n "$deps" ]; then
         echo "todo     $id -> $cid ($lane; waiting on parents)"
       else
@@ -215,7 +226,7 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$total" ]; do
     }
 
     printf '%s\t%s\n' "$id" "$cid" >> "$IDMAP"
-    created=$((created + ${#parent_args[@]} / 2))
+    created=$((created + parent_count))
     progress=$((progress + 1))
   done < <(jq -r '.[].id' "$GRAPH")
 

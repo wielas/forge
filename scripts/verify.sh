@@ -667,6 +667,8 @@ run_lane_group() {
   # card's create transaction, then reads the parents back.
   local bootstrap=hermes/board-bootstrap.sh
   if grep -Fq 'parent_args+=(--parent "$parent_card")' "$bootstrap" \
+     && grep -Fq 'if [ "$parent_count" -eq 0 ]' "$bootstrap" \
+     && grep -Fq 'created=$((created + parent_count))' "$bootstrap" \
      && grep -Fq '"${@:6}" --json' "$bootstrap" \
      && grep -Fq '.parents[]?' "$bootstrap" \
      && ! sed -n '/# full mode:/,$p' "$bootstrap" \
