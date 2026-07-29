@@ -1,8 +1,10 @@
 # Forge — current state
 
 **Updated 2026-07-28, after a second full climb of the ladder on a fresh
-project (`ladder-forge`). The first run proved the chain runs; this one
-attacked it.**
+project (`ladder-forge`), plus the four exercises that followed it. The first
+run proved the chain runs; this one attacked it, and the exercises made it fail
+on purpose — a deliberate bounce, a dependency edge, a killed worker and a red
+CI. Two sessions ran that day and their histories are reconciled here.**
 
 This is the orientation doc for a session starting with no context. It says what
 is *proven*, what is merely *claimed*, and what to do next. `README.md` is the
@@ -54,10 +56,11 @@ per rung) reproduced the whole chain and found eight more findings — see
 run were confirmed working under load: Codex never read `forge-lane`, and it
 hit zero sandbox denials because §3 had built the venv first.
 
-`make verify` — 53 cases — is the executable form of most of the above. In the
-isolated commissioning worktree it currently reports 49 pass, three deliberate
-`external_dirs` mismatches (the untouched digest/orchestrator/prejudge profiles
-still point at the original checkout), and one opt-in Codex skip. Run it in CI,
+`make verify` — 53 cases — is the executable form of most of the above. On this
+checkout it reports **52 pass, 0 fail, 1 opt-in Codex skip**. (Run from a
+different worktree it will fail `config/external-dirs` for every profile, which
+is not a defect: the check is checkout-relative and the live profiles point at
+whichever checkout last ran `profiles-bootstrap.sh`.) Run it in CI,
 after every `hermes update`, and after every `codex`/`claude` upgrade.
 
 ## Not proven (do not write these into a skill body)
