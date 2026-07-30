@@ -7,16 +7,53 @@ from a regression, and every proposal was equally defensible.
 Three numbers, recorded once per retro period. They are deliberately few. A
 number nobody reads is worse than no number, because it looks like rigour.
 
+## Who computes these
+
+`scripts/metrics.sh`, and nothing else:
+
+```bash
+make metrics BOARD=<slug> [SINCE=YYYY-MM-DD] [UNTIL=YYYY-MM-DD]
+./scripts/metrics.sh <slug> --since .. --until .. --markdown-row   # a Log row
+```
+
+Every row below the separator in the Log is pasted from `--markdown-row`. This
+is not ceremony. Until 2026-07-30 the numbers were derived by a language model
+reading printed board output, and every way that could fail, it did: the bounce
+rate read `0.00` for a run with 12 bounces (F3), one row reads `n/a` because a
+key was misspelled, the largest run in the project's history had no row at all,
+and 22 malformed chunk envelopes went unseen for three days. See audit F27.
+**Deriving any of these by hand is a defect, not a fallback.**
+
 ## The three numbers
 
 ### 1. Bounce rate
 
-**Definition:** `bounced chunk cards / completed chunk cards`, over the period.
-A chunk counts as bounced if any tier-1 verdict against it was `bounce`, even if
-a later attempt was approved — the cost was already paid.
+**Definition:** `bounced chunk cards / chunk cards judged at that tier`, over
+the period, **reported separately for tier 1 and tier 2**. A chunk counts as
+bounced if **any** verdict against it was `bounce`, even if a later attempt was
+approved — the cost was already paid.
 
-**Source:** `forge.judge.v1` verdicts in card metadata (`.verdict == "bounce"`),
-counted against completed chunk cards on the period's boards.
+**Source:** canonical `forge.judge.v1` verdicts on `task_runs`, attributed to
+the chunk card the reviewed card hangs off. Tier comes from the `profile` of the
+run carrying the verdict — `forge-prejudge` is tier 1, everything else including
+an operator's unassigned card is tier 2 — never from the card title.
+
+**Changed 2026-07-30 (F3), and this is the correction that motivated it.** The
+old definition counted tier-1 verdicts only. Tier 1 bounced **0 of 17** on the
+`forgeboard-report` run while tier 2 bounced **12**, so the published figure for
+the largest run to date was `0.00` — blind to the run's dominant failure mode
+*by construction*. A single blended rate would have hidden it just as well in
+the other direction, so the two tiers are reported side by side: they measure
+different filters, and the gap between them is itself the diagnostic.
+
+**Denominator honesty.** A chunk that was never judged at a tier cannot have
+bounced at it, so the denominator is chunk cards that received at least one
+canonical verdict at that tier — not all completed chunks. When those differ, the
+gap is a metadata-discipline problem and belongs in the row's prose. Chunk cards
+are identified by card **shape** (a completed card parenting a `forge-prejudge`
+card, or one with a `forge-codex-lane` run), never by "carries a chunk
+envelope" — that would drop malformed runs out of the denominator and hide the
+exact defect the envelope count exists to find.
 
 **Reads as:** how often work reaches review in a state review rejects. Rising
 means chunks are too big, contracts too vague, or the lane model too weak — the
@@ -37,11 +74,22 @@ made review more permissive.
 
 ### 3. `reason_class` distribution
 
-**Definition:** counts per `reason_class` from `forge.block.v1` metadata on
-blocked cards: `stale-spec`, `failing-prereq`, `env`, `ci-red`, `judge-bounce`,
-`other`.
+**Definition:** counts per class over the period's `blocked` events, where the
+class is the leading `<token>:` of the block reason. Documented vocabulary:
+`stale-spec`, `failing-prereq`, `env`, `ci-red`, `judge-bounce`,
+`gate-misrouted`, `other`. Anything whose reason does not begin with a bare
+lowercase slug is `(unclassified)`; a class outside the vocabulary is counted
+and flagged rather than folded into `other`.
 
-**Source:** `forge.block.v1` in blocked-card metadata.
+**Source:** `task_events.payload.reason` where `kind='blocked'`.
+
+**Not `forge.block.v1` — that envelope has never existed and cannot (F26).**
+`kanban_block` takes no metadata parameter, so nothing can carry it; the count
+of runs carrying it is printed on every report and has always been 0. The
+leading-token convention is what emerged instead, and it is followed about a
+quarter of the time, which is why `(unclassified)` is large and load-bearing.
+A period dominated by `(unclassified)` is not a period without problems — it is
+a period whose *producers* are broken, and that is the finding.
 
 **Reads as:** where the system loses runs. It is a distribution, not a scalar,
 on purpose — the shape names the layer to fix. A period dominated by `stale-spec`
@@ -79,6 +127,11 @@ One row per retro. Newest last.
 | 2026-07-28 | controlled bounce, PR #6 (`forge-ladder`) | 1.00 (1/1) | 2.33 (1 verdict) | empty (0 blocked cards) | worktree route, hard driver boundary, clean-worktree proof | yes for routing/role; clean proof awaits the next lane |
 | 2026-07-28 | dependency D1 → D2 (`forge-dependency-clone-20260728`) | 0.00 (0/2) | 3.00 (2 verdicts) | `failing-prereq` ×1 | atomic parent creation, merged-PR gate, no implicit stacks | no — 3/3 scope score missed D1 files in D2 PR |
 | 2026-07-28 | CI-red recovery, PR #10 (`forge-dependency-clone-20260728`) | n/a — observed bounce used noncanonical metadata | 3.00 (1 green verdict; red sentinel absent) | empty (0 blocked cards) | repo-independent `gh`; canonical CI-red verdict | yes — worktree repair and clean proof both held live |
+
+*Rows below this line are generated by `scripts/metrics.sh --markdown-row`. Only
+the last two columns are written by a human.*
+
+| 2026-07-30 | forge-ladder, 2026-07-29..2026-07-30 | t1 0.00 (0/7) · t2 0.71 (12/17) | 2.19 (24 verdicts) | `(unclassified)` ×20, `failing-prereq` ×8, `review-required` ×1 | `make metrics` (F27): the three numbers become a program | **cannot tell** — no CI-red bounce occurred, so last period's canonical CI-red verdict was never exercised |
 
 **Baseline (2026-07-28).** `CHUNK-HELLO-1` on board `forge-hello`: card
 `t_1b7be3bb` completed on its first run, prejudge `t_1570a10e` returned
@@ -151,6 +204,42 @@ opened PR #7. Its first `dependency` block immediately auto-promoted because
 the linked card was already done; its retry invented a stack, and PR #8 showed
 six D1+D2 files against `main`. Tier 1 still returned 3/3 scope discipline.
 ADR-0008 moves the gate to parent `mergedAt` and keeps the wait sticky.
+
+**`forgeboard-report` row (2026-07-30) — the first machine-generated row, and
+the one this file was missing.** Six chunks, five merged, on board
+`forge-ladder`; the largest run in the project's history and, until now, the
+only one with no row at all. Reproduce it with
+`make metrics BOARD=forge-ladder SINCE=2026-07-29 UNTIL=2026-07-30`.
+
+- **`t1 0.00 (0/7) · t2 0.71 (12/17)` is the whole of F3 in one cell.** The old
+  definition would have published `0.00` for this run. Tier 1 approved
+  everything it looked at; tier 2 bounced 12 of the 17 chunk cards it judged.
+  Both numbers are true, and reporting only the first was the defect.
+- **Tier 1's denominator is 7, not 17, and that is a finding rather than a
+  sample size.** Seventeen prejudge runs executed in this window; only **7**
+  carry canonical `forge.judge.v1`. The other ten have the right *shape* and no
+  `schema` key, so nothing can count them. They are not backfilled here. The
+  honest reading is that tier 1's rate covers under half of tier 1's work.
+- **`(unclassified)` ×20 is the F26 story, measured.** Twenty-two of this
+  board's block events read `tier-2 operator review required: …`, which carries
+  no class token. `forge.block.v1` runs: **0**, as always.
+- **Zero conforming chunk envelopes.** All 17 chunk completions in the window
+  nest under `$."forge.chunk.v1"`; none uses the documented flat shape. That
+  count is why `forgeboard-report` exits 4 on the board that built it (F1), and
+  it was available in SQL from the first day of the run.
+- **Operator touches: 9 (1 comment + 8 unblocks).** This is a floor, not a
+  count. The operator drove 17 tier-2 reviews off-board, closed 4 PRs by hand
+  and assembled every review prompt manually; none of that touches the board, so
+  none of it is here (F31). A metric that cannot see the human is exactly how a
+  change that improves all three numbers while costing more operator time gets
+  called an improvement.
+
+**One correction this row makes to the audit that commissioned it.** The audit
+reports mean tier-2 d1–3 as **1.90** (§"The run, in numbers", F3, F27). It is
+**1.88** — 96 dimension points over 51 dimensions, 17 verdicts, no nulls. The
+board-lifetime figures in F27 all reproduce exactly, and they are the ones that
+came with an executed query attached; 1.90 was asserted in prose beside it. The
+audit's own thesis, arriving one day early and at its own expense.
 
 **CI-red row.** The operational loop worked: Tier 1 saw red, created fix card
 `t_0a443d25` in the rejected branch's worktree, the lane removed only the
