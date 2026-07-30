@@ -11,18 +11,31 @@ Output is a PROPOSAL (branch + PR against the forge repo), never a direct edit.
 ## Inputs
 1. `docs/decision-log.md` entries since the last retro (each retro ends by
    writing a `RETRO-MARKER <date>` line — read from the previous marker).
-2. Board exhaust for the period: completed cards' metadata + judge verdicts
-   (`hermes kanban runs/list` — flags: VERIFY) or the metadata JSONs in PRs.
+2. `make metrics BOARD=<slug> [SINCE=..] [UNTIL=..]` — the period's numbers,
+   straight out of the board's SQLite. Read the output; do not recompute it.
 3. Current forge repo state: `skills/`, `rubrics/`, `templates/`.
 
 ## Process
-1. **Open with the numbers, before any interpretation.** Compute the three in
-   `docs/retro-metrics.md` — bounce rate, mean judge score on dimensions 1–3,
-   and the `reason_class` distribution — for this period, and append a row.
-   Then answer, per change proposed by the *previous* retro: did the number it
-   named move, in the direction it claimed? Say so plainly, including "no" and
-   "cannot tell". A retro that opens with anecdotes instead of this is how a
-   flywheel becomes a ratchet that only ever adds.
+1. **Open with the numbers, before any interpretation. Do not compute them.**
+
+   ```bash
+   make metrics BOARD=<slug> SINCE=<YYYY-MM-DD> UNTIL=<YYYY-MM-DD>
+   ./scripts/metrics.sh <slug> --since .. --until .. --markdown-row  # the log row
+   ```
+
+   Paste the generated row into `docs/retro-metrics.md` verbatim and fill only
+   the last two columns. Deriving any of these numbers yourself — from card
+   output, PR bodies or memory — is a defect, not a fallback: the published
+   bounce rate once read `0.00` for a run with 12 bounces because a model was
+   asked to do arithmetic over printed board output (audit F3/F27).
+
+   Then **interpret**, which is the part that needs you. Per change proposed by
+   the *previous* retro: did the number it named move, in the direction it
+   claimed? Say so plainly, including "no" and "cannot tell". Read the script's
+   own caveats too — an `(unclassified)` majority, `n/a`, or a nonzero
+   `neither` envelope bucket each mean the exhaust is broken, and a broken
+   producer is a finding in its own right. A retro that opens with anecdotes
+   instead of this is how a flywheel becomes a ratchet that only ever adds.
 
    Then **cluster** the raw material: repeated surprises, repeated judge
    findings, repeated bounce reasons, repeated manual corrections, DEBT: and

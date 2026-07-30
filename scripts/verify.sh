@@ -27,6 +27,9 @@
 #   lane/       preconditions the unattended lane needs and cannot create for
 #               itself. Every case was a real failure seen on 2026-07-28 while
 #               driving `codex exec` by hand against a live chunk (rung 2).
+#   metrics/    the flywheel's three numbers, computed from a checked-in SQL
+#               fixture and diffed against a checked-in expectation. A schema
+#               drift must fail a check rather than a quarter                (F27)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -42,11 +45,11 @@ while [ $# -gt 0 ]; do
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
-    cli|config|substrate|template|lane) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|metrics) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -574,6 +577,12 @@ lane/prejudge-gh-is-repo-independent    scratch review uses canonical PR URL, no
 lane/prejudge-ci-red-is-canonical       CI-red skips the model, not forge.judge.v1 metadata
 lane/prejudge-schema-is-inline          Claude receives supported schema JSON, not a path
 lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
+metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
+metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
+metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
+metrics/is-read-only              reading a board does not change its sha256
+metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
+metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
 EOF
   exit 0
 fi
@@ -821,6 +830,112 @@ run_lane_group() {
   fi
 }
 wants lane      && run_lane_group
+
+# ---------------------------------------------------------------------------
+# metrics/ — the flywheel's own numbers (F27). Before scripts/metrics.sh, /retro
+# asked a language model to derive them from printed board output, and the
+# published bounce rate read 0.00 on a run with 12 bounces. A number that is
+# computed can be tested; that is the entire argument, so it is tested here.
+#
+# The fixture is SQL, not a .db: a binary blob in git is a number nobody can
+# review. It is rebuilt into a temp board on every run and reached through
+# HERMES_KANBAN_HOME, which exercises the real path-resolution code rather than
+# a test-only escape hatch.
+# ---------------------------------------------------------------------------
+run_metrics_group() {
+  group metrics
+  local ms=scripts/metrics.sh fx=scripts/fixtures/metrics-board.sql
+  local exp=scripts/fixtures/metrics-expected.json
+
+  for tool in sqlite3 jq; do
+    command -v "$tool" >/dev/null 2>&1 || { skip "fixture-numbers-exact" "$tool not on PATH"; return; }
+  done
+
+  # --help must work with no board, no database and no arguments: it is the
+  # first thing anyone runs, including CI on a host with no ~/.hermes at all.
+  if HOME="$TMPROOT/nohome" "$ms" --help >/dev/null 2>&1; then
+    ok "help-exits-zero"
+  else
+    bad "help-exits-zero" "$ms --help did not exit 0 without a board"
+  fi
+
+  local home="$TMPROOT/kanban" db="$TMPROOT/kanban/boards/metrics-fixture/kanban.db"
+  mkdir -p "$(dirname "$db")"
+  if ! sqlite3 "$db" < "$fx" 2>"$TMPROOT/fixture.log"; then
+    bad "fixture-numbers-exact" "fixture would not load: $(tail -2 "$TMPROOT/fixture.log" | tr '\n' ' ')"
+    return
+  fi
+
+  # Exact, whole-document diff. Asserting a handful of fields would let a new
+  # bucket appear, or an old one silently vanish, without failing anything.
+  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture --json > "$TMPROOT/metrics.json" 2>&1
+  if diff -u "$exp" "$TMPROOT/metrics.json" > "$TMPROOT/metrics.diff" 2>&1; then
+    ok "fixture-numbers-exact ($(jq -r '.verdicts.total' "$exp") verdicts, every field)"
+  else
+    bad "fixture-numbers-exact" "$(head -12 "$TMPROOT/metrics.diff" | tr '\n' ' ')"
+  fi
+
+  # The lane writes chunk metadata NESTED under a key named for the schema,
+  # while the documented shape is flat with an inner "schema" field (F1). This
+  # slice must REPORT that divergence, never repair it — and the card carrying
+  # the malformed envelope must stay in the denominator, or the conformance
+  # count would be blind to exactly the fault it exists to find.
+  local e
+  e="$(jq -c '[.envelope.flat,.envelope.nested,.envelope.neither,.envelope.total,.chunk_cards]' \
+        "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$e" = "[1,1,1,3,3]" ]; then
+    ok "detects-noncanonical-envelope (1 flat, 1 nested, 1 neither, none normalized away)"
+  else
+    bad "detects-noncanonical-envelope" \
+        "expected [flat,nested,neither,total,chunk_cards]=[1,1,1,3,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
+  fi
+
+  # A live board is production data for the whole flywheel. The script opens it
+  # file:...?mode=ro; this proves the bytes, because mode=ro is a claim in a
+  # string literal and claims in string literals are what this suite exists for.
+  local before after
+  before="$(shasum -a 256 "$db" | cut -d' ' -f1)"
+  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture >/dev/null 2>&1
+  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture --since 2026-07-28 --markdown-row >/dev/null 2>&1
+  after="$(shasum -a 256 "$db" | cut -d' ' -f1)"
+  if [ "$before" = "$after" ]; then
+    ok "is-read-only (sha256 unchanged across three invocations)"
+  else
+    bad "is-read-only" "the database changed while being read — mode=ro is not holding"
+  fi
+
+  # The fixture declares a schema by hand, so it can drift away from the real
+  # one and keep passing. Read the columns metrics.sh depends on off a live
+  # board instead of asserting in a comment that they are the same.
+  local live
+  live="$(ls -1 "${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"/*/kanban.db 2>/dev/null | head -1)"
+  if [ -z "$live" ]; then
+    skip "live-schema-has-fixture-columns" "no live board to compare against"
+  else
+    local missing="" t c
+    for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
+                "task_events:kind,payload,created_at" "task_comments:author,created_at" \
+                "task_links:parent_id,child_id"; do
+      t="${spec%%:*}"
+      for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
+        sqlite3 "file:$live?mode=ro" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
+          || missing="$missing $t.$c"
+      done
+    done
+    [ -z "$missing" ] && ok "live-schema-has-fixture-columns ($(basename "$(dirname "$live")"))" \
+      || bad "live-schema-has-fixture-columns" "a live board no longer has:$missing — the fixture is testing a schema that no longer exists"
+  fi
+
+  # /retro must not go back to asking a model for arithmetic. The skill has to
+  # name the command, and must not still be telling anyone to compute anything.
+  if grep -Fq 'make metrics BOARD=' skills/retro/SKILL.md; then
+    ok "retro-skill-runs-the-command"
+  else
+    bad "retro-skill-runs-the-command" \
+        "skills/retro/SKILL.md must run 'make metrics BOARD=<board>' — step 1 may not derive the numbers in prose (ADR-0003)"
+  fi
+}
+wants metrics   && run_metrics_group
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1
