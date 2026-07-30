@@ -34,5 +34,6 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  head -1 $$f | grep -q '^---$$' || { echo "BAD frontmatter: $$f"; exit 1; }; \
 	  grep -q '^name:' $$f && grep -q '^description:' $$f || { echo "MISSING name/description: $$f"; exit 1; }; \
 	done
-	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh scripts/preflight.sh
+	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
+	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh
 	@echo "forge validate: OK"

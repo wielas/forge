@@ -1448,3 +1448,75 @@ findings each step closes.
 - `README.md` VERIFY list: *"The bounce path"* is checked `[x]` on n=1. It has
   now run 12 times; the finding is that it works mechanically and does not
   converge (F6).
+
+---
+
+## Ledger additions from the F27 remediation slice (`scripts/metrics.sh`)
+
+Appended 2026-07-30 while implementing F27. Each was found by running the
+queries rather than by reading, which is the point.
+
+### F37 — This audit's own tier-2 mean is wrong, and only the number with a query attached survived · `OPEN` · **medium**
+
+Three places in this document report mean tier-2 d1–3 as **1.90** (§"The run, in
+numbers", F3, and the parenthetical in F27's SQL block). The value is **1.88**:
+
+```
+SELECT SUM(spec_fidelity), SUM(scenario_integrity), SUM(architectural_conformance), COUNT(*)
+-- 28 + 31 + 37 = 96 over 17 verdicts × 3 dimensions = 51 → 1.88235…
+```
+
+No null scores, no excluded rows, no rounding path that reaches 1.90 (averaging
+per-verdict means first still gives 1.88). Every *board-lifetime* figure in F27
+reproduces exactly — 30 verdicts, 15/1/14, mean 2.31, 0 flat and 22 nested
+envelopes — and those are the ones F27 published with an executed query beside
+them. 1.90 appears only in prose.
+
+**This is F27 happening to the document that reports F27**, one day early and at
+its own expense, and it is the strongest available evidence for the finding:
+the numbers a model computes by reading are wrong at a rate you cannot predict
+from how confident the surrounding text sounds. Corrected in
+`docs/retro-metrics.md`; the audit body is left as written so the error stays
+legible.
+
+### F38 — Kanban timestamps are true epoch, not local-epoch · `FIXED` · **low**
+
+Working notes and this slice's contract both warned that kanban timestamps are
+local-epoch. They are not. `hermes_cli/kanban_db.py` writes `int(time.time())`
+throughout, and `MAX(created_at)` equals the database file's own mtime to the
+second on three separate boards.
+
+The trap is real but sits on the other side of the boundary: `--since` is a
+**local calendar date**, and `strftime('%s','2026-07-29')` is UTC midnight —
+wrong by the UTC offset, silently, and in the direction that quietly drops or
+adds the first hours of a run. `strftime('%s', <date>, 'utc')` is the conversion
+that makes a day boundary mean the operator's midnight.
+`scripts/metrics.sh` does that and says why.
+
+### F39 — `make verify` has been red on the operator's own machine, and nobody noticed · `OPEN` · **medium**
+
+`./scripts/verify.sh config` fails six cases on the live host, on `main`, before
+this slice touched anything:
+
+```
+config/{terminal-timeout,write-approval,external-dirs}/forge-operator
+config/{terminal-timeout,write-approval,external-dirs}/forge-operator-handoff
+```
+
+Both names come back from `hermes kanban assignees` and neither has a Hermes
+profile, because neither is *supposed* to — `forge-operator-handoff` is the
+deliberately non-spawnable sentinel the tier-2 hand-off parks on
+(`lane/prejudge-tier2-card-is-sticky`), and `forge-operator` is the ghost
+assignee from the rung-4 row in `docs/retro-metrics.md`. The `config/` group
+reads assignees and assumes every one is a profile it can interrogate.
+
+The consequence is the one that matters: **`make verify` has been exiting 1 on
+this machine continuously**, so the suite's headline result carries no
+information and a seventh, real failure would land in a list already red. A
+suite that cries wolf gets switched off — `verify.sh` says exactly this in the
+comment above its own `skip` helper, about a different case.
+
+**Fix (out of scope here, and small):** the `config/` group should judge
+assignees that resolve to a profile, and `skip` — with the sentinel named — the
+ones that deliberately do not exist. Not fixed in this slice: it is the
+`config/` group's contract, not the `metrics/` group's.
