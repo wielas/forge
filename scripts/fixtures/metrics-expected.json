@@ -1,0 +1,70 @@
+{
+  "board": "metrics-fixture",
+  "since": null,
+  "until": null,
+  "chunk_cards": 3,
+  "verdicts": {
+    "total": 6,
+    "unattributed": 1,
+    "by_verdict": {
+      "approve": 2,
+      "bounce": 4
+    }
+  },
+  "tiers": [
+    {
+      "tier": 1,
+      "verdicts": 2,
+      "bounce_verdicts": 1,
+      "mean_d13": "2.17",
+      "chunks_judged": 2,
+      "chunks_bounced": 1,
+      "bounce_rate": "0.50"
+    },
+    {
+      "tier": 2,
+      "verdicts": 4,
+      "bounce_verdicts": 3,
+      "mean_d13": "1.42",
+      "chunks_judged": 2,
+      "chunks_bounced": 2,
+      "bounce_rate": "1.00"
+    }
+  ],
+  "mean_d13_all": "1.67",
+  "reason_class": [
+    {
+      "class": "failing-prereq",
+      "count": 2,
+      "documented": true
+    },
+    {
+      "class": "(unclassified)",
+      "count": 1,
+      "documented": false
+    },
+    {
+      "class": "gate-misrouted",
+      "count": 1,
+      "documented": true
+    },
+    {
+      "class": "review-required",
+      "count": 1,
+      "documented": false
+    }
+  ],
+  "forge_block_v1": 0,
+  "envelope": {
+    "flat": 1,
+    "nested": 1,
+    "neither": 1,
+    "total": 3
+  },
+  "operator": {
+    "comments": 2,
+    "unblocks": 2,
+    "touches": 4,
+    "method": "comments by an author that never ran as a profile on this board, plus every unblocked event (the event records no actor)"
+  }
+}

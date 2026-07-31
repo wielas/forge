@@ -1,8 +1,12 @@
 # forge repo-level commands
-.PHONY: install new validate verify preflight
+.PHONY: install new validate verify preflight metrics
 
 verify:                        ## execute this repo's own claims (see scripts/verify.sh)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
+
+metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
+	@test -n "$(BOARD)" || { echo "usage: make metrics BOARD=<slug> [SINCE=YYYY-MM-DD] [UNTIL=YYYY-MM-DD]"; exit 1; }
+	./scripts/metrics.sh $(BOARD) $(if $(SINCE),--since $(SINCE),) $(if $(UNTIL),--until $(UNTIL),)
 
 preflight:                     ## revalidate the mini before unattended work (read-only)
 	./scripts/preflight.sh $(if $(OUT),--out $(OUT),)
@@ -30,5 +34,6 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  head -1 $$f | grep -q '^---$$' || { echo "BAD frontmatter: $$f"; exit 1; }; \
 	  grep -q '^name:' $$f && grep -q '^description:' $$f || { echo "MISSING name/description: $$f"; exit 1; }; \
 	done
-	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh scripts/preflight.sh
+	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
+	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh
 	@echo "forge validate: OK"
