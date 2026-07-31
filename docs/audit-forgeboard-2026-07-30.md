@@ -61,8 +61,8 @@ that were built after it was written down (§L).
 | Cards created | **54** — 6 chunk, 12 fix/bounce, 17 prejudge, 17 judge, 2 archived dupes |
 | Productive-to-overhead card ratio | **6 : 48** |
 | Tier-2 bounces | **12** — C1:0 C2:0 C3:**5** C4:3 C5:2 C6:2(unfinished) |
-| Tier-1 bounces | **0 out of 17** |
-| Mean tier-2 score, dims 1–3 | **1.90** (17 verdicts) — vs tier-1's near-uniform 3.00 |
+| Tier-1 bounces | **0** — but out of only **7 readable verdicts**; 10 of the 17 tier-1 runs emitted no canonical metadata at all (F44) |
+| Mean tier-2 score, dims 1–3 | **1.88** (17 verdicts, 96/51 points) — vs tier-1's near-uniform 3.00 |
 | Tier-2 review tokens (self-reported) | **386,300** — 65% of it on CHUNK-3 alone |
 | Tier-1 review tokens (extrapolated) | ~134,000, on **Opus**, for zero bounces |
 | Est. avoidable review tokens | **~60–65%** of ~520k, without weakening a gate (F20/F21) |
@@ -181,7 +181,7 @@ SELECT json_extract(metadata,'$.chunk_id'), json_extract(metadata,'$.verdict'),
 FROM task_runs WHERE json_extract(metadata,'$.schema')='forge.judge.v1';
 ```
 
-Mean d1–3 across the 17 tier-2 verdicts is **1.90** — the first genuinely
+Mean d1–3 across the 17 tier-2 verdicts is **1.88** — the first genuinely
 discriminating number this rubric has produced, and exactly the falsification
 `retro-metrics.md` asked for when it warned that a standing 3.00 would be
 "decorative".
@@ -893,7 +893,7 @@ SELECT ROUND(AVG((json_extract(metadata,'$.scores.spec_fidelity')
        COUNT(*)
   FROM task_runs
  WHERE json_extract(metadata,'$.schema')='forge.judge.v1';
--- 2.31 over 30 verdicts   (board lifetime; 1.90 over this run's 17)
+-- 2.31 over 30 verdicts   (board lifetime; 1.88 over this run's 17)
 
 -- 3. reason_class distribution  (see F26 — currently from the reason string)
 SELECT json_extract(payload,'$.reason'), COUNT(*)
@@ -1265,9 +1265,9 @@ The measurement is unambiguous. Same diffs, same rubric, same days:
 
 | | Tier 1 (Opus) | Tier 2 (operator) |
 |---|---|---|
-| Passes | 17 | 17 |
+| Passes | 17 runs, **7 readable** | 17 |
 | Bounces | **0** | **12** |
-| Mean d1–3 | ~3.00 | **1.90** |
+| Mean d1–3 | ~3.00 | **1.88** |
 
 A 1.1-point spread on identical inputs is not a filter and a judge; it is one
 judgement with enormous variance, of which the expensive half is the wrong half.
@@ -1370,67 +1370,315 @@ written down.
 
 ---
 
+## M. Correction — the cost model this audit assumed was wrong
+
+*Third pass, 2026-07-30, after measuring the auth topology on the mini instead
+of inferring it. Sections B, F and L were written against a cost model that
+counted tokens without asking who pays for them. This section corrects it and
+supersedes the parts of F20/F21 that follow from the error.*
+
+### The auth topology, measured
+
+| Role | Engine | Auth | Marginal cost |
+|---|---|---|---|
+| Lane driver | `deepseek/deepseek-v4-flash` via Hermes profile | **metered API key** | **real dollars** |
+| Prejudge driver | `deepseek/deepseek-v4-flash` via Hermes profile | **metered API key** | **real dollars** |
+| Implementer | `codex exec` | OAuth (ChatGPT subscription) | none |
+| Tier-1 scorer | `claude -p --model opus` | OAuth (Claude subscription) | none |
+| Tier-2 judge | operator in Claude Code | OAuth (Claude subscription) | none |
+
+`~/.hermes/profiles/{forge-prejudge,forge-codex-lane}/config.yaml` both read
+`model.default: deepseek/deepseek-v4-flash`. That is the only metered path in
+the system. Everything the audit called "expensive" — Opus at tier 1, the
+operator's tier-2 sessions — is subscription-covered and costs **nothing at the
+margin**.
+
+**What this breaks.** F20 is titled *"the cost structure is inverted: Opus
+rubber-stamps, cheap models judge"* and recommends moving tier-1 scoring
+in-profile to `deepseek-v4-flash`. Under the real topology that recommendation
+**moves work from a free OAuth path onto the only metered one.** It is exactly
+backwards. The same error is latent in F21 and in §L Move 2's framing.
+
+**What survives.** F20's *observation* is untouched and still critical: tier 1
+bounced 0 times in 17, so its output is worthless regardless of who pays. F35's
+conclusion — that tier 1 should be a deterministic program — is strengthened,
+not weakened, because a program costs nothing on *either* axis. What changes is
+the reason: tier 1 should be deleted because it does not discriminate, and the
+residual model judgment should stay **on the OAuth CLIs**, not be migrated to
+the metered profile.
+
+**The corrected objective function**, and the one every later slice optimises:
+
+> Minimise **metered Hermes API tokens**. Treat OAuth CLI usage (`codex exec`,
+> `claude -p`) as free at the margin, bounded by subscription quota and latency
+> rather than dollars. Spend the cheap metered driver on *driving* — tool calls,
+> board lifecycle, protocol — and never on *reading*.
+
+---
+
+### F37 — The metered driver reads the 127 KB diff into its own context, then pays a second time to send it somewhere free · `OPEN` · **critical**
+
+This is the largest metered cost in the system, and the audit missed it by
+counting reviewer tokens instead of driver tokens.
+
+`hermes/profiles/forge-prejudge.SOUL.md` step 3, addressed to the driver
+(deepseek, metered):
+
+> **3.** Read the diff and the contract, nothing more:
+> ```
+> gh pr diff "$pr_url" < /dev/null
+> ```
+
+Then step 4 tells the same driver to write the rubric, contract **and diff** to
+`$prompt_file` and hand it to `claude -p` (OAuth, free).
+
+So the diff is paid for **twice**: once as metered deepseek input tokens when
+the driver executes step 3 and the output lands in its context, and once as
+free OAuth tokens when Claude scores it. The largest saved prompt in
+`/private/tmp` is **127,738 bytes ≈ 32k tokens** (F15). Across 17 prejudge runs
+plus 22 lane runs, the driver has been metered on diff bytes it never needed to
+see — it is not the scorer.
+
+The root cause is a role confusion in the SOUL itself. Its *"What you are
+looking for"* section instructs the driver to hunt for scenario theater and
+scope creep — but the driver does not score anything; `claude -p` does. The
+SOUL addresses two different agents in one voice, and the driver acts on
+instructions meant for the scorer.
+
+**Fix (one character, essentially).** The driver must move bytes, never read
+them:
+
+```bash
+# step 3 — never render the diff into the driver's context
+gh pr diff "$pr_url" >> "$prompt_file" < /dev/null || exit 1
+wc -c < "$prompt_file"        # the driver sees a byte count, not a diff
+```
+
+and split the SOUL's voice explicitly: everything under *"What you are looking
+for"* belongs in `$prompt_file` as instructions **to the scorer**, not in the
+driver's protocol. Add a `lane/driver-never-reads-the-diff` verify case beside
+the existing `lane/driver-never-authors-diff`.
+
+Apply the identical rule to `forge-lane`: the lane driver should never `cat` the
+Codex transcript or the full `git diff` into its own context. §5's hostile-reader
+step is the one place it genuinely must look — and that is an argument for
+bounding diff size (F28), not for reading unboundedly.
+
+---
+
+### F38 — `claude -p` supports cached session continuity, which makes delta review free on the OAuth path · `OPEN` · **high** *(supersedes the mechanism half of F21/F33)*
+
+F21 assumed cache reuse required moving review to `deepseek-v4-flash`. Measured
+on the mini, 2026-07-30, that assumption is unnecessary — the OAuth Claude CLI
+does it natively.
+
+**Probe 1** — `--output-format json` and `--json-schema` compose cleanly
+(exit 0). The envelope carries far more than the audit hoped for:
+
+```
+usage.input_tokens · usage.output_tokens
+usage.cache_creation_input_tokens · usage.cache_read_input_tokens
+total_cost_usd · modelUsage · session_id · structured_output
+```
+
+`structured_output` returns the schema-valid object already parsed, so the
+SOUL's `.result | fromjson` dance is unnecessary. `total_cost_usd` is a real
+number, not an estimate — **F30's fix is strictly better than F30 proposed**:
+the Forge can record actual cost, not a token guess.
+
+**Probe 2** — `--resume <session_id>` preserves both the schema and the cache:
+
+| pass | `cache_creation` | `cache_read` | output |
+|---|---|---|---|
+| 1 (cold) | 19,480 | **0** | 163 |
+| 2 (`--resume`) | 1,011 | **19,480** | 110 |
+
+The entire prior context was served from cache. This is the mechanism F32 and
+F33 need, available today, on a subscription-covered engine, with no model
+change and no metered spend.
+
+**Consequence for the design.** A bounce sequence becomes: score cold once,
+capture `session_id` into the verdict metadata, and every re-review runs
+`claude -p --resume <sid>` with **only the repair diff** as new input. Prior
+findings are in the session, so the reviewer remembers what it already
+accepted — which is the accuracy half of F32 (oscillation) solved by the same
+change as the cost half. `session_id` must therefore be added to the fields F33
+proposes for `forge.judge.v1`.
+
+---
+
+### F39 — The Codex pin was changed again on 2026-07-30; this is the F22 hazard, handled correctly this time · `RESOLVED-BY-RECORD` · **medium**
+
+`~/.codex/config.toml` changed from `gpt-5.6-terra` / `high` to **`gpt-5.6-sol`
+/ `high`** on 2026-07-30 at operator instruction. Previous value backed up at
+`~/.codex/config.toml.bak-20260730`.
+
+F22 exists because the previous pin change (`sol` → `terra`) happened silently,
+mid-run, between CHUNK-2 and CHUNK-3 — and CHUNK-3 was simultaneously the first
+`terra` run, the largest chunk, and the 5-bounce chunk, making all three
+uninterpretable as evidence. **This entry is what F22 says should have existed.**
+
+Live hazard to carry forward: **CHUNK-6 is still open at PR #11 with bounce
+card `t_d13daaf6` blocked.** Its next run will be the first under `sol`. Do not
+read a change in its behaviour as evidence about the repair, the contract, or
+the bounce budget — the model changed underneath it. Either note this on the
+card before resuming, or finish CHUNK-6 under the old pin.
+
+Both `docs/state.md` (which says `sol` / `xhigh`) and
+`skills/forge-lane/SKILL.md` §4 (same) are now wrong on the effort level only.
+The durable fix remains F36's: read the pin at runtime, stop duplicating it
+into prose.
+
+---
+
+### Revised Move 2 and Move 3
+
+Superseding the versions in §L.
+
+**Move 2 — delete tier 1's model call; do not relocate it.**
+`make prejudge PR=<n>` (deterministic, §F35's table) becomes the whole of tier
+1. The residual judgment it cannot make is *not* re-hosted on the metered
+profile — it is deferred to tier 2, which is OAuth and already does it better
+(1.88 vs 3.00 means tier 2 is the only tier producing signal). *Effect: removes
+a filter that bounced 0 times in 7 readable verdicts, adds deterministic checks with higher recall, and touches the
+metered path only by making the driver's job smaller.*
+
+**Move 2b (new, and the biggest metered saving) — the driver moves bytes, never
+reads them.** F37. Redirect every `gh pr diff` / transcript / large `git diff`
+straight to a file; the driver sees byte counts and exit codes. Split the
+prejudge SOUL's two voices. *Effect: removes ~32k metered input tokens per
+review-bearing run, the single largest line item in actual dollars.*
+
+**Move 3 — incremental review on `claude -p --resume`.** F38 + F32 + F33.
+Cold-score once per chunk, persist `session_id`, re-review the repair diff only.
+*Effect: the ~60–65% reduction F21 identified, achieved on the OAuth path at
+zero metered cost, and it removes F9's oscillation as a side effect.*
+
+The deepseek long-session idea from F21 is **not** adopted for review. It remains
+correct for what it already does — driving the lane protocol across long
+unattended runs, where its caching and cheapness are the right trade and the
+derailment risk is bounded by §5's verification. Review does not need it,
+because review has a free cached engine.
+
+---
+
+### F40 — The orchestrator and the implementer shared one working tree, with no isolation · `OPEN` · **medium**
+
+Measured 2026-07-30 during slice S1. The implementing session ran in
+`/Users/goonlab/dev/forge` — the main checkout — on branch
+`slice/metrics-command`. It committed `docs/audit-forgeboard-2026-07-30.md`
+unchanged as `1f79839`, per its contract. The orchestrator then appended §M
+(F37–F39) to the same file on disk, producing a 251-line uncommitted delta
+inside the implementer's working tree. The next `git add -A` would have swept an
+unrelated audit revision into a metrics commit under a metrics commit message.
+
+This is F1's defect class applied to the Forge's own process: **two writers, one
+mutable artifact, no canonical owner and no versioning.** Nothing detected it;
+it was found by inspecting `git status` for an unrelated reason.
+
+The Forge already solved this for the work it automates and did not apply the
+solution to the work it does by hand. Chunk cards get
+`<repo>/.worktrees/<task-id>`, created by the dispatcher *before* the worker is
+spawned (`forge-lane` §2). Slices driven by a human operator get the main
+checkout, because nobody wrote that rule down for them.
+
+**Second symptom, same root, same day.** The slice filed its three new findings
+as F37–F39 — numbers the orchestrator had already spent in this very section,
+on a revision that had been reverted out of the implementer's tree so it could
+not be seen. Two disjoint F37s existed until the slice renumbered to F41–F43 at
+review. Nothing would have caught it: the ledger has no allocator, and
+`make verify` does not read it.
+
+**Fix.** Every slice runs in its own worktree, exactly as a chunk card does:
+
+```bash
+git worktree add ../forge-slices/<slice-id> -b slice/<slice-id> main
+```
+
+The orchestrator keeps the main checkout and can edit the audit ledger freely
+while a slice runs. Add it to `docs/operator-guide.md` alongside the manual
+worktree sweep (F18), and state the ownership rule explicitly: **the audit
+ledger is the orchestrator's file; a slice may read it and commit it once as a
+source document, and must never be the only writer.**
+
+---
+
 ## Priority order for the follow-up passes
 
-Sequenced by the four moves in §L, which is dependency order, not severity
-order. Findings from both passes are folded in; F-numbers in brackets are the
-findings each step closes.
+Sequenced by the four moves in §L **as corrected by §M**, which is dependency
+order, not severity order. Slice labels are the orchestration units actually
+being implemented; F-numbers are what each closes.
 
-**Move 1 — Instrument, before touching anything else**
+**S1 — Instrument · `SHIPPED` 2026-07-30, PR #3**
 
-1. **F30** — capture real `usage` from `claude -p --output-format json` and
-   `codex exec`; stamp it with `jq` exactly as `judge_model` already is. Five
-   minutes. **Every other item's effect is unmeasurable until this lands.**
-2. **F27 + F3** — `scripts/metrics.sh <board>` / `make metrics`: the three retro
-   numbers in SQL, wired into `/retro` step 1 and `make verify`. ~30 lines, zero
-   tokens, and it retroactively detects F1. Then write the missing
-   `retro-metrics.md` row.
+1. ~~**F27 + F3**~~ — `scripts/metrics.sh` / `make metrics`: the three retro
+   numbers in SQL, wired into `/retro` step 1 and a `metrics` verify group.
+   93 lines of bash over 130 of SQL. **It found three errors in this audit
+   within one slice** (F41, F42, F44) and every one of them was a number this
+   document had produced by prose rather than by query. F27 is now the
+   best-evidenced finding in the file, and the evidence is the audit itself.
 
-**Move 2 — Demote tier 1 from a model to a gate**
+**S2 — The prejudge SOUL cost slice (one file, one bootstrap, one live run)**
 
-3. **F35 + F20 + F4** — replace the tier-1 model call with `make prejudge PR=<n>`.
-   Bounce-only, deterministic. −134k tokens/run at *higher* recall.
-4. **F7 + F5 + F10 + F28 + F8** — the checks that gate becomes: branch regex in
-   lefthook `pre-push`, CI-state exit code, parent `mergedAt`, diff-size budget
-   with a recorded `size-exception:`, `Touches` set difference. Each is a
-   one-liner; together they reclaim 4 PRs and 5 wasted dispatches per run.
-5. **F25 + F14 + F13** — the two checks worth writing properly: one real-source
-   scenario per chunk (skip-if-absent), and an AST walk asserting every `Then`
-   step asserts on a value. F25 is still the highest-value single item in the
-   document — it is what would have caught F1 live.
+2. **F37** — the driver moves bytes, never reads them. Redirect `gh pr diff`
+   into `$prompt_file`; split the SOUL's two voices so scorer instructions stop
+   being addressed to the driver. **One line, and the largest real-dollar saving
+   in the document** (~32k metered tokens per review-bearing run).
+3. **F30** — capture the real envelope from `claude -p --output-format json`:
+   `total_cost_usd`, full `usage` including `cache_read_input_tokens`,
+   `structured_output`, and **`session_id`** (which S6 requires).
 
-**Move 3 — Make review incremental and continuous**
+**S3 — `make prejudge` in shadow mode (repo-only, free)**
 
-6. **F32** — scope "fresh context" to the chunk, not the pass. One paragraph in
-   `skills/judge` + the prejudge SOUL. Fixes F9's oscillation *and* unlocks §7.
-7. **F33 + F21 + F15** — `supersedes` / `findings_addressed` /
-   `scores_carried_forward` on `forge.judge.v1`; stable cached prefix; one
-   `deepseek-v4-flash` session per bounce sequence reading the repair diff.
-   Est. 60–65% of review tokens. **F33 must land first — delta review is
-   currently inexpressible, not merely unimplemented.**
-8. **F6 + F11** — bounce budget (2, then the operator decides), `fix`-only
-   verdicts become `approve-with-nits` + cards, one pinned reviewer model.
+4. **F35 + F7 + F8 + F10 + F28 + F5 + F25** — the deterministic tier-1 gate.
+   Runs **alongside** the model tier and logs agreement; gates nothing yet.
+   Note F44: the model tier's historical agreement data is a third the size this
+   audit assumed, so the shadow run is now the *only* usable comparison.
+   Before F28's size budget becomes a gate, decide what counts against it —
+   S1 came in at 741 lines of which 193 were fixture and 99 were the metrics
+   doc. A budget that counts fixtures will be routed around immediately.
 
-**Move 4 — Derive, don't assert**
+**S4 — Delete tier 1's model call (do not relocate it)**
 
-9. **F29** — verdict becomes a computed field: a decision table in
-   `judge-verdict.schema.json` plus a ~15-line shared function. The model emits
-   scores and evidence only. Makes rubber-stamping expensive and collapses F23.
-10. **F1 + F2 + F23** — one canonical `forge.chunk.v1` shape (the flat form the
-    judge path already uses), a real JSON Schema, `make verify` validating live
-    board metadata. Closes the critical finding.
-11. **F26** — drop `forge.block.v1`; enforce a `reason_class:` prefix regex on
-    the string the API actually stores, and add `gate-misrouted`.
+5. **F35 + F20 + F4**, as corrected by §M and F44. Tier 1 becomes the S3 gate;
+   residual judgment is **deferred to tier 2 (OAuth)**, not migrated to the
+   metered deepseek profile. Requires S3's agreement data.
 
-**Standing hygiene**
+**S5 — Derive, don't assert (repo-only, free)**
 
-12. **F31** — start recording operator touches per merged chunk; it is the
-    number the Forge exists to reduce and the only one never measured.
-13. **F34 + F36 + F22** — delete `start-chunk`/`end-chunk` or add a
-    cross-reference check to `make verify cli/`; read the Codex pin at runtime
-    instead of duplicating it into two prose files.
-14. **F24 + F12**, then F19 (move the repo out of `/private/tmp`), F17, F16, F18.
+6. **F29** — verdict becomes a computed field; the model emits scores and
+   evidence only.
+7. **F1 + F2 + F23 + F44** — one canonical `forge.chunk.v1` shape, a real JSON
+   Schema, and `make verify` validating **every completed run's metadata against
+   the schema its profile is contracted to emit**, failing on a run that emits
+   none. F1 and F44 are the same defect on two different producers.
+8. **F26** — drop `forge.block.v1`; enforce a `reason_class:` prefix regex, add
+   `gate-misrouted`. S1 measured the damage: `(unclassified)` ×27 against
+   `failing-prereq` ×8.
 
+**S6 — Incremental review on `claude -p --resume`**
+
+9. **F38 + F32 + F33 + F21 + F15** — scope "fresh context" to the chunk, not the
+   pass; persist `session_id`; add `supersedes` / `findings_addressed` /
+   `scores_carried_forward`. *Measured mechanism: 19,480 tokens served from
+   cache on resume.*
+10. **F6 + F11** — bounce budget, `fix`-only verdicts become
+    `approve-with-nits` + cards, one pinned reviewer model.
+
+**S7 — Hygiene**
+
+11. **F43** — `make verify` exits 1 on the operator's own machine and has for
+    some time; the `config/` group should `skip` a sentinel assignee, not fail
+    it. **Promote this above the rest of S7:** a suite that is already red
+    cannot report a new failure, which silently disarms every gate S3–S5 add.
+12. **F31** — operator touches per merged chunk. S1 emits it (11 = 2 comments +
+    9 unblocks); it now needs a column in `retro-metrics.md`.
+13. **F40** — every slice runs in its own worktree; the audit ledger is the
+    orchestrator's file, and finding numbers need an allocator.
+14. **F34 + F36 + F22 + F39** — cross-reference check in `make verify cli/`;
+    read the Codex pin at runtime rather than duplicating it into two prose
+    files that are both currently wrong on the effort level.
+15. **F24 + F12**, then F19 (move the repo out of `/private/tmp`), F17, F16, F18.
 
 ---
 
@@ -1442,7 +1690,7 @@ findings each step closes.
   now largely **proven** (5/6 chunks merged), with F1 as the caveat.
 - `docs/retro-metrics.md` — **no row exists** for the largest run to date. The
   row it should carry: bounce rate **0.67 (4/6)** counted at tier 2 (0.00 (0/17)
-  as currently defined at tier 1), mean d1–3 **1.90**, `reason_class`
+  as currently defined at tier 1), mean d1–3 **1.88**, `reason_class`
   `failing-prereq` ×5 (F10) — the first row in the file whose mean score is not
   3.00, which is what the 2026-07-28 watch item asked for.
 - `README.md` VERIFY list: *"The bounce path"* is checked `[x]` on n=1. It has
@@ -1520,3 +1768,45 @@ comment above its own `skip` helper, about a different case.
 assignees that resolve to a profile, and `skip` — with the sentinel named — the
 ones that deliberately do not exist. Not fixed in this slice: it is the
 `config/` group's contract, not the `metrics/` group's.
+
+### F44 — More than half of all tier-1 runs left no readable verdict · `OPEN` · **high**
+
+Found while validating the F27 slice, by running the query the slice made
+possible. The board's own producers, board lifetime:
+
+```sql
+prejudge cards                                        27
+prejudge runs                                         28
+runs carrying canonical forge.judge.v1                13
+runs whose metadata has no $.schema key at all        15
+```
+
+and scoped to the `forgeboard-report` run window (`started_at >= 2026-07-29`):
+
+```sql
+prejudge runs 17 · canonical verdicts 7 · bounces 0
+```
+
+**Every tier-1 figure in this audit was computed over a set that does not
+exist.** §"The run, in numbers" reported *"Tier-1 bounces: 0 out of 17"*, and F4
+built the rubber-stamp case on 17 uniform approvals. The measured statement is
+**0 bounces out of 7 readable verdicts, with 10 of 17 runs emitting nothing
+countable.**
+
+The conclusion survives and arguably hardens — a tier that produces no readable
+verdict 59% of the time is worse than one that rubber-stamps, because its
+output cannot even be audited — but the *evidence base* was a third the size
+this document claimed. F4, F20 and F35 should be read with that denominator.
+
+This is **F1's defect, one layer up**: the same board, the same two days, a
+producer writing metadata in a shape its consumers cannot read, undetected
+because nothing ever queried it. F1 is the lane's chunk envelope; this is the
+prejudge profile's verdict envelope. Both are closed by S5's schema validation
+against live board metadata, and both would have surfaced on day one had
+`scripts/metrics.sh` existed — which is now the third independent vindication
+of F27 in a single slice.
+
+**Fix.** S5 extends `make verify` to validate every completed run's metadata
+against the schema its profile is contracted to emit, and fails on a run that
+emits none. Until then, treat every tier-1 count in this document as an upper
+bound.
