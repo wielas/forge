@@ -1456,7 +1456,7 @@ findings each step closes.
 Appended 2026-07-30 while implementing F27. Each was found by running the
 queries rather than by reading, which is the point.
 
-### F37 — This audit's own tier-2 mean is wrong, and only the number with a query attached survived · `OPEN` · **medium**
+### F41 — This audit's own tier-2 mean is wrong, and only the number with a query attached survived · `OPEN` · **medium**
 
 Three places in this document report mean tier-2 d1–3 as **1.90** (§"The run, in
 numbers", F3, and the parenthetical in F27's SQL block). The value is **1.88**:
@@ -1479,7 +1479,7 @@ from how confident the surrounding text sounds. Corrected in
 `docs/retro-metrics.md`; the audit body is left as written so the error stays
 legible.
 
-### F38 — Kanban timestamps are true epoch, not local-epoch · `FIXED` · **low**
+### F42 — Kanban timestamps are true epoch, not local-epoch · `FIXED` · **low**
 
 Working notes and this slice's contract both warned that kanban timestamps are
 local-epoch. They are not. `hermes_cli/kanban_db.py` writes `int(time.time())`
@@ -1493,7 +1493,7 @@ adds the first hours of a run. `strftime('%s', <date>, 'utc')` is the conversion
 that makes a day boundary mean the operator's midnight.
 `scripts/metrics.sh` does that and says why.
 
-### F39 — `make verify` has been red on the operator's own machine, and nobody noticed · `OPEN` · **medium**
+### F43 — `make verify` has been red on the operator's own machine, and nobody noticed · `OPEN` · **medium**
 
 `./scripts/verify.sh config` fails six cases on the live host, on `main`, before
 this slice touched anything:
