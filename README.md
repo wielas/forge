@@ -103,7 +103,7 @@ Forge tells every project it stamps that *skills persuade, gates enforce*
 (ADR-0003). `make verify` is that rule applied to Forge:
 
 ```bash
-make verify                     # cli + config + substrate + template
+make verify                     # cli + config + substrate + template + lane + metrics
 make verify SUITES="cli config" # one or more suites
 make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 ./scripts/verify.sh --list      # what it checks, without running it
@@ -116,6 +116,7 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `substrate/` | behaviour we depend on and do not control: worktree ownership, `.git`-is-a-file, the codex sandbox commit |
 | `template/` | stamp → `make setup` → hooks really installed → `make check` green → the pre-push gate exercised against a real bare remote, both ways: the push that *creates* `main` is allowed, every later one is refused |
 | `lane/` | what the lane must do **for** Codex because Codex cannot: build the venv while a network still exists, and state the role boundary in the prompt (reads are not sandboxed) |
+| `metrics/` | the flywheel's own numbers: a checked-in SQL board must reproduce a checked-in JSON expectation field for field, a nonconforming chunk envelope must be reported rather than normalized away, reading a board must not change it, and `/retro` must still run the command instead of doing the arithmetic |
 
 Run it in CI, after every `hermes update`, and after every `codex`/`claude`
 upgrade. A tool version bump that changes a flag or a sandbox rule should fail a
