@@ -577,6 +577,10 @@ lane/prejudge-gh-is-repo-independent    scratch review uses canonical PR URL, no
 lane/prejudge-ci-red-is-canonical       CI-red skips the model, not forge.judge.v1 metadata
 lane/prejudge-schema-is-inline          Claude receives supported schema JSON, not a path
 lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
+lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
+lane/prejudge-cost-is-observed          cost/tokens/session come from the harness envelope, not the model
+lane/prejudge-cost-is-storable          the verdict schema takes cost + session_id, optional, cache field intact
+lane/prejudge-schema-hides-stamped-fields  the model is not asked for the fields the operator stamps
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
@@ -847,6 +851,92 @@ run_lane_group() {
   else
     bad "prejudge-judge-model-is-observed" \
         "prejudge must normalize PR and judge_model from observed inputs, not trust self-report"
+  fi
+
+  # F37. The driver is the ONLY metered agent in a review; `claude -p` scores on
+  # OAuth. A diff rendered into the driver's context is billed once as deepseek
+  # input and then handed, free, to the engine that actually needed it — 63,164
+  # bytes on the PR #9 probe, 127,738 on the largest measured payload. So every
+  # `gh pr diff` in this protocol must redirect, and the driver's only permitted
+  # observations are a byte count and an exit code.
+  local unredirected
+  unredirected="$(grep -n 'gh pr diff' "$soul" | grep -vF '>> "$prompt_file"' || true)"
+  if [ -z "$unredirected" ] \
+     && grep -Fq 'wc -c < "$prompt_file"' "$soul" \
+     && grep -Fq 'You never read the diff — you move it' "$soul" \
+     && ! grep -Fq 'cat "$prompt_file"' "$soul"; then
+    ok "driver-never-reads-the-diff"
+  else
+    bad "driver-never-reads-the-diff" \
+        "every gh pr diff must redirect into \$prompt_file and the driver must observe only a byte count${unredirected:+ — unredirected: $unredirected}"
+  fi
+
+  # F30. Every token figure in the audit descended from `tokens_estimate`, filled
+  # in by the same model whose consumption it claimed to measure. The SOUL had
+  # already proved models cannot report on themselves (judge_model) and applied
+  # the lesson to nothing else in the same object.
+  if grep -Fq -- '--output-format json' "$soul" \
+     && grep -Fq '$env.usage as $u' "$soul" \
+     && grep -Eq '\.tokens_estimate *= *\(\$u\.input_tokens \+ \$u\.output_tokens\)' "$soul" \
+     && grep -Eq '\.session_id *= *\$env\.session_id' "$soul" \
+     && grep -Fq 'total_cost_usd: $env.total_cost_usd' "$soul" \
+     && grep -Fq '$env.structured_output' "$soul" \
+     && grep -Fq '.api_error_status != null' "$soul" \
+     && grep -Fq 'halt_error' "$soul"; then
+    ok "prejudge-cost-is-observed"
+  else
+    bad "prejudge-cost-is-observed" \
+        "cost, tokens and session_id must be stamped from the --output-format json envelope, which must fail closed on is_error/api_error_status"
+  fi
+
+  # The stored verdict must be ABLE to carry what the operator stamps, and must
+  # not demand it: cost is absent on a ci-red bounce, which has no model call to
+  # measure. cache_read_input_tokens is required *within* cost because without it
+  # F21's cache-hostility claim, and every saving proposed against it, is
+  # unfalsifiable.
+  if ! command -v jq >/dev/null 2>&1; then
+    skip "prejudge-cost-is-storable" "jq not on PATH"
+  elif jq -e '
+      (.properties.cost.required | index("cache_read_input_tokens"))
+      and (.properties.cost.required | index("total_cost_usd"))
+      and (.properties.session_id.type == "string")
+      and ((.required | index("cost")) == null)
+      and ((.required | index("session_id")) == null)
+      and (.required | index("tokens_estimate"))
+    ' rubrics/judge-verdict.schema.json >/dev/null 2>&1; then
+    ok "prejudge-cost-is-storable"
+  else
+    bad "prejudge-cost-is-storable" \
+        "judge-verdict.schema.json must accept cost/session_id as OPTIONAL, keep tokens_estimate required, and require cache_read_input_tokens inside cost"
+  fi
+
+  # The model was required to produce three fields the operator overwrote a
+  # moment later — which is where the invented `claude-opus-4-8` came from. Not
+  # asking is a better fix than overwriting. Run the SOUL's own reduction rather
+  # than a copy of it, so this cannot pass against a transform that has drifted.
+  local jq_prog reduced
+  jq_prog="$(sed -n '/VERDICT_SCHEMA="\$(jq -c --argjson stamped/,/judge-verdict\.schema\.json)"/p' \
+               "$soul" | sed '1d;$d')"
+  if ! command -v jq >/dev/null 2>&1; then
+    skip "prejudge-schema-hides-stamped-fields" "jq not on PATH"
+  elif [ -z "$jq_prog" ]; then
+    bad "prejudge-schema-hides-stamped-fields" \
+        "could not find the model-facing schema reduction in $soul"
+  elif reduced="$(jq -c --argjson stamped \
+        '["pr","judge_model","tokens_estimate","cost","session_id"]' \
+        "$jq_prog" rubrics/judge-verdict.schema.json 2>/dev/null)" \
+    && grep -Fq "STAMPED='[\"pr\",\"judge_model\",\"tokens_estimate\",\"cost\",\"session_id\"]'" "$soul" \
+    && printf '%s' "$reduced" | jq -e --argjson stamped \
+         '["pr","judge_model","tokens_estimate","cost","session_id"]' '
+           (has("$schema") | not)
+           and (((.properties | keys) - $stamped) == (.properties | keys))
+           and ((.required - $stamped) == .required)
+           and (.required | index("verdict"))
+         ' >/dev/null 2>&1; then
+    ok "prejudge-schema-hides-stamped-fields"
+  else
+    bad "prejudge-schema-hides-stamped-fields" \
+        "the schema handed to --json-schema must drop pr/judge_model/tokens_estimate/cost/session_id from BOTH properties and required"
   fi
 }
 wants lane      && run_lane_group
