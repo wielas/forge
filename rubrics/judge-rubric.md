@@ -51,9 +51,24 @@ Scoring: 3 exemplary · 2 acceptable · 1 deficient (fixable) · 0 disqualifying
   "nits_as_cards": ["CARD?: extract retry policy into shared helper"],
   "spot_check_suggestion": "eyeball src/sync/engine.py diff — densest change",
   "judge_model": "<model id>",
-  "tokens_estimate": 0
+  "tokens_estimate": 0,
+  "cost": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "total_cost_usd": 0.0
+  },
+  "session_id": "<judging engine session id>"
 }
 ```
+
+The last four fields are **stamped by the operator from the judging harness,
+never produced by the judging model** — a model cannot report its own id, and
+still less its own token consumption. `cost` and `session_id` are optional, and
+are absent from a `ci-red` verdict, which has no model call to measure. The
+scorer is never asked for any of them: the schema it receives has them removed,
+because a field a model is asked for is a field it will invent.
 
 ## Bounce contract
 Every `block`/`fix` finding's `action` must be executable by a fresh mid-weight

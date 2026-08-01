@@ -1810,3 +1810,81 @@ of F27 in a single slice.
 against the schema its profile is contracted to emit, and fails on a run that
 emits none. Until then, treat every tier-1 count in this document as an upper
 bound.
+
+---
+
+## Ledger additions from the prejudge cost slice (S2, F30 + F37)
+
+Appended 2026-07-31 while implementing F30 and F37. Both were found by reading
+a real `claude -p` envelope instead of the one this audit imagined, in a
+hand-driven review of merged PR #9 on `wielas/forgeboard-report`.
+
+### F45 — `tokens_estimate` measures almost nothing on `claude -p`, because the prompt is billed to the cache and not to `input_tokens` · `OPEN` · **medium-high**
+
+F30 is fixed: `tokens_estimate` is now stamped from the harness envelope rather
+than invented by the model. But the `[DEFAULT]` that governs it — *input +
+output, excluding cache reads, so the number stays comparable period over
+period* — turns out to exclude the prompt itself. Measured on the S2 probe, a
+66,189-byte prompt of which 63,164 bytes were diff:
+
+```
+prompt_file                    66,189 bytes
+usage.input_tokens                     10      <- the whole prompt is not here
+usage.cache_creation_input_tokens  55,121      <- it is here
+usage.cache_read_input_tokens     186,468
+usage.output_tokens                 8,513
+tokens_estimate (input+output)      8,523      <- 99.9% of it is output
+total_cost_usd                   0.878421
+```
+
+Claude Code caches the prompt by default, so `input_tokens` counts only what
+fell outside a cache block — here, ten tokens. **`tokens_estimate` is now
+effectively an output-token count**, and moves with verdict verbosity rather
+than with review size. A 127 KB diff and a 6 KB diff produce nearly the same
+figure.
+
+Three consequences, none of them fixed by this slice:
+
+1. **The old series and the new one are not comparable**, and not only because
+   one was invented. F15b's table — 386,300 tier-2 tokens, CHUNK-3's 252,000,
+   tier-1's ~7,900 average — reads as prompt-inclusive review cost. The
+   post-fix field does not count the prompt at all. Any line drawn from those
+   figures to a post-2026-07-31 one compares two different quantities.
+   (`docs/retro-metrics.md` publishes no token series, so nothing there is
+   invalidated; the exposure is F15b and everything derived from it.)
+2. **The `[DEFAULT]`'s own justification is inverted on this engine.** Cache
+   reads were excluded to keep a cold pass and a resumed pass comparable; the
+   effect is that neither pass counts its input at all.
+3. **`cost.total_cost_usd` is the only scalar in the verdict that tracks review
+   size**, which is an argument for `/retro` keying off `cost` and treating
+   `tokens_estimate` as a compatibility field.
+
+Not changed here, because the `[DEFAULT]` was given and silently redefining the
+field is precisely the failure mode this slice exists to stop. The decision
+belongs to whoever owns `docs/retro-metrics.md`: either redefine
+`tokens_estimate` as `input + cache_creation + output` and mark the series
+break, or retire the scalar and report `cost`.
+
+### F46 — `judge_model` is still an alias, and a two-model bill is recorded as one number · `OPEN` · **low-medium**
+
+F30's fix stamps `judge_model` from the observed `--model` argument, on the
+correct principle that the model cannot report its own id. The envelope shows
+that the CLI argument is not the best available source either:
+
+```
+modelUsage: ["claude-haiku-4-5-20251001", "claude-opus-5"]
+judge_model as stamped: "opus"
+```
+
+Two things follow. The alias `opus` resolved to **`claude-opus-5`**, and the
+exact id is sitting in the envelope we already parse — so provenance can be
+recorded exactly rather than as the alias the operator happened to type. And
+the run billed **two** models: the harness used `claude-haiku-4-5` alongside
+the scoring model, and `total_cost_usd` aggregates both. `modelUsage` carries
+the per-model split, and this slice discards it.
+
+This is F30's own defect class one level finer: we stopped trusting the model
+about itself and started trusting the *argument*, when the harness reports the
+resolved truth. Deliberately not fixed here — stamping the resolved id changes
+what `lane/prejudge-judge-model-is-observed` asserts, and that case should be
+rewritten on purpose rather than as a side effect of a cost slice.
