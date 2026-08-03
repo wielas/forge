@@ -96,6 +96,31 @@ on purpose — the shape names the layer to fix. A period dominated by `stale-sp
 is a roadmap problem; by `env`, a substrate problem. A large `other` bucket means
 the vocabulary is wrong and should be extended.
 
+## Cost, and why it is not a fourth number yet
+
+`forge.judge.v1` carries `tokens_estimate` and a full `cost` block since
+2026-08-01 (audit F30). Neither is a retro metric, and the reason is worth
+stating so nobody promotes one by default.
+
+**`tokens_estimate` = `input + cache_creation + output`** — tokens new to the
+model on that call. It deliberately **excludes `cache_read`**: cached re-reads
+are real tokens but counting them would make a resumed session score higher than
+a cold one, which inverts the signal delta review exists to produce.
+
+**Series break 2026-08-01 (F45).** Before that date the field was
+`input + output`, which on `claude -p` measured *output alone* — the prompt is
+billed to `cache_creation_input_tokens`, and a 131 KB prompt contributes ~9 to
+`input_tokens`. Verdicts either side of that date are not comparable. No row
+below has ever carried a token figure, so no published series is affected.
+
+**`cost.total_cost_usd` is recorded and is not the headline.** On the OAuth path
+it is a notional price nobody pays. The metered path is the
+`deepseek-v4-flash` Hermes profiles, and that side has **no telemetry and no
+column to hold any** (F48). A cost number here would measure the free half of a
+two-engine system and read as rigour.
+
+The fourth number lands when F48 does, not before.
+
 ## How this is used
 
 - `/retro` step 1 opens by reporting **whether the numbers moved since the last

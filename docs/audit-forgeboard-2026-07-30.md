@@ -1819,7 +1819,7 @@ Appended 2026-07-31 while implementing F30 and F37. Both were found by reading
 a real `claude -p` envelope instead of the one this audit imagined, in a
 hand-driven review of merged PR #9 on `wielas/forgeboard-report`.
 
-### F45 — `tokens_estimate` measures almost nothing on `claude -p`, because the prompt is billed to the cache and not to `input_tokens` · `OPEN` · **medium-high**
+### F45 — `tokens_estimate` measures almost nothing on `claude -p`, because the prompt is billed to the cache and not to `input_tokens` · `RESOLVED 2026-08-03` · **medium-high**
 
 F30 is fixed: `tokens_estimate` is now stamped from the harness envelope rather
 than invented by the model. But the `[DEFAULT]` that governs it — *input +
@@ -1865,6 +1865,45 @@ belongs to whoever owns `docs/retro-metrics.md`: either redefine
 `tokens_estimate` as `input + cache_creation + output` and mark the series
 break, or retire the scalar and report `cost`.
 
+**Ruling, 2026-08-03 — redefine, do not retire.**
+
+Reproduced independently before deciding. A ~30-byte prompt returned
+`input_tokens 10 / cache_creation 19,480`; a 131 KB prompt returned
+`input_tokens 9 / cache_creation 50,759`. Content moves `cache_creation`
+one-for-one and leaves `input_tokens` flat at ~9. The `[DEFAULT]` was wrong and
+the slice was right to flag it rather than silently redefine it.
+
+**`tokens_estimate = input + cache_creation + output`** — tokens new to the
+model on this call. Three reasons, in order of weight:
+
+1. **Excluding `cache_read` is the load-bearing part.** It double-counts
+   multi-turn re-reads, and including it would make a *resumed* session score
+   higher than a cold one — inverting the exact signal S6's delta review exists
+   to produce. A metric that punishes the optimisation it is meant to measure is
+   worse than no metric.
+2. **Retiring it costs a `.v2`.** The field is `required`; removing it breaks
+   the schema's own additive-evolution rule for no gain, since the corrected
+   formula is well-defined and cheap.
+3. **Tokens are work; price is work × tariff.** A provider price change would
+   break a cost series silently, with no marker — which is precisely the failure
+   `retro-metrics.md` exists to prevent. Tokens degrade more honestly.
+
+**`cost.total_cost_usd` is recorded but is *not* promoted to a retro headline
+number.** On the OAuth path it is a notional price nobody pays. §M established
+that the objective function is **metered Hermes API spend**, and neither
+candidate in this finding measures that side at all — see F48, which is the
+finding this decision actually surfaced.
+
+**Series break: 2026-08-01.** Verdicts before that date carry `input + output`,
+which on `claude -p` measured output alone. The break is marked in the schema's
+`tokens_estimate` description and here. No row of `retro-metrics.md` has ever
+carried a token figure, so no published series is affected — only stored card
+metadata, and only for the S2 probe run.
+
+Applied 2026-08-03: one line in `forge-prejudge.SOUL.md` step 4, plus the schema
+description. F30's other stamped fields are unaffected.
+
+
 ### F46 — `judge_model` is still an alias, and a two-model bill is recorded as one number · `OPEN` · **low-medium**
 
 F30's fix stamps `judge_model` from the observed `--model` argument, on the
@@ -1888,3 +1927,101 @@ about itself and started trusting the *argument*, when the harness reports the
 resolved truth. Deliberately not fixed here — stamping the resolved id changes
 what `lane/prejudge-judge-model-is-observed` asserts, and that case should be
 rewritten on purpose rather than as a side effect of a cost slice.
+### F47 — `scripts/metrics.sh` fails on a quiescent board, which is exactly when a retro runs · `OPEN` · **high**
+
+Found while reviewing S2, by running S1's own deliverable and watching it die.
+
+```
+$ ./scripts/metrics.sh forge-ladder
+Parse error near line 3: unable to open database file (14)
+```
+
+then succeeding on retry, with nothing changed. Reproduced deterministically:
+
+| board db | `-shm` sidecar | `sqlite3 "file:…?mode=ro"` |
+|---|---|---|
+| WAL mode | present | works |
+| WAL mode | **absent** | **`unable to open database file (14)`** |
+
+Every Hermes board is `journal_mode=wal`. A **read-only connection cannot create
+the `-shm` file that WAL requires**, so `mode=ro` succeeds only while some other
+process happens to be holding the board open. The failure window is the board at
+rest — no dispatcher, no worker, sidecars checkpointed away. **That is the state
+a board is in when someone sits down to run `/retro`.**
+
+The bug is intermittent in the worst direction: it works every time you test it
+by hand right after touching the board, and fails when the tool is used for its
+actual purpose. Nothing detected it; it surfaced because a review happened to
+run the command in the wrong second.
+
+**Fix — the pattern already exists in this project's own output.**
+`forgeboard-report`'s `hermes.py` snapshot-copies the database *and its
+sidecars* to a temp directory, fingerprints them before and after, and reads the
+copy. That is both the fix for this defect and the fix for the consistency
+問題 `mode=ro` never solved: a report assembled from a board being written
+underneath it is torn regardless of whether it opens. The product the Forge
+built solved this correctly; the Forge's own script did not, having been given
+`[MEASURED] Open read-only: mode=ro` by an orchestrator who had not tested it
+against a quiescent board.
+
+That last clause is the transferable lesson, and it belongs beside F41 and F42:
+this is the **third** `[MEASURED]` tag in this audit that turned out to be an
+inference dressed as a measurement.
+
+---
+
+### F48 — The metered half of the system has no cost telemetry, and no slot to put it in · `OPEN` · **critical**
+
+The finding F45's decision surfaced, and the largest remaining blind spot.
+
+§M established the objective function: `codex exec` and `claude -p` are OAuth
+and free at the margin; the `deepseek-v4-flash` Hermes profiles are the **only
+metered path**. S2 then instrumented `claude -p` beautifully — real `usage`,
+real `total_cost_usd`, `session_id`, all stamped from the harness.
+
+**All of it measures the free engine.** Checked on the live board:
+
+```sql
+PRAGMA table_info(task_runs);
+-- id task_id profile step_key status claim_lock claim_expires worker_pid
+-- max_runtime_seconds last_heartbeat_at started_at ended_at outcome summary
+-- metadata error
+--                            ^ no usage, no tokens, no cost column
+```
+
+`hermes kanban runs` exposes no usage flag. `forge.chunk.v1` defines no cost
+field. So the driver's consumption — the only consumption that is billed — is
+**not recorded anywhere, and there is no column, flag or schema key that could
+hold it.**
+
+Worse, the envelope that exists is nearly empty. The documented
+`forge.chunk.v1` has 15 fields; what the lane actually emits is:
+
+```
+branch, chunk_id, pr
+```
+
+**Three.** F2 said "not one field is canonical"; the measured answer is that 12
+of 15 are simply absent, on top of F1's nesting defect.
+
+**Consequence.** Every efficiency claim in this document — including the
+60–65% saving in F21 and the whole justification for S6 — is measured on the
+side of the system that does not cost anything. The Forge can currently prove
+it made the free half cheaper and cannot say whether the billed half moved at
+all.
+
+**Fix, in the order the layers allow:**
+
+1. **`forge.chunk.v1` gains a `cost` block** mirroring `forge.judge.v1`'s, and
+   the lane stamps it from `codex exec`'s reported usage plus whatever the
+   driver can observe of its own. Additive; no `.v2`.
+2. **Establish what the driver can see.** Hermes may expose per-run usage
+   through a route `hermes kanban runs` does not; if it does not, that is a
+   substrate limitation to record in `docs/hermes-field-notes.md` and route
+   around — a wall-clock and tool-call proxy beats nothing.
+3. **Fix the producer first.** A cost field added to an envelope that emits 3 of
+   15 documented fields will simply be the 13th absent one. S5's schema
+   validation against live board metadata is the prerequisite, not a follow-up.
+
+Until then, treat every token figure in this audit as describing the
+subscription-covered half of a two-engine system.
