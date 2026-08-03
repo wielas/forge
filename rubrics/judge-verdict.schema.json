@@ -105,7 +105,7 @@
     "tokens_estimate": {
       "type": "integer",
       "minimum": 0,
-      "description": "Non-cached input + output tokens, stamped by the operator from the harness usage envelope — never self-reported by the judging model. A projection of `cost`, kept required for period-over-period comparison in docs/retro-metrics.md."
+      "description": "Tokens NEW to the model on this call: input + cache_creation + output. Excludes cache_read, which double-counts multi-turn re-reads and would make a resumed (cheap) session score higher than a cold one — inverting the signal delta review exists to produce. Stamped by the operator from the harness usage envelope, never self-reported. SERIES BREAK 2026-08-01 (audit F45): earlier verdicts used input + output, which on claude -p measured output alone, because the prompt is billed to cache_creation_input_tokens."
     },
     "cost": {
       "type": "object",
