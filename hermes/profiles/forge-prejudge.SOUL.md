@@ -136,7 +136,8 @@ SCORER
      | $env.structured_output
      | .pr = $pr
      | .judge_model = "opus"
-     | .tokens_estimate = ($u.input_tokens + $u.output_tokens)
+     | .tokens_estimate = ($u.input_tokens + $u.cache_creation_input_tokens
+                           + $u.output_tokens)
      | .cost = ($u | del(.iterations)) + {total_cost_usd: $env.total_cost_usd}
      | .session_id = $env.session_id
    ')"
