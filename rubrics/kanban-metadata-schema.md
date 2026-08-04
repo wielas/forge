@@ -38,8 +38,49 @@ to watch. The lane worker passes this JSON directly to
 recommended keys (`changed_files`, `tests_run`, `decisions`) are welcome
 alongside the forge keys; the dashboard renders them for free.
 
+## Tier-1 gate result — `forge.gate.v1`
+
+Emitted by `scripts/prejudge.sh --json` and stored **unmodified** as the
+prejudge card's metadata when the gate blocks (ADR-0009 D9.4).
+
+```json
+{
+  "schema": "forge.gate.v1",
+  "gate": "forge-prejudge-gate",
+  "pr": "https://github.com/…/pull/8",
+  "repo": "wielas/forgeboard-report",
+  "number": 8,
+  "chunk": "CHUNK-5",
+  "branch": "chunk/5",
+  "head": "67c1a12…", "base": "b71fc96…",
+  "checks": [
+    { "id": "branch-name", "status": "pass | block | warn | skip",
+      "evidence": "chunk/5 has no <slug> — AGENTS.md requires chunk/<id>-<slug>",
+      "action": "rename the branch and force-push, keeping the same PR: …" }
+  ],
+  "counts": { "pass": 2, "block": 2, "warn": 2, "skip": 1 },
+  "blocks": ["branch-name", "scenario-count"],
+  "result": "block | clear"
+}
+```
+
+**This is deliberately not `forge.judge.v1`, and the distinction is the point.**
+A gate block costs zero model tokens and happens before any scorer is spawned; a
+bounce costs a full review. Expressing "the branch name is wrong" as a verdict
+with six zeroed dimensions would invent five scores — the same defect as the
+zeroed cost object the prejudge SOUL already refuses to write — and would make
+the two events indistinguishable in the one metric built to tell a filter from a
+judge. `scripts/metrics.sh` counts them separately and `docs/retro-metrics.md`
+says what each number means.
+
+`action` is null on `pass` and `skip` and **required on every `block`**: gate
+findings are copied verbatim into the repair card, so a finding a fresh worker
+cannot execute is an unworkable card. `skip` is a real outcome and never
+collapses into `pass` — a check that could not run has not passed.
+
 ## Judge completion — `forge.judge.v1`
-Defined in `rubrics/judge-rubric.md`. Stored as the judge card's metadata.
+Defined in `rubrics/judge-rubric.md`. Stored as the judge card's metadata — by
+tier 1's model stage when the gate cleared and the scorer ran, and by tier 2.
 
 ## Blocked card — `forge.block.v1`
 

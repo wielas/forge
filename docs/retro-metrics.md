@@ -4,7 +4,8 @@
 helped, so the loop could only accumulate: it had no way to tell an improvement
 from a regression, and every proposal was equally defensible.
 
-Three numbers, recorded once per retro period. They are deliberately few. A
+Three numbers, recorded once per retro period, plus a fourth added 2026-08-04
+when tier 1 grew a deterministic first stage. They are deliberately few. A
 number nobody reads is worse than no number, because it looks like rigour.
 
 ## Who computes these
@@ -24,7 +25,36 @@ key was misspelled, the largest run in the project's history had no row at all,
 and 22 malformed chunk envelopes went unseen for three days. See audit F27.
 **Deriving any of these by hand is a defect, not a fallback.**
 
-## The three numbers
+## The numbers
+
+### 0. Gate block rate — and why it is not a bounce rate
+
+**Definition:** `gate runs that blocked / gate runs`, over the period, plus the
+distribution of **which check did the blocking**. Reported first and labelled
+separately. It is *not* a bounce rate and must never be averaged into one.
+
+**Source:** `forge.gate.v1` results on `task_runs` — `$.result` for the rate,
+`$.blocks[]` for the per-check distribution. Emitted by `scripts/prejudge.sh`
+and stored unmodified by the `forge-prejudge` driver (ADR-0009 D9.4).
+
+**Why it is its own number.** A gate block costs **zero model tokens and zero
+scorer latency**, because it lands before anything is spawned; a bounce costs a
+full review. They are different events with different prices, and a single
+blended rate would hide the gap between a filter and a judge — the same defect,
+from the other side, as the tier-blind rate F3 exposed. It would also make
+ADR-0009 D9.5's experiment unreadable: if a gate block and a model bounce are
+one number, no later period can show which stage did the filtering.
+
+**Reads as:** how much of what reaches review is mechanically wrong. A period
+where this rises while tier 2's bounce rate falls is the change working — the
+program absorbing defects that used to cost a human. A period where the
+`by_check` distribution collapses onto one check is a gate with one useful check
+in it, and that is worth knowing before anyone concludes the other six earn
+their place.
+
+**No dollar figure belongs here.** The blocked path avoids OAuth work, which is
+free at the margin, and the metered driver has no cost telemetry at all (F48).
+The saving is spawns and latency; say that, and do not convert it to money.
 
 ### 1. Bounce rate
 
@@ -37,6 +67,13 @@ approved — the cost was already paid.
 the chunk card the reviewed card hangs off. Tier comes from the `profile` of the
 run carrying the verdict — `forge-prejudge` is tier 1, everything else including
 an operator's unassigned card is tier 2 — never from the card title.
+
+**Tier 1's number now covers its model stage only.** Since ADR-0009 tier 1 is
+two stages: a gate that emits `forge.gate.v1` and never scores, then the
+`claude -p` scorer that emits `forge.judge.v1` as before. Only the second
+produces a verdict, so only the second appears here. Gate blocks are number 0
+above, and a PR that the gate blocked never reached the scorer at all — so the
+two denominators are different populations, not two views of one.
 
 **Changed 2026-07-30 (F3), and this is the correction that motivated it.** The
 old definition counted tier-1 verdicts only. Tier 1 bounced **0 of 17** on the
@@ -77,7 +114,12 @@ made review more permissive.
 **Definition:** counts per class over the period's `blocked` events, where the
 class is the leading `<token>:` of the block reason. Documented vocabulary:
 `stale-spec`, `failing-prereq`, `env`, `ci-red`, `judge-bounce`,
-`gate-misrouted`, `other`. Anything whose reason does not begin with a bare
+`gate-misrouted`, `gate-unrunnable`, `other`. `gate-unrunnable` was added
+2026-08-04 with ADR-0009: it is the prejudge driver's reason when
+`scripts/prejudge.sh` exits 2 — no `gh`, no network, PR unreadable — and it is a
+fact about the substrate, never a verdict on the work. `ci-red` stays in the
+vocabulary for the historical rows that carry it; new CI failures block at the
+gate instead. Anything whose reason does not begin with a bare
 lowercase slug is `(unclassified)`; a class outside the vocabulary is counted
 and flagged rather than folded into `other`.
 

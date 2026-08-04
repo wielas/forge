@@ -1,0 +1,7 @@
+34	1	src/forgeboard_report/domain.py
+21	0	src/forgeboard_report/errors.py
+122	0	src/forgeboard_report/publish.py
+739	0	src/forgeboard_report/render.py
+42	0	tests/features/report_output.feature
+300	0	tests/steps/test_report_output_steps.py
+386	0	tests/test_render.py

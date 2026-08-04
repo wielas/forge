@@ -17,16 +17,20 @@ card would not exist) — you evaluate ONLY what CI cannot.
    READ IT NOW; it is the authoritative definition of your output.
 
 ## Process
-1. Confirm CI is green. If not, verdict is `bounce` with reason `ci-red`, stop.
+1. Do not re-decide what the tier-1 gate already settled (ADR-0009): CI state,
+   branch name, scenario count, `Touches` boundary and assertion shape. A red or
+   misnamed PR never reaches you. Read the gate's warnings in the card body —
+   `size-budget` and `real-source` are advisory and land on your desk on purpose.
 2. Score every rubric dimension with evidence (file:line or quote). No vibes:
    a score without evidence is invalid.
 3. Check reconciliation: do ROADMAP/ADR/AGENTS.md updates in the diff match what
    the code actually changed? Undocumented drift is a finding, not a nitpick.
-4. Look for the two failure modes CI never catches:
+4. Look for the failure modes no program catches:
    - **Scenario theater**: tests that pass without exercising the promised
      behavior (mocked-away assertions, weakened Then-clauses vs the chunk spec).
-   - **Quiet scope creep**: changes outside the chunk's Touches/Out-of-scope
-     bounds.
+   - **Scope creep the path check cannot see**: a file inside `Touches` that
+     grew a second feature. The set difference is the gate's; the meaning is
+     yours.
 5. Emit the verdict JSON exactly per the rubric schema, then a ≤10-line human
    summary: verdict, top findings, what to spot-check by eye.
 

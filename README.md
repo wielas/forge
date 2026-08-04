@@ -116,7 +116,8 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `substrate/` | behaviour we depend on and do not control: worktree ownership, `.git`-is-a-file, the codex sandbox commit |
 | `template/` | stamp → `make setup` → hooks really installed → `make check` green → the pre-push gate exercised against a real bare remote, both ways: the push that *creates* `main` is allowed, every later one is refused |
 | `lane/` | what the lane must do **for** Codex because Codex cannot: build the venv while a network still exists, and state the role boundary in the prompt (reads are not sandboxed) |
-| `metrics/` | the flywheel's own numbers: a checked-in SQL board must reproduce a checked-in JSON expectation field for field, a nonconforming chunk envelope must be reported rather than normalized away, reading a board must not change it, and `/retro` must still run the command instead of doing the arithmetic |
+| `metrics/` | the flywheel's own numbers: a checked-in SQL board must reproduce a checked-in JSON expectation field for field, a nonconforming chunk envelope must be reported rather than normalized away, reading a board must not change it, gate blocks must stay counted apart from bounces, and `/retro` must still run the command instead of doing the arithmetic |
+| `prejudge/` | the tier-1 gate: two **recorded** PRs of the audited run reproduce a checked-in severity map with no `gh`, no `git` and no network; a blocking check exits 1; every blocking finding carries an action a fresh worker can execute; and the gate contains no model call while the SOUL's scorer is still there |
 
 Run it in CI, after every `hermes update`, and after every `codex`/`claude`
 upgrade. A tool version bump that changes a flag or a sandbox rule should fail a
@@ -194,6 +195,7 @@ before blaming the model.
 | 6 | A lane is a Hermes profile, not a program we write | [0006](docs/adr/0006-hermes-native-lanes.md) |
 | 7 | Two-tier judging: an unattended filter that can only bounce, then the operator | [0007](docs/adr/0007-two-tier-judge.md) |
 | 8 | Code dependencies wait for merged parent PRs; no implicit stacks | [0008](docs/adr/0008-integrated-dependencies.md) |
+| 9 | Tier 1 gets a deterministic first stage that blocks before any model runs; the model stage stays, as a control arm under evaluation | [0009](docs/adr/0009-tier-1-gate.md) |
 
 How the substrate actually behaves — the traps, with the commands that exposed
 them — is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md). What we

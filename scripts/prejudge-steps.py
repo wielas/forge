@@ -44,21 +44,6 @@ _ASSERTING_CALLS = {"fail", "raises", "approx"}
 _ASSERT_METHOD_PREFIX = "assert"
 
 
-def _decorator_name(node: ast.expr) -> str:
-    """`@then`, `@then("x")`, `@pytest_bdd.then("x")` -> `then`."""
-    if isinstance(node, ast.Call):
-        node = node.func
-    while isinstance(node, ast.Attribute):
-        node = node.value if isinstance(node.value, ast.Attribute) else node
-        if isinstance(node, ast.Attribute):
-            return node.attr
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return ""
-
-
 def _is_then(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     for dec in func.decorator_list:
         target = dec.func if isinstance(dec, ast.Call) else dec

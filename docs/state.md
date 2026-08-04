@@ -42,7 +42,8 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | A chunk flows card → PR → merge, unattended | `forge-hello` board, card `t_1b7be3bb`, PR #1 merged 2026-07-28, 4 min, one run, no retries |
 | The cheap driver holds the 7-section lane protocol | `deepseek-v4-flash` executed every section in order, narrating its position |
 | Both metadata schemas populate | `forge.chunk.v1` and `forge.judge.v1` complete on the real cards |
-| Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict |
+| Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict. Since ADR-0009 the waiting is the gate's job; the scorer call itself is unchanged |
+| The tier-1 gate blocks, offline | `make verify prejudge` — two recorded PRs of the audited run reproduce a checked-in severity map with no gh, git or network; PR #8 exits 1 on `branch-name` + `scenario-count` |
 | Tier-1 discriminates | deliberate PR #6 was CI-green but assertion-free; prejudge `t_624586d7` scored scenario integrity 1 and bounced |
 | A bounce reaches the rejected PR | corrected fix `t_d159a76e` resumed the completed chunk's linked worktree; role probe `t_d36ec44e` made Codex author the repair |
 | Dependency gating holds at card level | D1 `t_86aa3f8d` ran while D2 `t_b9fa41cc` stayed `todo`; D2 promoted exactly when D1 completed |
