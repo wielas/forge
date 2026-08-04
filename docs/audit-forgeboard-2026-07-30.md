@@ -1741,7 +1741,7 @@ adds the first hours of a run. `strftime('%s', <date>, 'utc')` is the conversion
 that makes a day boundary mean the operator's midnight.
 `scripts/metrics.sh` does that and says why.
 
-### F43 — `make verify` has been red on the operator's own machine, and nobody noticed · `OPEN` · **medium**
+### F43 — `make verify` has been red on the operator's own machine, and nobody noticed · `FIXED 2026-08-04` · **medium**
 
 `./scripts/verify.sh config` fails six cases on the live host, on `main`, before
 this slice touched anything:
@@ -1768,6 +1768,16 @@ comment above its own `skip` helper, about a different case.
 assignees that resolve to a profile, and `skip` — with the sentinel named — the
 ones that deliberately do not exist. Not fixed in this slice: it is the
 `config/` group's contract, not the `metrics/` group's.
+
+**Fixed 2026-08-04 (S3 step 0).** `hermes kanban assignees --json` already
+carries an `on_disk` boolean; the group now filters on it and emits one `skip`
+per ghost, naming it. The six failures became two skips.
+
+The count was wrong, and the direction it was wrong in matters. The suite was
+red for **three** independent causes, not one: these six, plus F49 (four more,
+in any worktree) and F50 (one, on `main`, since the commit that resolved F45).
+F43's own thesis — that a red suite hides the next failure — was demonstrated by
+F43's own write-up, which recorded a third of the redness.
 
 ### F44 — More than half of all tier-1 runs left no readable verdict · `OPEN` · **high**
 
@@ -1927,7 +1937,7 @@ about itself and started trusting the *argument*, when the harness reports the
 resolved truth. Deliberately not fixed here — stamping the resolved id changes
 what `lane/prejudge-judge-model-is-observed` asserts, and that case should be
 rewritten on purpose rather than as a side effect of a cost slice.
-### F47 — `scripts/metrics.sh` fails on a quiescent board, which is exactly when a retro runs · `OPEN` · **high**
+### F47 — `scripts/metrics.sh` fails on a quiescent board, which is exactly when a retro runs · `FIXED 2026-08-04` · **high**
 
 Found while reviewing S2, by running S1's own deliverable and watching it die.
 
@@ -2025,3 +2035,131 @@ all.
 
 Until then, treat every token figure in this audit as describing the
 subscription-covered half of a two-engine system.
+
+---
+
+## Ledger additions from the prejudge-gate slice (S3, step 0)
+
+*All three found while executing F43 and F47 — that is, by running the suite
+the audit had just declared red and watching what else was wrong underneath it.
+F43 recorded six failures from one cause. There were eleven, from three.*
+
+### F49 — `make verify` cannot be green in a worktree, which is where F40 requires every slice to run · `FIXED 2026-08-04` · **medium**
+
+`config/external-dirs/<profile>` asserts that each live Hermes profile's
+`skills.external_dirs` points at `$REPO_ROOT/skills`, where `REPO_ROOT` is
+wherever `verify.sh` was invoked from. The profiles are bootstrapped once,
+against the main checkout. So from a linked worktree the check compares
+
+```
+/Users/goonlab/dev/forge-slices/s3-prejudge-gate/skills   (REPO_ROOT)
+/Users/goonlab/dev/forge/skills                           (what the profiles hold)
+```
+
+and fails once per profile — **4 more failures on top of F43's 6**, measured on
+this host before this slice changed anything.
+
+The two rules are in direct contradiction. F40 says a slice must run in a
+worktree and not in the main checkout. This case says a worktree is red. Taken
+together they say: do the work where the suite cannot pass. That is F43's
+disease with a different cause — the suite is red for a reason unrelated to the
+change under test, so it carries no information about the change under test.
+
+**Fixed** by judging the two roots separately. A match on this checkout is a
+`pass`. A match on the *main* checkout, from a linked worktree, is a `skip`
+naming the consequence out loud: *the skills you are editing are not the ones
+any run would read.* That consequence is real and worth stating on every slice —
+it is why a SOUL edit in a worktree changes nothing until it is merged and
+`profiles-bootstrap.sh` is re-run — but it is not a defect in the slice, and a
+`skip` says so where a `fail` did not.
+
+### F50 — The commit that resolved F45 broke the check that asserts F45, and `make verify` has been red on `main` since · `FIXED 2026-08-04` · **medium**
+
+`lane/prejudge-cost-is-observed` asserts the SOUL's token formula with a
+line-anchored regex:
+
+```
+\.tokens_estimate *= *\(\$u\.input_tokens \+ \$u\.output_tokens\)
+```
+
+Commit `2055929` ("resolve F45") changed the SOUL to the formula F45 measured to
+be the true one —
+
+```jq
+.tokens_estimate = ($u.input_tokens + $u.cache_creation_input_tokens
+                    + $u.output_tokens)
+```
+
+— and did not touch `verify.sh`. `git log -S` puts the divergence in that single
+commit. The case has failed on `main` ever since, which means **F43 was still
+true on the day it was written up**, just for a second, newer reason: this
+slice's step 0 found the suite red for three independent causes, of which the
+audit had recorded one.
+
+Two things made it invisible for a commit. The expression is wrapped across two
+lines in the SOUL, so a line-anchored grep could not match the correct formula
+even in principle — the check could only ever pass on the *old* text. And the
+number the case exists to protect is the one F45 proved was wrong.
+
+**Fixed** by flattening newlines before matching and asserting the F45 formula
+including `cache_creation_input_tokens` — the term whose omission *was* F45.
+
+**The transferable lesson, and it is the one this slice keeps re-learning:** a
+`make verify` case that asserts the text of a skill body is a second copy of
+that skill body, and F34 already named duplication in the methodology layer as a
+defect class. Nothing links the two copies. The suite cannot tell "the SOUL
+regressed" from "the SOUL was corrected and I was not told", and it reports both
+as `FAIL` in the same words.
+
+### F51 — The `metrics/` fixture is not `journal_mode=wal`, and that is why the suite could not have caught F47 · `FIXED 2026-08-04` · **medium**
+
+`scripts/fixtures/metrics-board.sql` created its board with no `PRAGMA
+journal_mode`, so `sqlite3` built it as `delete` — SQLite's default. **Every
+Hermes board is `wal`** (measured on `digest`, `forge-ladder`,
+`forge-dependency-clone-20260728`).
+
+F47 is reachable *only* on a WAL database with no `-shm` beside it. On a
+`delete`-mode fixture, `mode=ro` opens fine every time. So the six-case
+`metrics/` group could not have found F47 however many cases were added to it,
+and the regression case written for F47 in this slice **passed against the
+reintroduced bug** on the first attempt — which is how this was found.
+
+The fixture's own header claims fidelity: *"the names and NOT NULL constraints
+the live Hermes schema uses"*, checked against a real board by
+`metrics/live-schema-has-fixture-columns`. That case reads columns. Journal mode
+is not a column, so nothing compared it, and the one production property that
+mattered to the one bug in this script was the property the fixture did not
+reproduce.
+
+**Fixed**: the fixture is `wal`, and `metrics/reads-a-quiescent-board`
+checkpoints and strips the sidecars to build the resting state explicitly. The
+case has been mutation-tested — with the `mode=ro` read restored it fails, and
+the failure text is F47's exact error.
+
+**The transferable lesson:** `live-schema-has-fixture-columns` exists precisely
+because a hand-written fixture drifts from production. It compares the one
+dimension somebody thought of. A fixture is a claim about *every* property of
+production, and only the enumerated ones are ever checked.
+
+### An unrecorded second half of F47
+
+The audit records F47 as `metrics.sh` *failing* on a quiescent board. Measured
+here: it fails and **exits 0**, printing a single blank line.
+
+```
+$ HERMES_KANBAN_HOME=<quiescent> ./scripts/metrics.sh forge-ladder --json
+                      # one empty line
+$ echo $?
+0
+```
+
+`sqlite3` writes `Error: unable to open database file` to **stdout**, not
+stderr. The guard was `[ -n "$JSON" ] || exit 2` — satisfied by the error text
+itself. `jq` then failed on it, and with `set -uo pipefail` but no `-e`, the
+script printed the empty result and reported success.
+
+So a `/retro` consuming `--json` on a resting board does not get an error; it
+gets nothing, from a command that says it worked. Fixed with the sqlite3 exit
+code plus a `jq -e` parse check. Recorded because it changes F47's severity: the
+failure is not loud, it is silent, and the flywheel's numbers are exactly where
+a silent empty result is least likely to be questioned.
