@@ -8,14 +8,17 @@ metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..
 	@test -n "$(BOARD)" || { echo "usage: make metrics BOARD=<slug> [SINCE=YYYY-MM-DD] [UNTIL=YYYY-MM-DD]"; exit 1; }
 	./scripts/metrics.sh $(BOARD) $(if $(SINCE),--since $(SINCE),) $(if $(UNTIL),--until $(UNTIL),)
 
-# SHADOW MODE. This gates nothing: no lefthook, no CI job, no lane or SOUL
-# change, and `make verify`'s prejudge/gates-nothing case keeps it that way.
-# Tier 1 costs a full Opus pass and has never bounced anything (17 runs, 0
-# bounces) while tier 2 bounced 12 times on the same diffs from the same rubric.
-# Everything tier 1 is mandated to catch is decidable without a model; this is
-# that program, running beside the model tier rather than in place of it, until
-# the numbers say which of its checks should gate (audit F35).
-prejudge:                      ## make prejudge PR=<url|number> [REPO=owner/name] — tier 1 as a program, shadow mode
+# THIS BLOCKS (ADR-0009). Four checks block, three warn, and the severity map
+# came from backtesting all 11 PRs of the run that produced the audit rather
+# than from a table written in advance. Exit 1 is a block; exit 2 is the gate
+# failing to run at all, and the two are deliberately different, because
+# conflating them would let a network outage read as a rejection.
+#
+# It is tier 1's FIRST stage, not the whole of it. A clear result here is not an
+# approval — the forge-prejudge SOUL runs its model scorer on whatever this lets
+# through, and ADR-0007 D7.1 stands. The saving is real and is not a dollar
+# saving: a blocked PR spends zero driver tokens, because nothing is spawned.
+prejudge:                      ## make prejudge PR=<url|number> [REPO=owner/name] — tier 1 stage 1; exit 1 on a block
 	@test -n "$(PR)" || { echo "usage: make prejudge PR=<url|number> [REPO=owner/name] [WAIT=secs]"; exit 1; }
 	./scripts/prejudge.sh $(PR) $(if $(REPO),--repo $(REPO),) $(if $(WAIT),--wait $(WAIT),) $(if $(JSON),--json,)
 

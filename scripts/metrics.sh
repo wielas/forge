@@ -199,6 +199,28 @@ tiers AS (
          COUNT(DISTINCT CASE WHEN verdict = 'bounce' THEN chunk_card END) AS chunks_bounced
     FROM va GROUP BY tier
 ),
+-- Gate blocks are counted SEPARATELY from bounces, which is ADR-0009 D9.4.
+-- Tier 1 has two stages and they leave two different envelopes. The gate emits
+-- `forge.gate.v1` — a `result` and the ids of the checks that blocked, and no
+-- scores, because a program forms no opinion to score. Its model stage still
+-- emits `forge.judge.v1` and is still counted as tier 1 above.
+--
+-- A gate block costs zero model tokens and lands before any scorer is spawned;
+-- a bounce costs a full review. Averaging them into one rate would hide the gap
+-- between a filter and a judge — the same defect, from the other side, as the
+-- single blended rate this file already refuses (F3). It would also make the
+-- experiment ADR-0009 D9.5 sets up unreadable: if a gate block and a model
+-- bounce are one number, no later period can show which stage did the filtering.
+g AS (
+  SELECT json_extract(r.metadata,'$.result') AS result, r.metadata AS md
+    FROM task_runs r
+   WHERE json_extract(r.metadata,'$.schema') = 'forge.gate.v1'
+     AND r.started_at >= :since AND r.started_at < :until
+),
+-- Which check did the blocking. A gate whose blocks are all one check is a gate
+-- with one useful check in it, and that is worth seeing before anyone concludes
+-- the other six are earning their place.
+gk AS (SELECT je.value AS id FROM g, json_each(g.md, '$.blocks') je),
 -- [MEASURED] Read both envelope shapes, report the divergence, normalize
 -- neither: detecting it is the deliverable (audit F1/F2). "neither" is a real,
 -- reachable bucket, not a defensive else-branch.
@@ -252,9 +274,17 @@ SELECT json_object(
             FROM (SELECT * FROM tiers ORDER BY tier)),
   'mean_d13_all', (SELECT CASE WHEN AVG(d13) IS NULL THEN NULL
                           ELSE printf('%.2f', AVG(d13)) END FROM va),
+  'gate', (SELECT json_object(
+             'runs',    (SELECT COUNT(*) FROM g),
+             'blocked', (SELECT COUNT(*) FROM g WHERE result = 'block'),
+             'clear',   (SELECT COUNT(*) FROM g WHERE result = 'clear'),
+             'block_rate', (SELECT CASE WHEN COUNT(*) = 0 THEN NULL
+                            ELSE printf('%.2f', 1.0 * SUM(result = 'block') / COUNT(*)) END FROM g),
+             'by_check', (SELECT COALESCE(json_group_object(id, n), json_object())
+                          FROM (SELECT id, COUNT(*) n FROM gk GROUP BY id ORDER BY n DESC, id)))),
   'reason_class', (SELECT json_group_array(json_object('class', class, 'count', n,
                      'documented', CASE WHEN class IN ('stale-spec','failing-prereq','env',
-                       'ci-red','judge-bounce','gate-misrouted','other')
+                       'ci-red','judge-bounce','gate-misrouted','gate-unrunnable','other')
                      THEN json('true') ELSE json('false') END))
                    FROM (SELECT class, COUNT(*) n FROM rc GROUP BY class ORDER BY n DESC, class)),
   -- Counted, not asserted. F26 claims this envelope has never been emitted;
@@ -300,9 +330,15 @@ markdown-row)
                   else "t\(n) \(.bounce_rate) (\(.chunks_bounced)/\(.chunks_judged))" end);
     def period: (if .since == null and .until == null then "board lifetime"
                  else "\(.since // "board start")..\(.until // "now")" end);
+    # The gate number is FIRST and separately labelled. It is not a bounce rate
+    # and must never be averaged into one: it is free, it lands before a
+    # reviewer exists, and a period where it rises while t2 falls is the whole
+    # point of the change that produced it (ADR-0009).
+    def gate: (if .gate.runs == 0 then "gate n/a — 0 gate runs in period"
+               else "gate \(.gate.block_rate) (\(.gate.blocked)/\(.gate.runs))" end);
     "| " + ([ (now | strflocaltime("%Y-%m-%d")),
               "\(.board), \(period)",
-              "\(br(1)) · \(br(2))",
+              "\(gate) · \(br(1)) · \(br(2))",
               (if .mean_d13_all == null then "n/a — 0 canonical verdicts in period"
                else "\(.mean_d13_all) (\(.verdicts.total) verdicts)" end),
               (if (.reason_class | length) == 0 then "empty (0 blocked cards)"
@@ -313,10 +349,18 @@ text)
   render "$JSON" '
     "forge metrics — board \(.board)   period \(.since // "(board start)") .. \(.until // "(now)")",
     "",
+    "tier-1 gate — stage 1, a program (ADR-0009); blocks cost zero model tokens and are NOT bounces",
+    (if .gate.runs == 0 then "  no forge.gate.v1 results in period"
+     else "  block rate  \(.gate.block_rate) (\(.gate.blocked)/\(.gate.runs) gate runs)"
+          + "\n  by check    " + ([.gate.by_check | to_entries[] | "\(.key) ×\(.value)"]
+                                  | if length == 0 then "nothing blocked" else join(" · ") end) end),
+    "",
     "bounce rate — a chunk counts as bounced if ANY verdict against it bounced",
     (if (.tiers | length) == 0 then "  no canonical forge.judge.v1 verdicts in period"
      else ([.tiers[] | "  tier \(.tier)  \(.bounce_rate // "n/a") (\(.chunks_bounced)/\(.chunks_judged) chunk cards)"
-                       + "   from \(.bounce_verdicts)/\(.verdicts) verdicts"] | join("\n")) end),
+                       + "   from \(.bounce_verdicts)/\(.verdicts) verdicts"
+                       + (if .tier == 1 then "   [model stage only; gate blocks are the number above]" else "" end)]
+           | join("\n")) end),
     "",
     "mean judge score, dimensions 1–3 (range 0–3)",
     (if (.tiers | length) == 0 then empty

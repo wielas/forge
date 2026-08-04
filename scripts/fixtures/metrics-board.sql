@@ -72,13 +72,16 @@ INSERT INTO tasks (id, title, status, created_at, completed_at) VALUES
   ('t_j2', 'judge: CHUNK-1 re-review',          'done', 1785200140, 1785200150),
   ('t_j3', 'judge: CHUNK-2',                    'done', 1785200220, 1785200230),
   ('t_j4', 'judge: orphan, linked to nothing',  'done', 1785200240, 1785200250),
+  ('t_g1', 'prejudge: CHUNK-1 (gate, blocked)', 'done', 1785200500, 1785200505),
+  ('t_g2', 'prejudge: CHUNK-2 (gate, clear)',   'done', 1785200510, 1785200515),
   ('t_b1', 'blocked card',                      'blocked', 1785200400, NULL);
 
 -- t_j2 hangs off the TIER-1 card, not the chunk card. That really happens on
 -- forge-ladder (t_26565597), and it is why attribution walks two hops.
 INSERT INTO task_links (parent_id, child_id) VALUES
   ('t_c1', 't_p1'), ('t_c2', 't_p2'), ('t_c3', 't_p3'),
-  ('t_c1', 't_j1'), ('t_p1', 't_j2'), ('t_c2', 't_j3');
+  ('t_c1', 't_j1'), ('t_p1', 't_j2'), ('t_c2', 't_j3'),
+  ('t_c1', 't_g1'), ('t_c2', 't_g2');
 
 -- Chunk completions. t_c3 has no prejudge child, so it is only identifiable by
 -- its forge-codex-lane run — and its metadata carries neither envelope shape,
@@ -111,6 +114,18 @@ INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, 
    '{"schema":"forge.judge.v1","verdict":"bounce","scores":{"spec_fidelity":0,"scenario_integrity":1,"architectural_conformance":2,"scope_discipline":1,"debt_honesty":2,"doc_reconciliation":2}}'),
   ('t_j4',NULL,'done',1785200245,1785200250,'completed',
    '{"schema":"forge.judge.v1","verdict":"bounce","scores":{"spec_fidelity":1,"scenario_integrity":1,"architectural_conformance":1,"scope_discipline":1,"debt_honesty":1,"doc_reconciliation":1}}');
+
+-- Tier 1 after ADR-0009: a program, emitting `forge.gate.v1` and no scores at
+-- all. These two rows are why gate blocks are counted separately — t_g1 blocks
+-- on two checks at zero tokens, which is NOT the same event as t_j3's bounce
+-- after a full review, and a single averaged bounce rate would say it was.
+-- The verdict rows above stay: they are the pre-ADR-0009 series, and the break
+-- between the two is a fact about the log, not a mess to normalize away.
+INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, metadata) VALUES
+  ('t_g1','forge-prejudge','done',1785200500,1785200505,'completed',
+   '{"schema":"forge.gate.v1","gate":"forge-prejudge-gate","result":"block","number":8,"blocks":["branch-name","scenario-count"],"counts":{"pass":2,"block":2,"warn":2,"skip":1}}'),
+  ('t_g2','forge-prejudge','done',1785200510,1785200515,'completed',
+   '{"schema":"forge.gate.v1","gate":"forge-prejudge-gate","result":"clear","number":9,"blocks":[],"counts":{"pass":4,"block":0,"warn":2,"skip":1}}');
 
 -- forge.block.v1 is absent because it cannot exist: kanban_block takes no
 -- metadata parameter (audit F26). The class is the leading token of the
