@@ -30,6 +30,10 @@
 #   metrics/    the flywheel's three numbers, computed from a checked-in SQL
 #               fixture and diffed against a checked-in expectation. A schema
 #               drift must fail a check rather than a quarter                (F27)
+#   prejudge/   tier 1 as a program: the AST walker against a checked-in fixture
+#               of real and near-miss step shapes, and the gate's own safety
+#               properties — absent CI is not a pass, skip is not pass, it does
+#               not speak the verdict schema, and it gates nothing       (F35)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -49,11 +53,11 @@ while [ $# -gt 0 ]; do
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
-    cli|config|substrate|template|lane|metrics) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|metrics|prejudge) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics prejudge"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -618,6 +622,14 @@ metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is stil
 metrics/is-read-only              reading a board does not change its sha256
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
 metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
+prejudge/help-exits-zero          scripts/prejudge.sh --help works with no PR
+prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces a checked-in expectation
+prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x)==render(x) are both reported
+prejudge/steps-walker-has-no-false-positives     six legitimate Then-step shapes are not reported
+prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
+prejudge/skip-is-distinguishable-from-pass  a check that could not run has not passed
+prejudge/emits-its-own-shape-not-the-verdict-schema  the gate does not emit forge.judge.v1 (F29 is not this slice's)
+prejudge/gates-nothing            shadow mode: no hook, no CI job, no lane or SOUL wiring
 EOF
   exit 0
 fi
@@ -1119,6 +1131,119 @@ run_metrics_group() {
   fi
 }
 wants metrics   && run_metrics_group
+
+# ---------------------------------------------------------------------------
+# prejudge/ — the tier-1 gate (F35). Tier 1 costs a full Opus pass and has never
+# bounced anything: 17 runs, 0 bounces, mean d1-3 ~3.00, against tier 2's 12
+# bounces and 1.88 on the same diffs. This group tests the program that replaces
+# it, and it is modelled on metrics/: a checked-in fixture, an exact
+# whole-document expectation, and a mutation the case must actually catch.
+#
+# WHAT THIS GROUP DOES NOT COVER, stated rather than implied. The four checks
+# that need GitHub — ci-state, branch-name, size-budget, parents-merged — are
+# exercised by the 11-PR backtest in the slice's PR body, not here, because the
+# gate reads a live `gh`. That is a real gap and it is the gap S4 must close
+# before this gates anything: a gate whose network-facing half is only ever
+# tested by hand is a gate that will rot exactly where it is load-bearing.
+# ---------------------------------------------------------------------------
+run_prejudge_group() {
+  group prejudge
+  local gate=scripts/prejudge.sh walker=scripts/prejudge-steps.py
+  local fx=scripts/fixtures/prejudge-steps exp=scripts/fixtures/prejudge-steps-expected.json
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    skip "steps-walker-exact" "python3 not on PATH"; return
+  fi
+
+  if HOME="$TMPROOT/nohome" "$gate" --help >/dev/null 2>&1; then
+    ok "help-exits-zero"
+  else
+    bad "help-exits-zero" "$gate --help did not exit 0 without a PR"
+  fi
+
+  # Exact, whole-document. A new offender kind appearing, or an old one quietly
+  # vanishing, must fail a case — the same argument as metrics/fixture-numbers.
+  python3 "$walker" "$fx" | jq . > "$TMPROOT/steps.json" 2>&1
+  if diff -u "$exp" "$TMPROOT/steps.json" > "$TMPROOT/steps.diff" 2>&1; then
+    ok "steps-walker-exact ($(jq -r .then_steps "$exp") Then steps, $(jq -r '.offenders|length' "$exp") offenders, every field)"
+  else
+    bad "steps-walker-exact" "$(head -12 "$TMPROOT/steps.diff" | tr '\n' ' ')"
+  fi
+
+  # The two shapes F14 cites by file and line must be caught BY NAME, not merely
+  # counted. A count can stay right while the walker starts finding the wrong
+  # three things.
+  local kinds
+  kinds="$(jq -r '[.offenders[] | "\(.func):\(.kind)"] | sort | join(",")' "$exp")"
+  case "$kinds" in
+    *"then_no_assertion_at_all:no-assertion"*)
+      case "$kinds" in
+        *"then_tautology:tautology"*) ok "steps-walker-catches-both-cited-shapes";;
+        *) bad "steps-walker-catches-both-cited-shapes" "the render(x)==render(x) tautology (test_render.py:198-200) is not reported";;
+      esac;;
+    *) bad "steps-walker-catches-both-cited-shapes" "a Then step with no assertion at all is not reported";;
+  esac
+
+  # False positives are how a gate gets switched off. The fixture holds six
+  # legitimate Then steps — plain assert, recorded-vs-recomputed comparison,
+  # pytest.raises, pytest.fail, an assert* helper and a module-PRIVATE
+  # _assert* helper — and none may be reported. The last shape is here because
+  # the walker got it wrong: four Then steps on PR #11 delegating to
+  # `_assert_failures` were reported as making no claim at all.
+  local fp
+  fp="$(jq -r '[.offenders[].func | select(test("plain_assert|compares_two_different|pytest_raises|pytest_fail|assert_helper"))] | join(",")' "$exp")"
+  [ -z "$fp" ] && ok "steps-walker-has-no-false-positives (6 legitimate step shapes)" \
+    || bad "steps-walker-has-no-false-positives" "legitimate steps reported as defects: $fp"
+
+  # F5's fourth state. `gh pr checks` on a just-pushed PR returns an EMPTY
+  # rollup — not pass, not fail, not pending. Tier 1 read that as "no CI
+  # configured" and approved on absent CI four times while CI was green on all
+  # ten PRs. Absent checks must be wait-then-block. This asserts the source,
+  # because the live behaviour needs a PR that has not registered its checks yet
+  # and that window is seconds wide.
+  if grep -Fq 'emit ci-state fail "empty statusCheckRollup' "$gate" \
+     && grep -Fq 'WAIT_SECS' "$gate"; then
+    ok "absent-ci-is-not-a-pass"
+  else
+    bad "absent-ci-is-not-a-pass" \
+        "an empty statusCheckRollup must emit fail after a real wait, never pass (F5)"
+  fi
+
+  # A check that could not run has not passed. If skip collapsed into pass the
+  # gate would repeat F5's exact mistake in a new place.
+  if grep -Fq '{pass:0,fail:0,warn:0,skip:0}' "$gate" \
+     && grep -Fq 'if any(.[]; .status=="fail") then "block"' "$gate"; then
+    ok "skip-is-distinguishable-from-pass"
+  else
+    bad "skip-is-distinguishable-from-pass" \
+        "the result must count skip separately and block only on fail"
+  fi
+
+  # Emitting forge.judge.v1 would smuggle in F29's derive-don't-assert decision,
+  # which belongs to the slice that owns the schema, and couple this gate to a
+  # schema that is about to change. A gate reports checks; it does not score.
+  # Comment lines are stripped first: the gate *explains* why it does not speak
+  # the verdict schema, and a grep over the whole file cannot tell the reason
+  # from the deed.
+  if ! grep -v '^[[:space:]]*#' "$gate" | grep -Fq 'forge.judge.v1' \
+     && grep -Fq 'forge-prejudge-gate' "$gate"; then
+    ok "emits-its-own-shape-not-the-verdict-schema"
+  else
+    bad "emits-its-own-shape-not-the-verdict-schema" \
+        "$gate must not emit forge.judge.v1 (F29 is not this slice's decision)"
+  fi
+
+  # SHADOW MODE is the whole safety property of this slice. If any of these
+  # acquired a prejudge hook, the gate would be enforcing on six chunks a policy
+  # nobody has decided yet — F8 in particular is deliberately still open.
+  local wired=""
+  grep -rlF 'prejudge.sh' templates/ 2>/dev/null | grep -q . && wired="$wired templates/"
+  grep -rlF 'prejudge.sh' .github/ 2>/dev/null | grep -q . && wired="$wired .github/"
+  grep -rlF 'prejudge.sh' hermes/ skills/ 2>/dev/null | grep -q . && wired="$wired hermes-or-skills"
+  [ -z "$wired" ] && ok "gates-nothing (no hook, no CI job, no lane or SOUL wiring)" \
+    || bad "gates-nothing" "the shadow gate is wired into:$wired — gating is the next slice, not this one"
+}
+wants prejudge  && run_prejudge_group
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1

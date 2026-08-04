@@ -1,0 +1,34 @@
+{
+  "files": 1,
+  "then_steps": 9,
+  "offenders": [
+    {
+      "file": "scripts/fixtures/prejudge-steps/test_steps_fixture.py",
+      "line": 27,
+      "func": "then_no_assertion_at_all",
+      "kind": "no-assertion",
+      "detail": "no assert, no pytest.raises/fail, no assert* call"
+    },
+    {
+      "file": "scripts/fixtures/prejudge-steps/test_steps_fixture.py",
+      "line": 38,
+      "func": "then_tautology",
+      "kind": "tautology",
+      "detail": "both sides of the comparison are the same expression"
+    },
+    {
+      "file": "scripts/fixtures/prejudge-steps/test_steps_fixture.py",
+      "line": 43,
+      "func": "then_tautology_identity",
+      "kind": "tautology",
+      "detail": "both sides of the comparison are the same expression"
+    },
+    {
+      "file": "scripts/fixtures/prejudge-steps/test_steps_fixture.py",
+      "line": 107,
+      "func": "test_plain_unit_tautology",
+      "kind": "tautology",
+      "detail": "both sides of the comparison are the same expression"
+    }
+  ]
+}

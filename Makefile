@@ -1,5 +1,5 @@
 # forge repo-level commands
-.PHONY: install new validate verify preflight metrics
+.PHONY: install new validate verify preflight metrics prejudge
 
 verify:                        ## execute this repo's own claims (see scripts/verify.sh)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
@@ -7,6 +7,17 @@ verify:                        ## execute this repo's own claims (see scripts/ve
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
 	@test -n "$(BOARD)" || { echo "usage: make metrics BOARD=<slug> [SINCE=YYYY-MM-DD] [UNTIL=YYYY-MM-DD]"; exit 1; }
 	./scripts/metrics.sh $(BOARD) $(if $(SINCE),--since $(SINCE),) $(if $(UNTIL),--until $(UNTIL),)
+
+# SHADOW MODE. This gates nothing: no lefthook, no CI job, no lane or SOUL
+# change, and `make verify`'s prejudge/gates-nothing case keeps it that way.
+# Tier 1 costs a full Opus pass and has never bounced anything (17 runs, 0
+# bounces) while tier 2 bounced 12 times on the same diffs from the same rubric.
+# Everything tier 1 is mandated to catch is decidable without a model; this is
+# that program, running beside the model tier rather than in place of it, until
+# the numbers say which of its checks should gate (audit F35).
+prejudge:                      ## make prejudge PR=<url|number> [REPO=owner/name] — tier 1 as a program, shadow mode
+	@test -n "$(PR)" || { echo "usage: make prejudge PR=<url|number> [REPO=owner/name] [WAIT=secs]"; exit 1; }
+	./scripts/prejudge.sh $(PR) $(if $(REPO),--repo $(REPO),) $(if $(WAIT),--wait $(WAIT),) $(if $(JSON),--json,)
 
 preflight:                     ## revalidate the mini before unattended work (read-only)
 	./scripts/preflight.sh $(if $(OUT),--out $(OUT),)
@@ -35,5 +46,6 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  grep -q '^name:' $$f && grep -q '^description:' $$f || { echo "MISSING name/description: $$f"; exit 1; }; \
 	done
 	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
-	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh
+	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh
+	@python3 -c 'import ast,sys; ast.parse(open("scripts/prejudge-steps.py").read())'
 	@echo "forge validate: OK"

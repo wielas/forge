@@ -2163,3 +2163,155 @@ gets nothing, from a command that says it worked. Fixed with the sqlite3 exit
 code plus a `jq -e` parse check. Recorded because it changes F47's severity: the
 failure is not loud, it is silent, and the flywheel's numbers are exactly where
 a silent empty result is least likely to be questioned.
+
+---
+
+## Ledger additions from the prejudge-gate slice (S3)
+
+*Produced by backtesting `make prejudge` against all 11 PRs of the run that
+produced this audit. F35's claim is that a program has higher recall than the
+model tier achieved, at zero tokens. It is partly true, and the parts that are
+false are more useful than the parts that are true.*
+
+### F52 — Two of F35's eight checks cannot work at prejudge time, and one of them is at the wrong layer entirely · `OPEN` · **high**
+
+`ci-state` and `parents-merged` both return **zero findings across all 11 PRs**.
+Their zeroes have different causes and only one is benign.
+
+**`ci-state` (F5) — benign, and unmeasurable by backtest.** CI was green on all
+11 PRs, confirmed here against the live rollup. The defect F5 records is a
+*race*: prejudge queried before checks registered, got an empty rollup, and
+approved. That window is seconds wide and cannot be reproduced retroactively —
+the rollup is populated forever after. The check is still right, and its
+fourth-state handling is the point, but **the backtest can say nothing about its
+recall** and this write-up will not pretend otherwise.
+
+**`parents-merged` (F10) — not benign. The check is at the wrong layer.** It
+passes on all 11 PRs because *by the time a PR exists, the parent has merged* —
+the lane cannot open a PR before it has done the work, and it cannot do the work
+until it is unblocked. F10's waste is five spawned workers that discover they
+cannot work, and every one of them dies **before any PR exists**. A prejudge gate
+runs on a PR. It is structurally incapable of preventing F10.
+
+F35's fix table lists "Parent PRs merged · `jq '.mergedAt'` · no" as a tier-1
+check. It is not one. It is a **dispatcher** check, and F10's own fix text says
+so correctly — *"make the card-level dependency edge resolve on parent-PR-merged
+rather than parent-card-done"* — while the F35 table then files it under review.
+The two findings disagree and F35 is the one that is wrong.
+
+**Consequence for S4.** Deleting tier 1's model call on the strength of "a
+program has higher recall" must not carry `parents-merged` along as evidence. It
+contributes nothing at this layer and never will. Six checks, not eight.
+
+### F53 — The two highest-severity checks fire on everything, so neither can filter · `OPEN` · **high**
+
+| check | fires on |
+|---|---|
+| `size-budget` (F28) | **11 of 11** |
+| `real-source` (F25) | 8 of 11 — every chunk whose contract names an external source |
+
+Not one PR in the project's only real run came within the size budget, the
+planning PR included (1,421 lines, 3.6×). And no feature file in the repository
+carries a `@real-source` tag, because the convention did not exist until this
+slice; 5 of the 6 chunks name an external source and all 5 fail. CHUNK-5 passes
+because its contract genuinely names none.
+
+Both results are correct and both were predicted. The consequence was not: **a
+gate that blocks every PR is not a filter either.** Turned on as blocking on day
+one, `size-budget` would have stopped the project at PR #2 and never let it
+resume, because nothing in the run's methodology produces a 400-line chunk.
+
+The conclusion is not to loosen the threshold — the threshold is the roadmap's
+own and moving it after seeing the data is exactly what this slice was told not
+to do. It is that **F28 and F25 are planning defects being surfaced at review
+time**, and review time is the most expensive place to learn that a planner
+wrote a 3,700-line chunk. Both belong at `/roadmap`, where the contract is still
+editable and no model has been spawned. As a PR gate they are a receipt for a
+decision made days earlier.
+
+### F54 — The judge cited a defect, bounced the PR, accepted the fix, and the defect is still on `main` · `OPEN` · **high** *(instance of F6)*
+
+The tier-2 bounce of PR #8 cites, verbatim:
+
+> `tests/test_render.py:198-200` defines determinism as
+> `render(report) == render(report)`
+
+The gate finds that exact tautology on PR #8 at **line 200**. It then finds it on
+PR #9, PR #10, PR #11 — and on `main` today, at `tests/test_render.py:259`,
+where reading the file confirms it:
+
+```python
+assert render(report) == render(report)
+```
+
+So: named by the judge, in writing, with a line number. Bounced on. Fix
+delivered, re-reviewed, approved, merged. **The cited line was never changed.**
+The bounce was resolved by adding coverage elsewhere and the specific defect
+survived four more reviews and the merge.
+
+This is F6 — *"the judge does not converge; it relents"* — with a surviving
+artifact rather than an inference. It also sharpens F32: the fresh-context rule
+means the reviewer of PR #9 never knew that the tautology it was looking at had
+been the subject of the previous bounce.
+
+**The cheap fix is the one this slice already built.** A finding that names a
+`file:line` is checkable at the next push for nothing. Nothing checked it.
+
+### F55 — `Touches` drift is dominated by process files no contract has ever listed, which decides F8 · `OPEN` · **medium** *(resolves the F8 decision)*
+
+F8 was left deliberately undecided: `Touches` advisory, or amendable in-branch.
+The instruction was to count the drift across the six chunks and let the number
+choose. Counted:
+
+`touches` warns on **5 of the 10 chunk PRs** (#2, #4, #5, #8, #9). The distinct
+drifting paths are five, and they are not the same kind of thing:
+
+| path | PRs | what it is |
+|---|---|---|
+| `docs/decision-log.md` | #2, #5 | process doc every chunk must write |
+| `docs/ROADMAP.md` | #5 | process doc |
+| `docs/chunks/CHUNK-3.md` | #5 | **the contract amending itself** |
+| `tests/fixtures/normalize.py` | #4 | a fixture the work necessarily needed |
+| `src/forgeboard_report/errors.py` | #8, #9 | genuine implementation, outside the plan |
+
+**Three of the five are process documents that no contract in the entire run
+ever listed in `Touches`, and every chunk is required to change them.** They
+cannot be scope creep; a contract that omitted them was never going to include
+them. A fourth is the contract file recording its own amendment — drift created
+by the remediation of a previous drift bounce.
+
+**Exactly one of five is a real implementation file outside its plan.** That is
+`errors.py`, on CHUNK-5, and it is the case the audit already cites — tier 2
+scored `scope_discipline: 1` for it.
+
+**The data decides F8, and it decides it against the bounce.** `Touches` should
+be **advisory**, and the comparison must exclude `docs/decision-log.md`,
+`docs/ROADMAP.md` and `docs/chunks/*` outright — not as a convenience, but
+because including a file every chunk must edit and no chunk may declare
+manufactures a finding on every single PR. With that exclusion the check fires
+on 2 of 10 PRs instead of 5, and both remaining hits are the same real one.
+
+### F56 — The gate's first version produced four false positives, and only reading the flagged code found them · `RESOLVED 2026-08-04` · **medium**
+
+Recorded because it is the methodological lesson of this slice, not a defect
+that survived it.
+
+The `Then`-step walker reported four steps in PR #11's
+`tests/steps/test_report_command_steps.py` as making no assertion at all. They
+delegate to a module-private `_assert_failures` helper which asserts four times.
+The prefix test matched `assert*` and not `_assert*`, and one underscore turned
+four correct steps into four fabricated findings.
+
+Nothing about the output looked wrong. The count was plausible, the file was the
+file the audit cites for CHUNK-6's scenario theater, and the finding class was
+the one being looked for. **It was found by opening the file the gate pointed
+at** — which is the check this slice's own standing instruction demanded and
+which no automated case would have performed.
+
+The number that matters: after the fix, `then-asserts` fires on 4 PRs and every
+one of them is the **same single defect** (F54's tautology). The `no-assertion`
+detector — the half F35 singles out, *"a five-line AST visitor"* — found
+**nothing at all** across all 11 PRs. F14 is real and is the most-cited defect in
+the run; the specific mechanization F35 proposed for it has zero recall against
+the run that motivated it. The recall this slice does deliver for F14 comes
+entirely from the tautology detector, which F35 does not mention.
