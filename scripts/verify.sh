@@ -607,17 +607,14 @@ lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the opera
 lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
 lane/prejudge-tier2-card-is-sticky      human card has a real block event and no final assignee
 lane/prejudge-bounce-reuses-worktree    a bounced fix resumes the rejected PR in its completed chunk worktree
-lane/prejudge-gh-is-repo-independent    scratch review uses canonical PR URL, not cwd repository context
-lane/prejudge-ci-red-is-canonical       CI-red skips the model, not forge.judge.v1 metadata
-lane/prejudge-schema-is-inline          Claude receives supported schema JSON, not a path
-lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
-lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
-lane/prejudge-cost-is-observed          cost/tokens/session come from the harness envelope, not the model
-lane/prejudge-cost-is-storable          the verdict schema takes cost + session_id, optional, cache field intact
-lane/prejudge-schema-hides-stamped-fields  the model is not asked for the fields the operator stamps
+lane/prejudge-gh-is-repo-independent    scratch review passes the canonical PR URL to the gate, never cwd
+lane/prejudge-stores-the-gate-result    tier 1 stores forge.gate.v1 and manufactures no scored verdict
+lane/driver-never-reads-the-diff        the metered tier-1 driver fetches no diff at all
+lane/verdict-cost-is-storable           the verdict schema takes cost + session_id, optional, cache field intact
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
+metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from tier-2 bounces (ADR-0009)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
 metrics/is-read-only              reading a board does not change its sha256
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
@@ -628,8 +625,12 @@ prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x
 prejudge/steps-walker-has-no-false-positives     six legitimate Then-step shapes are not reported
 prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
 prejudge/skip-is-distinguishable-from-pass  a check that could not run has not passed
-prejudge/emits-its-own-shape-not-the-verdict-schema  the gate does not emit forge.judge.v1 (F29 is not this slice's)
-prejudge/gates-nothing            shadow mode: no hook, no CI job, no lane or SOUL wiring
+prejudge/emits-its-own-shape-not-the-verdict-schema  the gate emits forge.gate.v1, never a scored forge.judge.v1
+prejudge/recorded-prs-exact       two recorded PRs reproduce a checked-in severity map, offline
+prejudge/blocks-with-exit-1       a blocking check exits 1; a clear-with-warnings PR exits 0
+prejudge/scenario-count-is-asymmetric  fewer scenarios than the contract blocks, more only warns
+prejudge/emits-an-action-per-block  every blocking finding carries an action a fresh worker can execute
+prejudge/tier-1-has-no-model-call  no claude/codex/llm invocation anywhere in the tier-1 path
 EOF
   exit 0
 fi
@@ -768,7 +769,7 @@ run_lane_group() {
   # 2026-07-28 on the first real chunk).
   local soul=hermes/profiles/forge-prejudge.SOUL.md
   local approve_path
-  approve_path="$(sed -n '/approve` \/ `approve-with-nits/,/bounce`:/p' "$soul")"
+  approve_path="$(sed -n '/^3\. \*\*Clear\*\*/,/^4\. \*\*Block\*\*/p' "$soul")"
   if printf '%s' "$approve_path" \
        | grep -q 'hermes kanban.*create "judge:'; then
     ok "prejudge-approve-routes-to-tier2"
@@ -812,7 +813,7 @@ run_lane_group() {
   # authored the fix itself, hit an HTTPS push failure, and spent 57 tool calls
   # on one changed line. Reuse the completed chunk's linked worktree explicitly.
   local bounce_path
-  bounce_path="$(sed -n '/\*\*`bounce`:/,/Do not invent a retry loop/p' "$soul")"
+  bounce_path="$(sed -n '/^4\. \*\*Block\*\*/,/Do not invent a retry loop/p' "$soul")"
   if printf '%s' "$bounce_path" | grep -Fq 'git -C "$chunk_workspace" rev-parse' \
      && printf '%s' "$bounce_path" | grep -Fq 'workspace_kind="dir"' \
      && printf '%s' "$bounce_path" | grep -Fq 'workspace_path=chunk_workspace' \
@@ -848,108 +849,62 @@ run_lane_group() {
 
   # Review cards intentionally run in scratch. On the first CI-red probe,
   # `gh pr checks 10` failed outside a repository and the worker spent a minute
-  # searching unrelated workspaces for any clone. A canonical PR URL gives gh
-  # complete repository context from any directory.
-  if grep -Fq 'gh pr checks "$pr_url"' "$soul" \
-     && grep -Fq 'gh pr diff "$pr_url"' "$soul" \
+  # searching unrelated workspaces for any clone. The driver no longer calls gh
+  # at all — the gate does — so what must survive is that the canonical URL is
+  # what gets passed, and that nothing here trusts the current directory.
+  if grep -Fq 'prejudge.sh "$pr_url"' "$soul" \
      && grep -Fq 'current directory to give `gh` repository context' "$soul"; then
     ok "prejudge-gh-is-repo-independent"
   else
     bad "prejudge-gh-is-repo-independent" \
-        "scratch prejudge must pass the canonical PR URL to gh checks and diff"
+        "scratch prejudge must pass the canonical PR URL to the gate, never rely on cwd"
   fi
 
-  # The first live CI-red bounce emitted one-off `forge.prejudge.v1.*` keys.
-  # Retro counts `.verdict == "bounce"` in forge.judge.v1, so the most
-  # objective bounce disappeared from the very metric meant to track it.
-  if grep -Fq 'does **not** skip the verdict' "$soul" \
-     && grep -Fq 'all six scores set to zero' "$soul" \
-     && grep -Fq '`judge_model: "ci"`' "$soul" \
-     && grep -Fq 'without a model call' rubrics/judge-rubric.md; then
-    ok "prejudge-ci-red-is-canonical"
+  # ADR-0009 replaced the CI-red zeroed-verdict sentinel: CI is a gate check now,
+  # and the gate stores its own shape. The property that matters is unchanged in
+  # spirit and inverted in mechanism — tier 1 must not manufacture a scored
+  # verdict, because five invented dimension scores are the same defect as the
+  # zeroed cost object this file already refuses to write.
+  if grep -Fq 'forge.gate.v1' "$soul" \
+     && grep -Fq 'as it came out' "$soul" \
+     && grep -Fq 'Do not translate it into `forge.judge.v1`' "$soul" \
+     && ! grep -v '^[[:space:]]*#' rubrics/judge-rubric.md | grep -Fq 'deterministic sentinel'; then
+    ok "prejudge-stores-the-gate-result"
   else
-    bad "prejudge-ci-red-is-canonical" \
-        "CI-red must emit deterministic forge.judge.v1 metadata so retro can count the bounce"
+    bad "prejudge-stores-the-gate-result" \
+        "tier 1 must store forge.gate.v1 unmodified and manufacture no scored verdict (ADR-0009)"
   fi
 
-  # Claude Code 2.1.212 takes inline JSON at --json-schema and rejects the
-  # schema's draft declaration. Passing the file path failed immediately on
-  # CHUNK-C3; passing the whole file then failed on $schema.
-  if grep -Fq 'VERDICT_SCHEMA=' "$soul" \
-     && grep -Fq 'del(."$schema")' "$soul" \
-     && grep -Fq -- '--json-schema "$VERDICT_SCHEMA"' "$soul"; then
-    ok "prejudge-schema-is-inline"
-  else
-    bad "prejudge-schema-is-inline" \
-        "prejudge must pass inline supported JSON to Claude --json-schema, not a schema file path"
-  fi
-
-  # A model cannot report its own id: the first real verdict claimed
-  # `claude-opus-4-8`, which does not exist. judge_model is schema-REQUIRED, so
-  # an invented value poisons provenance silently.
-  if grep -q -- '--model opus' "$soul" \
-     && grep -Fq '.judge_model = "opus"' "$soul" \
-     && grep -Fq '.pr = $pr' "$soul"; then
-    ok "prejudge-judge-model-is-observed"
-  else
-    bad "prejudge-judge-model-is-observed" \
-        "prejudge must normalize PR and judge_model from observed inputs, not trust self-report"
-  fi
-
-  # F37. The driver is the ONLY metered agent in a review; `claude -p` scores on
-  # OAuth. A diff rendered into the driver's context is billed once as deepseek
-  # input and then handed, free, to the engine that actually needed it — 63,164
-  # bytes on the PR #9 probe, 127,738 on the largest measured payload. So every
-  # `gh pr diff` in this protocol must redirect, and the driver's only permitted
-  # observations are a byte count and an exit code.
-  local unredirected
-  unredirected="$(grep -n 'gh pr diff' "$soul" | grep -vF '>> "$prompt_file"' || true)"
-  if [ -z "$unredirected" ] \
-     && grep -Fq 'wc -c < "$prompt_file"' "$soul" \
-     && grep -Fq 'You never read the diff — you move it' "$soul" \
-     && ! grep -Fq 'cat "$prompt_file"' "$soul"; then
-    ok "driver-never-reads-the-diff"
+  # F37, and now settled by construction rather than by discipline. The driver is
+  # the only metered agent in a review; a diff rendered into its context was
+  # billed once as deepseek input and then handed, free, to the engine that
+  # actually needed it — 63,164 bytes on the PR #9 probe, 127,738 on the largest
+  # measured payload. The protocol no longer fetches a diff at all, so the
+  # assertion is the stronger one: there is no `gh pr diff` in this file.
+  local diffs; diffs="$(grep -n 'gh pr diff' "$soul" || true)"
+  if [ -z "$diffs" ] \
+     && grep -Fq 'Never render a diff' "$soul" \
+     && grep -Fq 'observe the byte count' "$soul"; then
+    ok "driver-never-reads-the-diff (no diff is fetched at all)"
   else
     bad "driver-never-reads-the-diff" \
-        "every gh pr diff must redirect into \$prompt_file and the driver must observe only a byte count${unredirected:+ — unredirected: $unredirected}"
+        "the tier-1 driver must not fetch a diff${diffs:+ — found: $diffs}"
   fi
 
-  # F30. Every token figure in the audit descended from `tokens_estimate`, filled
-  # in by the same model whose consumption it claimed to measure. The SOUL had
-  # already proved models cannot report on themselves (judge_model) and applied
-  # the lesson to nothing else in the same object.
+  # The verdict must be ABLE to carry what a judging harness observes, and must
+  # not demand it. cache_read_input_tokens is required *within* cost because
+  # without it F21's cache-hostility claim, and every saving proposed against it,
+  # is unfalsifiable.
   #
-  # F50. The formula includes `cache_creation_input_tokens` because F45 measured
-  # that the prompt is billed to cache creation and not to `input_tokens` — an
-  # `input + output` total reads near zero on the payload that dominates the
-  # bill. This assertion is matched against the SOUL with newlines flattened:
-  # the expression is wrapped across two lines there, and a line-anchored grep
-  # is how the check and the SOUL silently diverged for a commit in the first
-  # place. It is asserted, not merely commented, because F45's whole content is
-  # that this sum is the one that is true.
-  local soulflat; soulflat="$(tr '\n' ' ' < "$soul" | tr -s ' ')"
-  if grep -Fq -- '--output-format json' "$soul" \
-     && grep -Fq '$env.usage as $u' "$soul" \
-     && printf '%s' "$soulflat" | grep -Eq \
-          '\.tokens_estimate *= *\(\$u\.input_tokens \+ \$u\.cache_creation_input_tokens \+ \$u\.output_tokens\)' \
-     && grep -Eq '\.session_id *= *\$env\.session_id' "$soul" \
-     && grep -Fq 'total_cost_usd: $env.total_cost_usd' "$soul" \
-     && grep -Fq '$env.structured_output' "$soul" \
-     && grep -Fq '.api_error_status != null' "$soul" \
-     && grep -Fq 'halt_error' "$soul"; then
-    ok "prejudge-cost-is-observed"
-  else
-    bad "prejudge-cost-is-observed" \
-        "cost, tokens and session_id must be stamped from the --output-format json envelope, which must fail closed on is_error/api_error_status"
-  fi
-
-  # The stored verdict must be ABLE to carry what the operator stamps, and must
-  # not demand it: cost is absent on a ci-red bounce, which has no model call to
-  # measure. cache_read_input_tokens is required *within* cost because without it
-  # F21's cache-hostility claim, and every saving proposed against it, is
-  # unfalsifiable.
+  # This is all that survives of the four cases that asserted tier 1's stamping
+  # of `judge_model`, `tokens_estimate`, `cost` and `session_id` from the
+  # `claude -p` envelope (F30, F45, F50). Those cases had exactly one call site
+  # and this slice deleted it; there is no envelope at tier 2, where the operator
+  # reviews interactively. The SCHEMA is kept, and so is the lesson: when a
+  # judging harness returns usage again — S6's `--resume` delta review is the
+  # live candidate — the stamping cases come back with it, or F30 comes back too.
   if ! command -v jq >/dev/null 2>&1; then
-    skip "prejudge-cost-is-storable" "jq not on PATH"
+    skip "verdict-cost-is-storable" "jq not on PATH"
   elif jq -e '
       (.properties.cost.required | index("cache_read_input_tokens"))
       and (.properties.cost.required | index("total_cost_usd"))
@@ -958,39 +913,10 @@ run_lane_group() {
       and ((.required | index("session_id")) == null)
       and (.required | index("tokens_estimate"))
     ' rubrics/judge-verdict.schema.json >/dev/null 2>&1; then
-    ok "prejudge-cost-is-storable"
+    ok "verdict-cost-is-storable"
   else
-    bad "prejudge-cost-is-storable" \
+    bad "verdict-cost-is-storable" \
         "judge-verdict.schema.json must accept cost/session_id as OPTIONAL, keep tokens_estimate required, and require cache_read_input_tokens inside cost"
-  fi
-
-  # The model was required to produce three fields the operator overwrote a
-  # moment later — which is where the invented `claude-opus-4-8` came from. Not
-  # asking is a better fix than overwriting. Run the SOUL's own reduction rather
-  # than a copy of it, so this cannot pass against a transform that has drifted.
-  local jq_prog reduced
-  jq_prog="$(sed -n '/VERDICT_SCHEMA="\$(jq -c --argjson stamped/,/judge-verdict\.schema\.json)"/p' \
-               "$soul" | sed '1d;$d')"
-  if ! command -v jq >/dev/null 2>&1; then
-    skip "prejudge-schema-hides-stamped-fields" "jq not on PATH"
-  elif [ -z "$jq_prog" ]; then
-    bad "prejudge-schema-hides-stamped-fields" \
-        "could not find the model-facing schema reduction in $soul"
-  elif reduced="$(jq -c --argjson stamped \
-        '["pr","judge_model","tokens_estimate","cost","session_id"]' \
-        "$jq_prog" rubrics/judge-verdict.schema.json 2>/dev/null)" \
-    && grep -Fq "STAMPED='[\"pr\",\"judge_model\",\"tokens_estimate\",\"cost\",\"session_id\"]'" "$soul" \
-    && printf '%s' "$reduced" | jq -e --argjson stamped \
-         '["pr","judge_model","tokens_estimate","cost","session_id"]' '
-           (has("$schema") | not)
-           and (((.properties | keys) - $stamped) == (.properties | keys))
-           and ((.required - $stamped) == .required)
-           and (.required | index("verdict"))
-         ' >/dev/null 2>&1; then
-    ok "prejudge-schema-hides-stamped-fields"
-  else
-    bad "prejudge-schema-hides-stamped-fields" \
-        "the schema handed to --json-schema must drop pr/judge_model/tokens_estimate/cost/session_id from BOTH properties and required"
   fi
 }
 wants lane      && run_lane_group
@@ -1054,6 +980,23 @@ run_metrics_group() {
   else
     bad "detects-noncanonical-envelope" \
         "expected [flat,nested,neither,total,chunk_cards]=[1,1,1,3,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
+  fi
+
+  # ADR-0009 D9.4. A gate block and a tier-2 bounce are different events and must
+  # stay different numbers. The fixture holds one blocking and one clearing gate
+  # run alongside the pre-ADR-0009 tier-1 verdicts, so this fails if the gate
+  # results are ever folded into the bounce rate — or if they stop being counted
+  # at all, which is the quieter way to lose them.
+  local gate_row
+  gate_row="$(jq -c '[.gate.runs, .gate.blocked, .gate.block_rate,
+                      (.gate.by_check | keys | length),
+                      ([.tiers[] | select(.tier == 2) | .bounce_verdicts] | first)]' \
+                "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$gate_row" = '[2,1,"0.50",2,3]' ]; then
+    ok "gate-blocks-are-not-bounces (1 of 2 gate runs blocked, 3 tier-2 bounces, counted apart)"
+  else
+    bad "gate-blocks-are-not-bounces" \
+        "expected [runs,blocked,rate,checks,t2_bounces]=[2,1,\"0.50\",2,3], got ${gate_row:-nothing} — forge.gate.v1 results must be counted separately from forge.judge.v1 bounces"
   fi
 
   # F47. A board AT REST — WAL checkpointed away, no `-shm`, no `-wal`, nobody
@@ -1139,12 +1082,23 @@ wants metrics   && run_metrics_group
 # it, and it is modelled on metrics/: a checked-in fixture, an exact
 # whole-document expectation, and a mutation the case must actually catch.
 #
-# WHAT THIS GROUP DOES NOT COVER, stated rather than implied. The four checks
-# that need GitHub — ci-state, branch-name, size-budget, parents-merged — are
-# exercised by the 11-PR backtest in the slice's PR body, not here, because the
-# gate reads a live `gh`. That is a real gap and it is the gap S4 must close
-# before this gates anything: a gate whose network-facing half is only ever
-# tested by hand is a gate that will rot exactly where it is load-bearing.
+#
+# S3 left the GitHub-facing half — ci-state, branch-name, size-budget, touches —
+# covered by an 11-PR backtest run by hand and nothing else. That gap is closed
+# here, because the gate blocks now: `--fixture` replays two RECORDED PRs of the
+# run that produced the audit, and the whole gate runs against them with no gh,
+# no git and no network. Recorded with, for n in 8 9:
+#
+#   gh pr view $n --repo wielas/forgeboard-report --json \
+#     number,state,title,body,headRefName,headRefOid,baseRefName,baseRefOid,\
+#     mergedAt,url,additions,deletions,changedFiles,statusCheckRollup | jq -S .
+#   git diff --numstat <baseRefOid> <headRefOid>        > numstat.tsv
+#   git archive <headRefOid> docs/chunks tests/features | tar -x -C tree/
+#
+# The recorded `tree/` carries the contract and the feature file and NOT the
+# 3,500-line test suite, so `then-asserts` skips on these fixtures. That check
+# is covered exactly, and separately, by the walker fixture above — the point of
+# these two is the four checks that were covered by nothing.
 # ---------------------------------------------------------------------------
 run_prejudge_group() {
   group prejudge
@@ -1195,53 +1149,122 @@ run_prejudge_group() {
   [ -z "$fp" ] && ok "steps-walker-has-no-false-positives (6 legitimate step shapes)" \
     || bad "steps-walker-has-no-false-positives" "legitimate steps reported as defects: $fp"
 
-  # F5's fourth state. `gh pr checks` on a just-pushed PR returns an EMPTY
-  # rollup — not pass, not fail, not pending. Tier 1 read that as "no CI
-  # configured" and approved on absent CI four times while CI was green on all
-  # ten PRs. Absent checks must be wait-then-block. This asserts the source,
-  # because the live behaviour needs a PR that has not registered its checks yet
-  # and that window is seconds wide.
-  if grep -Fq 'emit ci-state fail "empty statusCheckRollup' "$gate" \
-     && grep -Fq 'WAIT_SECS' "$gate"; then
-    ok "absent-ci-is-not-a-pass"
+  # ---- the recorded PRs. The whole gate, offline, against real inputs. ------
+  local prs=scripts/fixtures/prejudge-prs pexp=scripts/fixtures/prejudge-prs/expected.json
+  local got want name drift=""
+  for name in pr-8 pr-9; do
+    "$gate" --fixture "$prs/$name" --json > "$TMPROOT/$name.json" 2>"$TMPROOT/$name.err"
+    got="$(jq -S '{result, blocks, checks: (.checks | map({(.id): .status}) | add)}' \
+             "$TMPROOT/$name.json" 2>/dev/null)"
+    want="$(jq -S --arg n "$name" '.[$n]' "$pexp")"
+    [ "$got" = "$want" ] || drift="$drift $name"
+  done
+  # The expectation is the SEVERITY MAP, not the prose: id -> status, the block
+  # list and the result. Asserting the evidence strings too would fail on every
+  # reworded sentence and teach the next person to regenerate the file without
+  # reading it, which is how a checked-in expectation stops being evidence.
+  [ -z "$drift" ] && ok "recorded-prs-exact (2 PRs, 7 checks each, offline)" \
+    || bad "recorded-prs-exact" "the severity map moved on:$drift — $(jq -c . "$TMPROOT/${drift## }.json" 2>/dev/null | cut -c1-200)"
+
+  # The gate blocks. This is the property the whole slice turns on, and it is
+  # asserted on the exit code rather than on the printed word, because that is
+  # what a hook, a CI job and a driver will all read.
+  "$gate" --fixture "$prs/pr-8" >/dev/null 2>&1; local rc8=$?
+  "$gate" --fixture "$prs/pr-9" >/dev/null 2>&1; local rc9=$?
+  if [ "$rc8" = 1 ] && [ "$rc9" = 0 ]; then
+    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with 2 warnings)"
+  else
+    bad "blocks-with-exit-1" \
+        "expected pr-8 to exit 1 and pr-9 to exit 0, got $rc8 and $rc9 — a gate that cannot fail a command gates nothing"
+  fi
+
+  # F5's fourth state, on a real recording with its rollup emptied. The live
+  # window is seconds wide and cannot be recorded after the fact (F52), so this
+  # is the one edited input in the fixture set, and it is edited in exactly the
+  # way the race produces: checks not registered yet.
+  local ci="$TMPROOT/absent-ci"
+  rm -rf "$ci"; cp -R "$prs/pr-9" "$ci"
+  jq '.statusCheckRollup = []' "$prs/pr-9/pr.json" > "$ci/pr.json"
+  "$gate" --fixture "$ci" --json > "$TMPROOT/absent-ci.json" 2>&1; local rcci=$?
+  if [ "$rcci" = 1 ] && [ "$(jq -r '.checks[] | select(.id=="ci-state") | .status' "$TMPROOT/absent-ci.json")" = "block" ]; then
+    ok "absent-ci-is-not-a-pass (empty rollup blocks, exit 1)"
   else
     bad "absent-ci-is-not-a-pass" \
-        "an empty statusCheckRollup must emit fail after a real wait, never pass (F5)"
+        "an empty statusCheckRollup must block, never pass (F5) — got exit $rcci, ci-state $(jq -r '.checks[]|select(.id=="ci-state")|.status' "$TMPROOT/absent-ci.json" 2>/dev/null)"
+  fi
+
+  # Asymmetry, in one comparison. Fewer scenarios than the contract is spec
+  # infidelity and blocks; more is a planner underestimating and only warns.
+  # Both sides are read off the same pair of recordings — pr-8 shipped 1 of 5,
+  # pr-9 shipped 6 of 5 — so this cannot pass by having no `more` case at all.
+  local fewer more
+  fewer="$(jq -r '.checks[] | select(.id=="scenario-count") | .status' "$TMPROOT/pr-8.json")"
+  more="$(jq -r '.checks[] | select(.id=="scenario-count") | .status' "$TMPROOT/pr-9.json")"
+  if [ "$fewer" = block ] && [ "$more" = warn ]; then
+    ok "scenario-count-is-asymmetric (1-of-5 blocks, 6-of-5 warns)"
+  else
+    bad "scenario-count-is-asymmetric" "fewer=$fewer more=$more; expected block and warn"
   fi
 
   # A check that could not run has not passed. If skip collapsed into pass the
-  # gate would repeat F5's exact mistake in a new place.
-  if grep -Fq '{pass:0,fail:0,warn:0,skip:0}' "$gate" \
-     && grep -Fq 'if any(.[]; .status=="fail") then "block"' "$gate"; then
+  # gate would repeat F5's exact mistake in a new place — and it did, once:
+  # `then-asserts` reported `pass` against a tree with no Python in it, having
+  # examined nothing. Asserted on behaviour now, not on the source.
+  if [ "$(jq -r '[.checks[] | select(.status=="skip")] | length' "$TMPROOT/pr-8.json")" -ge 1 ] \
+     && [ "$(jq -r '.counts.pass' "$TMPROOT/pr-8.json")" -ge 1 ] \
+     && [ "$(jq -r '.result' "$TMPROOT/pr-9.json")" = clear ]; then
     ok "skip-is-distinguishable-from-pass"
   else
     bad "skip-is-distinguishable-from-pass" \
-        "the result must count skip separately and block only on fail"
+        "the result must count skip separately from pass and block only on block"
   fi
 
-  # Emitting forge.judge.v1 would smuggle in F29's derive-don't-assert decision,
-  # which belongs to the slice that owns the schema, and couple this gate to a
-  # schema that is about to change. A gate reports checks; it does not score.
-  # Comment lines are stripped first: the gate *explains* why it does not speak
-  # the verdict schema, and a grep over the whole file cannot tell the reason
-  # from the deed.
-  if ! grep -v '^[[:space:]]*#' "$gate" | grep -Fq 'forge.judge.v1' \
-     && grep -Fq 'forge-prejudge-gate' "$gate"; then
+  # The bounce contract, applied to a program. The gate's findings are copied
+  # verbatim into the repair card, so a blocking finding with no executable
+  # action produces an unworkable card. Every block, on every fixture, must
+  # carry one — and it must be an instruction, not a restatement.
+  local noaction=""
+  for name in pr-8 absent-ci; do
+    jq -e '[.checks[] | select(.status=="block") | select((.action // "") | length < 40)] | length == 0' \
+      "$TMPROOT/$name.json" >/dev/null 2>&1 || noaction="$noaction $name"
+  done
+  [ -z "$noaction" ] && ok "emits-an-action-per-block" \
+    || bad "emits-an-action-per-block" "blocking findings with no executable action:$noaction"
+
+  # `forge.gate.v1`, not a scored `forge.judge.v1` with five invented numbers in
+  # it. A gate block at zero tokens and a tier-2 bounce after a full review are
+  # different events, and the SOUL's own argument against a zeroed cost object
+  # is the argument against a zeroed score object.
+  if [ "$(jq -r .schema "$TMPROOT/pr-8.json")" = "forge.gate.v1" ] \
+     && jq -e '(.scores // null) == null and (.verdict // null) == null' "$TMPROOT/pr-8.json" >/dev/null; then
     ok "emits-its-own-shape-not-the-verdict-schema"
   else
     bad "emits-its-own-shape-not-the-verdict-schema" \
-        "$gate must not emit forge.judge.v1 (F29 is not this slice's decision)"
+        "$gate must emit forge.gate.v1 and must not score dimensions or assert a verdict"
   fi
 
-  # SHADOW MODE is the whole safety property of this slice. If any of these
-  # acquired a prejudge hook, the gate would be enforcing on six chunks a policy
-  # nobody has decided yet — F8 in particular is deliberately still open.
-  local wired=""
-  grep -rlF 'prejudge.sh' templates/ 2>/dev/null | grep -q . && wired="$wired templates/"
-  grep -rlF 'prejudge.sh' .github/ 2>/dev/null | grep -q . && wired="$wired .github/"
-  grep -rlF 'prejudge.sh' hermes/ skills/ 2>/dev/null | grep -q . && wired="$wired hermes-or-skills"
-  [ -z "$wired" ] && ok "gates-nothing (no hook, no CI job, no lane or SOUL wiring)" \
-    || bad "gates-nothing" "the shadow gate is wired into:$wired — gating is the next slice, not this one"
+  # ADR-0009's whole content: there is no model in tier 1. Proven over the paths
+  # tier 1 actually executes — the gate, its walker, the driver SOUL and the make
+  # target — rather than asserted in a document that cannot check itself.
+  #
+  # Prose is stripped before the search, exactly as the verdict-schema case does
+  # it, and for the same reason: all four of these files DISCUSS the deleted
+  # `claude -p --model opus` call at length, and a grep over the whole file
+  # cannot tell an explanation from an invocation. Shell and Make are read with
+  # comments removed; the SOUL is read as its fenced code blocks only, which is
+  # the only part of it a driver executes.
+  local modelled="" f exec_text
+  for f in "$gate" "$walker" hermes/profiles/forge-prejudge.SOUL.md Makefile; do
+    case "$f" in
+      *.md) exec_text="$(awk '/^[[:space:]]*```/{fence=!fence; next} fence' "$f")";;
+      *)    exec_text="$(grep -vE '^[[:space:]]*#' "$f")";;
+    esac
+    printf '%s' "$exec_text" \
+      | grep -qE '(^|[^-[:alnum:]])(claude|codex|llm)([[:space:]]+-|[[:space:]]+exec|[[:space:]]*$)' \
+      && modelled="$modelled $f"
+  done
+  [ -z "$modelled" ] && ok "tier-1-has-no-model-call (gate, walker, SOUL, Makefile)" \
+    || bad "tier-1-has-no-model-call" "a model invocation is back in the tier-1 path:$modelled (ADR-0009)"
 }
 wants prejudge  && run_prejudge_group
 

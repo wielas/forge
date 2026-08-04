@@ -1,0 +1,28 @@
+{
+  "pr-8": {
+    "result": "block",
+    "blocks": ["branch-name", "scenario-count"],
+    "checks": {
+      "ci-state": "pass",
+      "branch-name": "block",
+      "touches": "warn",
+      "size-budget": "warn",
+      "then-asserts": "skip",
+      "scenario-count": "block",
+      "real-source": "pass"
+    }
+  },
+  "pr-9": {
+    "result": "clear",
+    "blocks": [],
+    "checks": {
+      "ci-state": "pass",
+      "branch-name": "pass",
+      "touches": "warn",
+      "size-budget": "warn",
+      "then-asserts": "skip",
+      "scenario-count": "warn",
+      "real-source": "pass"
+    }
+  }
+}
