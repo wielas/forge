@@ -38,6 +38,10 @@ set -uo pipefail   # NOT -e: a failing case is a result, not a crash
 
 cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." || exit 2
 REPO_ROOT="$(pwd)"
+# In a linked worktree these differ: --git-common-dir resolves to the main
+# checkout's .git, which is the checkout the live Hermes profiles point at (F49).
+MAIN_ROOT="$(cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)/.." 2>/dev/null && pwd)"
+MAIN_ROOT="${MAIN_ROOT:-$REPO_ROOT}"
 
 WITH_CODEX=0; LIST_ONLY=0; SUITES=""
 while [ $# -gt 0 ]; do
@@ -245,10 +249,26 @@ run_config_group() {
   if ! command -v hermes >/dev/null 2>&1; then
     skip "per-profile" "hermes not on PATH"; return
   fi
-  local profs; profs=$(hermes kanban assignees 2>/dev/null | grep -oE '\bforge-[a-z-]+\b' | sort -u)
+  # An assignee is not a profile (audit F43). `forge-operator-handoff` is the
+  # deliberately non-spawnable sentinel the tier-2 hand-off parks on
+  # (lane/prejudge-tier2-card-is-sticky), and `forge-operator` is a ghost
+  # assignee from the rung-4 row in docs/retro-metrics.md. Both are supposed to
+  # have no profile. This group interrogated them anyway and reported six hard
+  # failures, so `make verify` exited 1 on the operator's own machine
+  # continuously — and a suite that is already red cannot report a new failure.
+  # `assignees --json` says which names resolve to a profile; the ones that do
+  # not are SKIPPED and named, because a check that could not run has not passed.
+  local profs; profs=$(hermes kanban assignees --json 2>/dev/null \
+    | jq -r '.[]|select(.name|test("^forge-[a-z-]+$"))|select(.on_disk)|.name' | sort -u)
+  local ghosts; ghosts=$(hermes kanban assignees --json 2>/dev/null \
+    | jq -r '.[]|select(.name|test("^forge-[a-z-]+$"))|select(.on_disk|not)|.name' | sort -u)
   if [ -z "$profs" ]; then
     bad "per-profile" "no forge-* profiles are known assignees"; return
   fi
+  local g
+  for g in $ghosts; do
+    skip "per-profile/$g" "assignee with no profile on disk — sentinel or ghost, not spawnable"
+  done
   local p v
   for p in $profs; do
     v="$(hermes -p "$p" config get terminal.timeout 2>/dev/null | tail -1)"
@@ -262,9 +282,19 @@ run_config_group() {
     [ "$v" = "true" ] && ok "write-approval/$p" \
       || bad "write-approval/$p" "got '${v:-unset}', ADR-0005's consent gate needs true"
 
+    # F49. The profiles are bootstrapped once, against the MAIN checkout. F40
+    # requires every slice to run in a linked worktree — where this check can
+    # only ever be false, because a worktree's skills/ is not the directory the
+    # live profiles load. Judged against $REPO_ROOT it made `make verify` red by
+    # construction in the one place the audit mandates working, which is the
+    # same disarming F43 describes. So: a match on this checkout passes; a match
+    # on the main checkout, from a linked worktree, SKIPS with the consequence
+    # stated — the skills you are editing are not the ones a run would read.
     v="$(hermes -p "$p" config get skills.external_dirs 2>/dev/null)"
     case "$v" in
       *"$REPO_ROOT/skills"*) ok "external-dirs/$p";;
+      *"$MAIN_ROOT/skills"*)
+        skip "external-dirs/$p" "points at the main checkout $MAIN_ROOT/skills; edits in this worktree are not live for any run";;
       *) bad "external-dirs/$p" "does not point at $REPO_ROOT/skills (got '${v:-unset}')";;
     esac
 
@@ -584,6 +614,7 @@ lane/prejudge-schema-hides-stamped-fields  the model is not asked for the fields
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
+metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
 metrics/is-read-only              reading a board does not change its sha256
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
 metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
@@ -875,9 +906,20 @@ run_lane_group() {
   # in by the same model whose consumption it claimed to measure. The SOUL had
   # already proved models cannot report on themselves (judge_model) and applied
   # the lesson to nothing else in the same object.
+  #
+  # F50. The formula includes `cache_creation_input_tokens` because F45 measured
+  # that the prompt is billed to cache creation and not to `input_tokens` — an
+  # `input + output` total reads near zero on the payload that dominates the
+  # bill. This assertion is matched against the SOUL with newlines flattened:
+  # the expression is wrapped across two lines there, and a line-anchored grep
+  # is how the check and the SOUL silently diverged for a commit in the first
+  # place. It is asserted, not merely commented, because F45's whole content is
+  # that this sum is the one that is true.
+  local soulflat; soulflat="$(tr '\n' ' ' < "$soul" | tr -s ' ')"
   if grep -Fq -- '--output-format json' "$soul" \
      && grep -Fq '$env.usage as $u' "$soul" \
-     && grep -Eq '\.tokens_estimate *= *\(\$u\.input_tokens \+ \$u\.output_tokens\)' "$soul" \
+     && printf '%s' "$soulflat" | grep -Eq \
+          '\.tokens_estimate *= *\(\$u\.input_tokens \+ \$u\.cache_creation_input_tokens \+ \$u\.output_tokens\)' \
      && grep -Eq '\.session_id *= *\$env\.session_id' "$soul" \
      && grep -Fq 'total_cost_usd: $env.total_cost_usd' "$soul" \
      && grep -Fq '$env.structured_output' "$soul" \
@@ -971,7 +1013,9 @@ run_metrics_group() {
 
   local home="$TMPROOT/kanban" db="$TMPROOT/kanban/boards/metrics-fixture/kanban.db"
   mkdir -p "$(dirname "$db")"
-  if ! sqlite3 "$db" < "$fx" 2>"$TMPROOT/fixture.log"; then
+  # stdout is discarded: the fixture's `PRAGMA journal_mode=wal` echoes its
+  # result, and that is fixture noise, not a case result.
+  if ! sqlite3 "$db" < "$fx" >/dev/null 2>"$TMPROOT/fixture.log"; then
     bad "fixture-numbers-exact" "fixture would not load: $(tail -2 "$TMPROOT/fixture.log" | tr '\n' ' ')"
     return
   fi
@@ -1000,9 +1044,38 @@ run_metrics_group() {
         "expected [flat,nested,neither,total,chunk_cards]=[1,1,1,3,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
   fi
 
-  # A live board is production data for the whole flywheel. The script opens it
-  # file:...?mode=ro; this proves the bytes, because mode=ro is a claim in a
-  # string literal and claims in string literals are what this suite exists for.
+  # F47. A board AT REST — WAL checkpointed away, no `-shm`, no `-wal`, nobody
+  # holding it open — is the state a board is in when someone sits down to run
+  # /retro, and it is the one state `mode=ro` could not read: a read-only
+  # connection cannot create the `-shm` that WAL requires. The fixture above
+  # does not reach it, because loading the fixture leaves the sidecars warm.
+  # This case builds the quiescent condition explicitly: it copies the database
+  # alone, without sidecars, to a directory nothing has ever opened.
+  #
+  # Both halves are asserted. The old failure printed sqlite3's error on STDOUT,
+  # satisfied a `[ -n "$JSON" ]` guard with the error text, and EXITED 0 — so a
+  # case that checked only the exit code would have passed on the bug.
+  local qhome="$TMPROOT/quiescent" qdb
+  qdb="$qhome/boards/metrics-fixture/kanban.db"
+  mkdir -p "$(dirname "$qdb")"
+  cp "$db" "$qdb"
+  # Checkpoint first, then delete the sidecars: a WAL board that is closed
+  # cleanly folds its WAL into the main file and leaves nothing beside it.
+  # Deleting an un-checkpointed `-wal` would discard committed rows and test a
+  # corrupt board instead of a resting one.
+  sqlite3 "$qdb" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1
+  rm -f "$qdb-wal" "$qdb-shm" "$qdb-journal"
+  if HERMES_KANBAN_HOME="$qhome" "$ms" metrics-fixture --json > "$TMPROOT/quiescent.json" 2>&1 \
+     && jq -e '.verdicts.total' "$TMPROOT/quiescent.json" >/dev/null 2>&1; then
+    ok "reads-a-quiescent-board (no -wal, no -shm, nothing holding it open)"
+  else
+    bad "reads-a-quiescent-board" \
+        "a board at rest could not be read — the state every /retro finds it in: $(head -2 "$TMPROOT/quiescent.json" | tr '\n' ' ')"
+  fi
+
+  # A live board is production data for the whole flywheel. The script snapshots
+  # it and reads the copy; this proves the original's bytes, because "read-only"
+  # is a claim in a comment and claims in comments are what this suite is for.
   local before after
   before="$(shasum -a 256 "$db" | cut -d' ' -f1)"
   HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture >/dev/null 2>&1

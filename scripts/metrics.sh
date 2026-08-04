@@ -11,9 +11,20 @@
 # all for the largest run to date, and 22 malformed chunk envelopes nobody saw
 # for three days because nothing ever queried the board's own exhaust.
 #
-# READ-ONLY BY DESIGN. The board is opened `file:...?mode=ro`; a live board is
-# never written, and `make verify`'s metrics/is-read-only case hashes the file
-# before and after to keep it that way.
+# READ-ONLY BY DESIGN, via a snapshot copy. The live board is only ever read —
+# copied byte for byte into a private temp dir, fingerprinted before and after
+# to prove the copy is not torn, and queried there. `make verify`'s
+# metrics/is-read-only case hashes the original across invocations to keep it so.
+#
+# It used to open the live file `file:...?mode=ro` instead, which was wrong
+# twice (audit F47). A read-only connection cannot create the `-shm` file that
+# WAL requires, and every Hermes board is `journal_mode=wal` — so it worked only
+# while some other process happened to hold the board open, and failed on a
+# board at rest, which is exactly the state a board is in when someone sits down
+# to run /retro. And `mode=ro` never addressed the torn read at all: a report
+# assembled from a board being written underneath it is inconsistent whether or
+# not the connection opens. The snapshot is the pattern `forgeboard-report`'s
+# own `hermes.py` uses, and it fixes both.
 #
 # Usage:
 #   ./scripts/metrics.sh <board-slug>                    # human-readable report
@@ -60,6 +71,57 @@ if [ "$BOARD" = "default" ]; then DB="$HERMES_ROOT/kanban.db"
 else DB="$KANBAN_ROOT/boards/$BOARD/kanban.db"; fi
 [ -f "$DB" ] || { echo "no board database at $DB" >&2; exit 2; }
 
+# ---------------------------------------------------------------------------
+# The snapshot (audit F47). Copy the board and its durable sidecars to a
+# private directory, then query the copy.
+#
+# `-shm` is deliberately NOT among them, and that is not an omission. `-shm` is
+# the WAL index: shared memory scratch, rebuildable from `-wal`, and rewritten
+# constantly by every attached reader. Copying it risks handing SQLite a torn
+# index, and fingerprinting it would make the consistency check fail against a
+# live board for no reason. SQLite rebuilds it in the private copy — which is
+# precisely the thing `mode=ro` on the live file could not do, and the whole
+# bug. `forgeboard-report`'s hermes.py excludes it for the same reason.
+#
+# The copy is opened READ-WRITE, on purpose: WAL recovery must be able to
+# create `-shm` and checkpoint. Nothing that happens to a copy in $TMPDIR can
+# reach the board, and metrics/is-read-only proves the original's bytes.
+# ---------------------------------------------------------------------------
+SNAPDIR="$(mktemp -d "${TMPDIR:-/tmp}/forge-metrics-snap.XXXXXX")"
+SQLF="$SNAPDIR/query.sql"
+trap 'rm -rf "$SNAPDIR"' EXIT
+SNAP="$SNAPDIR/$(basename "$DB")"
+
+# Membership AND bytes: a sidecar that appears or vanishes mid-copy is as much
+# a change as one whose contents move, and only the second kind shows up in a
+# hash of the files we happened to find first.
+fingerprint() {
+  local f
+  for f in "$DB" "$DB-wal" "$DB-journal"; do
+    [ -f "$f" ] && printf '%s %s\n' "${f##*/}" "$(shasum -a 256 "$f" | cut -d' ' -f1)"
+  done
+  return 0
+}
+
+# Three attempts, then an error. A board written faster than it can be copied is
+# a real condition and must be reported, never silently reported stale.
+attempt=1
+while : ; do
+  before="$(fingerprint)"
+  rm -f "$SNAPDIR"/kanban.db*
+  copied=0
+  for f in "$DB" "$DB-wal" "$DB-journal"; do
+    [ -f "$f" ] || continue
+    cp "$f" "$SNAPDIR/${f##*/}" 2>/dev/null || { copied=1; break; }
+  done
+  [ "$copied" = 0 ] && [ "$before" = "$(fingerprint)" ] && break
+  attempt=$((attempt+1))
+  [ "$attempt" -le 3 ] || {
+    echo "board $BOARD changed under every one of 3 snapshot attempts; refusing to report a torn read" >&2
+    exit 2; }
+done
+[ -f "$SNAP" ] || { echo "could not snapshot $DB" >&2; exit 2; }
+
 # Timestamps in this schema are true Unix epoch seconds (`int(time.time())` in
 # hermes_cli/kanban_db.py; confirmed by the db file's mtime matching MAX(
 # created_at) exactly on three boards). The trap is on the OTHER side: --since
@@ -75,8 +137,6 @@ SINCE_E=0; UNTIL_E=99999999999
 # The query is assembled into a file rather than a variable: macOS ships bash
 # 3.2, whose parser mishandles a here-document nested inside `$(...)` and dies
 # with "unexpected EOF" on a script that is in fact balanced.
-SQLF="$(mktemp "${TMPDIR:-/tmp}/forge-metrics.XXXXXX")"
-trap 'rm -f "$SQLF"' EXIT
 printf '.param set :since %s\n.param set :until %s\n' "$SINCE_E" "$UNTIL_E" > "$SQLF"
 cat >> "$SQLF" <<'SQL_BODY'
 WITH
@@ -211,8 +271,15 @@ SELECT json_object(
 );
 SQL_BODY
 
-JSON="$(sqlite3 "file:$DB?mode=ro" < "$SQLF")"
+# The exit code, not the emptiness of the output. sqlite3 prints `Error: ...`
+# on STDOUT, so the old `[ -n "$JSON" ]` guard was satisfied by the error text
+# itself: on the F47 failure this script printed a blank line and exited 0. A
+# broken read reported as success is worse than the read being broken.
+JSON="$(sqlite3 "$SNAP" < "$SQLF")"; rc=$?
+[ "$rc" = 0 ] || { printf 'querying %s failed (sqlite3 exit %s): %s\n' "$BOARD" "$rc" "$JSON" >&2; exit 2; }
 [ -n "$JSON" ] || { echo "query produced no output for $DB" >&2; exit 2; }
+printf '%s' "$JSON" | jq -e . >/dev/null 2>&1 \
+  || { printf 'querying %s produced non-JSON: %s\n' "$BOARD" "$JSON" >&2; exit 2; }
 JSON="$(printf '%s' "$JSON" | jq --arg b "$BOARD" --arg s "${SINCE:-}" --arg u "${UNTIL:-}" \
   '.board=$b | .since=(if $s=="" then null else $s end) | .until=(if $u=="" then null else $u end)')"
 

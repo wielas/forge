@@ -12,6 +12,15 @@
 -- envelope at all, a verdict that cannot be attributed to a chunk card, a
 -- noncanonical judge envelope that must NOT be counted, and a block reason
 -- whose leading token is not in the documented vocabulary.
+--
+-- WAL, because every Hermes board is `journal_mode=wal` and this fixture was
+-- `delete` — SQLite's default — for its whole life. That one unstated
+-- difference is why a 54-case suite could not see F47: `mode=ro` fails only on
+-- a WAL database with no `-shm` beside it, so the bug was unreachable from this
+-- fixture no matter how many cases were pointed at it. A fixture that differs
+-- from production in a property nobody wrote down certifies the wrong thing;
+-- journal mode is now part of what it reproduces.
+PRAGMA journal_mode=wal;
 
 CREATE TABLE tasks (
     id           TEXT PRIMARY KEY,
