@@ -2315,3 +2315,121 @@ detector — the half F35 singles out, *"a five-line AST visitor"* — found
 the run; the specific mechanization F35 proposed for it has zero recall against
 the run that motivated it. The recall this slice does deliver for F14 comes
 entirely from the tautology detector, which F35 does not mention.
+
+---
+
+## Ledger additions from the gate-blocking slice (S4)
+
+*Produced by re-running `make prejudge` against all 11 PRs of the audited run
+with the blocking severity map live, and by reconciling what it clears against
+what tier 2 actually did. The severity map is unchanged by these findings; what
+changes is what may honestly be claimed for it.*
+
+### F57 — `touches` reads the contract from the PR's own tree, so a branch that amends its own `Touches` list clears the check by construction · `OPEN` · **medium**
+
+The gate reports `touches: pass` on **PR #5**. Tier 2 bounced PR #5 for
+`scope_discipline`, citing:
+
+> `docs/chunks/CHUNK-3.md:5` and `docs/ROADMAP.md:69` authorize six Touches
+> paths, but `origin/main...05b6d30` changes two additional implementation-test
+> paths
+
+Both readings are correct, and the difference is *which copy of the contract was
+read*. `CHUNK-3.md` in PR #5's own tree says, verbatim:
+
+> **Touches:** … `tests/fixtures/normalize.py`, `tests/fixtures/hermes_019.py`
+> (grew from 6 to 8 files because the judge bounce required both canonical
+> fixture sources)
+
+The branch amended its own `Touches` list to authorize its own drift, in the
+same PR. The gate reads the PR tree — deliberately, and S3 documented why: the
+contract as it stood on the branch is the one the implementer worked against.
+Combined with F8's still-undecided "the lane may amend `Touches` in-branch",
+that makes the check **self-certifying**: any drift can be legalised by editing
+one line in the same commit, and the check will agree.
+
+**This does not change F55's ruling.** `touches` is advisory precisely because
+its findings are dominated by paths no contract may declare, and an advisory
+check that can be talked out of a finding is a smaller problem than a blocking
+one. What it changes is the claim: `touches` measures *drift the branch did not
+declare*, not drift. Its recall is bounded by the honesty of the branch it reads,
+and the one case in the run where that mattered is the one case tier 2 caught.
+
+**The fix is not to read the base contract instead** — that would resurrect
+CHUNK-3's original bounce, where the plan omitted a fixture the work genuinely
+needed, which is the defect F8 exists to avoid. The candidate is to compare the
+two copies and report *the amendment itself* as the finding: "this PR widened its
+own `Touches` by 2 paths" is a true, cheap, non-self-certifying statement, and it
+is the one a reviewer actually wants. Not built here; it is a new check, not a
+severity change.
+
+### F58 — The gate clears 3 of 11, and 2 of those 3 carry six tier-2 bounces between them · `OPEN` · **high**
+
+The residual, measured rather than estimated, because S5 is sized against it.
+
+| PR | gate | tier-2 verdicts |
+|---|---|---|
+| #1 `planning/lifecycle` | clear | none recorded — not a chunk |
+| #5 `chunk/3-lifecycle-metrics` | clear | **4 bounces**, 1 approve |
+| #7 `chunk/4-dependency-audit` | clear | **2 bounces**, 1 approve |
+
+Every other PR the gate blocks. So the deterministic stage lets through
+**exactly the two chunk PRs that cost tier 2 six review cycles**, and nothing
+about their findings is mechanical:
+
+- **#5** — the `forge.judge.v1` decoder accepts scores serialised as strings and
+  a fractional `2.5` where the schema names six integer dimensions; the evidence
+  index sorts by id where `ARCHITECTURE.md` specifies otherwise; a per-chunk
+  rescan of every card where the doc specifies linear scans plus an index.
+- **#7** — `started_at == wait.occurred_at` treated as a retry, where CHUNK-4
+  and ADR-0005 require strictly later; and the BDD scenario *codifying* that
+  wrong behaviour, which is scenario theater that asserts confidently on the
+  wrong rule.
+
+**This is the case for keeping a semantic reader at tier 1, and it is also the
+case against assuming the current one would find these.** Tier 1's model
+approved both PRs at the time. The residual is real; whether an Opus pass told
+to pass anything subtler than obvious through can address it is exactly what
+ADR-0009 D9.5 leaves open, and the number to beat is **6 bounces on 2 PRs**.
+
+### F59 — "The gate blocks 8 of 11" decomposes into one naming convention and one tautology · `OPEN` · **medium**
+
+The headline is true and reads as broader recall than it is:
+
+| check | PRs blocked |
+|---|---|
+| `branch-name` | 6 — #2, #3, #4, #6, #8, #10 |
+| `then-asserts` | 4 — #8, #9, #10, #11 |
+| `scenario-count` | 1 — #8 |
+
+**Four PRs (#2, #3, #4, #6) block on `branch-name` alone.** Fix the lane's branch
+naming — a one-line change at the point of creation, which is where it belongs —
+and the gate's block count falls from 8 to 4. And per F56, all four
+`then-asserts` hits are the **same single defect**: the `render(report) ==
+render(report)` tautology, which is F54, still on `main` today.
+
+So the honest statement of what the blocking gate catches on this run is: **one
+misapplied naming convention, and one tautology that four reviews failed to
+remove.** That is worth having — it is 8 blocked PRs at zero model tokens, and
+`branch-name` alone cost the run four closed-and-recreated PRs after full review
+had been paid for. But it is two defects, not eight, and a severity map validated
+on two defects should be re-validated on the next real run before anyone
+concludes the other checks are earning their place.
+
+`size-budget` warns on **11 of 11** and `real-source` on **8 of 11**, exactly as
+F53 measured. Both reproduce; neither has been moved to `/roadmap` yet.
+
+### F60 — A SOUL edit desynchronises the live profile, and `make verify` is the only thing that says so · `RECORDED` · **low**
+
+`config/soul-in-sync/forge-prejudge` fails on this slice's branch and passes on
+`main`. That is the check working exactly as designed — it exists because a fix
+can look committed and merged while every run still reads the old identity
+(measured 2026-07-28) — but it means **every slice that edits a SOUL ships with
+one red case**, and the remedy (`./hermes/profiles-bootstrap.sh`) publishes an
+unmerged protocol to the operator's always-on install.
+
+Recorded rather than fixed, because the resolution is a policy question this
+slice should not settle unilaterally: either the check learns to compare against
+the merge-base for a branch, or SOUL publication becomes an explicit post-merge
+step with its own gate. Publishing from an unmerged branch — the current
+instruction — is the one option that is actively wrong while a board is live.
