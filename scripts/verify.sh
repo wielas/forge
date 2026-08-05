@@ -742,6 +742,12 @@ prejudge/verdict-derives-from-scores     judge-rubric.md's verdict logic, as a t
 prejudge/unevidenced-score-is-not-a-verdict  a score below 3 naming no finding fails instead of deriving
 prejudge/derivation-is-shadow-not-routing    divergence is recorded; .verdict still routes
 prejudge/shadow-fields-are-stamped-never-trusted  a model-invented derived_verdict cannot survive
+prejudge/shadow-never-destroys-the-verdict  an unstampable verdict file is left exactly as found
+prejudge/shadow-needs-no-writable-tmpdir  the stage does not depend on TMPDIR being writable
+prejudge/stamp-reports-its-own-failure    emitting nothing returns non-zero, not 0
+prejudge/shadow-preserves-the-routing-field  stamping never alters .verdict
+prejudge/stamped-envelope-declares-every-key  no key the schema does not declare (additionalProperties:false)
+prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 EOF
   exit 0
 fi
@@ -1558,6 +1564,90 @@ TABLE
   else
     bad "shadow-fields-are-stamped-never-trusted" \
         "a model-supplied derived_verdict survived the stamp — it must be overwritten unconditionally"
+  fi
+
+  # SHADOW MUST NOT BE ABLE TO DESTROY A REVIEW. The first version of this
+  # stage stamped into a temp file and mv'd it over the verdict unconditionally.
+  # When the stamp came back empty the verdict was truncated to zero bytes,
+  # `.verdict` read null, and Stage 5's routing case fell through to `*)` and
+  # called substrate() — a completed, paid-for review reported as an
+  # infrastructure outage because a SHADOW record could not be computed. The
+  # empty path also returns 0, so no exit-code check would have caught it.
+  #
+  # Adversarial input: bytes that are not JSON. derive_verdict cannot parse
+  # them, and neither can the error branch that runs over the same bytes, so
+  # stamp_shadow emits nothing at all.
+  local sdir vf
+  sdir="$TMPROOT/shadow"; mkdir -p "$sdir"; vf="$sdir/verdict.json"
+
+  printf 'not json at all' > "$vf"
+  stamp_shadow_file "$vf" >/dev/null 2>&1
+  if [ "$(cat "$vf")" = "not json at all" ]; then
+    ok "shadow-never-destroys-the-verdict (unstampable input leaves the file intact)"
+  else
+    bad "shadow-never-destroys-the-verdict" \
+        "an unstampable verdict was overwritten — a completed review would route to substrate"
+  fi
+
+  # stamp_shadow must REPORT the empty case rather than merely not printing.
+  # `rm -f` as a function's last statement returns 0 and hides it.
+  if stamp_shadow 'not json at all' >/dev/null 2>&1; then
+    bad "stamp-reports-its-own-failure" \
+        "stamp_shadow returned 0 while emitting nothing — a caller cannot tell that from success"
+  else
+    ok "stamp-reports-its-own-failure"
+  fi
+
+  # The stage must not need a writable TMPDIR. The Hermes worker's environment
+  # is not this shell's, and an earlier version opened `err="$(mktemp)"` then
+  # redirected to it — with no writable TMPDIR that is an empty filename and an
+  # ambiguous redirect, taking down the one stage whose contract is that it
+  # cannot cost a review.
+  if [ "$(TMPDIR=/nonexistent-dir stamp_shadow \
+            "$(_env 313333 approve '[{"dimension":"scenario_integrity","severity":"nit"}]')" \
+          2>/dev/null | jq -r '.derived_verdict')" = "approve-with-nits" ]; then
+    ok "shadow-needs-no-writable-tmpdir"
+  else
+    bad "shadow-needs-no-writable-tmpdir" \
+        "stamping failed without a writable TMPDIR — the worker's environment is not the verifier's"
+  fi
+
+  # The routing field is the one thing shadow may never touch.
+  printf '%s' "$(_env 313333 bounce '[{"dimension":"scenario_integrity","severity":"fix"}]')" > "$vf"
+  if stamp_shadow_file "$vf" >/dev/null 2>&1 \
+     && [ "$(jq -r '.verdict' "$vf")" = "bounce" ] \
+     && [ "$(jq -r '.derived_verdict' "$vf")" = "bounce" ] \
+     && [ "$(jq -r '.verdict_divergence' "$vf")" = "false" ]; then
+    ok "shadow-preserves-the-routing-field"
+  else
+    bad "shadow-preserves-the-routing-field" \
+        "stamping altered or lost .verdict — shadow adds fields, it never changes the one that routes"
+  fi
+
+  # `additionalProperties: false` is the binding constraint on the stored
+  # envelope, and there is no JSON Schema validator on this host (no ajv, no
+  # python jsonschema), so assert the part that actually bites: every key the
+  # stamp writes must be declared in the schema. This is what breaks if a
+  # shadow field is added to the envelope and not to judge-verdict.schema.json.
+  local stampedout
+  stampedout="$(stamp_shadow "$(_env 313333 bounce '[{"dimension":"scenario_integrity","severity":"nit"}]')")"
+  if printf '%s' "$stampedout" | jq -e --slurpfile s rubrics/judge-verdict.schema.json '
+        ($s[0].properties | keys) as $allowed
+      | [keys[] | select(([$allowed[]] | index(.)) == null)] | length == 0
+     ' >/dev/null 2>&1; then
+    ok "stamped-envelope-declares-every-key"
+  else
+    bad "stamped-envelope-declares-every-key" \
+        "the stamped envelope carries a key judge-verdict.schema.json does not declare, and the schema is additionalProperties:false"
+  fi
+
+  # The caller must use the guarded entry point, not the raw two lines.
+  if grep -q 'stamp_shadow_file "\$TMP/verdict.json"' scripts/prejudge-review.sh \
+     && ! grep -q 'mv "\$TMP/v2.json"' scripts/prejudge-review.sh; then
+    ok "review-uses-the-guarded-stamp"
+  else
+    bad "review-uses-the-guarded-stamp" \
+        "prejudge-review.sh must call stamp_shadow_file; an unguarded mv can truncate the verdict"
   fi
 }
 wants prejudge  && run_prejudge_group
