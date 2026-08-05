@@ -82,6 +82,20 @@ touch it. Moving the bytes makes the control *stronger*: they are now executed
 by bash and pinned by a test, where before they were prose a cheap model
 re-enacted each run.
 
+> **Correction, 2026-08-05 (audit F65).** The last sentence was true on this
+> branch and false one commit after it merged. Pinning against
+> `main:hermes/profiles/forge-prejudge.SOUL.md` worked only while the arm still
+> lived in that SOUL — and removing it from there is precisely what this ADR
+> *did*. On merge the baseline became empty, the case began reporting
+> `skip: main has no pinned scorer block to compare`, and the control sat
+> unguarded for four commits. The bytes were never harmed (sha256 `7f9ddf38…`,
+> identical to `6b4c419`), so the decision above stands unchanged and S5's
+> experiment is still runnable. But the claim that the move made the control
+> stronger was only earned once the baseline stopped being a branch: it is now
+> the recorded fixture `scripts/fixtures/control-arm.txt`, and the case is
+> forbidden to skip for any reason. A control anchored to a moving ref is not
+> pinned.
+
 ## Consequences
 
 - What the protocol does is now testable by running it.
