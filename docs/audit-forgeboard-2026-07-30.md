@@ -1008,7 +1008,7 @@ leading indicator for both bounce rate and token burn, and it is knowable
 
 ---
 
-### F29 — The verdict is a pure function of the scores, and the model is asked to assert it anyway · `OPEN` · **high**
+### F29 — The verdict is a pure function of the scores, and the model is asked to assert it anyway · `SHADOWED` · **high**
 
 `rubrics/judge-rubric.md` § *Verdict logic*:
 
@@ -1054,6 +1054,58 @@ Three things fall out at once: the tier-1/tier-2 disagreement becomes
 opinions); rubber-stamping now requires the model to fabricate *evidence-bearing
 scores*, which is far harder than fabricating a word; and `forgeboard-report`'s
 230 hand-rolled lines collapse to a schema import (F23).
+
+**SHADOWED 2026-08-05.** The rules are now a program — `scripts/verdict.sh`,
+sourced by `prejudge-review.sh` — and every review records `derived_verdict`
+and `verdict_divergence` beside the model's word. **Nothing routes on the
+derived value yet.** The scorer's `verdict` still decides, exactly as before.
+
+Shadow rather than enforcement, because the derivation is only worth acting on
+once it has been measured against real reviews, and because the alternative
+touches the pinned control arm. Adding `verdict` to `STAMPED` is an edit inside
+`prejudge-review.sh`'s pinned region, which ADR-0009 D9.5 forbids until its
+experiment concludes — and F65 is what happened the last time that pin stopped
+holding. The shadow record is what that experiment reads.
+
+**Rule 2's quantifier, resolved.** `derive_verdict` reads "none = 1" across all
+six dimensions, for the reason defect 1 gives: over dimensions 1–3 the clause is
+vacuous. That is now a line of code rather than a paragraph two documents
+disagree about.
+
+**First measurement — replay of every stored verdict on this machine:**
+
+| | |
+|---|---|
+| verdicts replayed | **34** |
+| agreed with the derivation | **33** |
+| diverged | **1** |
+| underivable (invalid input) | **0** |
+| of those, *discriminating* (not all-3s-no-findings) | **18** — 17 agree, 1 diverge |
+
+The single divergence: scores `3/3/3/2/3/3` with one `nit` finding, stored as
+`approve-with-nits`, derives to `approve` — rule 2 is satisfied, since no
+dimension scored 1. It is also the only `approve-with-nits` in the entire
+population, and it has **no routing consequence**: `prejudge-review.sh` sends
+`approve` and `approve-with-nits` down the same branch.
+
+**Two limitations, stated because they bound what this can conclude.** First,
+these are *not* the seventeen approvals F4 counted — that run was on
+`forgeboard-report`, whose board database is not on this machine, so it cannot
+be replayed. This population is `forge-ladder` (30), `forge-dependency-clone`
+(3) and `forge-hello` (1). Second, all 34 predate `scripts/prejudge.sh`, so they
+measure the scorer with nothing in front of it; D9.5 asks what it adds *given*
+the gate. What the replay does establish is the weaker and still useful claim:
+across every scored review available, the verdict field carried information its
+own scores did not exactly once, and that once changed nothing.
+
+**Also fixed here, and not cosmetic:** `judge-verdict.schema.json` says "a score
+below 3 with no corresponding finding is invalid" inside a `description`, where
+no validator reads it. Rule 3 quantifies over 1-scored findings, and `all` over
+an empty list is *true* — so a dimension scored 1 that named no finding at all
+would have derived to `approve-with-nits`, the least evidenced verdict possible.
+`derive_verdict` exits 3 on that input instead. All 34 stored verdicts pass it,
+so the rule is calibrated against real data rather than against the schema's
+prose.
 
 ---
 

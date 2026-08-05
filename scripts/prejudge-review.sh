@@ -333,6 +333,39 @@ pr_url="$PR_URL"
   || substrate "judge-envelope: claude -p returned no structured verdict"
 
 printf '%s' "$verdict" > "$TMP/verdict.json"
+
+# ---------------------------------------------------------------------------
+# Stage 4b — the verdict, DERIVED. Shadow mode: this records, it never routes.
+#
+# `rubrics/judge-rubric.md` has always stated the verdict logic as four rules
+# over the scores, and nothing ever computed them — the model was asked for
+# `verdict` beside the scores it also produced, and whatever word came back was
+# stored, routed on and counted (audit F29). `scripts/verdict.sh` is those four
+# rules as a program.
+#
+# ROUTING BELOW IS UNCHANGED AND STILL READS `.verdict`, the model's own word.
+# The derived value is recorded beside it so the two can be compared over real
+# runs. That comparison is the evidence ADR-0009 D9.5 asks for — whether an
+# Opus pass told to pass through adds anything a program cannot — and it has to
+# be collected before anything acts on it. Same instrument -> shadow -> block
+# order the gate itself went through in S1, S3 and S4.
+#
+# This block sits deliberately AFTER `end pinned region`. Everything above that
+# marker is the control arm, byte-identical to
+# `scripts/fixtures/control-arm.txt`; `prejudge/scorer-is-the-control-arm`
+# fails the suite on any edit inside it, whitespace included, because S5's
+# experiment is measured against exactly those bytes (F65 is what happens when
+# that pin stops holding).
+#
+# A DERIVATION FAILURE IS NOT A REVIEW FAILURE. Malformed scores mean the
+# shadow record is unavailable for this run; that must never cost a review the
+# scorer actually completed. The error is recorded and the run continues.
+# ---------------------------------------------------------------------------
+# shellcheck source=scripts/verdict.sh
+. "$HERE/verdict.sh"
+stamp_shadow "$(cat "$TMP/verdict.json")" > "$TMP/v2.json"
+mv "$TMP/v2.json" "$TMP/verdict.json"
+
 VERDICT="$(jq -r '.verdict' "$TMP/verdict.json")"
 SUMMARY="$(jq -r '"\(.verdict) — \([.findings[]?] | length) finding(s)"' "$TMP/verdict.json")"
 

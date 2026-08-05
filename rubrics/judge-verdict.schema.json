@@ -135,6 +135,19 @@
     "session_id": {
       "type": "string",
       "description": "OPTIONAL, operator-stamped: the judging engine's session id. `claude -p --resume <id>` replays this review's context from cache, so a re-review pays only for the repair diff. A verdict without it is not resumable."
+    },
+    "derived_verdict": {
+      "type": ["string", "null"],
+      "enum": ["approve", "approve-with-nits", "bounce", null],
+      "description": "OPTIONAL, operator-stamped, SHADOW: the verdict that follows from `scores` and `findings` under judge-rubric.md's verdict logic, computed by scripts/verdict.sh. Never model-produced, and not yet acted on — `verdict` still routes. Null when derivation failed, with the reason in verdict_derivation_error. Recorded so that 'the scorer's word agrees with the scorer's own numbers' is a measurement rather than an assumption (audit F29)."
+    },
+    "verdict_divergence": {
+      "type": ["boolean", "null"],
+      "description": "OPTIONAL, operator-stamped, SHADOW: whether `verdict` differs from `derived_verdict`. Null when derivation failed. This is the quantity ADR-0009 D9.5's experiment reads — a verdict field that never diverges from what its own scores imply carries no information those scores do not."
+    },
+    "verdict_derivation_error": {
+      "type": "string",
+      "description": "OPTIONAL, operator-stamped: why derivation produced no value. Present only when derived_verdict is null. A derivation failure is not a review failure — the scorer's verdict still routes — so this records the gap rather than hiding it."
     }
   }
 }
