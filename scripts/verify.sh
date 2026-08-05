@@ -306,6 +306,28 @@ run_config_group() {
   for g in $ghosts; do
     skip "per-profile/$g" "assignee with no profile on disk — sentinel or ghost, not spawnable"
   done
+
+  # preflight.sh must answer "which profiles are real" the same way this group
+  # does. It did not: it took every forge-* assignee regardless of on_disk, so
+  # `forge-operator` (a ghost) and `forge-operator-handoff` (the tier-2
+  # sentinel, which MUST be absent) were interrogated for config they cannot
+  # have — six FAILs and "not ready for unattended work" on a system that was
+  # correct. This group had already been fixed for exactly that as audit F43;
+  # the fix was never carried across. A readiness gate that reddens when the
+  # system is right teaches its operator to ignore it.
+  #
+  # And the sentinel must be read from where the hand-off lives now. preflight
+  # sed'd it out of forge-prejudge.SOUL.md, which was right until ADR-0010
+  # moved the protocol into scripts/prejudge-review.sh — after which it matched
+  # nothing and the check reported its own blindness as a WARN. F65's shape.
+  if grep -q 'on_disk' scripts/preflight.sh \
+     && grep -q 'route_tier2' scripts/preflight.sh \
+     && ! grep -q 'forge-prejudge.SOUL.md" 2>/dev/null | head -1' scripts/preflight.sh; then
+    ok "preflight-agrees-about-real-profiles"
+  else
+    bad "preflight-agrees-about-real-profiles" \
+        "preflight must filter assignees by on_disk (F43) and read the tier-2 sentinel out of route_tier2() in prejudge-review.sh, not out of the SOUL (F65)"
+  fi
   local p v
   for p in $profs; do
     v="$(hermes -p "$p" config get terminal.timeout 2>/dev/null | tail -1)"

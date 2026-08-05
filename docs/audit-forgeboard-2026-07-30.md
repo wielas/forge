@@ -2659,3 +2659,80 @@ derivation work proceeded around it. For four commits it did not hold at all.
 Nothing edited the arm in that window — `sha256` confirms it — so the baseline
 is intact and the experiment is still runnable, but the margin was luck rather
 than enforcement.
+
+### F66 — `make preflight` failed because the system was correct, and stopped checking the human gate · `FIXED` · **high**
+
+Measured on `main` at `515229c`, immediately after the stack landed:
+
+```
+PASS 79   WARN 6   FAIL 6
+Not ready for unattended work. Fix every FAIL, then re-run.
+```
+
+`docs/state.md` records `PASS 78 / WARN 3 / FAIL 0`. Every one of the six
+failures was preflight being wrong, and one of the warnings was preflight
+having gone blind.
+
+**All six FAILs were profiles that are supposed not to exist.** Section 4 built
+its profile list as
+
+```sh
+hermes kanban assignees | grep -oE '\bforge-[a-z-]+\b' | sort -u
+```
+
+`kanban assignees` lists every name that has ever appeared on a card and marks
+each `yes`/`no` under `ON DISK`. The `grep` discards that column. So preflight
+ran `hermes -p <name> config get` against `forge-operator` — a ghost assignee
+from the rung-4 row of `retro-metrics.md` — and against
+`forge-operator-handoff`, **the tier-2 sentinel, whose entire purpose is to have
+no profile**. Neither has config, so three checks failed apiece.
+
+Preflight was reporting "not ready for unattended work" *because ADR-0007's
+human gate was intact.* A readiness gate that reddens when the system is right
+trains its operator to ignore it, which is how the real failure gets missed.
+
+`make verify`'s config group had already been fixed for exactly this, as **F43**
+— its comment describes the same six failures and switched to
+`assignees --json` / `.on_disk`. The fix was never carried across to preflight.
+Two scripts answering "which profiles are real" differently is how one of them
+gets to be wrong.
+
+**And the sentinel check had stopped checking anything.** It reads the sentinel
+name out of the hand-off rather than hardcoding it twice, then asserts in
+reverse — the failure is that name *existing* on disk, because if a profile is
+ever created there, every parked tier-2 card becomes claimable and ADR-0007's
+second tier silently collapses into the first. It read the name with
+
+```sh
+sed -n 's/.*--assignee \(forge-operator-handoff\).*/\1/p' \
+    hermes/profiles/forge-prejudge.SOUL.md
+```
+
+ADR-0010 moved `route_tier2()` out of that SOUL and into
+`scripts/prejudge-review.sh`. The sed then matched nothing, `$SENTINEL` went
+empty, and the check fell to its "could not read" branch — a **WARN**. From
+that merge onward nothing verified that the human gate was still unclaimable,
+and the only signal was a warning about the check's own blindness.
+
+**This is F65 exactly, one script over**: a check anchored to a location whose
+content moved, going quiet at the merge that moved it. F65 was found by running
+`make verify` on `main` after merging; this was found by running `make
+preflight` for the same reason. Neither was catchable by reading.
+
+**Fix (this slice):**
+
+- profiles are filtered by `.on_disk` via `assignees --json`, matching F43's fix
+  in `verify.sh`; assignees without a profile are named and skipped rather than
+  silently dropped, because a check that could not run has not passed
+- the sentinel is read out of `route_tier2()` in `scripts/prejudge-review.sh`,
+  capturing whatever name is there rather than asserting a known one, so it is
+  still never written twice
+- an unreadable sentinel is now a **FAIL**, not a WARN. F65's lesson generalised:
+  a control that cannot find the thing it guards is not passing
+- `config/preflight-agrees-about-real-profiles` fails the suite if preflight
+  goes back to either mistake
+
+After: `PASS 79 · WARN 4 · FAIL 0`, and the sentinel check makes a real
+assertion — `tier-2 sentinel 'forge-operator-handoff' is correctly absent from
+disk`. Negative-tested: pointing `route_tier2()` at an existing profile fails;
+renaming the function so the name cannot be read fails.
