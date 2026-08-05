@@ -359,12 +359,23 @@ printf '%s' "$verdict" > "$TMP/verdict.json"
 #
 # A DERIVATION FAILURE IS NOT A REVIEW FAILURE. Malformed scores mean the
 # shadow record is unavailable for this run; that must never cost a review the
-# scorer actually completed. The error is recorded and the run continues.
+# scorer actually completed. `stamp_shadow_file` ENFORCES that rather than
+# merely intending it: the verdict is replaced only if the stamped result is
+# non-empty, parses, and still carries the same `.verdict`; otherwise the file
+# is left byte-for-byte as it was found.
+#
+# The two obvious lines — stamp into a temp file, `mv` it over — do the
+# opposite. An empty stamp truncates the verdict to zero bytes, `.verdict`
+# reads null, and Stage 5 below falls to its `*)` arm and calls `substrate`. A
+# completed, paid-for review is then reported as an infrastructure outage
+# because a SHADOW record could not be computed. That is measured rather than
+# theoretical: it is exactly what the first version of this stage did, and the
+# empty-output path returns 0, so its exit code could not have caught it.
 # ---------------------------------------------------------------------------
 # shellcheck source=scripts/verdict.sh
 . "$HERE/verdict.sh"
-stamp_shadow "$(cat "$TMP/verdict.json")" > "$TMP/v2.json"
-mv "$TMP/v2.json" "$TMP/verdict.json"
+stamp_shadow_file "$TMP/verdict.json" \
+  || echo "shadow: derivation unavailable this run; verdict left untouched" >&2
 
 VERDICT="$(jq -r '.verdict' "$TMP/verdict.json")"
 SUMMARY="$(jq -r '"\(.verdict) — \([.findings[]?] | length) finding(s)"' "$TMP/verdict.json")"
