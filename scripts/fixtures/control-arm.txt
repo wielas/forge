@@ -1,0 +1,24 @@
+   STAMPED='["pr","judge_model","tokens_estimate","cost","session_id"]'
+   VERDICT_SCHEMA="$(jq -c --argjson stamped "$STAMPED" '
+       del(."$schema")
+     | .properties |= with_entries(select(.key | IN($stamped[]) | not))
+     | .required |= map(select(. | IN($stamped[]) | not))
+   ' ~/.forge/rubrics/judge-verdict.schema.json)"
+   raw="$(claude -p --model opus --output-format json \
+            --json-schema "$VERDICT_SCHEMA" < "$prompt_file")"
+
+   verdict="$(printf '%s' "$raw" | jq -ce --arg pr "$pr_url" '
+       if .is_error == true
+          or .api_error_status != null
+          or (.structured_output | type) != "object"
+       then "judge-envelope" | halt_error(9) else . end
+     | . as $env
+     | $env.usage as $u
+     | $env.structured_output
+     | .pr = $pr
+     | .judge_model = "opus"
+     | .tokens_estimate = ($u.input_tokens + $u.cache_creation_input_tokens
+                           + $u.output_tokens)
+     | .cost = ($u | del(.iterations)) + {total_cost_usd: $env.total_cost_usd}
+     | .session_id = $env.session_id
+   ')"

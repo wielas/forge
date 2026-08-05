@@ -663,7 +663,7 @@ prejudge/skip-is-distinguishable-from-pass  a check that could not run has not p
 prejudge/emits-an-action-per-block  every blocking finding carries an action a fresh worker can execute
 prejudge/emits-its-own-shape-not-the-verdict-schema  the gate emits forge.gate.v1, never a scored verdict
 prejudge/gate-is-a-stage-not-a-replacement  no model in the gate, and the protocol's scorer still there
-prejudge/scorer-is-the-control-arm  the claude -p call is byte-identical to main's SOUL (S5's baseline)
+prejudge/scorer-is-the-control-arm  the claude -p call is byte-identical to the recorded baseline (S5's control; never skips)
 prejudge/review-routes-by-gate-result  a gate block bounces with no model spawned, carrying forge.gate.v1
 prejudge/review-emits-a-terminator-envelope  one forge.review.v1 object tells the model which terminator to call
 prejudge/review-never-prints-the-diff  a recorded 63 KB patch reaches the prompt file and not stdout
@@ -1213,30 +1213,50 @@ run_prejudge_group() {
   # measures candidate tier-1 mandates against what this call does today, so a
   # baseline somebody edited in passing is not a baseline.
   #
-  # This is the case that makes "byte-identical to main" checkable in one
-  # command instead of readable in prose. Two ranges, both pure bash, diffed
-  # against main's SOUL. Whitespace counts: the three-space indent in $review is
-  # inherited from the markdown list item the block came out of, and reindenting
-  # it would be an undeclared edit to the control arm.
+  # The baseline is a RECORDED FIXTURE, not a branch (F65). It used to be
+  # `git show main:hermes/profiles/forge-prejudge.SOUL.md`, which was correct
+  # for exactly as long as the arm lived in that SOUL. ADR-0010 moved it into
+  # this script — so the moment ADR-0010 merged, main's SOUL stopped containing
+  # the block, `arm_extract` returned empty, and this case began reporting
+  # `skip: main has no pinned scorer block to compare`. It went inert at the
+  # merge that created it, and a skip is quiet. ADR-0010 D10.5's claim that
+  # moving the bytes made the control *stronger* because they are "pinned by a
+  # test" was true on the branch and false one commit later.
+  #
+  # Hence: compare against `scripts/fixtures/control-arm.txt`, recorded from
+  # `6b4c419:hermes/profiles/forge-prejudge.SOUL.md` — the last commit whose
+  # SOUL still carried the arm — and verified byte-identical to the bytes
+  # ADR-0010 moved. A fixture cannot drift out from under the check the way a
+  # branch can.
+  #
+  # NOTHING HERE MAY SKIP. A control that cannot find its baseline is not a
+  # passing control, it is a failing one; that is the whole lesson of F65. Both
+  # the missing-fixture and the empty-extraction paths call bad(), so deleting
+  # either side of the comparison fails the suite instead of silencing it.
+  #
+  # Whitespace counts: the three-space indent is inherited from the markdown
+  # list item the block came out of, and reindenting it would be an undeclared
+  # edit to the control arm.
   # -------------------------------------------------------------------------
-  local arm_main arm_now
+  local arm_base arm_now baseline=scripts/fixtures/control-arm.txt
   arm_extract() {
     sed -n '/^   STAMPED=/,/judge-verdict\.schema\.json)"$/p' "$1"
     sed -n '/^   raw="\$(claude -p --model opus/,/^   .)"$/p' "$1"
   }
-  if ! git rev-parse --verify -q main >/dev/null 2>&1; then
-    skip "scorer-is-the-control-arm" "no main ref to compare against"
+  arm_now="$(arm_extract "$review")"
+  if [ ! -f "$baseline" ]; then
+    bad "scorer-is-the-control-arm" \
+        "$baseline is missing — S5's baseline is unrecorded, so nothing can be measured against it (F65)"
+  elif [ -z "$arm_now" ]; then
+    bad "scorer-is-the-control-arm" \
+        "no scorer block found in $review — the arm was renamed, reindented or deleted, and this check must fail rather than skip (F65)"
   else
-    git show main:hermes/profiles/forge-prejudge.SOUL.md > "$TMPROOT/soul-main.md" 2>/dev/null
-    arm_main="$(arm_extract "$TMPROOT/soul-main.md")"
-    arm_now="$(arm_extract "$review")"
-    if [ -z "$arm_main" ]; then
-      skip "scorer-is-the-control-arm" "main has no pinned scorer block to compare"
-    elif [ "$arm_main" = "$arm_now" ]; then
-      ok "scorer-is-the-control-arm ($(printf '%s\n' "$arm_now" | wc -l | tr -d ' ') lines byte-identical to main)"
+    arm_base="$(cat "$baseline")"
+    if [ "$arm_base" = "$arm_now" ]; then
+      ok "scorer-is-the-control-arm ($(printf '%s\n' "$arm_now" | wc -l | tr -d ' ') lines byte-identical to the recorded baseline)"
     else
       bad "scorer-is-the-control-arm" \
-          "the scorer call in $review differs from main's SOUL — it is S5's baseline and may be moved but not modified (ADR-0009 D9.5)"
+          "the scorer call in $review differs from $baseline — it is S5's baseline and may be moved but not modified (ADR-0009 D9.5)"
     fi
   fi
 
