@@ -367,8 +367,35 @@ if [ "$HAVE_HERMES" = 0 ]; then
 else
   # The profiles that can actually receive a card. `kanban assignees` is the
   # authority: an assignee that is not listed here strands its card silently.
-  LANE_PROFILES="$(hermes kanban assignees 2>/dev/null \
-    | grep -oE '\bforge-[a-z-]+\b' | sort -u)"
+  #
+  # ON DISK IS PART OF THE ANSWER. `kanban assignees` lists every name that has
+  # ever appeared on a card and marks each `yes`/`no` for whether a profile
+  # exists for it. Taking every `forge-*` name regardless meant running
+  # `hermes -p <name> config get` against profiles that have no config, which
+  # returns nothing and fails three checks apiece.
+  #
+  # That produced six FAILs and "not ready for unattended work" on a system
+  # that was correct: three from `forge-operator`, a historical mis-assignment
+  # the audit already records, and three from `forge-operator-handoff` — the
+  # tier-2 sentinel, which MUST NOT exist on disk. Preflight was failing
+  # *because* the human gate was intact. A readiness gate that says FAIL when
+  # the system is right teaches its operator to ignore it, and that is how the
+  # real FAIL gets missed.
+  #
+  # A card parked on a profile that does not exist is a different defect, with
+  # its own check below, which correctly looks at `ready` cards only.
+  #
+  # `make verify`'s config group already learned this as audit F43 — its
+  # comment describes the same six failures — but the fix was never carried
+  # across to preflight. Same `assignees --json` / `.on_disk` shape here, so
+  # the two scripts answer "which profiles are real" the same way.
+  LANE_PROFILES="$(hermes kanban assignees --json 2>/dev/null \
+    | jq -r '.[]|select(.name|test("^forge-[a-z-]+$"))|select(.on_disk)|.name' 2>/dev/null | sort -u)"
+  # Named, not silently dropped: a check that could not run has not passed.
+  for _ghost in $(hermes kanban assignees --json 2>/dev/null \
+    | jq -r '.[]|select(.name|test("^forge-[a-z-]+$"))|select(.on_disk|not)|.name' 2>/dev/null | sort -u); do
+    info "── assignee '$_ghost' has no profile on disk — sentinel or ghost, not spawnable; config checks skipped"
+  done
   if [ -z "$LANE_PROFILES" ]; then
     fail "no forge-* profiles are known assignees — run ./hermes/profiles-bootstrap.sh"
   else
@@ -559,13 +586,24 @@ if [ "$HAVE_HERMES" = 1 ]; then
   #   * The tier-2 hand-off parks on a sentinel assignee that is SUPPOSED not to
   #     exist — that is the whole mechanism keeping the human's card away from
   #     the dispatcher. Warning about it would be backwards, so the sentinel is
-  #     read out of the SOUL (never hardcoded twice) and checked in reverse:
-  #     the failure is that name EXISTING.
+  #     read out of the hand-off itself (never hardcoded twice) and checked in
+  #     reverse: the failure is that name EXISTING.
   # NOTE: $FORGE_DIR is resolved further down this script, so it is not usable
   # here. Derive the checkout from this script's own location instead.
+  #
+  # READ IT WHERE IT LIVES NOW. This used to sed the SOUL, which was right
+  # until ADR-0010 moved the protocol out of the SOUL and into
+  # prejudge-review.sh — after which the sed matched nothing, $SENTINEL went
+  # empty, and the check below fell to its "could not read" branch and stopped
+  # verifying anything. Same shape as F65: a check anchored to a location whose
+  # content moved, going quiet at the merge that moved it. The name is still
+  # not written twice — it is read out of route_tier2(), which is the only
+  # place that parks a card on it, and the extraction captures whatever name is
+  # there rather than asserting a known one.
   SELF_REPO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
-  SENTINEL="$(sed -n 's/.*--assignee \(forge-operator-handoff\).*/\1/p' \
-              "$SELF_REPO/hermes/profiles/forge-prejudge.SOUL.md" 2>/dev/null | head -1)"
+  SENTINEL="$(sed -n '/^route_tier2()/,/^}/p' \
+              "$SELF_REPO/scripts/prejudge-review.sh" 2>/dev/null \
+              | sed -n 's/.*--assignee \([A-Za-z0-9_-]*\).*/\1/p' | head -1)"
   GHOSTS=""
   for b in $(hermes kanban boards list --json 2>/dev/null | jq -r '.[].slug' 2>/dev/null); do
     for g in $(HERMES_KANBAN_BOARD="$b" hermes kanban assignees 2>/dev/null \
@@ -590,8 +628,15 @@ if [ "$HAVE_HERMES" = 1 ]; then
   # tier silently collapses into the first — the exact 2026-07-28 failure, but
   # with no code change to blame it on.
   if [ -z "$SENTINEL" ]; then
-    warn "could not read the tier-2 sentinel assignee out of forge-prejudge.SOUL.md"
-    say  "      the hand-off may have been rewritten; re-check it by hand."
+    # FAIL, not WARN. This branch means the check cannot see the thing it
+    # exists to guard, and ADR-0007's human tier is unverified — a warning
+    # there is a check reporting its own blindness as a minor note. F65 is the
+    # same lesson one layer over: a control that cannot find its baseline is
+    # not a passing control.
+    fail "cannot read the tier-2 sentinel assignee out of scripts/prejudge-review.sh"
+    say  "      route_tier2() must park the tier-2 card on an assignee with no"
+    say  "      profile. Until that name can be read, nothing here verifies the"
+    say  "      human gate is still unclaimable (ADR-0007)."
   elif [ -d "$HOME/.hermes/profiles/$SENTINEL" ]; then
     fail "a profile exists at ~/.hermes/profiles/$SENTINEL"
     say  "      that name MUST stay unspawnable: it is what keeps parked tier-2"

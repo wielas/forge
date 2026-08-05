@@ -25,8 +25,11 @@
 # does not touch the scorer's brief. The `claude -p --model opus` call below is
 # S5's experimental control arm: it MOVED here from the SOUL and it was not
 # modified. `make verify`'s `prejudge/scorer-is-the-control-arm` diffs it
-# against `git show main:hermes/profiles/forge-prejudge.SOUL.md` and fails the
-# suite on any difference, whitespace included. That is why two regions below
+# against the recorded baseline `scripts/fixtures/control-arm.txt` and fails
+# the suite on any difference, whitespace included. (It diffed against
+# `git show main:hermes/profiles/forge-prejudge.SOUL.md` until audit F65: that
+# baseline stopped existing the moment this file was merged, since removing the
+# block from the SOUL is precisely what this file did.) That is why two regions below
 # are indented three spaces instead of two: they are pinned bytes carried over
 # from a markdown list item. Do not reindent them. Do not tidy them. If you
 # think the scorer should change, that is ADR-0009 D9.5 — S5's experiment, not
