@@ -67,5 +67,33 @@ pre-push:
           echo "  Push a branch and open a PR." >&2
           exit 1
         fi
+    # ADVISORY. The rule AGENTS.md already states, enforced where it is cheap.
+    # Measured on forgeboard-report 2026-07-30 (audit F7): the lane pushed
+    # `chunk/1`…`chunk/6` against a documented `chunk/<id>-<slug>`. CHUNK-1 and
+    # CHUNK-2 merged in violation; CHUNK-3–6 were bounced by tier 2 on the name
+    # alone, closing PRs #4, #6, #8 and #10 unmerged. `t_298e46f4` is the case
+    # that names the cost: verdict `bounce` with the first three dimensions
+    # scored 3/3/3 — exemplary work, rejected after implementation, prejudge and
+    # review had all been paid for, to enforce a regex. Nothing told the lane at
+    # push time, so it learned nothing and repeated it four times.
+    #
+    # `main` exits 0 here. `no-main-push` above owns the main-branch policy
+    # INCLUDING its bootstrap exception, and a second opinion from this command
+    # would re-block the push that creates main — the rung-1 failure that
+    # exception exists to fix. Do not "tidy" that early exit away.
+    #
+    # The rule itself lives in scripts/branch-name.sh, called from here AND from
+    # CI. Inlining the regex would put a third copy of the rule in the repo —
+    # AGENTS.md states it, this hook would restate it, ci.yml would restate it
+    # again — and the copies would disagree the first time one was edited. That
+    # is F30's defect, and ADR-0003 names lefthook and CI as tiers of one gate,
+    # not as two gates.
+    #
+    # This tier is ADVISORY by construction: `--no-verify` and `LEFTHOOK=0` skip
+    # it, exactly as they skip no-main-push. Its value is telling the lane at
+    # push time instead of at review time, which is the whole of F7. The tier
+    # that cannot be skipped is the CI job running the same script.
+    chunk-branch-name:
+      run: ./scripts/branch-name.sh
     full-check:
       run: make check

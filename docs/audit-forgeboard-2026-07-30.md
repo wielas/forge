@@ -332,6 +332,34 @@ counter-example inside the Forge's own doctrine.
 **Fix:** lefthook `pre-push` regex on the branch name, in
 `templates/python-service/`. Cost: ~4 lines. Saved: 4 PRs, 4 review rounds.
 
+**FIXED 2026-08-05.** The rule is `templates/python-service/template/scripts/branch-name.sh`,
+called from two tiers: lefthook `pre-push` (fast, local, and skippable with
+`--no-verify`) and a `branch-name` CI job on `pull_request` (authoritative, not
+skippable). ADR-0003 names both tiers, so enforcing only at the skippable one
+would have half-closed the finding.
+
+Three details cost more than the regex did, and each is a defect the first
+draft actually had:
+
+- **`main` must pass.** `no-main-push` owns main-branch policy including its
+  bootstrap exception, and a second opinion here re-blocks the push that
+  *creates* main — the rung-1 failure recorded in `docs/state.md`.
+- **`[[ =~ ]]` is bash; lefthook runs `sh`.** A command that dies on its own
+  syntax fails OPEN, so the gate would have passed every branch while reading
+  correctly in review.
+- **The pattern is written once.** AGENTS.md states it in prose; a copy in
+  `lefthook.yml` and another in `ci.yml` is F30's defect, and the copies
+  disagree the first time one is edited — surfacing as a branch that passes
+  locally and fails in CI, which is F7's cost in a new costume.
+  `template/branch-rule-has-one-source` fails the suite if either tier inlines
+  the pattern.
+
+Verified against a real bare remote in two states with opposite verdicts
+(`chunk/7-render-report` pushes, `chunk/8` is refused, and the two pushes differ
+only in branch name), plus eight names driven through the script directly to
+exercise the CI path, which takes the branch as an argument because a
+`pull_request` checkout is a detached merge ref whose HEAD is not the branch.
+
 ### F8 — The `Touches` list is planner fiction, and the judge scores against it · `OPEN` · **medium**
 
 Contract `Touches` lists were written by `/roadmap` before any code existed and
