@@ -1,0 +1,27 @@
+{
+  "additions": 1644,
+  "baseRefName": "main",
+  "baseRefOid": "b71fc96eefd60c99b0be7b722827c59102b3dd55",
+  "body": "## CHUNK-5 bounce repair 2\n\nThis is the second bounce repair addressing all 5 judge findings from the independent tier-2 review.\n\n### Changes\n\n**A. Markdown now projects every JSON fact (spec_fidelity)**\n- `sources.hermes_files` with name, size, sha256\n- `version` in graph and hermes source lines\n- `completed_without_canonical_verdict` chunk ids\n- `outcome` per verdict, `status` in bounce rate header\n- `task_id`, `run_id`, `native_kinds` in block occurrences\n- `occurrence_ids` in reason buckets\n- `author` in comments and qualifying comments\n- `merged_at`, `link_evidence_ids` in dependency edges\n- `retry_started_at`, `operator_comment_at` in wait lines\n- Full unexpected link details (parent/child chunk/task, evidence)\n- Indeterminate evidence details\n- Regression test: `assert_all_json_leaf_values_in_markdown()` verifies every JSON leaf appears in Markdown\n\n**B. Scenario coverage (scenario_integrity)**\n- Replaced sampled Markdown assertion with `assert_all_json_leaf_values_in_markdown()`\n- Extended subprocess determinism to 3 distinct locale/timezone/hash-seed combinations\n- Subprocess-based source-byte preservation check\n- New BDD scenario: injected renderer failure → InvalidCoreError + no destination\n\n**C. Operator identity validation (architectural_conformance + doc_reconciliation)**\n- Removed backtick/newline/CR rejection from `_validate_operators()` in domain.py\n- Added `test_operator_identity_markdown_is_safe_while_json_is_exact()` proving acceptance in JSON and safe escaping in Markdown\n\n**D. Scope discipline**\n- Removed 3 out-of-contract operator rejection test cases from test_graph.py\n\n### Verification\n- `make check`: 177 passed, 92.38% coverage\n- Hooks, main ref, and worktree blast radius verified",
+  "changedFiles": 7,
+  "deletions": 1,
+  "headRefName": "chunk/5-render-canonical-report",
+  "headRefOid": "84913ecc9c7d565eed733ccdb45c41c663398a7d",
+  "mergedAt": "2026-07-30T10:20:13Z",
+  "number": 9,
+  "state": "MERGED",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-07-30T10:08:46Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/wielas/forgeboard-report/actions/runs/30533527478/job/90841199069",
+      "name": "check",
+      "startedAt": "2026-07-30T10:08:37Z",
+      "status": "COMPLETED",
+      "workflowName": "ci"
+    }
+  ],
+  "title": "CHUNK-5: Render and atomically publish the canonical report",
+  "url": "https://github.com/wielas/forgeboard-report/pull/9"
+}

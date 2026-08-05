@@ -1,0 +1,27 @@
+{
+  "additions": 1168,
+  "baseRefName": "main",
+  "baseRefOid": "b71fc96eefd60c99b0be7b722827c59102b3dd55",
+  "body": "## CHUNK-5: Render and atomically publish the canonical report\n\n**Builds one immutable `forgeboard.report.v1` model and deterministically renders and atomically publishes its JSON and paste-ready Markdown projections.**\n\n### Changes\n\n- **`domain.py`** — Added `ResolvedInputs`, `ReportSources`, and `Report` frozen dataclasses. The `Report` model carries `schema_version`, `inputs`, `sources`, `metrics`, `dependency_audit`, `warnings`, and `evidence` in that order.\n- **`errors.py`** — Added `PublicationWriteError`, `PublicationFlushError`, `PublicationRenameError` — specific publication error types.\n- **`render.py`** — Deterministic JSON and Markdown renderers. JSON emits canonical field order, half-even rounding at 6 places with trailing zeroes removed, unavailable as null. Markdown renders matching values with stable IDs in fixed section order. No calculated values, no generated-at clock.\n- **`publish.py`** — Atomic publication via private sibling staging directory, write+flush both artifacts, then `os.replace` into place. Cleanup on failure removes only the staging directory.\n- **`tests/features/report_output.feature`** — BDD scenario for stable projections.\n- **`tests/steps/test_report_output_steps.py`** — BDD step implementations.\n- **`tests/test_render.py`** — 283 lines of focused tests covering rendering, determinism, escaping, atomic publication, and every injected-failure scenario.\n\n### Verification\n\n- `make check` — GREEN (165 tests, 92.32% coverage)\n- Blast radius: main unchanged, worktree clean\n- Diff scope: only the 7 files listed in the contract\n\n### Chunk contract\n\nSee [docs/ROADMAP.md](docs/ROADMAP.md) and the chunk-5 contract.",
+  "changedFiles": 7,
+  "deletions": 0,
+  "headRefName": "chunk/5",
+  "headRefOid": "67c1a12eb2e7bfad10a6fead7f6760561621111f",
+  "mergedAt": null,
+  "number": 8,
+  "state": "CLOSED",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-07-30T09:12:50Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/wielas/forgeboard-report/actions/runs/30529768759/job/90829070642",
+      "name": "check",
+      "startedAt": "2026-07-30T09:12:39Z",
+      "status": "COMPLETED",
+      "workflowName": "ci"
+    }
+  ],
+  "title": "CHUNK-5: Render and atomically publish the canonical report",
+  "url": "https://github.com/wielas/forgeboard-report/pull/8"
+}
