@@ -2433,3 +2433,93 @@ slice should not settle unilaterally: either the check learns to compare against
 the merge-base for a branch, or SOUL publication becomes an explicit post-merge
 step with its own gate. Publishing from an unmerged branch — the current
 instruction — is the one option that is actively wrong while a board is live.
+
+### F61 — ADR-0003 is unenforced above L2 for *drivers*, and F35 named only half the problem · `MEASURED` · **high**
+
+F35 found eight mechanical properties being checked by a language model, in
+prose, and called it "ADR-0003's obituary above L2". The fix, ADR-0009, moved
+what tier 1 **decides** into `scripts/prejudge.sh`. Nobody applied the same test
+to what tier 1 **does**.
+
+Measured 2026-08-05 on `slice/gate-blocks`:
+
+| profile | SOUL lines | fenced blocks | protocol lives in |
+|---|---|---|---|
+| `forge-digest` | 27 | 0 | three prose steps |
+| `forge-codex-lane` | 29 | 0 | `skills/forge-lane/SKILL.md` |
+| `forge-orchestrator` | 32 | 0 | four prose steps |
+| **`forge-prejudge`** | **404** | **11** | **itself** |
+
+144 of those 404 lines were executable bash — a `jq` schema reduction, a
+`claude -p` invocation, a fifteen-line stamping `jq`, a create/block/unassign
+sentinel sequence and two `jq -e` read-backs. None of it required a model. All
+of it was retyped by one on every run: `deepseek-v4-flash`, the only metered
+agent in a review, with no gate on the transcription.
+
+The comparison inside the repo is the finding. `forge-codex-lane` is 29 lines
+because it says *"Your protocol is the `forge-lane` skill. Load it and follow
+it… This file is only your identity."* The pattern existed, was proven across
+four climbs, and was never applied to the one profile that needed it most.
+
+Closed by ADR-0010: the protocol is `scripts/prejudge-review.sh`, the SOUL is 56
+lines, and `cli/soul-body-budget` holds every SOUL at 60.
+
+### F62 — A slice can satisfy its contract and still move the measured quantity backwards · `MEASURED` · **medium**
+
+S4's thesis was that properties a program can decide belong in a program. It
+narrowed the tier-1 scorer's brief by two bullets — and grew the driver's system
+prompt from 339 lines to 404. **Net prompt surface went up 19%.**
+
+Both halves were contract-compliant. Deliverable 2 asked for exactly the two
+bullets to go; nothing asked what the slice was adding elsewhere. `make verify`
+could not see it either: `cli/skill-body-budget` covers `skills/*/SKILL.md` and
+there was no equivalent for `hermes/profiles/*.SOUL.md`, so the file with the
+largest per-run context cost in the repo was the only prompt with no budget.
+
+This is a general shape worth naming: **a slice that measures the thing it
+removes and not the thing it adds will report a saving it did not make.** The
+fix is a number, not a review — `cli/soul-body-budget` (60 lines) and
+`cli/no-programs-in-souls` (6-line fenced blocks) both land with ADR-0010.
+
+### F63 — Eleven `make verify` cases asserted runtime behaviour by substring, and one by comparing line numbers · `MEASURED` · **medium**
+
+Because tier 1's protocol lived in prose, the suite could only describe it a
+second time and diff the descriptions. As of `slice/gate-blocks`, the `lane/`
+group carried eleven `prejudge-*` cases that were `grep -Fq` against
+`forge-prejudge.SOUL.md`. `lane/prejudge-runs-the-gate-first` asserted execution
+order by taking `grep -n` line numbers of two strings and comparing them.
+`lane/prejudge-cost-is-observed` matched a newline-flattened regex, and
+`verify.sh` carried a comment conceding that this *"is how the check and the
+SOUL silently diverged for a commit in the first place."*
+
+These were the best available proxy **given the protocol was prose**, and they
+did catch real regressions. The finding is not that they were badly written; it
+is that a protocol in a prompt is not testable, only approximable — and the
+suite said so about itself in a code comment for a whole commit before anyone
+read it as a defect.
+
+ADR-0010 replaces them with four identity assertions and six executions against
+recorded `gh` responses. `prejudge/review-never-prints-the-diff` is the clearest
+of them: F32's rule used to be a `grep` for the sentence promising it, and is now
+a measurement — **63,164 bytes moved into the prompt file, 2,599 bytes observed
+by the driver.**
+
+### F64 — `forge-lane` is at 299 against a 300 budget that was raised to admit it · `MEASURED` · **low**
+
+`skills/forge-lane/SKILL.md` is 299 lines with 12 fenced blocks — the same shape
+as F61, one layer over. `docs/state.md` records it as **resolved** on 2026-07-29
+"by splitting the budget rather than the skill", raising the ceiling from 150 to
+300 with the file at 283. It has since grown 16 more lines into that headroom.
+
+The argument given for the raise is a real one and still stands: the lane is the
+whole job of one dedicated unattended profile, and its length is accumulated
+measured failures rather than prose. But that is also precisely the argument
+`forge-prejudge` would have made at 404 lines, and F61 is what came of not
+testing it. The distinction that survives is not length — it is whether the
+content is *executable*. Twelve fenced blocks say some of it is.
+
+**Recorded, deliberately not acted on.** The lane is the most load-bearing
+proven artifact in the repo; four climbs depend on it; and `state.md:116` is
+explicit that this system's failures live in seams visible only under load and
+that nothing should ever be tested with two unknowns in play. It needs its own
+slice, with a real run behind it.
