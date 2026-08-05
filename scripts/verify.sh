@@ -608,7 +608,8 @@ lane/prejudge-approve-routes-to-tier2   an approval creates a card for the human
 lane/prejudge-tier2-card-is-sticky      human card has a real block event and no final assignee
 lane/prejudge-bounce-reuses-worktree    a bounced fix resumes the rejected PR in its completed chunk worktree
 lane/prejudge-gh-is-repo-independent    scratch review uses canonical PR URL, not cwd repository context
-lane/prejudge-ci-red-is-canonical       CI-red skips the model, not forge.judge.v1 metadata
+lane/prejudge-runs-the-gate-first       the deterministic gate is invoked before the scorer, never after
+lane/prejudge-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
 lane/prejudge-schema-is-inline          Claude receives supported schema JSON, not a path
 lane/prejudge-judge-model-is-observed   judge_model comes from --model, not self-report
 lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
@@ -618,6 +619,7 @@ lane/prejudge-schema-hides-stamped-fields  the model is not asked for the fields
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
+metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from bounces (ADR-0009 D9.4)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
 metrics/is-read-only              reading a board does not change its sha256
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
@@ -626,10 +628,14 @@ prejudge/help-exits-zero          scripts/prejudge.sh --help works with no PR
 prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces a checked-in expectation
 prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x)==render(x) are both reported
 prejudge/steps-walker-has-no-false-positives     six legitimate Then-step shapes are not reported
+prejudge/recorded-prs-exact       two recorded PRs reproduce a checked-in severity map, offline
+prejudge/blocks-with-exit-1       a blocking check exits 1; a clear-with-warnings PR exits 0
 prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
+prejudge/scenario-count-is-asymmetric  fewer scenarios than the contract blocks, more only warns
 prejudge/skip-is-distinguishable-from-pass  a check that could not run has not passed
-prejudge/emits-its-own-shape-not-the-verdict-schema  the gate does not emit forge.judge.v1 (F29 is not this slice's)
-prejudge/gates-nothing            shadow mode: no hook, no CI job, no lane or SOUL wiring
+prejudge/emits-an-action-per-block  every blocking finding carries an action a fresh worker can execute
+prejudge/emits-its-own-shape-not-the-verdict-schema  the gate emits forge.gate.v1, never a scored verdict
+prejudge/gate-is-a-stage-not-a-replacement  no model in the gate, and the SOUL's scorer still there
 EOF
   exit 0
 fi
@@ -849,27 +855,48 @@ run_lane_group() {
   # Review cards intentionally run in scratch. On the first CI-red probe,
   # `gh pr checks 10` failed outside a repository and the worker spent a minute
   # searching unrelated workspaces for any clone. A canonical PR URL gives gh
-  # complete repository context from any directory.
-  if grep -Fq 'gh pr checks "$pr_url"' "$soul" \
+  # complete repository context from any directory. The gate waits for CI now,
+  # so `gh pr checks` has left this file — but the diff fetch has not, and the
+  # gate has to be handed the same canonical URL for the same reason.
+  if grep -Fq 'prejudge.sh "$pr_url"' "$soul" \
      && grep -Fq 'gh pr diff "$pr_url"' "$soul" \
      && grep -Fq 'current directory to give `gh` repository context' "$soul"; then
     ok "prejudge-gh-is-repo-independent"
   else
     bad "prejudge-gh-is-repo-independent" \
-        "scratch prejudge must pass the canonical PR URL to gh checks and diff"
+        "scratch prejudge must pass the canonical PR URL to the gate and to gh diff, never rely on cwd"
   fi
 
-  # The first live CI-red bounce emitted one-off `forge.prejudge.v1.*` keys.
-  # Retro counts `.verdict == "bounce"` in forge.judge.v1, so the most
-  # objective bounce disappeared from the very metric meant to track it.
-  if grep -Fq 'does **not** skip the verdict' "$soul" \
-     && grep -Fq 'all six scores set to zero' "$soul" \
-     && grep -Fq '`judge_model: "ci"`' "$soul" \
-     && grep -Fq 'without a model call' rubrics/judge-rubric.md; then
-    ok "prejudge-ci-red-is-canonical"
+  # The gate runs BEFORE the scorer, and that ordering is the saving. Scoring a
+  # PR the gate would have blocked spends a full review on work a regex rejects.
+  # Asserted on the order of the two invocations in the file, because a protocol
+  # that mentions both in the wrong order is a protocol a driver will follow in
+  # the wrong order.
+  local gate_ln scorer_ln
+  gate_ln="$(grep -n 'prejudge.sh "$pr_url"' "$soul" | head -1 | cut -d: -f1)"
+  scorer_ln="$(grep -n 'claude -p --model opus' "$soul" | head -1 | cut -d: -f1)"
+  if [ -n "$gate_ln" ] && [ -n "$scorer_ln" ] && [ "$gate_ln" -lt "$scorer_ln" ]; then
+    ok "prejudge-runs-the-gate-first (gate at line $gate_ln, scorer at $scorer_ln)"
   else
-    bad "prejudge-ci-red-is-canonical" \
-        "CI-red must emit deterministic forge.judge.v1 metadata so retro can count the bounce"
+    bad "prejudge-runs-the-gate-first" \
+        "the gate must be invoked before the scorer (gate=${gate_ln:-absent}, scorer=${scorer_ln:-absent})"
+  fi
+
+  # ADR-0009 retires the CI-red sentinel: CI is a gate check now, so the zeroed
+  # six-dimension verdict that existed to make `/retro` count the bounce has no
+  # subject left. What replaces it is the inverse property — tier 1 must store
+  # what actually happened and manufacture neither envelope. Five invented
+  # dimension scores are the same defect as the zeroed cost object this protocol
+  # already refuses to write.
+  if grep -Fq 'forge.gate.v1' "$soul" \
+     && grep -Fq 'as it came out of the gate' "$soul" \
+     && grep -Fq 'Never translate one into the other' "$soul" \
+     && ! grep -Fq 'all six scores set to zero' "$soul" \
+     && ! grep -Fq 'deterministic sentinel' rubrics/judge-rubric.md; then
+    ok "prejudge-stores-what-happened (gate result or verdict, never a manufactured one)"
+  else
+    bad "prejudge-stores-what-happened" \
+        "tier 1 must store forge.gate.v1 on a gate block and forge.judge.v1 on a scored review, and the ci-red zeroed-score sentinel must be gone (ADR-0009 D9.4)"
   fi
 
   # Claude Code 2.1.212 takes inline JSON at --json-schema and rejects the
@@ -1056,6 +1083,24 @@ run_metrics_group() {
         "expected [flat,nested,neither,total,chunk_cards]=[1,1,1,3,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
   fi
 
+  # ADR-0009 D9.4. A gate block and a bounce are different events and must stay
+  # different numbers. The fixture holds one blocking and one clearing gate run
+  # alongside tier-1 and tier-2 verdicts, so this fails if the gate results are
+  # ever folded into the bounce rate — or if they stop being counted at all,
+  # which is the quieter way to lose them. The tier-2 bounce count is asserted in
+  # the same expression precisely so that folding one into the other cannot pass.
+  local gate_row
+  gate_row="$(jq -c '[.gate.runs, .gate.blocked, .gate.block_rate,
+                      (.gate.by_check | keys | length),
+                      ([.tiers[] | select(.tier == 2) | .bounce_verdicts] | first)]' \
+                "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$gate_row" = '[2,1,"0.50",2,3]' ]; then
+    ok "gate-blocks-are-not-bounces (1 of 2 gate runs blocked, 3 tier-2 bounces, counted apart)"
+  else
+    bad "gate-blocks-are-not-bounces" \
+        "expected [runs,blocked,rate,checks,t2_bounces]=[2,1,\"0.50\",2,3], got ${gate_row:-nothing} — forge.gate.v1 results must be counted separately from forge.judge.v1 bounces"
+  fi
+
   # F47. A board AT REST — WAL checkpointed away, no `-shm`, no `-wal`, nobody
   # holding it open — is the state a board is in when someone sits down to run
   # /retro, and it is the one state `mode=ro` could not read: a read-only
@@ -1133,18 +1178,27 @@ run_metrics_group() {
 wants metrics   && run_metrics_group
 
 # ---------------------------------------------------------------------------
-# prejudge/ — the tier-1 gate (F35). Tier 1 costs a full Opus pass and has never
-# bounced anything: 17 runs, 0 bounces, mean d1-3 ~3.00, against tier 2's 12
-# bounces and 1.88 on the same diffs. This group tests the program that replaces
-# it, and it is modelled on metrics/: a checked-in fixture, an exact
-# whole-document expectation, and a mutation the case must actually catch.
+# prejudge/ — tier 1's deterministic FIRST STAGE (F35, ADR-0009). Modelled on
+# metrics/: a checked-in fixture, an exact whole-document expectation, and a
+# mutation the case must actually catch. The model stage that runs after a clear
+# result is covered in lane/, which is where the SOUL is read.
 #
-# WHAT THIS GROUP DOES NOT COVER, stated rather than implied. The four checks
-# that need GitHub — ci-state, branch-name, size-budget, parents-merged — are
-# exercised by the 11-PR backtest in the slice's PR body, not here, because the
-# gate reads a live `gh`. That is a real gap and it is the gap S4 must close
-# before this gates anything: a gate whose network-facing half is only ever
-# tested by hand is a gate that will rot exactly where it is load-bearing.
+# S3 left the GitHub-facing half — ci-state, branch-name, size-budget, touches —
+# covered by an 11-PR backtest run by hand and nothing else. That gap is closed
+# here, because the gate blocks now: `--fixture` replays two RECORDED PRs of the
+# run that produced the audit, and the whole gate runs against them with no gh,
+# no git and no network. Recorded with, for n in 8 9:
+#
+#   gh pr view $n --repo wielas/forgeboard-report --json \
+#     number,state,title,body,headRefName,headRefOid,baseRefName,baseRefOid,\
+#     mergedAt,url,additions,deletions,changedFiles,statusCheckRollup | jq -S .
+#   git diff --numstat <baseRefOid> <headRefOid>        > numstat.tsv
+#   git archive <headRefOid> docs/chunks tests/features | tar -x -C tree/
+#
+# The recorded `tree/` carries the contract and the feature file and NOT the
+# 3,500-line test suite, so `then-asserts` skips on these fixtures. That check
+# is covered exactly, and separately, by the walker fixture above — the point of
+# these two is the four checks that were covered by nothing.
 # ---------------------------------------------------------------------------
 run_prejudge_group() {
   group prejudge
@@ -1195,53 +1249,118 @@ run_prejudge_group() {
   [ -z "$fp" ] && ok "steps-walker-has-no-false-positives (6 legitimate step shapes)" \
     || bad "steps-walker-has-no-false-positives" "legitimate steps reported as defects: $fp"
 
-  # F5's fourth state. `gh pr checks` on a just-pushed PR returns an EMPTY
-  # rollup — not pass, not fail, not pending. Tier 1 read that as "no CI
-  # configured" and approved on absent CI four times while CI was green on all
-  # ten PRs. Absent checks must be wait-then-block. This asserts the source,
-  # because the live behaviour needs a PR that has not registered its checks yet
-  # and that window is seconds wide.
-  if grep -Fq 'emit ci-state fail "empty statusCheckRollup' "$gate" \
-     && grep -Fq 'WAIT_SECS' "$gate"; then
-    ok "absent-ci-is-not-a-pass"
+  # ---- the recorded PRs. The whole gate, offline, against real inputs. ------
+  local prs=scripts/fixtures/prejudge-prs pexp=scripts/fixtures/prejudge-prs/expected.json
+  local got want name drift=""
+  for name in pr-8 pr-9; do
+    "$gate" --fixture "$prs/$name" --json > "$TMPROOT/$name.json" 2>"$TMPROOT/$name.err"
+    got="$(jq -S '{result, blocks, checks: (.checks | map({(.id): .status}) | add)}' \
+             "$TMPROOT/$name.json" 2>/dev/null)"
+    want="$(jq -S --arg n "$name" '.[$n]' "$pexp")"
+    [ "$got" = "$want" ] || drift="$drift $name"
+  done
+  # The expectation is the SEVERITY MAP, not the prose: id -> status, the block
+  # list and the result. Asserting the evidence strings too would fail on every
+  # reworded sentence and teach the next person to regenerate the file without
+  # reading it, which is how a checked-in expectation stops being evidence.
+  [ -z "$drift" ] && ok "recorded-prs-exact (2 PRs, 7 checks each, offline)" \
+    || bad "recorded-prs-exact" "the severity map moved on:$drift — $(jq -c . "$TMPROOT/${drift## }.json" 2>/dev/null | cut -c1-200)"
+
+  # The gate blocks. This is the property the whole slice turns on, and it is
+  # asserted on the exit code rather than on the printed word, because that is
+  # what a hook, a CI job and the driver will all read.
+  "$gate" --fixture "$prs/pr-8" >/dev/null 2>&1; local rc8=$?
+  "$gate" --fixture "$prs/pr-9" >/dev/null 2>&1; local rc9=$?
+  if [ "$rc8" = 1 ] && [ "$rc9" = 0 ]; then
+    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with 2 warnings)"
+  else
+    bad "blocks-with-exit-1" \
+        "expected pr-8 to exit 1 and pr-9 to exit 0, got $rc8 and $rc9 — a gate that cannot fail a command gates nothing"
+  fi
+
+  # F5's fourth state, on a real recording with its rollup emptied. The live
+  # window is seconds wide and cannot be recorded after the fact (F52), so this
+  # is the one edited input in the fixture set, and it is edited in exactly the
+  # way the race produces: checks not registered yet.
+  local ci="$TMPROOT/absent-ci"
+  rm -rf "$ci"; cp -R "$prs/pr-9" "$ci"
+  jq '.statusCheckRollup = []' "$prs/pr-9/pr.json" > "$ci/pr.json"
+  "$gate" --fixture "$ci" --json > "$TMPROOT/absent-ci.json" 2>&1; local rcci=$?
+  if [ "$rcci" = 1 ] && [ "$(jq -r '.checks[] | select(.id=="ci-state") | .status' "$TMPROOT/absent-ci.json")" = "block" ]; then
+    ok "absent-ci-is-not-a-pass (empty rollup blocks, exit 1)"
   else
     bad "absent-ci-is-not-a-pass" \
-        "an empty statusCheckRollup must emit fail after a real wait, never pass (F5)"
+        "an empty statusCheckRollup must block, never pass (F5) — got exit $rcci, ci-state $(jq -r '.checks[]|select(.id=="ci-state")|.status' "$TMPROOT/absent-ci.json" 2>/dev/null)"
+  fi
+
+  # Asymmetry, in one comparison. Fewer scenarios than the contract is spec
+  # infidelity and blocks; more is a planner underestimating and only warns.
+  # Both sides are read off the same pair of recordings — pr-8 shipped 1 of 5,
+  # pr-9 shipped 6 of 5 — so this cannot pass by having no `more` case at all.
+  local fewer more
+  fewer="$(jq -r '.checks[] | select(.id=="scenario-count") | .status' "$TMPROOT/pr-8.json")"
+  more="$(jq -r '.checks[] | select(.id=="scenario-count") | .status' "$TMPROOT/pr-9.json")"
+  if [ "$fewer" = block ] && [ "$more" = warn ]; then
+    ok "scenario-count-is-asymmetric (1-of-5 blocks, 6-of-5 warns)"
+  else
+    bad "scenario-count-is-asymmetric" "fewer=$fewer more=$more; expected block and warn"
   fi
 
   # A check that could not run has not passed. If skip collapsed into pass the
-  # gate would repeat F5's exact mistake in a new place.
-  if grep -Fq '{pass:0,fail:0,warn:0,skip:0}' "$gate" \
-     && grep -Fq 'if any(.[]; .status=="fail") then "block"' "$gate"; then
+  # gate would repeat F5's exact mistake in a new place — and it did, once:
+  # `then-asserts` reported `pass` against a tree with no Python in it, having
+  # examined nothing. Asserted on behaviour now, not on the source.
+  if [ "$(jq -r '[.checks[] | select(.status=="skip")] | length' "$TMPROOT/pr-8.json")" -ge 1 ] \
+     && [ "$(jq -r '.counts.pass' "$TMPROOT/pr-8.json")" -ge 1 ] \
+     && [ "$(jq -r '.result' "$TMPROOT/pr-9.json")" = clear ]; then
     ok "skip-is-distinguishable-from-pass"
   else
     bad "skip-is-distinguishable-from-pass" \
-        "the result must count skip separately and block only on fail"
+        "the result must count skip separately from pass and block only on block"
   fi
 
-  # Emitting forge.judge.v1 would smuggle in F29's derive-don't-assert decision,
-  # which belongs to the slice that owns the schema, and couple this gate to a
-  # schema that is about to change. A gate reports checks; it does not score.
-  # Comment lines are stripped first: the gate *explains* why it does not speak
-  # the verdict schema, and a grep over the whole file cannot tell the reason
-  # from the deed.
-  if ! grep -v '^[[:space:]]*#' "$gate" | grep -Fq 'forge.judge.v1' \
-     && grep -Fq 'forge-prejudge-gate' "$gate"; then
+  # The bounce contract, applied to a program. The gate's findings are copied
+  # verbatim into the repair card, so a blocking finding with no executable
+  # action produces an unworkable card. Every block, on every fixture, must
+  # carry one — and it must be an instruction, not a restatement.
+  local noaction=""
+  for name in pr-8 absent-ci; do
+    jq -e '[.checks[] | select(.status=="block") | select((.action // "") | length < 40)] | length == 0' \
+      "$TMPROOT/$name.json" >/dev/null 2>&1 || noaction="$noaction $name"
+  done
+  [ -z "$noaction" ] && ok "emits-an-action-per-block" \
+    || bad "emits-an-action-per-block" "blocking findings with no executable action:$noaction"
+
+  # `forge.gate.v1`, not a scored `forge.judge.v1` with five invented numbers in
+  # it. A gate block at zero model tokens and a bounce after a full review are
+  # different events, and the SOUL's own argument against a zeroed cost object
+  # is the argument against a zeroed score object.
+  if [ "$(jq -r .schema "$TMPROOT/pr-8.json")" = "forge.gate.v1" ] \
+     && jq -e '(.scores // null) == null and (.verdict // null) == null' "$TMPROOT/pr-8.json" >/dev/null; then
     ok "emits-its-own-shape-not-the-verdict-schema"
   else
     bad "emits-its-own-shape-not-the-verdict-schema" \
-        "$gate must not emit forge.judge.v1 (F29 is not this slice's decision)"
+        "$gate must emit forge.gate.v1 and must not score dimensions or assert a verdict"
   fi
 
-  # SHADOW MODE is the whole safety property of this slice. If any of these
-  # acquired a prejudge hook, the gate would be enforcing on six chunks a policy
-  # nobody has decided yet — F8 in particular is deliberately still open.
-  local wired=""
-  grep -rlF 'prejudge.sh' templates/ 2>/dev/null | grep -q . && wired="$wired templates/"
-  grep -rlF 'prejudge.sh' .github/ 2>/dev/null | grep -q . && wired="$wired .github/"
-  grep -rlF 'prejudge.sh' hermes/ skills/ 2>/dev/null | grep -q . && wired="$wired hermes-or-skills"
-  [ -z "$wired" ] && ok "gates-nothing (no hook, no CI job, no lane or SOUL wiring)" \
-    || bad "gates-nothing" "the shadow gate is wired into:$wired — gating is the next slice, not this one"
+  # The gate is a STAGE, not a replacement. S4's predecessor deleted tier 1's
+  # model call on the strength of 0-bounces-in-17, a number produced by a prompt
+  # that told the model to pass anything subtler than obvious through. That
+  # deletion was cancelled: the call is the control arm S5 measures against, and
+  # a control somebody quietly removed is worse than one somebody tuned. This is
+  # the case that fails if it goes missing again — the gate itself must contain
+  # no model call, and the SOUL must still contain exactly one.
+  local gate_exec soul=hermes/profiles/forge-prejudge.SOUL.md
+  gate_exec="$(grep -vE '^[[:space:]]*#' "$gate")"
+  if printf '%s' "$gate_exec" | grep -qE '(^|[^-[:alnum:]])(claude|codex)([[:space:]]+-|[[:space:]]+exec)'; then
+    bad "gate-is-a-stage-not-a-replacement" \
+        "a model invocation appeared inside the gate itself — the gate is the deterministic stage (ADR-0009 D9.1)"
+  elif [ "$(grep -c -- '^   raw="$(claude -p --model opus --output-format json \\$' "$soul")" = 1 ]; then
+    ok "gate-is-a-stage-not-a-replacement (gate has no model call; the SOUL's scorer survives)"
+  else
+    bad "gate-is-a-stage-not-a-replacement" \
+        "the tier-1 scorer call is gone from $soul — ADR-0007 D7.1 stands and ADR-0009 does not supersede it; deleting it is S5's experiment, not this gate's side effect"
+  fi
 }
 wants prejudge  && run_prejudge_group
 

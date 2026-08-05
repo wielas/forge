@@ -32,6 +32,16 @@
     }
   ],
   "mean_d13_all": "1.67",
+  "gate": {
+    "runs": 2,
+    "blocked": 1,
+    "clear": 1,
+    "block_rate": "0.50",
+    "by_check": {
+      "branch-name": 1,
+      "scenario-count": 1
+    }
+  },
   "reason_class": [
     {
       "class": "failing-prereq",
