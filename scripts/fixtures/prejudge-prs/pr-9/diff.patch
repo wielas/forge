@@ -1,0 +1,1701 @@
+diff --git a/src/forgeboard_report/domain.py b/src/forgeboard_report/domain.py
+index 596c11d..7f6828b 100644
+--- a/src/forgeboard_report/domain.py
++++ b/src/forgeboard_report/domain.py
+@@ -592,6 +592,40 @@ class LifecycleMetrics:
+     intervention: InterventionFinding
+ 
+ 
++@dataclass(frozen=True, slots=True)
++class ResolvedInputs:
++    """The report-relevant, non-volatile subset of an operator request."""
++
++    board_slug: str
++    from_original: str
++    to_original: str
++    from_utc: datetime
++    to_utc: datetime
++    operator_ids: tuple[str, ...]
++
++
++@dataclass(frozen=True, slots=True)
++class ReportSources:
++    """Fingerprints of the accepted source snapshot, excluding local paths."""
++
++    graph: SourceFingerprint
++    hermes: SourceFingerprint
++    hermes_files: tuple[SourceFileFingerprint, ...]
++
++
++@dataclass(frozen=True, slots=True)
++class Report:
++    """The one immutable v1 model shared by the JSON and Markdown projections."""
++
++    schema_version: str
++    inputs: ResolvedInputs
++    sources: ReportSources
++    metrics: LifecycleMetrics
++    dependency_audit: DependencyAudit
++    warnings: tuple[NormalizationWarning, ...]
++    evidence: tuple[EvidenceRef, ...]
++
++
+ @dataclass(frozen=True, slots=True)
+ class ReportRequest:
+     """Validated and resolved operator inputs for one report."""
+@@ -651,7 +685,6 @@ def _validate_operators(values: object) -> tuple[str, ...]:
+             raise UsageError("operator", "identities must be nonempty strings")
+         if operator != operator.strip():
+             raise UsageError("operator", "identities must not have surrounding whitespace")
+-
+     if len(set(operators)) != len(operators):
+         raise UsageError("operator", "duplicate identities are not allowed")
+ 
+diff --git a/src/forgeboard_report/errors.py b/src/forgeboard_report/errors.py
+index ec191bb..0ad4e3a 100644
+--- a/src/forgeboard_report/errors.py
++++ b/src/forgeboard_report/errors.py
+@@ -52,3 +52,24 @@ def __init__(self, stage: str, detail: str) -> None:
+         self.stage = stage
+         self.detail = detail
+         super().__init__(f"{stage}: {detail}")
++
++
++class PublicationWriteError(PublicationError):
++    """A staged report artifact could not be written completely."""
++
++    def __init__(self, detail: str) -> None:
++        super().__init__("write", detail)
++
++
++class PublicationFlushError(PublicationError):
++    """A staged report artifact could not be durably flushed."""
++
++    def __init__(self, detail: str) -> None:
++        super().__init__("flush", detail)
++
++
++class PublicationRenameError(PublicationError):
++    """The complete staging directory could not be made visible."""
++
++    def __init__(self, detail: str) -> None:
++        super().__init__("rename", detail)
+diff --git a/src/forgeboard_report/publish.py b/src/forgeboard_report/publish.py
+new file mode 100644
+index 0000000..c8c637d
+--- /dev/null
++++ b/src/forgeboard_report/publish.py
+@@ -0,0 +1,122 @@
++"""Atomic publication of the two already-rendered report artifacts."""
++
++from __future__ import annotations
++
++import os
++import shutil
++import tempfile
++from collections.abc import Callable
++from contextlib import suppress
++from dataclasses import dataclass
++from pathlib import Path
++
++from forgeboard_report.domain import Report
++from forgeboard_report.errors import (
++    InvalidCoreError,
++    PublicationError,
++    PublicationFlushError,
++    PublicationRenameError,
++    PublicationWriteError,
++    UsageError,
++)
++from forgeboard_report.render import RenderedReport, render
++
++
++@dataclass(frozen=True, slots=True)
++class PublishedReport:
++    """The one visible report bundle after a successful atomic rename."""
++
++    destination: Path
++
++
++def publish(destination: Path, artifacts: RenderedReport) -> PublishedReport:
++    """Atomically publish a fully-rendered pair into a new destination directory."""
++    destination = Path(destination)
++    _validate_destination(destination)
++    _validate_artifacts(artifacts)
++    staging: Path | None = None
++    try:
++        try:
++            staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent))
++        except OSError as error:
++            raise PublicationError("staging", str(error)) from error
++        try:
++            _write_artifact(staging / "report.json", artifacts.json)
++            _write_artifact(staging / "report.md", artifacts.markdown)
++        except (PublicationWriteError, PublicationFlushError):
++            raise
++        except OSError as error:
++            raise PublicationWriteError(str(error)) from error
++        try:
++            os.replace(staging, destination)
++        except OSError as error:
++            raise PublicationRenameError(str(error)) from error
++        staging = None
++        return PublishedReport(destination=destination)
++    finally:
++        if staging is not None:
++            _remove_staging(staging)
++
++
++def publish_report(
++    destination: Path,
++    report: Report,
++    *,
++    renderer: Callable[[Report], RenderedReport] = render,
++) -> PublishedReport:
++    """Render both projections in memory, then atomically publish the pair."""
++    _validate_destination(Path(destination))
++    try:
++        artifacts = renderer(report)
++    except InvalidCoreError:
++        raise
++    except Exception as error:
++        raise InvalidCoreError("report", f"renderer failed: {error}") from error
++    return publish(destination, artifacts)
++
++
++def _validate_destination(destination: Path) -> None:
++    if destination.exists() or destination.is_symlink():
++        raise UsageError("output", "destination must not already exist")
++    if not destination.parent.is_dir():
++        raise UsageError("output", "destination parent must already exist")
++
++
++def _validate_artifacts(artifacts: RenderedReport) -> None:
++    if not isinstance(artifacts, RenderedReport):
++        raise InvalidCoreError("report", "renderer must return RenderedReport")
++    for name, contents in (("report.json", artifacts.json), ("report.md", artifacts.markdown)):
++        if (
++            not isinstance(contents, bytes)
++            or not contents.endswith(b"\n")
++            or contents.endswith(b"\n\n")
++        ):
++            raise InvalidCoreError("report", f"{name} must be UTF-8 bytes with one final newline")
++        try:
++            contents.decode("utf-8")
++        except UnicodeDecodeError as error:
++            raise InvalidCoreError("report", f"{name} is not UTF-8") from error
++
++
++def _write_artifact(path: Path, contents: bytes) -> None:
++    try:
++        with path.open("xb") as stream:
++            try:
++                stream.write(contents)
++            except OSError as error:
++                raise PublicationWriteError(f"{path.name}: {error}") from error
++            try:
++                stream.flush()
++                os.fsync(stream.fileno())
++            except OSError as error:
++                raise PublicationFlushError(f"{path.name}: {error}") from error
++    except (PublicationWriteError, PublicationFlushError):
++        raise
++    except OSError as error:
++        raise PublicationWriteError(f"{path.name}: {error}") from error
++
++
++def _remove_staging(staging: Path) -> None:
++    """Best-effort cleanup constrained to the directory this call created."""
++    with suppress(OSError):
++        shutil.rmtree(staging)
+diff --git a/src/forgeboard_report/render.py b/src/forgeboard_report/render.py
+new file mode 100644
+index 0000000..215ffd3
+--- /dev/null
++++ b/src/forgeboard_report/render.py
+@@ -0,0 +1,739 @@
++"""Deterministic projections of the immutable Forgeboard report model."""
++
++from __future__ import annotations
++
++import json
++from collections.abc import Mapping, Sequence
++from dataclasses import dataclass
++from datetime import UTC, datetime
++from decimal import ROUND_HALF_EVEN, Decimal
++from typing import Any
++
++from forgeboard_report.domain import (
++    BlockOccurrence,
++    DependencyAudit,
++    DependencyEdgeFinding,
++    DependencyRunFinding,
++    DependencyWaitFinding,
++    EvidenceRef,
++    LifecycleMetrics,
++    NormalizationWarning,
++    Report,
++    ReportSources,
++    ResolvedInputs,
++    ScoreFinding,
++    SourceFileFingerprint,
++    SourceFingerprint,
++    SourceSnapshot,
++    UnexpectedBoardLinkFinding,
++)
++from forgeboard_report.errors import InvalidCoreError
++
++SCHEMA_VERSION = "forgeboard.report.v1"
++_SIX_PLACES = Decimal("0.000001")
++
++
++@dataclass(frozen=True, slots=True)
++class RenderedReport:
++    """Complete in-memory artifact pair ready for atomic publication."""
++
++    json: bytes
++    markdown: bytes
++
++
++def build_report(
++    snapshot: SourceSnapshot,
++    metrics: LifecycleMetrics,
++    dependency_audit: DependencyAudit,
++) -> Report:
++    """Assemble the sole report model from already-normalized, pure findings."""
++    report = Report(
++        schema_version=SCHEMA_VERSION,
++        inputs=ResolvedInputs(
++            board_slug=snapshot.request.board_slug,
++            from_original=snapshot.request.from_original,
++            to_original=snapshot.request.to_original,
++            from_utc=snapshot.request.from_utc,
++            to_utc=snapshot.request.to_utc,
++            operator_ids=tuple(sorted(snapshot.request.operator_ids)),
++        ),
++        sources=ReportSources(
++            graph=snapshot.graph_fingerprint,
++            hermes=snapshot.hermes_fingerprint,
++            hermes_files=tuple(sorted(snapshot.hermes_source_files, key=lambda item: item.name)),
++        ),
++        metrics=metrics,
++        dependency_audit=dependency_audit,
++        warnings=tuple(sorted(snapshot.warnings, key=lambda item: (item.code, item.evidence_id))),
++        evidence=tuple(sorted(snapshot.evidence, key=_evidence_key)),
++    )
++    _validate_report(report)
++    return report
++
++
++def render(report: Report) -> RenderedReport:
++    """Render both direct projections after validating the common model once."""
++    _validate_report(report)
++    return RenderedReport(json=render_json(report), markdown=render_markdown(report))
++
++
++def render_json(report: Report) -> bytes:
++    """Render v1 JSON with its contractually significant object field ordering."""
++    _validate_report(report)
++    return _encode_json(_report_data(report))
++
++
++def render_markdown(report: Report) -> bytes:
++    """Render a paste-ready Markdown projection without parsing JSON output."""
++    _validate_report(report)
++    data = _report_data(report)
++    metrics = data["metrics"]
++    bounce = metrics["bounce_rate"]
++    blocked = metrics["blocked_work"]
++    intervention = metrics["operator_intervention"]
++    verdict_ids = [item["evidence_id"] for item in bounce["verdicts"]]
++    unclassified_ids = [item["id"] for item in blocked["unclassified"]]
++    qualifying_ids = [item["evidence_id"] for item in intervention["qualifying_comments"]]
++    needed_chunks = [item["chunk_id"] for item in intervention["needed_to_execute"]]
++    comment_ids = [item["evidence_id"] for item in intervention["comments"]]
++    indeterminate_ids = _flatten_ids(intervention["indeterminate"])
++    period = (
++        f"- Period: {_inline_code(data['inputs']['from_utc'])} "
++        f"to {_inline_code(data['inputs']['to_utc'])}"
++    )
++    original_bounds = (
++        f"- Original bounds: {_inline_code(data['inputs']['from'])} "
++        f"to {_inline_code(data['inputs']['to'])}"
++    )
++    qualifying_line = (
++        f"- Qualifying comments: {_inline_code(str(intervention['qualifying_comment_count']))} "
++        f"({_ids(qualifying_ids)})"
++    )
++    source_file_lines = [
++        f"  - {_inline_code(source_file['name'])} "
++        f"({_inline_code(str(source_file['size']))}, "
++        f"{_inline_code(source_file['sha256'])})"
++        for source_file in data["sources"]["hermes_files"]
++    ]
++    lines = [
++        "# Forgeboard report",
++        "",
++        f"Schema: {_inline_code(report.schema_version)}",
++        "",
++        "## Resolved inputs",
++        "",
++        f"- Board: {_inline_code(data['inputs']['board_slug'])}",
++        period,
++        original_bounds,
++        f"- Operators: {_ids(data['inputs']['operator_ids'])}",
++        f"- Graph source: {_inline_code(data['sources']['graph']['kind'])} "
++        f"{_inline_code(data['sources']['graph']['sha256'])}; "
++        f"version {_nullable_code(data['sources']['graph']['version'])}",
++        f"- Hermes source: {_inline_code(data['sources']['hermes']['kind'])} "
++        f"{_inline_code(data['sources']['hermes']['sha256'])}; "
++        f"version {_nullable_code(data['sources']['hermes']['version'])}",
++        "- Hermes source files:",
++        *source_file_lines,
++        "",
++        "## Canonical metrics",
++        "",
++        "### Bounce rate",
++        "",
++        f"- Status: {_inline_code(bounce['status'])}",
++        _metric_line(bounce, "value", "numerator", "denominator"),
++        f"- Completed chunks: {_ids(bounce['completed_chunk_ids'])}",
++        f"- Bounced chunks: {_ids(bounce['bounced_chunk_ids'])}",
++        f"- Verdict evidence: {_ids(verdict_ids)}",
++        f"- Completed without canonical verdict: "
++        f"{_ids(bounce['completed_without_canonical_verdict'])}",
++        "",
++        "### Judge quality",
++        "",
++    ]
++    for verdict in bounce["verdicts"]:
++        lines.append(
++            f"- Verdict {_inline_code(verdict['evidence_id'])} / "
++            f"{_inline_code(verdict['chunk_id'])}: {_inline_code(verdict['outcome'])} at "
++            f"{_inline_code(verdict['occurred_at'])}"
++        )
++    for name, finding in metrics["judge_quality"].items():
++        score_name = _inline_code(name)
++        score_sum = _inline_code(str(finding["sum"]))
++        score_count = _inline_code(str(finding["count"]))
++        lines.extend(
++            (
++                f"- {score_name}: {_status_value(finding['status'], finding['value'])} "
++                f"(status {_inline_code(finding['status'])}, sum {score_sum}, count {score_count})",
++                f"  - Score evidence: {_ids([item['evidence_id'] for item in finding['scores']])}",
++            )
++        )
++        for contribution in finding["scores"]:
++            evidence_id = _inline_code(contribution["evidence_id"])
++            chunk_id = _inline_code(contribution["chunk_id"])
++            lines.append(
++                f"  - {evidence_id} / {chunk_id}: "
++                f"{_inline_code(_decimal_lexeme(contribution['score']))} at "
++                f"{_inline_code(contribution['occurred_at'])}"
++            )
++    lines.extend(
++        (
++            "",
++            "### Blocked work",
++            "",
++            f"- Total occurrences: {_inline_code(str(blocked['total']))}",
++            f"- Reason buckets: {_reason_buckets(blocked['reasons'])}",
++            f"- Unclassified: {_ids(unclassified_ids)}",
++        )
++    )
++    for occurrence in blocked["occurrences"]:
++        lines.append(_occurrence_line(occurrence))
++    lines.extend(
++        (
++            "",
++            "## Operator intervention",
++            "",
++            qualifying_line,
++            f"- Chunks needing intervention: "
++            f"{_inline_code(str(intervention['needed_to_execute_chunk_count']))} "
++            f"({_ids(needed_chunks)})",
++            f"- All comment evidence: {_ids(comment_ids)}",
++            f"- Indeterminate evidence: {_ids(indeterminate_ids)}",
++        )
++    )
++    for finding in intervention["qualifying_comments"]:
++        lines.append(_comment_line("Qualifying comment", finding))
++    for finding in intervention["comments"]:
++        lines.append(_comment_line("Comment", finding))
++    for finding in intervention["needed_to_execute"]:
++        chunk_id = finding["chunk_id"]
++        block_id = finding["block_id"]
++        block_at = finding["block_at"]
++        comment_at = _inline_code(finding["comment_at"])
++        next_claim_id = _inline_code(finding["next_claim_id"])
++        lines.append(
++            f"- Needed {_inline_code(chunk_id)}: block {_inline_code(block_id)} at "
++            f"{_inline_code(block_at)}, comment {_inline_code(finding['comment_id'])} at "
++            f"{comment_at}, claim {next_claim_id} at "
++            f"{_inline_code(finding['next_claim_at'])}"
++        )
++    for finding in intervention["indeterminate"]:
++        lines.append(
++            f"- Indeterminate {_inline_code(finding['chunk_id'])}: "
++            f"{_inline_code(finding['relation'])} at {_inline_code(finding['occurred_at'])}; "
++            f"evidence {_ids(finding['evidence_ids'])}"
++        )
++    lines.extend(("", "## Dependency audit", ""))
++    for edge in data["dependency_audit"]["edges"]:
++        run_ids = [item["run_id"] for item in edge["runs"]]
++        wait_ids = [item["wait_id"] for item in edge["waits"] if item["wait_id"] is not None]
++        handoff_id = _inline_code(edge["handoff_id"])
++        handoff_at = _inline_code(edge["handoff_at"])
++        lines.extend(
++            (
++                f"### {_inline_code(edge['parent_id'])} -> {_inline_code(edge['child_id'])}",
++                "",
++                f"- Attachment: {_inline_code(edge['attachment'])}; observation: "
++                f"{_inline_code(edge['observation'])}",
++                f"- Link evidence: {_ids(edge['link_evidence_ids'])}",
++                f"- Handoff: {handoff_id} at {handoff_at}",
++                f"- Pull request: {_inline_code(edge['pull_request_id'])} "
++                f"({_inline_code(edge['pull_request_url'])})",
++                f"- Merged at: {_nullable_code(edge['merged_at'])}",
++                f"- Runs: {_ids(run_ids)}",
++                f"- Waits: {_ids(wait_ids)}",
++                "",
++            )
++        )
++        for run in edge["runs"]:
++            lines.append(
++                f"  - Run {_inline_code(run['run_id'])} at {_inline_code(run['started_at'])}: "
++                f"{_inline_code(run['classification'])}"
++            )
++        for wait in edge["waits"]:
++            wait_at = _inline_code(wait["wait_at"] or "unavailable")
++            status = _inline_code(wait["status"])
++            lines.append(
++                f"  - Wait {_inline_code(wait['wait_id'] or 'unavailable')} at "
++                f"{wait_at}: {status}, "
++                f"retry {_inline_code(wait['retry_run_id'] or 'unavailable')} at "
++                f"{_nullable_code(wait['retry_started_at'])}, "
++                f"operator {_inline_code(wait['operator_comment_id'] or 'unavailable')} at "
++                f"{_nullable_code(wait['operator_comment_at'])}, "
++                f"intervention {_inline_code(wait['intervention'])}"
++            )
++    unexpected_links = data["dependency_audit"]["unexpected_links"]
++    if unexpected_links:
++        lines.append("- Unexpected links:")
++        for link in unexpected_links:
++            lines.append(
++                f"  - parent chunk {_nullable_code(link['parent_chunk_id'])}; "
++                f"child chunk {_nullable_code(link['child_chunk_id'])}; "
++                f"parent task {_inline_code(link['parent_task_id'])}; "
++                f"child task {_inline_code(link['child_task_id'])}; "
++                f"evidence {_inline_code(link['evidence_id'])}"
++            )
++    else:
++        lines.append("- Unexpected links: none")
++    lines.append("")
++    lines.extend(("## Warnings and unclassified evidence", ""))
++    for warning in data["warnings"]:
++        detail = _markdown_text(warning["detail"])
++        schema = warning["schema"] or "unavailable"
++        lines.append(
++            f"- {_inline_code(warning['code'])} — {_inline_code(warning['evidence_id'])} "
++            f"(schema {_inline_code(schema)}): {detail}"
++        )
++    for occurrence in metrics["blocked_work"]["unclassified"]:
++        lines.append(f"- Unclassified block {_occurrence_line(occurrence)[2:]}")
++    if not data["warnings"] and not metrics["blocked_work"]["unclassified"]:
++        lines.append("- None")
++    lines.extend(("", "## Evidence index", ""))
++    for evidence in data["evidence"]:
++        occurred_at = evidence["occurred_at"] or "unavailable"
++        lines.append(
++            f"- {_inline_code(evidence['id'])} — source {_inline_code(evidence['source_id'])}, "
++            f"{_inline_code(evidence['role'])}, {_inline_code(occurred_at)}"
++        )
++    return ("\n".join(lines) + "\n").encode("utf-8")
++
++
++def _report_data(report: Report) -> dict[str, Any]:
++    """Return ordered JSON-compatible data; no value is calculated here."""
++    return {
++        "schema_version": report.schema_version,
++        "inputs": _inputs_data(report.inputs),
++        "sources": _sources_data(report.sources),
++        "metrics": _metrics_data(report.metrics),
++        "dependency_audit": _audit_data(report.dependency_audit),
++        "warnings": [
++            _warning_data(item)
++            for item in sorted(report.warnings, key=lambda item: (item.code, item.evidence_id))
++        ],
++        "evidence": [_evidence_data(item) for item in sorted(report.evidence, key=_evidence_key)],
++    }
++
++
++def _inputs_data(inputs: ResolvedInputs) -> dict[str, Any]:
++    return {
++        "board_slug": inputs.board_slug,
++        "from": inputs.from_original,
++        "to": inputs.to_original,
++        "from_utc": _timestamp(inputs.from_utc),
++        "to_utc": _timestamp(inputs.to_utc),
++        "operator_ids": list(sorted(inputs.operator_ids)),
++    }
++
++
++def _sources_data(sources: ReportSources) -> dict[str, Any]:
++    return {
++        "graph": _fingerprint_data(sources.graph),
++        "hermes": _fingerprint_data(sources.hermes),
++        "hermes_files": [
++            _file_fingerprint_data(item)
++            for item in sorted(sources.hermes_files, key=lambda item: item.name)
++        ],
++    }
++
++
++def _fingerprint_data(value: SourceFingerprint) -> dict[str, Any]:
++    return {"kind": value.kind, "sha256": value.sha256, "version": value.version}
++
++
++def _file_fingerprint_data(value: SourceFileFingerprint) -> dict[str, Any]:
++    return {"name": value.name, "size": value.size, "sha256": value.sha256}
++
++
++def _metrics_data(metrics: LifecycleMetrics) -> dict[str, Any]:
++    return {
++        "bounce_rate": {
++            "status": metrics.bounce.status.value,
++            "value": _display(metrics.bounce.rate),
++            "numerator": metrics.bounce.numerator,
++            "denominator": metrics.bounce.denominator,
++            "completed_chunk_ids": sorted(metrics.bounce.completed_chunk_ids),
++            "bounced_chunk_ids": sorted(metrics.bounce.bounced_chunk_ids),
++            "verdicts": [
++                {
++                    "evidence_id": item.evidence_id,
++                    "chunk_id": item.chunk_id,
++                    "outcome": item.outcome.value,
++                    "occurred_at": _timestamp(item.occurred_at),
++                }
++                for item in sorted(
++                    metrics.bounce.verdicts, key=lambda item: (item.occurred_at, item.evidence_id)
++                )
++            ],
++            "completed_without_canonical_verdict": sorted(
++                metrics.bounce.completed_without_canonical_verdict
++            ),
++        },
++        "judge_quality": {
++            "spec_fidelity": _score_data(metrics.quality.spec_fidelity),
++            "scenario_integrity": _score_data(metrics.quality.scenario_integrity),
++            "architectural_conformance": _score_data(metrics.quality.architectural_conformance),
++        },
++        "blocked_work": {
++            "total": metrics.blocks.total,
++            "reasons": [
++                {
++                    "reason_class": item.reason_class,
++                    "count": item.count,
++                    "occurrence_ids": sorted(item.occurrence_ids),
++                }
++                for item in sorted(metrics.blocks.reasons, key=lambda item: item.reason_class)
++            ],
++            "unclassified": [
++                _occurrence_data(item)
++                for item in sorted(metrics.blocks.unclassified, key=_occurrence_key)
++            ],
++            "occurrences": [
++                _occurrence_data(item)
++                for item in sorted(metrics.blocks.occurrences, key=_occurrence_key)
++            ],
++        },
++        "operator_intervention": {
++            "qualifying_comment_count": metrics.intervention.qualifying_comment_count,
++            "qualifying_comments": [
++                _comment_data(item)
++                for item in sorted(metrics.intervention.qualifying_comments, key=_comment_key)
++            ],
++            "comments": [
++                _comment_data(item)
++                for item in sorted(metrics.intervention.comments, key=_comment_key)
++            ],
++            "needed_to_execute_chunk_count": metrics.intervention.needed_to_execute_chunk_count,
++            "needed_to_execute": [
++                {
++                    "chunk_id": item.chunk_id,
++                    "block_id": item.block_id,
++                    "comment_id": item.comment_id,
++                    "next_claim_id": item.next_claim_id,
++                    "block_at": _timestamp(item.block_at),
++                    "comment_at": _timestamp(item.comment_at),
++                    "next_claim_at": _timestamp(item.next_claim_at),
++                }
++                for item in sorted(
++                    metrics.intervention.needed_to_execute,
++                    key=lambda item: (item.chunk_id, item.block_id, item.comment_id),
++                )
++            ],
++            "indeterminate": [
++                {
++                    "chunk_id": item.chunk_id,
++                    "relation": item.relation,
++                    "occurred_at": _timestamp(item.occurred_at),
++                    "evidence_ids": sorted(item.evidence_ids),
++                }
++                for item in sorted(
++                    metrics.intervention.indeterminate,
++                    key=lambda item: (
++                        item.occurred_at,
++                        item.chunk_id,
++                        item.relation,
++                        item.evidence_ids,
++                    ),
++                )
++            ],
++        },
++    }
++
++
++def _score_data(finding: ScoreFinding) -> dict[str, Any]:
++    return {
++        "status": finding.status.value,
++        "value": _display(finding.mean),
++        "sum": _raw_decimal(finding.total),
++        "count": finding.count,
++        "scores": [
++            {
++                "evidence_id": item.evidence_id,
++                "chunk_id": item.chunk_id,
++                "occurred_at": _timestamp(item.occurred_at),
++                "score": _raw_decimal(item.score),
++            }
++            for item in sorted(
++                finding.scores, key=lambda item: (item.occurred_at, item.evidence_id)
++            )
++        ],
++    }
++
++
++def _occurrence_data(item: BlockOccurrence) -> dict[str, Any]:
++    return {
++        "id": item.id,
++        "chunk_id": item.chunk_id,
++        "task_id": item.task_id,
++        "run_id": item.run_id,
++        "reason_class": item.reason_class,
++        "native_kinds": sorted(item.native_kinds),
++        "occurred_at": _timestamp(item.occurred_at),
++        "evidence_ids": sorted(item.evidence_ids),
++    }
++
++
++def _comment_data(item: Any) -> dict[str, Any]:
++    return {
++        "evidence_id": item.evidence_id,
++        "chunk_id": item.chunk_id,
++        "author": item.author,
++        "actor_class": item.actor_class.value,
++        "occurred_at": _timestamp(item.occurred_at),
++        "disposition": item.disposition,
++    }
++
++
++def _audit_data(audit: DependencyAudit) -> dict[str, Any]:
++    return {
++        "edges": [
++            _edge_data(item)
++            for item in sorted(audit.edges, key=lambda item: (item.parent_id, item.child_id))
++        ],
++        "unexpected_links": [
++            _unexpected_link_data(item)
++            for item in sorted(
++                audit.unexpected_links,
++                key=lambda item: (
++                    item.parent_chunk_id or "",
++                    item.child_chunk_id or "",
++                    item.parent_task_id,
++                    item.child_task_id,
++                ),
++            )
++        ],
++    }
++
++
++def _edge_data(item: DependencyEdgeFinding) -> dict[str, Any]:
++    return {
++        "parent_id": item.parent_id,
++        "child_id": item.child_id,
++        "attachment": item.attachment,
++        "link_evidence_ids": sorted(item.link_evidence_ids),
++        "handoff_id": item.handoff_id,
++        "handoff_at": _timestamp(item.handoff_at),
++        "pull_request_id": item.pull_request_id,
++        "pull_request_url": item.pull_request_url,
++        "merged_at": _timestamp_or_none(item.merged_at),
++        "observation": item.observation,
++        "runs": [
++            _run_data(run)
++            for run in sorted(item.runs, key=lambda run: (run.started_at, run.run_id))
++        ],
++        "waits": [
++            _wait_data(wait)
++            for wait in sorted(
++                item.waits,
++                key=lambda wait: (
++                    wait.wait_at or datetime.min.replace(tzinfo=UTC),
++                    wait.wait_id or "",
++                ),
++            )
++        ],
++    }
++
++
++def _run_data(item: DependencyRunFinding) -> dict[str, Any]:
++    return {
++        "run_id": item.run_id,
++        "started_at": _timestamp(item.started_at),
++        "classification": item.classification,
++    }
++
++
++def _wait_data(item: DependencyWaitFinding) -> dict[str, Any]:
++    return {
++        "wait_id": item.wait_id,
++        "wait_at": _timestamp_or_none(item.wait_at),
++        "status": item.status,
++        "retry_run_id": item.retry_run_id,
++        "retry_started_at": _timestamp_or_none(item.retry_started_at),
++        "operator_comment_id": item.operator_comment_id,
++        "operator_comment_at": _timestamp_or_none(item.operator_comment_at),
++        "intervention": item.intervention,
++    }
++
++
++def _unexpected_link_data(item: UnexpectedBoardLinkFinding) -> dict[str, Any]:
++    return {
++        "parent_chunk_id": item.parent_chunk_id,
++        "child_chunk_id": item.child_chunk_id,
++        "parent_task_id": item.parent_task_id,
++        "child_task_id": item.child_task_id,
++        "evidence_id": item.evidence_id,
++    }
++
++
++def _warning_data(item: NormalizationWarning) -> dict[str, Any]:
++    return {
++        "code": item.code,
++        "evidence_id": item.evidence_id,
++        "schema": item.schema,
++        "detail": item.detail,
++    }
++
++
++def _evidence_data(item: EvidenceRef) -> dict[str, Any]:
++    return {
++        "id": item.id,
++        "source_id": item.source_id,
++        "occurred_at": _timestamp_or_none(item.occurred_at),
++        "role": item.role.value,
++    }
++
++
++def _display(value: Decimal | None) -> Decimal | None:
++    if value is None:
++        return None
++    if not value.is_finite():
++        raise InvalidCoreError("report", "display decimal must be finite")
++    return value.quantize(_SIX_PLACES, rounding=ROUND_HALF_EVEN)
++
++
++def _raw_decimal(value: Decimal) -> Decimal:
++    if not value.is_finite():
++        raise InvalidCoreError("report", "raw decimal must be finite")
++    return value
++
++
++def _timestamp(value: datetime) -> str:
++    if value.utcoffset() is None:
++        raise InvalidCoreError("report", "timestamps must be timezone-aware")
++    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
++
++
++def _timestamp_or_none(value: datetime | None) -> str | None:
++    return _timestamp(value) if value is not None else None
++
++
++def _encode_json(value: Any) -> bytes:
++    return (_json_lexeme(value) + "\n").encode("utf-8")
++
++
++def _json_lexeme(value: Any) -> str:
++    if value is None or isinstance(value, (bool, int, str)):
++        return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
++    if isinstance(value, Decimal):
++        return _decimal_lexeme(value)
++    if isinstance(value, Mapping):
++        return (
++            "{"
++            + ",".join(
++                f"{_json_lexeme(str(key))}:{_json_lexeme(item)}" for key, item in value.items()
++            )
++            + "}"
++        )
++    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
++        return "[" + ",".join(_json_lexeme(item) for item in value) + "]"
++    raise InvalidCoreError("report", f"unsupported JSON value {type(value).__name__}")
++
++
++def _decimal_lexeme(value: Decimal) -> str:
++    if not value.is_finite():
++        raise InvalidCoreError("report", "decimal must be finite")
++    text = format(value, "f")
++    if "." in text:
++        text = text.rstrip("0").rstrip(".")
++    return "0" if text in {"", "-0"} else text
++
++
++def _validate_report(report: Report) -> None:
++    if not isinstance(report, Report) or report.schema_version != SCHEMA_VERSION:
++        raise InvalidCoreError("report", f"schema_version must be {SCHEMA_VERSION!r}")
++    if (
++        report.metrics.bounce.status.value == "unavailable"
++        and report.metrics.bounce.rate is not None
++    ):
++        raise InvalidCoreError("report", "unavailable bounce rate must be null")
++    for score in (
++        report.metrics.quality.spec_fidelity,
++        report.metrics.quality.scenario_integrity,
++        report.metrics.quality.architectural_conformance,
++    ):
++        if score.status.value == "unavailable" and score.mean is not None:
++            raise InvalidCoreError("report", "unavailable score mean must be null")
++
++
++def _evidence_key(item: EvidenceRef) -> tuple[datetime, str]:
++    return (item.occurred_at or datetime.min.replace(tzinfo=UTC), item.id)
++
++
++def _occurrence_key(item: BlockOccurrence) -> tuple[datetime, str]:
++    return (item.occurred_at, item.id)
++
++
++def _comment_key(item: Any) -> tuple[datetime, str]:
++    return (item.occurred_at, item.evidence_id)
++
++
++def _ids(values: Sequence[Any]) -> str:
++    return ", ".join(_inline_code(str(value)) for value in values) if values else "none"
++
++
++def _flatten_ids(items: Sequence[Mapping[str, Any]]) -> list[str]:
++    return [evidence_id for item in items for evidence_id in item["evidence_ids"]]
++
++
++def _reason_buckets(reasons: Sequence[Mapping[str, Any]]) -> str:
++    return (
++        ", ".join(
++            f"{_inline_code(str(item['reason_class']))}: {_inline_code(str(item['count']))} "
++            f"({_ids(item.get('occurrence_ids', ()))})"
++            for item in reasons
++        )
++        or "none"
++    )
++
++
++def _occurrence_line(occurrence: Mapping[str, Any]) -> str:
++    reason = occurrence["reason_class"] or "unavailable"
++    return (
++        f"- {_inline_code(occurrence['id'])} / {_inline_code(occurrence['chunk_id'])}: "
++        f"task {_inline_code(str(occurrence['task_id']))}, "
++        f"run {_inline_code(str(occurrence['run_id']))}; "
++        f"reason {_inline_code(reason)}; native kinds {_ids(occurrence['native_kinds'])}; "
++        f"at {_inline_code(occurrence['occurred_at'])}; evidence {_ids(occurrence['evidence_ids'])}"
++    )
++
++
++def _comment_line(label: str, finding: Mapping[str, Any]) -> str:
++    return (
++        f"- {label} {_inline_code(finding['evidence_id'])} / "
++        f"{_inline_code(finding['chunk_id'])}: author {_inline_code(finding['author'])}; "
++        f"{_inline_code(finding['actor_class'])} {_inline_code(finding['disposition'])} at "
++        f"{_inline_code(finding['occurred_at'])}"
++    )
++
++
++def _nullable_code(value: str | None) -> str:
++    return _inline_code(value) if value is not None else "unavailable"
++
++
++def _metric_line(value: Mapping[str, Any], display: str, numerator: str, denominator: str) -> str:
++    result = _status_value(value["status"], value[display])
++    return (
++        f"- {result} ({_inline_code(str(value[numerator]))} / "
++        f"{_inline_code(str(value[denominator]))})"
++    )
++
++
++def _status_value(status: str, value: Any) -> str:
++    if status == "unavailable":
++        return "unavailable"
++    if isinstance(value, Decimal):
++        return _inline_code(_decimal_lexeme(value))
++    return _inline_code(str(value))
++
++
++def _inline_code(value: str) -> str:
++    """Return an LF-safe Markdown inline-code representation of source text."""
++    normalized = value.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
++    escaped = normalized.replace("`", "\\`")
++    return f"`{escaped}`"
++
++
++def _markdown_text(value: str) -> str:
++    text = _inline_code(value)[1:-1]
++    text = text.replace("&", "&amp;").replace("<", "&lt;")
++    for character in ("\\", "`", "*", "_", "[", "]"):
++        text = text.replace(character, f"\\{character}")
++    return text
+diff --git a/tests/features/report_output.feature b/tests/features/report_output.feature
+new file mode 100644
+index 0000000..a1c891c
+--- /dev/null
++++ b/tests/features/report_output.feature
+@@ -0,0 +1,42 @@
++Feature: Canonical report output
++  The report bundle is rendered from one immutable model.
++
++  Scenario: Render matching machine and paste-ready projections
++    Given a complete canonical report model
++    When its projections are rendered
++    Then the JSON schema order and Markdown section order are stable
++    And unavailable values remain explicit in the projections
++    And Markdown carries the matching projected JSON values and stable IDs
++
++  Scenario: Repeated rendering preserves report bytes and identifiers
++    Given a complete canonical report model
++    When its projections are rendered twice
++    Then both renderings are byte-identical
++
++  Scenario: Rendering is deterministic across source order and process settings
++    Given equivalent reports with shuffled source insertion under varied process settings
++    When their projections are rendered
++    Then their JSON and Markdown bytes are identical UTF-8 LF output
++
++  Scenario: Rendering and publication preserve the source-byte fingerprint
++    Given a report with immutable source bytes and their fingerprint
++    When its projections are rendered and published
++    Then the source bytes and their fingerprint are preserved in the output projections
++
++  Scenario: Injected renderer failure leaves no report destination
++    Given a complete canonical report model
++    And an injected renderer failure
++    When the full report is rendered and published
++    Then the renderer failure is invalid core and no destination appears
++
++  Scenario Outline: Publication failure leaves no plausible report
++    Given a complete canonical report model
++    And an injected <stage> publication failure
++    When the projections are published
++    Then the <stage> failure is typed and only private staging was cleaned up
++
++    Examples:
++      | stage  |
++      | write  |
++      | flush  |
++      | rename |
+diff --git a/tests/steps/test_report_output_steps.py b/tests/steps/test_report_output_steps.py
+new file mode 100644
+index 0000000..fe7fcd8
+--- /dev/null
++++ b/tests/steps/test_report_output_steps.py
+@@ -0,0 +1,300 @@
++"""BDD coverage for canonical report projections."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import subprocess
++import sys
++from dataclasses import replace
++from pathlib import Path
++
++import pytest
++from pytest_bdd import given, parsers, scenarios, then, when
++
++from forgeboard_report.domain import Availability, NormalizationWarning
++from forgeboard_report.errors import (
++    InvalidCoreError,
++    PublicationFlushError,
++    PublicationRenameError,
++    PublicationWriteError,
++)
++from forgeboard_report.publish import publish, publish_report
++from forgeboard_report.render import render
++from test_render import _report, assert_all_json_leaf_values_in_markdown
++
++scenarios("../features/report_output.feature")
++
++
++@given("a complete canonical report model", target_fixture="report_case")
++def complete_report_model():
++    report = _report()
++    metrics = replace(
++        report.metrics,
++        bounce=replace(
++            report.metrics.bounce,
++            status=Availability.UNAVAILABLE,
++            numerator=0,
++            denominator=0,
++            rate=None,
++        ),
++    )
++    return {"report": replace(report, metrics=metrics), "rendered": None}
++
++
++@when("its projections are rendered")
++def render_projections(report_case) -> None:
++    report_case["rendered"] = render(report_case["report"])
++
++
++@then("the JSON schema order and Markdown section order are stable")
++def stable_order(report_case) -> None:
++    rendered = report_case["rendered"]
++    data = json.loads(rendered.json)
++    assert list(data) == [
++        "schema_version",
++        "inputs",
++        "sources",
++        "metrics",
++        "dependency_audit",
++        "warnings",
++        "evidence",
++    ]
++    markdown = rendered.markdown.decode("utf-8")
++    assert markdown.index("## Canonical metrics") < markdown.index("## Operator intervention")
++    assert markdown.index("## Operator intervention") < markdown.index("## Dependency audit")
++
++
++@then("unavailable values remain explicit in the projections")
++def explicit_unavailable(report_case) -> None:
++    rendered = report_case["rendered"]
++    assert json.loads(rendered.json)["metrics"]["bounce_rate"]["value"] is None
++    assert "unavailable" in rendered.markdown.decode("utf-8")
++
++
++@then("Markdown carries the matching projected JSON values and stable IDs")
++def matching_projected_values(report_case) -> None:
++    rendered = report_case["rendered"]
++    assert_all_json_leaf_values_in_markdown(rendered.json, rendered.markdown)
++
++
++@when("its projections are rendered twice")
++def render_twice(report_case) -> None:
++    report_case["first"] = render(report_case["report"])
++    report_case["second"] = render(report_case["report"])
++
++
++@then("both renderings are byte-identical")
++def repeated_rendering_is_identical(report_case) -> None:
++    assert report_case["first"] == report_case["second"]
++
++
++@given(
++    "equivalent reports with shuffled source insertion under varied process settings",
++    target_fixture="deterministic_cases",
++)
++def shuffled_reports(monkeypatch: pytest.MonkeyPatch):
++    report = _report()
++    warnings = (
++        NormalizationWarning("z-warning", "evidence:z", "v1", "z detail"),
++        *report.warnings,
++        NormalizationWarning("a-warning", "evidence:a", "v1", "a detail"),
++    )
++    first = replace(report, warnings=warnings)
++    second = replace(report, warnings=tuple(reversed(warnings)))
++    monkeypatch.setenv("LC_ALL", "C")
++    monkeypatch.setenv("TZ", "UTC0")
++    monkeypatch.setenv("PYTHONHASHSEED", "1")
++    return {"first": first, "second": second, "rendered": None}
++
++
++@when("their projections are rendered")
++def render_shuffled_reports(deterministic_cases) -> None:
++    deterministic_cases["rendered"] = (
++        render(deterministic_cases["first"]),
++        render(deterministic_cases["second"]),
++    )
++
++
++@then("their JSON and Markdown bytes are identical UTF-8 LF output")
++def deterministic_output(deterministic_cases) -> None:
++    first, second = deterministic_cases["rendered"]
++    assert first == second
++    for artifact in (first.json, first.markdown):
++        assert artifact.endswith(b"\n") and not artifact.endswith(b"\n\n")
++        assert b"\r" not in artifact
++        artifact.decode("utf-8")
++
++    script = (
++        "import sys; "
++        "sys.path.insert(0, 'tests'); "
++        "from forgeboard_report.render import render; "
++        "from test_render import _report; "
++        "result = render(_report()); "
++        "sys.stdout.buffer.write(result.json + result.markdown)"
++    )
++    outputs = []
++    settings = (
++        {"PYTHONHASHSEED": "1", "TZ": "Pacific/Auckland", "LC_ALL": "en_NZ.UTF-8"},
++        {"PYTHONHASHSEED": "777", "TZ": "America/New_York", "LC_ALL": "C"},
++        {"PYTHONHASHSEED": "42", "TZ": "UTC0", "LC_ALL": "C"},
++    )
++    for setting in settings:
++        environment = os.environ | setting
++        result = subprocess.run(
++            [sys.executable, "-c", script],
++            check=True,
++            capture_output=True,
++            env=environment,
++        )
++        outputs.append(result.stdout)
++    assert len(set(outputs)) == 1
++
++
++@given(
++    "a report with immutable source bytes and their fingerprint",
++    target_fixture="source_byte_case",
++)
++def source_byte_report(tmp_path: Path):
++    source_bytes = b'{"ordered":"source bytes","keep":"exact"}\n'
++    source_path = tmp_path / "source.json"
++    source_path.write_bytes(source_bytes)
++    report = _report()
++    report = replace(
++        report,
++        sources=replace(
++            report.sources,
++            graph=replace(report.sources.graph, sha256=hashlib.sha256(source_bytes).hexdigest()),
++        ),
++    )
++    return {
++        "report": report,
++        "source_path": source_path,
++        "source_bytes": source_bytes,
++        "destination": tmp_path / "published",
++        "rendered": None,
++    }
++
++
++@when("its projections are rendered and published")
++def render_and_publish(source_byte_case) -> None:
++    script = (
++        "import hashlib, sys; "
++        "from dataclasses import replace; "
++        "from pathlib import Path; "
++        "sys.path.insert(0, 'tests'); "
++        "from forgeboard_report.publish import publish_report; "
++        "from test_render import _report; "
++        "source_path = Path(sys.argv[1]); "
++        "source_bytes = source_path.read_bytes(); "
++        "digest = hashlib.sha256(source_bytes).hexdigest(); "
++        "report = _report(); "
++        "report = replace(report, sources=replace(report.sources, "
++        "graph=replace(report.sources.graph, sha256=digest))); "
++        "publish_report(Path(sys.argv[2]), report); "
++        "assert source_path.read_bytes() == source_bytes; "
++        "sys.stdout.write(digest)"
++    )
++    result = subprocess.run(
++        [
++            sys.executable,
++            "-c",
++            script,
++            str(source_byte_case["source_path"]),
++            str(source_byte_case["destination"]),
++        ],
++        check=True,
++        capture_output=True,
++        text=True,
++    )
++    source_byte_case["rendered"] = render(source_byte_case["report"])
++    source_byte_case["subprocess_digest"] = result.stdout
++
++
++@then("the source bytes and their fingerprint are preserved in the output projections")
++def source_bytes_preserved(source_byte_case) -> None:
++    source_bytes = source_byte_case["source_bytes"]
++    digest = hashlib.sha256(source_bytes).hexdigest()
++    assert source_byte_case["source_path"].read_bytes() == source_bytes
++    assert source_byte_case["subprocess_digest"] == digest
++    assert json.loads(source_byte_case["rendered"].json)["sources"]["graph"]["sha256"] == digest
++    assert digest in source_byte_case["rendered"].markdown.decode("utf-8")
++
++
++@given(parsers.parse("an injected {stage} publication failure"), target_fixture="publication_case")
++def publication_failure(stage: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, report_case):
++    import forgeboard_report.publish as publisher
++
++    destination = tmp_path / "published"
++    if stage == "write":
++        monkeypatch.setattr(
++            publisher,
++            "_write_artifact",
++            lambda *_args: (_ for _ in ()).throw(OSError("write failed")),
++        )
++        expected = PublicationWriteError
++    elif stage == "flush":
++        monkeypatch.setattr(
++            publisher.os,
++            "fsync",
++            lambda _fd: (_ for _ in ()).throw(OSError("flush failed")),
++        )
++        expected = PublicationFlushError
++    else:
++        monkeypatch.setattr(
++            publisher.os,
++            "replace",
++            lambda *_args: (_ for _ in ()).throw(OSError("rename failed")),
++        )
++        expected = PublicationRenameError
++    return {
++        "destination": destination,
++        "expected": expected,
++        "error": None,
++        "report": report_case["report"],
++    }
++
++
++@when("the projections are published")
++def publish_projections(publication_case) -> None:
++    with pytest.raises(publication_case["expected"]) as raised:
++        publish(publication_case["destination"], render(publication_case["report"]))
++    publication_case["error"] = raised.value
++
++
++@then(parsers.parse("the {stage} failure is typed and only private staging was cleaned up"))
++def typed_failure_cleanup(stage: str, publication_case) -> None:
++    assert publication_case["error"].stage == stage
++    assert not publication_case["destination"].exists()
++    assert not list(publication_case["destination"].parent.glob(".published.*"))
++
++
++@given("an injected renderer failure", target_fixture="renderer_failure_case")
++def renderer_failure(tmp_path: Path, report_case):
++    def broken_renderer(_report):
++        raise RuntimeError("broken renderer")
++
++    return {
++        "destination": tmp_path / "published",
++        "report": report_case["report"],
++        "renderer": broken_renderer,
++        "error": None,
++    }
++
++
++@when("the full report is rendered and published")
++def render_and_publish_with_failure(renderer_failure_case) -> None:
++    with pytest.raises(InvalidCoreError) as raised:
++        publish_report(
++            renderer_failure_case["destination"],
++            renderer_failure_case["report"],
++            renderer=renderer_failure_case["renderer"],
++        )
++    renderer_failure_case["error"] = raised.value
++
++
++@then("the renderer failure is invalid core and no destination appears")
++def renderer_failure_leaves_no_destination(renderer_failure_case) -> None:
++    assert "renderer failed" in str(renderer_failure_case["error"])
++    assert not renderer_failure_case["destination"].exists()
+diff --git a/tests/test_render.py b/tests/test_render.py
+new file mode 100644
+index 0000000..f1e7388
+--- /dev/null
++++ b/tests/test_render.py
+@@ -0,0 +1,386 @@
++"""Tests for the one-model deterministic render and atomic publish boundary."""
++
++from __future__ import annotations
++
++import json
++from dataclasses import replace
++from datetime import UTC, datetime
++from decimal import Decimal
++from pathlib import Path
++
++import pytest
++
++from fixtures.normalize import (
++    at,
++    block_metadata,
++    card,
++    comment,
++    event,
++    judge_metadata,
++    normalize_fixture,
++    run,
++)
++from forgeboard_report.domain import (
++    Availability,
++    DependencyAudit,
++    DependencyEdgeFinding,
++    DependencyRunFinding,
++    DependencyWaitFinding,
++    NormalizationWarning,
++    ReportRequest,
++    ScoreFinding,
++    SourceFileFingerprint,
++    UnexpectedBoardLinkFinding,
++)
++from forgeboard_report.errors import (
++    InvalidCoreError,
++    PublicationFlushError,
++    PublicationRenameError,
++    PublicationWriteError,
++    UsageError,
++)
++from forgeboard_report.metrics import calculate
++from forgeboard_report.publish import publish, publish_report
++from forgeboard_report.render import (
++    RenderedReport,
++    _ids,
++    _inline_code,
++    _markdown_text,
++    _metric_line,
++    _reason_buckets,
++    _status_value,
++    build_report,
++    render,
++    render_json,
++    render_markdown,
++)
++
++
++def _report(operator_ids: tuple[str, ...] = ("operator",)):
++    snapshot = normalize_fixture(
++        ("A", "B"),
++        cards=(card("A", completed_at=at(40)), card("B", completed_at=at(41))),
++        runs=(
++            run(
++                1,
++                "A",
++                ended_at=at(20),
++                metadata=judge_metadata(verdict="bounce", scores=(0, 0, 0, 0, 0, 0)),
++            ),
++            run(
++                2,
++                "A",
++                status="blocked",
++                outcome="blocked",
++                ended_at=at(21),
++                metadata=block_metadata("failing-prereq"),
++            ),
++        ),
++        events=(event(1, "A", "claimed", at(10)), event(2, "A", "blocked", at(21), run_id=2)),
++        comments=(comment(1, "A", "operator", at(15)),),
++        operator_ids=operator_ids,
++    )
++    audit = DependencyAudit(
++        edges=(
++            DependencyEdgeFinding(
++                parent_id="A",
++                child_id="B",
++                attachment="missing",
++                link_evidence_ids=("hermes:link:a->b",),
++                handoff_id="hermes:run:1",
++                handoff_at=at(20),
++                pull_request_id="github:node:1",
++                pull_request_url="https://github.example/acme/repo/pull/1",
++                merged_at=None,
++                observation="observed",
++                runs=(DependencyRunFinding("hermes:run:3", at(22), "parent_unmerged"),),
++                waits=(
++                    DependencyWaitFinding(
++                        wait_id="hermes:block:2",
++                        wait_at=at(21),
++                        status="observed",
++                        retry_run_id="hermes:run:3",
++                        retry_started_at=at(22),
++                        operator_comment_id="hermes:comment:1",
++                        operator_comment_at=at(15),
++                        intervention="before_retry",
++                    ),
++                ),
++            ),
++        ),
++        unexpected_links=(
++            UnexpectedBoardLinkFinding(
++                parent_chunk_id="unexpected-parent",
++                child_chunk_id=None,
++                parent_task_id="task:unexpected-parent",
++                child_task_id="task:unexpected-child",
++                evidence_id="hermes:link:unexpected",
++            ),
++        ),
++    )
++    report = build_report(snapshot, calculate(snapshot), audit)
++    return replace(
++        report,
++        sources=replace(
++            report.sources,
++            hermes_files=(
++                SourceFileFingerprint("cards.json", 37, "c" * 64),
++                SourceFileFingerprint("runs.json", 53, "d" * 64),
++            ),
++        ),
++        warnings=(
++            NormalizationWarning(
++                code="unknown_schema",
++                evidence_id="hermes:run:99",
++                schema="future.v2",
++                detail="untrusted `text`\nkept as evidence",
++            ),
++        ),
++    )
++
++
++def _json_leaf_values(value: object):
++    if isinstance(value, dict):
++        for nested in value.values():
++            yield from _json_leaf_values(nested)
++    elif isinstance(value, list):
++        for nested in value:
++            yield from _json_leaf_values(nested)
++    else:
++        yield value
++
++
++def assert_all_json_leaf_values_in_markdown(json_bytes: bytes, markdown_bytes: bytes) -> None:
++    """Assert Markdown projects every JSON leaf with its Markdown-safe spelling."""
++    markdown = markdown_bytes.decode("utf-8")
++    for value in _json_leaf_values(json.loads(json_bytes)):
++        if value is None:
++            candidates = ("unavailable",)
++        elif isinstance(value, str):
++            candidates = (
++                value,
++                _inline_code(value),
++                _markdown_text(value),
++            )
++        else:
++            candidates = (json.dumps(value, ensure_ascii=False, separators=(",", ":")),)
++        assert any(candidate in markdown for candidate in candidates), value
++
++
++def test_rendered_projections_have_fixed_order_rounding_and_traceable_ids() -> None:
++    report = _report()
++    rendered = render(report)
++    data = json.loads(rendered.json)
++
++    assert list(data) == [
++        "schema_version",
++        "inputs",
++        "sources",
++        "metrics",
++        "dependency_audit",
++        "warnings",
++        "evidence",
++    ]
++    assert list(data["metrics"]) == [
++        "bounce_rate",
++        "judge_quality",
++        "blocked_work",
++        "operator_intervention",
++    ]
++    assert data["schema_version"] == "forgeboard.report.v1"
++    assert data["metrics"]["bounce_rate"]["value"] == 0.5
++    assert data["metrics"]["judge_quality"]["spec_fidelity"]["value"] == 0
++    assert data["dependency_audit"]["edges"][0]["handoff_id"] == "hermes:run:1"
++    assert data["warnings"][0]["detail"] == "untrusted `text`\nkept as evidence"
++    assert rendered.json.endswith(b"\n") and b"\r" not in rendered.json
++    assert rendered.markdown.endswith(b"\n") and b"\r" not in rendered.markdown
++
++    markdown = rendered.markdown.decode()
++    sections = [
++        "# Forgeboard report",
++        "## Resolved inputs",
++        "## Canonical metrics",
++        "## Operator intervention",
++        "## Dependency audit",
++        "## Warnings and unclassified evidence",
++        "## Evidence index",
++    ]
++    assert [markdown.index(section) for section in sections] == sorted(
++        markdown.index(section) for section in sections
++    )
++    assert "hermes:run:1" in markdown
++    assert "github:node:1" in markdown
++
++
++def test_markdown_projects_every_json_leaf_from_the_report_fixture() -> None:
++    rendered = render(_report())
++
++    assert_all_json_leaf_values_in_markdown(rendered.json, rendered.markdown)
++
++
++def test_display_rounds_half_even_once_and_unavailable_is_null() -> None:
++    report = _report()
++    quality = report.metrics.quality
++    score = replace(
++        quality.spec_fidelity,
++        total=Decimal("2.3456785"),
++        count=1,
++        mean=Decimal("2.3456785"),
++    )
++    unavailable = ScoreFinding(
++        name="scenario_integrity",
++        status=Availability.UNAVAILABLE,
++        total=Decimal(0),
++        count=0,
++        mean=None,
++        scores=(),
++    )
++    metrics = replace(
++        report.metrics,
++        bounce=replace(
++            report.metrics.bounce,
++            status=Availability.UNAVAILABLE,
++            numerator=0,
++            denominator=0,
++            rate=None,
++        ),
++        quality=replace(quality, spec_fidelity=score, scenario_integrity=unavailable),
++    )
++    data = json.loads(render_json(replace(report, metrics=metrics)))
++
++    assert data["metrics"]["bounce_rate"]["value"] is None
++    assert data["metrics"]["judge_quality"]["spec_fidelity"]["value"] == 2.345678
++    assert data["metrics"]["judge_quality"]["scenario_integrity"]["value"] is None
++    assert "unavailable" in render_markdown(replace(report, metrics=metrics)).decode()
++
++
++def test_rendering_is_stable_and_rejects_an_invalid_core_model() -> None:
++    report = _report()
++    assert render(report) == render(report)
++    invalid = replace(report, schema_version="not-v1")
++    with pytest.raises(InvalidCoreError, match="schema_version"):
++        render_json(invalid)
++
++
++def test_markdown_source_values_are_escaped_and_lf_normalized() -> None:
++    source_value = "source`id\r\nnext\rline"
++
++    assert _ids((source_value,)) == "`source\\`id next line`"
++    assert _reason_buckets(({"reason_class": source_value, "count": 1},)) == (
++        "`source\\`id next line`: `1` (none)"
++    )
++    assert _status_value("available", source_value) == "`source\\`id next line`"
++    assert (
++        _metric_line(
++            {"status": "available", "value": source_value, "numerator": 1, "denominator": 2},
++            "value",
++            "numerator",
++            "denominator",
++        )
++        == "- `source\\`id next line` (`1` / `2`)"
++    )
++    assert _markdown_text(source_value) == "source\\\\\\`id next line"
++
++    report = _report()
++    rendered = render(report)
++    assert (
++        json.loads(rendered.json)["warnings"][0]["detail"] == "untrusted `text`\nkept as evidence"
++    )
++    assert b"\r" not in rendered.markdown
++
++
++@pytest.mark.parametrize("operator", ("name`tag", "name\ntag", "name\rtag"))
++def test_operator_identity_markdown_is_safe_while_json_is_exact(operator: str) -> None:
++    request = ReportRequest(
++        board_slug="board",
++        graph_path=Path("graph.json"),
++        from_original="2026-01-01T00:00:00Z",
++        to_original="2026-01-02T00:00:00Z",
++        operator_ids=(operator,),
++        output_directory=Path("report"),
++    )
++    rendered = render(_report((operator,)))
++
++    assert request.operator_ids == (operator,)
++    assert json.loads(rendered.json)["inputs"]["operator_ids"] == [operator]
++    assert _inline_code(operator) in rendered.markdown.decode("utf-8")
++
++
++def test_publish_creates_only_the_complete_pair(tmp_path: Path) -> None:
++    destination = tmp_path / "published"
++    published = publish(destination, render(_report()))
++
++    assert published.destination == destination
++    assert sorted(path.name for path in destination.iterdir()) == ["report.json", "report.md"]
++    assert (destination / "report.json").read_bytes().endswith(b"\n")
++
++
++def test_publish_rejects_existing_or_parentless_destinations(tmp_path: Path) -> None:
++    artifacts = render(_report())
++    existing = tmp_path / "existing"
++    existing.mkdir()
++    with pytest.raises(UsageError, match="already exist"):
++        publish(existing, artifacts)
++    with pytest.raises(UsageError, match="parent"):
++        publish(tmp_path / "missing" / "report", artifacts)
++
++
++def test_publish_converts_renderer_failure_to_invalid_core(tmp_path: Path) -> None:
++    destination = tmp_path / "failed"
++
++    def broken_renderer(_report):
++        raise RuntimeError("broken renderer")
++
++    with pytest.raises(InvalidCoreError, match="renderer failed"):
++        publish_report(destination, _report(), renderer=broken_renderer)
++    assert not destination.exists()
++
++
++@pytest.mark.parametrize(
++    ("patch_target", "failure", "expected"),
++    [
++        ("write", OSError("write failed"), PublicationWriteError),
++        ("flush", OSError("flush failed"), PublicationFlushError),
++        ("rename", OSError("rename failed"), PublicationRenameError),
++    ],
++)
++def test_publish_failure_leaves_no_plausible_destination(
++    tmp_path: Path,
++    monkeypatch: pytest.MonkeyPatch,
++    patch_target: str,
++    failure: OSError,
++    expected: type[Exception],
++) -> None:
++    import forgeboard_report.publish as publisher
++
++    destination = tmp_path / patch_target
++    if patch_target == "write":
++        monkeypatch.setattr(
++            publisher, "_write_artifact", lambda *_args: (_ for _ in ()).throw(failure)
++        )
++    elif patch_target == "flush":
++        monkeypatch.setattr(publisher.os, "fsync", lambda _fd: (_ for _ in ()).throw(failure))
++    else:
++        monkeypatch.setattr(publisher.os, "replace", lambda *_args: (_ for _ in ()).throw(failure))
++
++    with pytest.raises(expected):
++        publish(destination, render(_report()))
++    assert not destination.exists()
++    assert not list(tmp_path.glob(f".{destination.name}.*"))
++
++
++def test_publish_rejects_invalid_artifacts(tmp_path: Path) -> None:
++    with pytest.raises(InvalidCoreError, match="final newline"):
++        publish(tmp_path / "invalid", RenderedReport(json=b"{}", markdown=b"# report\n"))
++
++
++def test_timestamp_rendering_is_utc_even_if_supplied_with_an_offset() -> None:
++    report = _report()
++    shifted = replace(
++        report,
++        inputs=replace(
++            report.inputs,
++            from_utc=datetime(2026, 7, 29, 2, tzinfo=UTC),
++        ),
++    )
++    assert '"from_utc":"2026-07-29T02:00:00.000000Z"' in render_json(shifted).decode()
