@@ -2523,3 +2523,59 @@ proven artifact in the repo; four climbs depend on it; and `state.md:116` is
 explicit that this system's failures live in seams visible only under load and
 that nothing should ever be tested with two unknowns in play. It needs its own
 slice, with a real run behind it.
+
+### F65 — The control arm's pin went inert at the merge that created it · `FIXED` · **high**
+
+`prejudge/scorer-is-the-control-arm` compared the scorer block in
+`scripts/prejudge-review.sh` against
+`git show main:hermes/profiles/forge-prejudge.SOUL.md`. That was correct for
+exactly as long as the arm lived in that SOUL — which is to say, while ADR-0010
+was an open branch.
+
+ADR-0010's entire purpose was to move the arm *out* of the SOUL and into the
+script. So the moment it merged, the comparison target stopped existing.
+`arm_extract` returned zero lines from main's SOUL, the check took its
+`[ -z "$arm_main" ]` branch, and reported:
+
+```
+skip  prejudge/scorer-is-the-control-arm (main has no pinned scorer block to compare)
+```
+
+Measured on `main` at `5f3c38c`, immediately after the stack landed. The bytes
+themselves were never harmed — the 24 lines in the script are byte-identical to
+`6b4c419`'s SOUL, sha256 `7f9ddf38…` — but nothing was checking that any more,
+and nothing would have said so.
+
+**This is the F62 shape at the layer above.** F62 recorded that a slice can
+satisfy its contract and still move the measured quantity backwards with no
+check able to see it. Here a slice satisfied its contract and disabled the check
+itself. ADR-0010 D10.5 argued the move made the control *stronger* because the
+bytes were now "pinned by a test"; that sentence was true on the branch and
+false one commit later. The ADR is otherwise sound and its bytes were carried
+faithfully — the defect is in the pin, not in the move.
+
+**Three things made it invisible:**
+
+1. **The baseline was a moving branch, not a record.** Any check anchored to
+   `main` is a check whose baseline the next merge can redefine.
+2. **The failure mode was `skip`, and a skip is quiet.** The suite ended
+   `0 failed` and the summary line read as success. A control that cannot find
+   its baseline is not a passing control; it is a failing one.
+3. **The check that would have caught it is the one that broke.** There was no
+   outer assertion that this case must never skip.
+
+**Fix (this slice):** the baseline is now `scripts/fixtures/control-arm.txt`,
+recorded from `6b4c419` and verified identical to the moved bytes. Both the
+missing-fixture and the empty-extraction paths call `bad()`, so this case can
+no longer skip for any reason. Verified by negative test — one added space
+inside the stamping `jq`, `--model opus` → `sonnet`, a deleted fixture, and a
+renamed marker each fail the suite; the unmodified arm passes.
+
+A sweep for the same shape found no other case in `verify.sh` anchored to a git
+ref. This was the only one.
+
+**Consequence for S5.** The plan's ordering assumed this pin held while the
+derivation work proceeded around it. For four commits it did not hold at all.
+Nothing edited the arm in that window — `sha256` confirms it — so the baseline
+is intact and the experiment is still runnable, but the margin was luck rather
+than enforcement.
