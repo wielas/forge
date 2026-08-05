@@ -572,6 +572,70 @@ run_template_group() {
   fi
   git -C "$dest" config --unset branch.main.remote
 
+  # F7, exercised the same way and for the same reason: two states, opposite
+  # verdicts, against a real remote rather than grepped out of the YAML.
+  # Measured on forgeboard-report 2026-07-30 — the lane pushed `chunk/1`…
+  # `chunk/6` against a documented `chunk/<id>-<slug>`, and tier 2 bounced four
+  # PRs on the name alone, after the review that found nothing else wrong had
+  # already been paid for. The valid case matters as much as the blocked one:
+  # a guard that refuses correct branches costs more than the rule it enforces.
+  git -C "$dest" checkout -q -b chunk/7-render-report
+  echo "# chunk" >> "$dest/README.md"
+  git -C "$dest" add -A >/dev/null 2>&1
+  git -C "$dest" -c user.email=v@v -c user.name=v commit -qm chunk >/dev/null 2>&1
+  if git -C "$dest" push -u origin chunk/7-render-report >"$TMPROOT/push4.log" 2>&1; then
+    ok "chunk-branch-push-allowed"
+  else
+    bad "chunk-branch-push-allowed" \
+        "a correctly named chunk branch was refused: $(tail -2 "$TMPROOT/push4.log" | tr '\n' ' ')"
+  fi
+
+  # `chunk/8` is the literal shape that closed PRs #4, #6, #8 and #10 unmerged.
+  git -C "$dest" checkout -q -b chunk/8
+  echo "# misnamed" >> "$dest/README.md"
+  git -C "$dest" add -A >/dev/null 2>&1
+  git -C "$dest" -c user.email=v@v -c user.name=v commit -qm misnamed >/dev/null 2>&1
+  if git -C "$dest" push -u origin chunk/8 >"$TMPROOT/push5.log" 2>&1; then
+    bad "misnamed-branch-blocked" \
+        "'chunk/8' pushed — the exact name that cost four PRs and four review rounds (F7)"
+  else
+    ok "misnamed-branch-blocked"
+  fi
+  git -C "$dest" checkout -q main
+
+  # ONE source for the rule. AGENTS.md states it in prose; lefthook and CI must
+  # both defer to the same script rather than restate the regex. Two config
+  # files each carrying a copy is F30's defect — they disagree the first time
+  # one is edited, and the disagreement surfaces as a branch that passes locally
+  # and fails in CI, which is the F7 cost over again in a new costume.
+  local lh="$dest/lefthook.yml" ciy="$dest/.github/workflows/ci.yml"
+  if grep -q 'scripts/branch-name.sh' "$lh" \
+     && grep -q 'scripts/branch-name.sh' "$ciy" \
+     && ! grep -qE '\^?chunk/\[' "$lh" "$ciy"; then
+    ok "branch-rule-has-one-source"
+  else
+    bad "branch-rule-has-one-source" \
+        "lefthook and CI must both call scripts/branch-name.sh, and neither may inline the pattern"
+  fi
+
+  # The CI path takes the branch as an ARGUMENT, because on a pull_request the
+  # runner's checkout is a detached merge ref whose HEAD is not the branch. That
+  # path is never exercised by the pushes above, so drive the script directly.
+  # `main` and a detached HEAD must PASS: no-main-push owns main-branch policy
+  # including its bootstrap exception, and a hook that cannot see which refs are
+  # being pushed has no question to answer and must not invent one.
+  local bn="$dest/scripts/branch-name.sh" bn_ok=1 got
+  for probe in "main:0" "chunk/7-render-report:0" "chunk/12-a-b-c:0" "HEAD:0" \
+               "chunk/8:1" "chunk/6:1" "slice/foo:1" "chunk/7-Render:1"; do
+    got=0; "$bn" "${probe%:*}" >/dev/null 2>&1 || got=1
+    if [ "$got" != "${probe##*:}" ]; then
+      bad "branch-name-judges-by-argument" \
+          "'${probe%:*}' returned $got, expected ${probe##*:}"
+      bn_ok=0; break
+    fi
+  done
+  [ "$bn_ok" = 1 ] && ok "branch-name-judges-by-argument (8 names, the CI path)"
+
   # `make check` is the verdict forge-lane §5 trusts in place of Codex's word,
   # so it must not be able to answer from a cache. Measured 2026-07-28: a lane
   # worktree's warm .ruff_cache returned "All checks passed!" for bytes that a
@@ -628,6 +692,10 @@ template/gitignores-worktrees     .worktrees/ is ignored (dispatcher worktrees l
 template/bootstrap-push-allowed   the push that CREATES main is allowed (real bare remote)
 template/main-push-blocked        every later direct push to main is refused
 template/main-push-guard-fails-closed  an unreachable tracked remote does not unlock the bootstrap exception
+template/chunk-branch-push-allowed  a correctly named chunk/<id>-<slug> branch pushes
+template/misnamed-branch-blocked  chunk/8 is refused at push time, not at review time (F7)
+template/branch-rule-has-one-source  lefthook and CI defer to one script; neither inlines the pattern
+template/branch-name-judges-by-argument  the CI path (branch passed in, detached HEAD) is correct
 template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
 lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox has no network
