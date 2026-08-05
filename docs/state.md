@@ -42,8 +42,9 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | A chunk flows card → PR → merge, unattended | `forge-hello` board, card `t_1b7be3bb`, PR #1 merged 2026-07-28, 4 min, one run, no retries |
 | The cheap driver holds the 7-section lane protocol | `deepseek-v4-flash` executed every section in order, narrating its position |
 | Both metadata schemas populate | `forge.chunk.v1` and `forge.judge.v1` complete on the real cards |
-| Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict. Since ADR-0009 the waiting is the gate's job; the scorer call itself is unchanged |
+| Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict. Since ADR-0009 the waiting is the gate's job; since ADR-0010 the whole protocol is `scripts/prejudge-review.sh`. The scorer call itself is byte-identical to the day it was written, and `prejudge/scorer-is-the-control-arm` fails the suite if that stops being true |
 | The tier-1 gate blocks, offline | `make verify prejudge` — two recorded PRs of the audited run reproduce a checked-in severity map with no gh, git or network; PR #8 exits 1 on `branch-name` + `scenario-count` |
+| The tier-1 protocol runs, offline | the same fixtures drive `prejudge-review.sh --dry-run`: a block routes to a bounce with no model spawned, a clear assembles a 64 KB prompt, and a recorded 63,164-byte patch reaches the prompt file while the driver observes 2,599 bytes |
 | Tier-1 discriminates | deliberate PR #6 was CI-green but assertion-free; prejudge `t_624586d7` scored scenario integrity 1 and bounced |
 | A bounce reaches the rejected PR | corrected fix `t_d159a76e` resumed the completed chunk's linked worktree; role probe `t_d36ec44e` made Codex author the repair |
 | Dependency gating holds at card level | D1 `t_86aa3f8d` ran while D2 `t_b9fa41cc` stayed `todo`; D2 promoted exactly when D1 completed |
@@ -134,6 +135,16 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    accumulated measured failures rather than prose. `cli/skill-body-budget`
    now enforces both numbers. The lane's 17 lines of headroom are deliberate:
    the next addition has to argue for itself.
+
+   **Reopened in part, 2026-08-05.** That resolution raised a limit to admit the
+   file, which is exactly what `forge-prejudge` then did without a limit at all:
+   404 lines against 27/29/32 for the other three profiles, 144 of them
+   executable bash. ADR-0010 makes that one a program and gives both prompt
+   kinds a number (`cli/soul-body-budget` 60, `cli/no-programs-in-souls` 6). The
+   lane is now at **299 against 300 with 12 fenced blocks**, and it is the same
+   shape — but it is the most load-bearing proven artifact in the repo, four
+   climbs depend on it, and this file says never to test two unknowns at once.
+   Measured as audit **F64**; deliberately untouched; its own slice.
 3. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
 
