@@ -737,6 +737,11 @@ prejudge/review-emits-a-terminator-envelope  one forge.review.v1 object tells th
 prejudge/review-never-prints-the-diff  a recorded 63 KB patch reaches the prompt file and not stdout
 prejudge/schema-hides-stamped-fields  the model is not asked for the fields the operator stamps
 prejudge/cost-is-storable         the verdict schema takes cost + session_id, optional, cache field intact
+prejudge/deriver-sources-without-side-effects  sourcing verdict.sh does not change the caller's shell options
+prejudge/verdict-derives-from-scores     judge-rubric.md's verdict logic, as a table of cases (F29)
+prejudge/unevidenced-score-is-not-a-verdict  a score below 3 naming no finding fails instead of deriving
+prejudge/derivation-is-shadow-not-routing    divergence is recorded; .verdict still routes
+prejudge/shadow-fields-are-stamped-never-trusted  a model-invented derived_verdict cannot survive
 EOF
   exit 0
 fi
@@ -1448,6 +1453,111 @@ run_prejudge_group() {
   else
     bad "cost-is-storable" \
         "judge-verdict.schema.json must accept cost/session_id as OPTIONAL, keep tokens_estimate required, and require cache_read_input_tokens inside cost"
+  fi
+
+  # -------------------------------------------------------------------------
+  # THE VERDICT, DERIVED (audit F29, shadow mode).
+  #
+  # judge-rubric.md has always stated the verdict logic as four rules over the
+  # scores. Nothing computed them: the model was asked for `verdict` beside the
+  # scores it also produced, so a verdict that did not follow from its own
+  # numbers was undetectable. scripts/verdict.sh is those rules as a program,
+  # and this is the table it must reproduce — written as cases, because a
+  # decision table asserted in prose is what F29 already is.
+  # -------------------------------------------------------------------------
+  local vs=scripts/verdict.sh
+
+  # SOURCING MUST NOT REWRITE THE CALLER'S SHELL. prejudge-review.sh runs
+  # `set -uo pipefail` and deliberately not `-e`: ADR-0010 gives it an exit-code
+  # contract (0 routed, 2 usage, 3 substrate, 1 unused precisely so a caller
+  # under errexit cannot read a bounce as a crash) and it handles non-zero
+  # returns itself. A sourced library that switched errexit on would rewrite the
+  # control flow of every line after the source.
+  #
+  # No --dry-run case can catch this: the shadow stage runs only after a real
+  # model call, so the source line is never reached offline. Hence a direct
+  # assertion on the shell state, in a subshell so the answer is not the
+  # verifier's own options.
+  if [ "$(bash -c 'set +e; . '"$vs"'; case "$-" in *e*) echo ERREXIT;; *) echo clean;; esac')" = "clean" ] \
+     && [ "$(bash -c 'set +u; . '"$vs"'; case "$-" in *u*) echo NOUNSET;; *) echo clean;; esac')" = "clean" ]; then
+    ok "deriver-sources-without-side-effects"
+  else
+    bad "deriver-sources-without-side-effects" \
+        "$vs changes the caller's shell options — prejudge-review.sh runs without errexit on purpose (ADR-0010's exit-code contract)"
+  fi
+
+  # shellcheck source=scripts/verdict.sh
+  . "$vs"
+  _sc() { # build a scores object from six digits
+    printf '{"spec_fidelity":%s,"scenario_integrity":%s,"architectural_conformance":%s,"scope_discipline":%s,"debt_honesty":%s,"doc_reconciliation":%s}' \
+      "${1:0:1}" "${1:1:1}" "${1:2:1}" "${1:3:1}" "${1:4:1}" "${1:5:1}"
+  }
+  _env() { printf '{"verdict":"%s","scores":%s,"findings":%s}' "$2" "$(_sc "$1")" "$3"; }
+
+  local dv_ok=1 got want
+  # scores | findings | expected derivation
+  while IFS='|' read -r sc f want; do
+    [ -z "$sc" ] && continue
+    got="$(derive_verdict "$(_env "$sc" approve "$f")" 2>/dev/null)" || got="ERR"
+    if [ "$got" != "$want" ]; then
+      bad "verdict-derives-from-scores" "scores $sc findings $f -> '$got', rubric says '$want'"
+      dv_ok=0; break
+    fi
+  done <<'TABLE'
+333333|[]|approve
+333332|[{"dimension":"doc_reconciliation","severity":"nit"}]|approve
+323333|[{"dimension":"scenario_integrity","severity":"fix"}]|approve
+333033|[{"dimension":"scope_discipline","severity":"block"}]|bounce
+313333|[{"dimension":"scenario_integrity","severity":"nit"}]|approve-with-nits
+313333|[{"dimension":"scenario_integrity","severity":"fix"}]|bounce
+313333|[{"dimension":"scenario_integrity","severity":"block"}]|bounce
+333331|[{"dimension":"doc_reconciliation","severity":"nit"}]|approve-with-nits
+313333|[]|ERR
+333332|[]|ERR
+TABLE
+  [ "$dv_ok" = 1 ] && ok "verdict-derives-from-scores (10 cases incl. the two unevidenced)"
+
+  # A dimension scored below 3 that names no finding is INVALID, not a nit. The
+  # schema says so in a `description`, where no validator reads it. Without the
+  # check, rule 3 is vacuously true — `all` over an empty list — so the least
+  # evidenced verdict possible would derive to approve-with-nits. The two ERR
+  # rows above are that case; this asserts the exit code that carries it.
+  if derive_verdict "$(_env 313333 approve '[]')" >/dev/null 2>&1; then
+    bad "unevidenced-score-is-not-a-verdict" \
+        "a dimension scored 1 with no finding derived a verdict instead of failing"
+  else
+    ok "unevidenced-score-is-not-a-verdict (exit $?)"
+  fi
+
+  # Shadow mode records; it must not route. Whatever the model said stays in
+  # `verdict`, and the routing case statement must keep reading that field.
+  local stamped
+  stamped="$(stamp_shadow "$(_env 333233 approve-with-nits '[{"dimension":"scope_discipline","severity":"nit"}]')")"
+  if [ "$(printf '%s' "$stamped" | jq -r '.verdict')" = "approve-with-nits" ] \
+     && [ "$(printf '%s' "$stamped" | jq -r '.derived_verdict')" = "approve" ] \
+     && [ "$(printf '%s' "$stamped" | jq -r '.verdict_divergence')" = "true" ] \
+     && grep -q 'case "\$VERDICT" in' scripts/prejudge-review.sh \
+     && grep -q 'VERDICT="\$(jq -r .\.verdict. "\$TMP/verdict.json")"' scripts/prejudge-review.sh; then
+    ok "derivation-is-shadow-not-routing (divergence recorded, verdict still routes)"
+  else
+    bad "derivation-is-shadow-not-routing" \
+        "the derived verdict must be recorded beside the model's, and routing must still read .verdict"
+  fi
+
+  # The model IS shown these three fields, because the model-facing schema is
+  # judge-verdict.schema.json minus STAMPED, and STAMPED is inside the pinned
+  # control arm and may not be edited until D9.5's experiment concludes. So the
+  # stamp has to be unconditional: a value the model invented must not survive.
+  # Adding the three to STAMPED belongs with the `verdict` exclusion.
+  local invented
+  invented="$(stamp_shadow '{"verdict":"approve","scores":'"$(_sc 333333)"',"findings":[],"derived_verdict":"bounce","verdict_divergence":true,"verdict_derivation_error":"invented"}')"
+  if [ "$(printf '%s' "$invented" | jq -r '.derived_verdict')" = "approve" ] \
+     && [ "$(printf '%s' "$invented" | jq -r '.verdict_divergence')" = "false" ] \
+     && [ "$(printf '%s' "$invented" | jq -r 'has("verdict_derivation_error")')" = "false" ]; then
+    ok "shadow-fields-are-stamped-never-trusted"
+  else
+    bad "shadow-fields-are-stamped-never-trusted" \
+        "a model-supplied derived_verdict survived the stamp — it must be overwritten unconditionally"
   fi
 }
 wants prejudge  && run_prejudge_group
