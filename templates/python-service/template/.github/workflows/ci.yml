@@ -5,6 +5,21 @@ on:
     branches: [main]
 
 jobs:
+  # The tier that cannot be skipped. lefthook runs the SAME script at push time,
+  # but `--no-verify` and `LEFTHOOK=0` skip it, and the local hook can never see
+  # the refs being pushed. Audit F7: four PRs were closed unmerged over a branch
+  # name, each after a full review had already been paid for.
+  #
+  # `pull_request` only. On a push event `github.head_ref` is empty, and the
+  # checkout is a detached merge ref whose HEAD is not the contributor's branch
+  # — which is exactly why the script takes the name as an argument.
+  branch-name:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/branch-name.sh "${{ github.head_ref }}"
+
   check:
     runs-on: ubuntu-latest
     steps:
