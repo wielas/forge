@@ -648,6 +648,29 @@ if [ "$HAVE_HERMES" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# The lane's protocol is partly a program too (audit F64): §3 and §5 invoke
+# scripts/lane-setup.sh and scripts/lane-blast-radius.sh through ~/.forge/repo.
+# An unattended lane reaches them by that path and by no other, so a missing
+# symlink or a cleared executable bit is a night-run failure the operator would
+# only meet as a reaped `crashed` run. Checked THROUGH ~/.forge/repo, the way
+# the lane calls them, rather than in this checkout — the checkout being fine is
+# not the property that matters, and `make verify` already covers that one.
+# ---------------------------------------------------------------------------
+for _lscript in lane-setup.sh lane-blast-radius.sh; do
+  _lpath="$HOME/.forge/repo/scripts/$_lscript"
+  if [ ! -e "$_lpath" ]; then
+    fail "~/.forge/repo/scripts/$_lscript does not resolve"
+    say  "      forge-lane §3/§5 invoke it by exactly that path. Check the"
+    say  "      ~/.forge/repo symlink, then re-run ./hermes/profiles-bootstrap.sh."
+  elif [ ! -x "$_lpath" ]; then
+    fail "~/.forge/repo/scripts/$_lscript is not executable"
+    say  "      chmod +x it in the checkout; an unattended lane cannot repair this."
+  else
+    pass "lane protocol '$_lscript' resolves through ~/.forge/repo and is executable"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 sect "9. Skills: discovery, and the curator risk"
 # ---------------------------------------------------------------------------
 # Hermes runs a curator that reviews, archives and rewrites the skills in its
