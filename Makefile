@@ -49,6 +49,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  grep -q '^name:' $$f && grep -q '^description:' $$f || { echo "MISSING name/description: $$f"; exit 1; }; \
 	done
 	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
-	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh
+	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh \
+	  scripts/lane-setup.sh scripts/lane-blast-radius.sh
 	@python3 -c 'import ast,sys; ast.parse(open("scripts/prejudge-steps.py").read())'
 	@echo "forge validate: OK"

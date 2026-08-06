@@ -2624,7 +2624,7 @@ of them: F32's rule used to be a `grep` for the sentence promising it, and is no
 a measurement — **63,164 bytes moved into the prompt file, 2,599 bytes observed
 by the driver.**
 
-### F64 — `forge-lane` is at 299 against a 300 budget that was raised to admit it · `SLICED` · **low**
+### F64 — `forge-lane` is at 299 against a 300 budget that was raised to admit it · `FIXED` · **low**
 
 `skills/forge-lane/SKILL.md` is 299 lines with 12 fenced blocks — the same shape
 as F61, one layer over. `docs/state.md` records it as **resolved** on 2026-07-29
@@ -2643,6 +2643,21 @@ proven artifact in the repo; four climbs depend on it; and `state.md:116` is
 explicit that this system's failures live in seams visible only under load and
 that nothing should ever be tested with two unknowns in play. It needs its own
 slice, with a real run behind it.
+
+**Sliced, bounced twice, narrowed.** PR #19 moved setup and the final audit into
+scripts; a post-merge review found six fail-open classes in that implementation
+(F69–F74); a second review found the repair for those fail-*closed* on normal
+non-Codex activity (F75, F76). What shipped protects a named set and states what
+it cannot protect. The skill is 291/300 and `make verify` is 117/0/3 with 35
+lane cases.
+
+**Live-validated against what shipped.** The earlier probe
+(`verify-codex-1786005619-80398`) exercised the *retired* wide design and is not
+evidence for this one; citing it would be exactly the claim ADR-0003 exists to
+prevent. Re-run on the narrowed audit: setup → immutable capture → real
+`codex exec` commit → `make check` → final audit clean, as run
+**`verify-codex-1786010605-22305`**. The probe now prints its run id, so the
+next such claim can be checked rather than taken.
 
 ### F65 — The control arm's pin went inert at the merge that created it · `FIXED` · **high**
 
@@ -2857,14 +2872,197 @@ records that the operator's projects are **not** all Python and pulls toward a
 Reproduced directly: a fresh `git init` repo, `capture` then `check`, no Codex
 involved at all, exits 3 `worktree-dirty`.
 
-**Fix.** `scripts/lane-blast-radius.sh` excludes the lane's own scratch area by
-pathspec — `git status --porcelain --untracked-files=all -- ':(exclude).forge'` —
-so the check is correct because of what it asks, not because of what the target
-project happens to ignore. Pinned by `lane/lane-final-worktree-is-clean`, which
-now runs `capture` then `check` on a repo with no `.gitignore` at all and
-requires exit 0.
+**The first fix was unsafe.** PR #19 excluded all of `.forge/` by pathspec. The
+review then modified a tracked `.forge/policy`, added `.forge/patch.orig`, and
+observed exit 0. Worse, the supposedly immutable hook/ref baselines also lived
+there, inside Codex's write grant. Avoiding the false positive had created both
+a worktree blind spot and an audit-bypass path.
+
+**Repair implemented.** All contract, transcript, PR-body
+and UV-cache scratch now lives under one run-specific `$TMPDIR`; immutable audit
+state lives at `~/.forge/lane-audits/<run-id>`. Final status has no exclusions,
+so tracked and untracked `.forge/` dirt both exit 3. Pinned independently by
+`blast/forge-dirt-is-not-hidden` and `blast/baseline-is-outside-codex-roots`.
 
 **The general shape:** a check whose correctness depends on a *sibling file in
 someone else's repository* is passing by luck. This one had no way to notice —
 the dependency was invisible from inside the lane, and the only project anyone
 tested it on satisfied it.
+
+---
+
+### F69 — The audit baseline was ordered after Codex and stored inside Codex's write grant · `FIXED` · **high**
+
+`forge-lane` ran `codex exec` in §4 and only showed the capture command in §5.
+The script wrote `.forge/main.before` and `.forge/hooks.before`, so Codex could
+run capture again after moving `main` or editing hooks. Reproduced: the first
+check exited 3, post-breach recapture exited 0, and the next check exited 0.
+
+**Repair implemented.** `lane-setup.sh` now takes the capture before it can
+return ready. State is keyed by `HERMES_KANBAN_RUN_ID` outside every sandbox
+write root, and capture refuses overwrite. `blast/capture-is-single-use` and
+`blast/baseline-is-outside-codex-roots` pin both halves. (The live run that
+exercised this was against the pre-F75 audit; see F64 for what is still owed.)
+
+### F70 — Hook hashing discarded hook identity and swallowed read failures · `FIXED` · **high**
+
+The extracted hash reduced every hook to its content digest. Renames, executable
+mode changes and symlink retargeting could preserve that multiset; an unreadable
+hook produced an empty manifest and still returned clean.
+
+**Repair implemented.** Manifests bind the relative path, node type, mode,
+symlink target, resolved target mode/content, and file content; every
+traversal/hash error fails closed. Independent `blast/hook-*` cases reproduce
+rename, chmod, retarget, target-content change and unreadable inputs, and
+`blast/clean-linked-worktree` proves the nominal hook set passes. Since F77 the
+manifest covers **both** the worktree's own hooks and the shared directory.
+
+### F71 — Three checks did not bound the shared `.git` grant, and status errors read as clean · `FIXED` · **high**
+
+The script named config, every ref and every worktree admin directory as writable
+but checked only `main`, default hooks and worktree stdout. A sibling ref and
+local config both changed with exit 0. A corrupt index made `git status` exit 128
+with empty stdout, which the command substitution interpreted as clean.
+
+**First repair overshot; see F75/F76.** It asserted that the whole shared `.git`
+was frozen except a small allow-list, which is false under normal operation and
+blocked clean chunks. What shipped is a **named protected set**, not a freeze:
+
+| protected | why it is the escape that matters |
+|---|---|
+| both hooks directories | they execute on the operator's machine |
+| `--local` and `--worktree` config | `core.hooksPath`, aliases, credential helpers |
+| `refs/heads/main` | the protected branch |
+| `objects/info/alternates` | redirects object lookup elsewhere |
+| object reachability (`fsck --connectivity-only`) | history cannot silently lose objects |
+| worktree cleanliness | the measured `.orig`/`.rej` leftovers |
+
+Any unreadable surface still exits 3, and each line has an independent `blast/*`
+regression. **Deliberately not protected:** sibling branches, `refs/remotes/*`
+and other worktrees' admin directories — see F75 for why that is a limit of the
+instrument rather than an omission.
+
+This remains a final-state audit, not a syscall log: identical
+modify-and-restore activity is not observable, and the hostile diff review is
+still the semantic control on the task commit itself.
+
+### F72 — Setup suppressed fetch failure and accepted a bare repository as a worktree · `FIXED` · **medium**
+
+`git fetch origin || true` reported ready against a broken remote. Checking only
+the exit status of `git rev-parse --is-inside-work-tree` accepted its literal
+`false` output from a bare repository. Both contradicted the skill's promise
+that origin was fresh and the dispatcher worktree verified.
+
+**Repair implemented.** Fetch failure exits 4; the probe must output `true`;
+detached HEAD, `main`, and a mismatch with `HERMES_KANBAN_BRANCH` exit 3. The
+setup case now runs a linked worktree and pins exits 0/2/3/4/5/6, and asserts
+the emitted `FORGE_LANE_RUNTIME` path and the per-worktree hooks directory.
+
+### F73 — Setup-created dirt would be blamed on Codex by the final audit · `FIXED` · **medium**
+
+The configured `forge-hello` sample exposed this before a board task was
+created: `make setup` generates an untracked `uv.lock` in that older checkout.
+The old sequence captured shared Git after setup but did not require a clean
+worktree, so the final audit would report setup's own artifact as Codex escaping
+its contract — F68's attribution error one phase earlier.
+
+**Fix.** `lane-setup.sh` now requires a readable, clean worktree after setup and
+baseline check. Dirt exits 5 as `failing-prereq`, before Codex and before audit
+capture. The linked setup fixture creates `generated.lock` and requires exit 5.
+
+### F74 — A failed final audit could be repaired and replayed under the same run id · `FIXED` · **high**
+
+Capture was single-use, but check was not. After a breach produced exit 3, the
+offending state could be restored and the same run checked again; that second
+check overwrote the `after` manifests and produced a clean completion marker.
+A clean check could likewise be replayed and overwrite its evidence timestamp.
+
+**Repair implemented.** Check now atomically creates `check.started` in the
+protected audit directory before reading any post-Codex state. That marker is
+never removed, so every run id gets one final-audit attempt whether it passes,
+finds a breach or fails to inspect. `blast/check-is-single-use` and
+`blast/failed-check-cannot-be-retried` pin the pass and breach paths. Recovery
+from a spent run id is a new card, which is already how the protocol handles a
+block — deliberately not a second attempt.
+
+### F75 — The audit blamed Codex for a sibling lane doing its job · `FIXED` · **high**
+
+F71's first repair froze the shared `.git`. A dispatcher runs lanes as worktrees
+off **one** shared `.git`, so that assertion is false whenever anything else
+touches the repository. All three reproduced against a clean worktree with no
+Codex involved:
+
+```
+lane B commits on its own branch  -> non-task-ref-edited shared-git-edited (exit 3)
+any `git fetch origin`           -> non-task-ref-edited shared-git-edited (exit 3)
+`git pack-refs` / `commit-graph` -> shared-git-edited / object-config-edited
+```
+
+Each blocks a clean chunk with the most alarming block the protocol raises.
+
+**The instrument has a hard limit, and this is it.** From inside lane A,
+`refs/heads/taskB` moving is *indistinguishable* from Codex moving it — the
+shared `.git` carries no signal separating a sibling lane from an escape. So
+sibling branches, `refs/remotes/*` and other worktrees' admin directories cannot
+be protected from here, only false-positived on. The audit now names what it
+protects (F71) and says what it does not, rather than claiming a guarantee it
+cannot keep.
+
+**Pinned by a positive case.** `blast/sibling-lane-is-not-a-breach` commits from
+a sibling worktree *and* fetches, and requires exit 0 — a negative-only suite
+passes a wide audit that is still unusable.
+
+### F76 — `git fsck --full` is an absolute check inside a differential audit · `FIXED` · **high**
+
+Every other surface compared before against after. `fsck --full` alone asked an
+absolute question, and it also validates object **content** — so a repository
+carrying malformed history failed it forever. Reproduced with **zero** changes
+after capture, on a commit whose `committer` line lacks a space before the email
+(what CVS/SVN-imported history looks like):
+
+```
+capture exit=0
+check   -> reason_class=other: ...invalid object database (exit 3)
+```
+
+That blocked *every* chunk on such a repo permanently, attributing pre-existing
+history to Codex — F68's shape again, one layer down.
+
+**Fix.** `--connectivity-only`, which asks the question that belongs here: can
+everything the refs reach still be found. Measured on the same repository,
+`--full` exits 1 and `--connectivity-only` exits 0. It is also the cheap half —
+the content scan was the dominant cost on any real repo. Pinned by
+`blast/pre-existing-fsck-damage-is-not-a-breach`.
+
+### F77 — `make setup` writes the shared hook, so two lanes race on one file · `FIXED` · **medium**
+
+Recorded during the ladder run (`docs/ladder-2026-07-28.md`): lefthook bakes the
+*installing* checkout's `.venv` path into `.git/hooks/pre-push`, which
+`--git-path hooks` resolves to the **shared** directory. It was called real but
+harmless. Protecting hook content makes it a hard block — a sibling lane's
+`make setup` rewrites the file and the loser's audit reports `hooks-edited`.
+
+**Fix.** `lane-setup.sh` enables `extensions.worktreeConfig` and points the
+worktree at its own `core.hooksPath` before `make setup` runs, so each lane owns
+its hooks and the shared directory stops being written by lanes at all. Probed
+first: lefthook honours `core.hooksPath`, hooks land per-worktree, the shared
+directory stays empty, and the template's own post-install assertion still passes.
+
+That is also what makes the shared directory *safe to protect strictly* — it is
+the one the operator's own checkout runs. The audit therefore watches **both**
+directories; watching only the resolved path would leave the highest-value
+target in the `--add-dir` grant unaudited. `blast/shared-hooks-are-protected`
+and the `env-prepared-before-codex` per-worktree assertion pin the two halves.
+
+### F78 — A breach named a category but never what moved · `FIXED` · **low**
+
+`record_node` hashed the relative path so odd path bytes could not break the
+line format, and the reason line emitted bare tokens
+(`— non-task-ref-edited shared-git-edited`). Nothing anywhere held a readable
+path: on a misfire the operator got an alarming block and could not tell what
+changed, even by diffing the retained manifests.
+
+**Fix.** Manifest lines carry a trailing display-only path column (hash stays
+first, so ordering is unchanged); a breach writes the differing lines to
+`<audit-root>/<run-id>/breach.txt` and names the first offending path in the
+`reason_class=` line. Pinned by `blast/breach-names-what-moved`.
