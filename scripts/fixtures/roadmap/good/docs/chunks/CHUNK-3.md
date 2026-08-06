@@ -1,0 +1,17 @@
+### CHUNK-3: Render the digest to Markdown and publish it atomically
+- **Goal:** Project one record set into a paste-ready Markdown digest and publish it by rename.
+- **Milestone:** M2  ·  **Depends on:** `CHUNK-1`, `CHUNK-2`
+- **Serves:** `FR-5`, `FR-6`  ·  **Relevant ADRs:** `0002`, `0005`
+- **Touches:** `src/digest/render.py`, `src/digest/publish.py`, `tests/features/publish.feature`, `tests/steps/test_publish_steps.py`, `tests/test_render.py`
+- **Contract decisions:**
+  - The renderer projects the record; it never reparses the board or recomputes a metric.
+  - Publication writes into a private sibling directory and renames it into place.
+- **Scenarios:**
+  - Given a record set with one unavailable metric, when it is rendered, then the digest shows the metric as unavailable rather than as a zero.
+  - Given the same record set rendered twice under different locale settings, when the outputs are compared, then the bytes are identical.
+  - Given a destination that does not exist, when the digest is published, then the destination appears atomically with one final newline.
+  - Given a rename failure injected at publication, when the digest is published, then a publication error is raised and no partial destination is left behind.
+- **Out of scope:** the CLI surface, the board reader, and any change to the record shape.
+- **Integration gate:** Do not start until CHUNK-2 is merged to `main`; branch from that merged state rather than stacking on its open PR (ADR-0008).
+- **Done when:** `make check` green + all four scenarios pass + docs updated
+- **Lane:** forge-codex-lane  ·  **Risk:** med
