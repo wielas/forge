@@ -52,7 +52,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | A card parked on a non-existent profile is detectable | `make preflight` walks every board and WARNs; caught `forge-operator` on `forge-ladder`, the shape the first two tier-2 attempts produced |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
-| Branch protection is a real merge gate | a red or unreviewed merge is refused by GitHub, not by prose |
+| Branch protection is a real merge gate **on a repo where it can be turned on** | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **Not true of this repository** — `wielas/forge` is private on a free plan and `gh api …/branches/main/protection` returns 403, so nothing gates its `main` (F79) |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
 A second, independent climb on 2026-07-28 (`ladder-forge`, three chunks, one
@@ -170,6 +170,21 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    which ADR-0010 puts in the prompt, not in a script.
 3. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
+4. **This repository has no merge gate at all** (audit **F79**, measured
+   2026-08-06). `wielas/forge` is private on a free plan, so both
+   `…/branches/main/protection` and `…/rulesets` return 403 — there is no
+   protected branch. The documented fallback is absent too: `.git/hooks` holds
+   nothing but samples and `core.hooksPath` is unset, because the Forge is not
+   stamped from its own template and `make protect` lives only in
+   `templates/python-service/template/Makefile`. CI runs on `pull_request`, so a
+   red merge is visible afterwards but refused by nothing, and a direct push to
+   `main` is refused by nothing either. **Shape of the fix:** decide the gate —
+   make the repo public (protection is free there, and measured working on
+   `forgeboard-report`), upgrade, or install the pre-push hook and stop calling
+   it advisory — then add a `make preflight` check that distinguishes
+   *protected* / *not protected* / **403, cannot be asked**. A 403 is a control
+   that could not run, and F65/F66 already settled that such a control has not
+   passed.
 
 ---
 

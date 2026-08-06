@@ -49,7 +49,12 @@ relocates what a check reads can blind it without turning anything red.
 
 ## Conventions
 
-- Work happens on `slice/*` branches merged via PR; `main` is protected, and branch
-  protection is the only real merge gate — the pre-push hook is advisory.
+- Work happens on `slice/*` branches merged via PR. **On this repository nothing
+  enforces that** — `wielas/forge` is private on a free plan, so branch protection
+  and rulesets both return 403, and no pre-push hook is installed either
+  (audit **F79**, measured 2026-08-06). Where protection *can* be turned on
+  (`make protect`, public or paid), it is the only real merge gate and the
+  pre-push hook is advisory. Here the convention is the gate: open a PR, never
+  push to `main`.
 - Findings carry stable `F<n>` identifiers across the audit docs. Reuse the existing
   number when revisiting one; do not renumber.
