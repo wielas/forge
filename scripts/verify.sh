@@ -796,6 +796,13 @@ metrics/is-read-only              reading a board does not change its sha256
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
 metrics/live-schema-read-survives-an-idle-board  a WAL board with no -shm is still readable, so the check above cannot flake (F67)
 metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
+metrics/help-names-its-usage      --help and the no-board error both reach the Usage block, not line-pinned prose
+metrics/snapshot/fixture-reproduces-the-idle-failure  the fixture is WAL and shm-less, so mode=ro provably refuses it (F51)
+metrics/snapshot/idle-wal-board-is-readable  a board at rest snapshots and reads (F47, F67)
+metrics/snapshot/source-is-byte-identical    reading a board changes neither it nor its sidecars
+metrics/snapshot/unreadable-input-is-silent-on-stdout  a failed read exits non-zero AND prints nothing (F47's second half)
+metrics/snapshot/torn-source-is-refused      a board moving under every attempt fails; no partial success
+metrics/snapshot/no-second-implementation    the WAL snapshot exists once, and both live-board readers call it
 metadata/schemas-are-valid              every run-metadata schema is valid JSON Schema Draft 2020-12
 metadata/profile-contract-is-explicit   each producing profile names the only schemas it may complete with
 metadata/lane-validates-before-complete the nondeterministic lane gates the exact object before its terminator
@@ -1494,26 +1501,29 @@ run_metrics_group() {
   # nothing about the retry recreates `-shm`, and waiting for quiescence waits
   # for the very condition that causes it.
   #
-  # `cp` only reads, so the live board is never opened, locked or mutated by
-  # the suite. The copy is then opened read-write, which is what lets SQLite
-  # build the `-shm` the original could not be given.
+  # THE COPY IS NO LONGER MADE HERE. scripts/board-snapshot.sh is the one
+  # implementation, shared with metrics.sh: `cp` only reads, so the live board
+  # is never opened, locked or mutated by the suite, and the copy is opened
+  # read-write, which is what lets SQLite build the `-shm` the original could
+  # not be given. This check carrying its own copy of that logic while
+  # metrics.sh carried another is what F67 cost a finding to discover.
+  #
+  # A read failure and a schema change are different findings and must not
+  # share a message. The primitive proves the snapshot opens (`SELECT 1` needs
+  # no table and no column) before it returns a path, so every column failure
+  # below is unambiguously about the column.
   local live
   live="$(ls -1 "${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"/*/kanban.db 2>/dev/null | head -1)"
   if [ -z "$live" ]; then
     skip "live-schema-has-fixture-columns" "no live board to compare against"
   else
-    local snap="$TMPROOT/live-schema" board
+    local snapdb board
     board="$(basename "$(dirname "$live")")"
-    rm -rf "$snap" && mkdir -p "$snap"
-    cp "$live" "$snap/kanban.db" 2>/dev/null
-    [ -f "$live-wal" ] && cp "$live-wal" "$snap/kanban.db-wal" 2>/dev/null
-    # A read failure and a schema change are different findings and must not
-    # share a message. `SELECT 1` needs no table and no column, so it succeeds
-    # on any database that opened at all — which makes every column failure
-    # below unambiguously about the column.
-    if ! sqlite3 "$snap/kanban.db" "SELECT 1;" >/dev/null 2>&1; then
+    rm -rf "$TMPROOT/live-schema"
+    if ! snapdb="$(scripts/board-snapshot.sh "$live" "$TMPROOT/live-schema" 2>"$TMPROOT/live-schema.err")" \
+       || [ -z "$snapdb" ]; then
       bad "live-schema-has-fixture-columns" \
-          "could not read a snapshot of board '$board' — the board was unreadable, which is not a schema change; the fixture is unverified this run, not disproven"
+          "could not read a snapshot of board '$board' — the board was unreadable, which is not a schema change; the fixture is unverified this run, not disproven: $(tr '\n' ' ' < "$TMPROOT/live-schema.err")"
     else
       local missing="" t c
       for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
@@ -1521,7 +1531,7 @@ run_metrics_group() {
                   "task_links:parent_id,child_id"; do
         t="${spec%%:*}"
         for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
-          sqlite3 "$snap/kanban.db" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
+          sqlite3 "$snapdb" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
             || missing="$missing $t.$c"
         done
       done
@@ -1568,7 +1578,177 @@ run_metrics_group() {
         "skills/retro/SKILL.md must run 'make metrics BOARD=<board>' — step 1 may not derive the numbers in prose (ADR-0003)"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# metrics/snapshot/ — the ONE WAL-safe way to read a live board (F47, F67).
+#
+# The behaviour these cases pin existed twice: once in scripts/metrics.sh, put
+# there by F47, and once in the live-schema check above, which went on opening
+# a live board `mode=ro` for weeks after F47 was fixed and cost a second
+# finding. F67's standing remedy — "when a check is fixed, grep for its
+# siblings" — is performed here once and then held by
+# metrics/snapshot/no-second-implementation.
+#
+# THE FIXTURE IS THE WHOLE CASE (F51). F47 is reachable ONLY on a
+# journal_mode=wal database with no `-shm` beside it; on SQLite's default
+# `delete` mode a read-only open succeeds every time. The regression case
+# written for F47 passed against the reintroduced bug for exactly that reason.
+# So the fixture below is built WAL, checkpointed, stripped of its sidecars,
+# and then asserted to still refuse a `mode=ro` open BEFORE anything else is
+# claimed about it — a fixture that cannot reproduce the bug is reported, not
+# assumed away.
+#
+# These cases build their own board under $TMPROOT. No live board is opened;
+# F67 is precisely why any live sweep stays explicit and opt-in.
+# ---------------------------------------------------------------------------
+run_snapshot_cases() {
+  # Not `group metrics` — that would print a second `== metrics ==` header for
+  # what is one group. These cases are appended rather than interleaved so the
+  # slices sharing this file rebase cleanly.
+  CURRENT_GROUP=metrics
+  local bs=scripts/board-snapshot.sh lab="$TMPROOT/snapshot"
+
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    skip "snapshot/idle-wal-board-is-readable" "sqlite3 not on PATH"; return
+  fi
+  if [ ! -x "$bs" ]; then
+    bad "snapshot/idle-wal-board-is-readable" "$bs is missing or not executable"
+    return
+  fi
+  rm -rf "$lab" && mkdir -p "$lab/src"
+
+  # Build the resting state explicitly. Checkpoint FIRST, then delete the
+  # sidecars: deleting an un-checkpointed `-wal` discards committed rows and
+  # would test a corrupt board rather than a quiescent one.
+  local src="$lab/src/kanban.db" mode
+  sqlite3 "$src" "PRAGMA journal_mode=WAL;
+                  CREATE TABLE tasks(id TEXT, status TEXT);
+                  INSERT INTO tasks VALUES('t1','done');" >/dev/null 2>&1
+  mode="$(sqlite3 "$src" "PRAGMA journal_mode;" 2>/dev/null)"
+  sqlite3 "$src" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1
+  rm -f "$src-wal" "$src-shm" "$src-journal"
+
+  if [ "$mode" != "wal" ]; then
+    bad "snapshot/fixture-reproduces-the-idle-failure" \
+        "the fixture board is journal_mode=${mode:-unknown}, not wal — F47 is unreachable on it, so every case below would pass against the reintroduced bug (F51)"
+  elif sqlite3 "file:$src?mode=ro" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
+    skip "snapshot/fixture-reproduces-the-idle-failure" \
+         "this sqlite3 opens a shm-less WAL database read-only; the F47/F67 failure cannot occur on this host"
+  else
+    ok "snapshot/fixture-reproduces-the-idle-failure (wal, no -shm, and mode=ro provably refuses it)"
+  fi
+
+  # Membership AND bytes, over the sidecars too: a `-shm` or `-wal` that the
+  # snapshot CREATED beside the live board would be a write to production even
+  # though the database itself hashed the same.
+  _snap_fp() {
+    local f
+    for f in "$1" "$1-wal" "$1-shm" "$1-journal"; do
+      if [ -e "$f" ]; then printf '%s %s\n' "${f##*/}" "$(shasum -a 256 "$f" | cut -d' ' -f1)"
+      else printf '%s absent\n' "${f##*/}"; fi
+    done
+  }
+  local before after out rc
+  before="$(_snap_fp "$src")"
+
+  out="$("$bs" "$src" "$lab/snap" 2>"$lab/snap.err")"; rc=$?
+  if [ "$rc" = 0 ] && [ -n "$out" ] \
+     && [ "$(sqlite3 "$out" "SELECT id FROM tasks;" 2>/dev/null)" = "t1" ]; then
+    ok "snapshot/idle-wal-board-is-readable (no -wal, no -shm, nothing holding it open)"
+  else
+    bad "snapshot/idle-wal-board-is-readable" \
+        "a WAL board at rest could not be snapshot-read (exit $rc, path '${out}') — that is the state every /retro finds a board in: $(tr '\n' ' ' < "$lab/snap.err")"
+  fi
+
+  after="$(_snap_fp "$src")"
+  if [ "$before" = "$after" ]; then
+    ok "snapshot/source-is-byte-identical (db and all three sidecars, present or absent)"
+  else
+    bad "snapshot/source-is-byte-identical" \
+        "reading a board changed it. before: $(printf '%s' "$before" | tr '\n' ' ') after: $(printf '%s' "$after" | tr '\n' ' ')"
+  fi
+
+  # F47's UNRECORDED SECOND HALF. `sqlite3` writes `Error: unable to open
+  # database file` to STDOUT, so a caller guarding on `[ -n "$OUT" ]` was
+  # satisfied by the error text itself: metrics.sh printed one blank line and
+  # exited 0 on a resting board, and a /retro consuming --json got nothing from
+  # a command that said it worked. Both halves are asserted here, because a
+  # case that checked only the exit code would have passed on the bug.
+  local out2 rc2
+  out="$("$bs" "$lab/absent.db" "$lab/absentsnap" 2>/dev/null)"; rc=$?
+  printf 'this is not a database\n' > "$lab/junk.db"
+  out2="$("$bs" "$lab/junk.db" "$lab/junksnap" 2>/dev/null)"; rc2=$?
+  if [ "$rc" != 0 ] && [ -z "$out" ] && [ "$rc2" != 0 ] && [ -z "$out2" ]; then
+    ok "snapshot/unreadable-input-is-silent-on-stdout (missing exit $rc, not-a-database exit $rc2, no path either time)"
+  else
+    bad "snapshot/unreadable-input-is-silent-on-stdout" \
+        "an unreadable board must exit non-zero AND print nothing to stdout: missing file exit $rc printed '$out'; not-a-database exit $rc2 printed '$out2'"
+  fi
+
+  # A source that moves under every attempt. The writer is injected through a
+  # `cp` shim rather than a background loop on purpose: a real concurrent
+  # writer makes this case a coin toss, and a flaky case in the suite that
+  # arbitrates disagreements is worse than no case.
+  mkdir -p "$lab/shim"
+  cat > "$lab/shim/cp" <<'SHIM'
+#!/bin/sh
+# fault injection: a writer commits to the SOURCE while the copy is in flight
+/bin/cp "$@"; rc=$?
+printf '%s' "$(date +%s)-$$" >> "$1"
+exit $rc
+SHIM
+  chmod +x "$lab/shim/cp"
+  cp "$src" "$lab/torn.db"
+  out="$(PATH="$lab/shim:$PATH" "$bs" "$lab/torn.db" "$lab/tornsnap" 2>"$lab/torn.err")"; rc=$?
+  if [ "$rc" != 0 ] && [ -z "$out" ]; then
+    ok "snapshot/torn-source-is-refused (exit $rc after 3 attempts, no path returned)"
+  else
+    bad "snapshot/torn-source-is-refused" \
+        "a board that changed under every copy attempt must fail, never return a partial success: exit $rc printed '$out'"
+  fi
+
+  # The point of the slice. The bracketed [r] keeps this line from matching the
+  # pattern it carries — without it, verify.sh would report itself as a second
+  # implementation of the thing it is checking for.
+  local impls
+  impls="$(grep -lE 'refusing to return a torn [r]ead' scripts/*.sh 2>/dev/null | tr '\n' ' ')"
+  impls="${impls% }"
+  if [ "$impls" = "scripts/board-snapshot.sh" ] \
+     && grep -Fq 'board-snapshot.sh' scripts/metrics.sh \
+     && grep -Fq 'board-snapshot.sh' scripts/verify.sh; then
+    ok "snapshot/no-second-implementation (both live-board readers call the one primitive)"
+  else
+    bad "snapshot/no-second-implementation" \
+        "the WAL snapshot must exist exactly once: retry loops in [${impls:-none}], and scripts/metrics.sh plus this suite's live-schema check must both call scripts/board-snapshot.sh — a second copy is what F67 cost a finding to find"
+  fi
+}
+
+# `metrics/help-exits-zero` asserted the exit code and nothing else, so both of
+# metrics.sh's `sed -n '<n>,<m>p' "$0"` help extractors printed the wrong text
+# for as long as anyone had been moving lines above them: --help stopped one
+# line before `# Usage:` and printed none of the flags, and the no-board branch
+# printed nine lines of F47 prose containing no usage line at all. Exactly the
+# failure mode CLAUDE.md names — a check anchored to content that moved goes
+# blind without turning anything red — so the extractors are now anchored to
+# content and the claim is executed rather than asserted.
+run_metrics_help_cases() {
+  CURRENT_GROUP=metrics
+  local h u
+  h="$(scripts/metrics.sh --help 2>/dev/null)"
+  u="$(scripts/metrics.sh 2>&1 >/dev/null)"
+  if printf '%s' "$h" | grep -Fq -- '--markdown-row' \
+     && printf '%s' "$h" | grep -Fq 'Usage:' \
+     && printf '%s' "$u" | grep -Fq 'Usage:'; then
+    ok "help-names-its-usage (--help and the no-board error both reach the Usage block)"
+  else
+    bad "help-names-its-usage" \
+        "metrics.sh --help must print the Usage block and its flags, and the no-board error must print Usage on stderr; got $(printf '%s' "$h" | wc -l | tr -d ' ') help lines and $(printf '%s' "$u" | wc -l | tr -d ' ') usage lines with no match"
+  fi
+}
+
 wants metrics   && run_metrics_group
+wants metrics   && run_metrics_help_cases
+wants metrics   && run_snapshot_cases
 
 # ---------------------------------------------------------------------------
 # metadata/ — the structured exhaust contract (F1, F2, F44).
