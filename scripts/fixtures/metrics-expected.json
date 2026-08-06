@@ -54,6 +54,11 @@
       "documented": false
     },
     {
+      "class": "env",
+      "count": 1,
+      "documented": false
+    },
+    {
       "class": "gate-misrouted",
       "count": 1,
       "documented": true

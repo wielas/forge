@@ -807,6 +807,8 @@ metadata/rejects-semantic-contradictions scenarios, identities, URLs, checks, co
 metadata/allows-additive-hermes-keys     dashboard-native sibling keys remain compatible
 metadata/rejects-profile-schema-mismatch a valid envelope from the wrong producer is still invalid
 metadata/rejects-missing-metadata        a completed producer run cannot carry null metadata
+metadata/validator-runtime-is-locked     the shebang the lane runs pins transitive validation code, not just jsonschema
+metadata/unreadable-path-is-not-invalid-metadata  an unreadable path exits 2; only a real envelope earns exit 1
 metadata/blocked-reason-contract         literal producers and the metrics consumer use the registry vocabulary
 prejudge/help-exits-zero          scripts/prejudge.sh --help works with no PR
 prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces a checked-in expectation
@@ -1571,6 +1573,10 @@ run_metadata_group() {
   local validator_log="$TMPROOT/metadata-validator.log"
 
   if ! command -v uv >/dev/null 2>&1; then
+    # A skip here is honest — this suite cannot run — but it is NOT the whole
+    # story, because forge-lane §7 shells out to this same validator on the
+    # unattended path. `make preflight` requires uv for that reason; a green
+    # verify with this skip does not mean a lane can terminate on this host.
     skip "schemas-are-valid" "uv not on PATH; cannot run the pinned jsonschema validator"
     return
   fi
@@ -1583,8 +1589,14 @@ run_metadata_group() {
     return
   fi
 
+  # --locked, not merely `--script`: without it uv silently RE-RESOLVES and
+  # rewrites the lock when the inline metadata drifts, so the check above would
+  # keep passing on the lock file's existence while the transitive versions it
+  # names had already moved. The direct jsonschema pin holds either way; attrs,
+  # referencing and rpds-py are what --locked keeps honest (ADR-0003: execute
+  # the claim, do not assert it).
   metadata_validate() {
-    uv run --quiet --script "$validator" "$@" > /dev/null 2> "$validator_log"
+    uv run --quiet --locked --script "$validator" "$@" > /dev/null 2> "$validator_log"
   }
   metadata_rc() {
     metadata_validate "$@"; printf '%s' "$?"
@@ -1611,9 +1623,14 @@ run_metadata_group() {
         "$contract must map each completed producer profile to its allowed schema ids"
   fi
 
+  # The ~/.forge/repo prefix is asserted, not just the script name: §7 is reached
+  # from a project worktree where a relative path cannot resolve, exactly as for
+  # lane-setup.sh and lane-blast-radius.sh above. Matching the bare name would
+  # let `scripts/validate-metadata.py …` keep this case green while every real
+  # lane run died at the terminator.
   local lane=skills/forge-lane/SKILL.md validate_line complete_line
-  validate_line="$(grep -n 'validate-metadata.py --profile forge-codex-lane' "$lane" \
-                    | head -1 | cut -d: -f1)"
+  validate_line="$(grep -Fn '~/.forge/repo/scripts/validate-metadata.py --profile forge-codex-lane' \
+                    "$lane" | head -1 | cut -d: -f1)"
   complete_line="$(grep -n 'kanban_complete(summary=' "$lane" | head -1 | cut -d: -f1)"
   if [ -n "$validate_line" ] && [ -n "$complete_line" ] \
      && [ "$validate_line" -lt "$complete_line" ] \
@@ -1684,32 +1701,49 @@ run_metadata_group() {
     bad "rejects-coverage-key-drift" "check.coverage silently replaced check.coverage_pct"
   fi
 
+  # Eight of these ten mutations edit the RECORDED gate output, so a producer
+  # that emitted nothing would silently turn them into no-ops that still report
+  # success: `jq '.result = "clear"' </dev/null` exits 0 with empty output, the
+  # validator then rejects empty stdin with rc 1, and `&& semantic_ok=0` reads
+  # that as "the contradiction was correctly caught". Prove the mutations had
+  # something to mutate before believing any of them. `.checks[1]` and the
+  # `.blocks | reverse` mutation are no-ops on shorter arrays, so the shape
+  # each mutation needs is what gets asserted, not merely non-emptiness.
   local semantic_ok=1
-  jq '.scenarios.passing = (.scenarios.added + 1)' "$fixtures/chunk-valid.json" \
-    | metadata_validate --profile forge-codex-lane - && semantic_ok=0
-  jq '.branch = "chunk/8-wrong-id"' "$fixtures/chunk-valid.json" \
-    | metadata_validate --profile forge-codex-lane - && semantic_ok=0
-  jq '.result = "clear"' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  jq '.counts.block = 0' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  jq '.counts.pass += 1' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  jq '.repo = "someone/else"' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  jq '.number += 1' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  jq '.checks[1].id = .checks[0].id' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  jq '.blocks |= reverse' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  jq '.branch = "chunk/6-wrong-id"' "$TMPROOT/metadata-produced-gate.json" \
-    | metadata_validate --profile forge-prejudge - && semantic_ok=0
-  if [ "$semantic_ok" = 1 ]; then
-    ok "rejects-semantic-contradictions (scenarios, ids, URLs, checks, counts and result)"
-  else
+  if ! jq -e '
+      type == "object"
+      and (.checks | type) == "array" and (.checks | length) > 1
+      and (.blocks | type) == "array" and (.blocks | length) > 1
+    ' "$TMPROOT/metadata-produced-gate.json" >/dev/null 2>&1; then
     bad "rejects-semantic-contradictions" \
-        "an envelope whose derived fields contradict its evidence was accepted"
+        "the recorded gate emitted no mutable envelope; the ten mutations proved nothing"
+  else
+    jq '.scenarios.passing = (.scenarios.added + 1)' "$fixtures/chunk-valid.json" \
+      | metadata_validate --profile forge-codex-lane - && semantic_ok=0
+    jq '.branch = "chunk/8-wrong-id"' "$fixtures/chunk-valid.json" \
+      | metadata_validate --profile forge-codex-lane - && semantic_ok=0
+    jq '.result = "clear"' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.counts.block = 0' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.counts.pass += 1' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.repo = "someone/else"' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.number += 1' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.checks[1].id = .checks[0].id' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.blocks |= reverse' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.branch = "chunk/6-wrong-id"' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    if [ "$semantic_ok" = 1 ]; then
+      ok "rejects-semantic-contradictions (scenarios, ids, URLs, checks, counts and result)"
+    else
+      bad "rejects-semantic-contradictions" \
+          "an envelope whose derived fields contradict its evidence was accepted"
+    fi
   fi
 
   if metadata_validate --profile forge-codex-lane "$fixtures/chunk-additive.json"; then
@@ -1730,31 +1764,78 @@ run_metadata_group() {
     bad "rejects-missing-metadata" "a completed lane run with null metadata was accepted"
   fi
 
-  local reason_ok=1 reason
+  # The lane runs this validator by shebang, not through this suite, so --locked
+  # has to be ON THE SHEBANG or the unattended path is the unpinned one while
+  # `make verify` reports a pinned one.
+  if head -1 "$validator" | grep -Fq 'uv run --locked --script'; then
+    ok "validator-runtime-is-locked (the shebang the lane uses refuses a drifted lock)"
+  else
+    bad "validator-runtime-is-locked" \
+        "$validator's shebang must pass --locked; uv silently re-resolves and rewrites the lock without it"
+  fi
+
+  # Exit 1 is a verdict about the envelope, and forge-lane §7 turns it into a
+  # block against the chunk. A path that cannot be read yields no verdict at
+  # all, so it must not borrow that code and blame the run for it.
+  if [ "$(metadata_rc --profile forge-codex-lane "$fixtures")" = 2 ]; then
+    ok "unreadable-path-is-not-invalid-metadata (exit 2, and no traceback)"
+  else
+    bad "unreadable-path-is-not-invalid-metadata" \
+        "a path that cannot be read must exit 2; exit 1 makes a lane block its chunk for an operator's fault"
+  fi
+
+  # Each producer is swept by a rule matching ITS literal form, and a rule that
+  # matches nothing extracts nothing: the loop below never sees the line, the
+  # class it carries is never validated, and the case still reports ok. That is
+  # the F65/F66 failure mode — a check anchored to content that moved degrades
+  # to silence rather than to red — and it is not hypothetical here. The form
+  # this slice retired from lane-setup.sh, `echo "reason_class=env: …"`, carries
+  # an underscore, which the echo rule's [a-z0-9=-] class does not admit;
+  # reverting a producer to it would go unswept, not caught.
+  #
+  # So the sweep is per producer, not one pooled stream, and a producer that
+  # contributes no class at all fails the case. Pooling hid this: lane-setup.sh
+  # and lane-blast-radius.sh together yield ~46 of the ~61 classes, so either
+  # one could fall silent and any total-count floor would still clear.
+  local reason_ok=1 reason silent="" legacy swept="$TMPROOT/metadata-reasons.txt"
+  : > "$swept"
+  metadata_sweep() { # $1=rule label  $2=sed script  $3=producer file
+    local hits; hits="$(sed -n "$2" "$3")"
+    if [ -n "$hits" ]; then printf '%s\n' "$hits" >> "$swept"
+    else silent="$silent $3($1)"; fi
+  }
+  metadata_sweep substrate 's/.*substrate "\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
+  metadata_sweep json     's/.*"reason":"\([a-z0-9=-]*:\).*/\1/p'   scripts/prejudge-review.sh
+  metadata_sweep quoted   's/^[[:space:]]*"\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
+  metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-setup.sh
+  metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-blast-radius.sh
+  metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-prejudge.SOUL.md
+  metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     skills/forge-lane/SKILL.md
+
   while IFS= read -r reason; do
     [ -n "$reason" ] || continue
     case "$reason" in usage:|lane-setup:|blast-radius:) continue;; esac
     metadata_validate --reason "$reason reason" || reason_ok=0
-  done < <(
-    sed -n 's/.*substrate "\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
-    sed -n 's/.*"reason":"\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
-    sed -n 's/^[[:space:]]*"\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
-    sed -n 's/.*echo "\([a-z0-9=-]*:\).*/\1/p' \
-      scripts/lane-setup.sh scripts/lane-blast-radius.sh
-    sed -n 's/.*reason="\([a-z0-9=-]*:\).*/\1/p' \
-      hermes/profiles/forge-prejudge.SOUL.md skills/forge-lane/SKILL.md
-  )
+  done < "$swept"
+
+  # Asserted directly, because no sweep rule can see it: the retired form is
+  # what a revert would reintroduce, and it is invisible to the rules above.
+  legacy="$(grep -lF 'reason_class=' \
+              scripts/prejudge-review.sh scripts/lane-setup.sh \
+              scripts/lane-blast-radius.sh hermes/profiles/forge-prejudge.SOUL.md \
+              skills/forge-lane/SKILL.md 2>/dev/null | tr '\n' ' ')"
+
   for producer in skills/forge-lane/SKILL.md \
                   hermes/profiles/forge-codex-lane.SOUL.md \
                   hermes/profiles/forge-orchestrator.SOUL.md; do
     grep -Fq '~/.forge/rubrics/run-metadata-contract.json' "$producer" || reason_ok=0
   done
   grep -Fq 'run-metadata-contract.json' scripts/metrics.sh || reason_ok=0
-  if [ "$reason_ok" = 1 ]; then
-    ok "blocked-reason-contract"
+  if [ "$reason_ok" = 1 ] && [ -z "$silent" ] && [ -z "$legacy" ]; then
+    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 7 producer rules)"
   else
     bad "blocked-reason-contract" \
-        "a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"
+        "${silent:+no class matched in:$silent — the sweep went blind, not green; }${legacy:+the retired reason-class form is back in: $legacy; }a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"
   fi
 }
 wants metadata  && run_metadata_group

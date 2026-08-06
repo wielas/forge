@@ -251,10 +251,18 @@ profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
           forge-digest (deepseek-v4-flash) · codex pinned gpt-5.6-sol xhigh
 ```
 
-`make preflight` on the mini: PASS 82 / WARN 3 / FAIL 0.
-`make verify` on this linked worktree: 124 passed / 3 failed / 7 skipped. The
+`make verify` on this linked worktree: 126 passed / 3 failed / 7 skipped. The
 three failures are the expected live SOUL-sync checks: deploying the new SOULs
 before this contract reaches `main` would leave workers referring to a contract
 that is not installed yet. Four live profile-path checks also skip outside the
 main checkout. After merge, run `./hermes/profiles-bootstrap.sh`; the expected
-main-equivalent count is 131 passed / 0 failed / 3 skipped.
+main-equivalent count is 133 passed / 0 failed / 3 skipped.
+
+`make preflight` on the mini before this slice: PASS 82 / WARN 3 / FAIL 0. It
+now reports one FAIL until this branch merges, and that is the check working
+rather than a defect: §7 reaches the validator through
+`~/.forge/repo/scripts/validate-metadata.py`, `~/.forge/repo` points at the main
+checkout, and `main` does not carry that script yet. It clears on merge. Before
+this slice the same missing dependency was silent — `uv` was declared optional
+and the metadata suite skipped without it, so a host that could not run a lane
+to completion still reported a green verify and a green preflight.

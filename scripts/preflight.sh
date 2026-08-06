@@ -114,7 +114,7 @@ need gh      required "end-chunk opens the PR with gh"
 need git     required
 need make    required "make check is THE green proof (ADR-0003)"
 need jq      required
-need uv      optional "needed for copier / make new"
+need uv      required "forge-lane §7 gates its completion metadata with it (and copier / make new)"
 need copier  optional "needed for make new"
 need lefthook optional "installed per-project by make setup, not globally"
 
@@ -649,14 +649,17 @@ fi
 
 # ---------------------------------------------------------------------------
 # The lane's protocol is partly a program too (audit F64): §3 and §5 invoke
-# scripts/lane-setup.sh and scripts/lane-blast-radius.sh through ~/.forge/repo.
-# An unattended lane reaches them by that path and by no other, so a missing
-# symlink or a cleared executable bit is a night-run failure the operator would
-# only meet as a reaped `crashed` run. Checked THROUGH ~/.forge/repo, the way
-# the lane calls them, rather than in this checkout — the checkout being fine is
-# not the property that matters, and `make verify` already covers that one.
+# scripts/lane-setup.sh and scripts/lane-blast-radius.sh through ~/.forge/repo,
+# and §7 now gates its completion metadata the same way, through
+# scripts/validate-metadata.py. An unattended lane reaches them by that path and
+# by no other, so a missing symlink or a cleared executable bit is a night-run
+# failure the operator would only meet as a reaped `crashed` run — and for §7
+# that reaping happens AFTER the PR is already open. Checked THROUGH
+# ~/.forge/repo, the way the lane calls them, rather than in this checkout — the
+# checkout being fine is not the property that matters, and `make verify`
+# already covers that one.
 # ---------------------------------------------------------------------------
-for _lscript in lane-setup.sh lane-blast-radius.sh; do
+for _lscript in lane-setup.sh lane-blast-radius.sh validate-metadata.py; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"

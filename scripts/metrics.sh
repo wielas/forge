@@ -248,9 +248,20 @@ env AS (
 -- `token:` the free-text reason happens to start with. Anything that is not a
 -- bare lowercase slug — a sentence, a timestamp like "8:07" — is honestly
 -- (unclassified) rather than quietly coerced into a bucket.
+--
+-- The whole reason is carried alongside the class, because `documented` is a
+-- claim about the REASON and not about its first token: the class extraction
+-- below only requires a slug before the first colon, so `env:no-space` classes
+-- as `env` while the contract's pattern — and validate-metadata.py --reason,
+-- which enforces it on the producer side — reject the string outright. Testing
+-- a synthesised `class + ": reason"` would agree with the SQL by construction
+-- and disagree with the validator in exactly that case. The reasons are used
+-- for the test and then dropped: they are free text on a durable board and
+-- have no business in a metrics document.
 rc AS (
   SELECT CASE WHEN p > 1 AND substr(reason,1,p-1) NOT GLOB '*[^a-z0-9-]*'
-              THEN substr(reason,1,p-1) ELSE '(unclassified)' END AS class
+              THEN substr(reason,1,p-1) ELSE '(unclassified)' END AS class,
+         reason
     FROM (SELECT reason, instr(reason,':') AS p FROM
            (SELECT json_extract(payload,'$.reason') AS reason FROM task_events
              WHERE kind = 'blocked' AND created_at >= :since AND created_at < :until)
@@ -292,8 +303,10 @@ SELECT json_object(
                             ELSE printf('%.2f', 1.0 * SUM(result = 'block') / COUNT(*)) END FROM g),
              'by_check', (SELECT COALESCE(json_group_object(id, n), json_object())
                           FROM (SELECT id, COUNT(*) n FROM gk GROUP BY id ORDER BY n DESC, id)))),
-  'reason_class', (SELECT json_group_array(json_object('class', class, 'count', n))
-                   FROM (SELECT class, COUNT(*) n FROM rc GROUP BY class ORDER BY n DESC, class)),
+  'reason_class', (SELECT json_group_array(json_object('class', class, 'count', n,
+                                                       'reasons', json(rs)))
+                   FROM (SELECT class, COUNT(*) n, json_group_array(reason) rs
+                           FROM rc GROUP BY class ORDER BY n DESC, class)),
   -- Counted, not asserted. F26 claims this envelope has never been emitted;
   -- the claim now has a number attached to it on every run.
   'forge_block_v1', (SELECT COUNT(*) FROM task_runs
@@ -323,8 +336,9 @@ JSON="$(printf '%s' "$JSON" | jq \
     .board=$b
     | .since=(if $s=="" then null else $s end)
     | .until=(if $u=="" then null else $u end)
-    | .reason_class |= map(. + {
-        documented: ((.class + ": reason") | test($reason_pattern))
+    | .reason_class |= map({
+        class, count,
+        documented: ([.reasons[] | test($reason_pattern)] | all)
       })')"
 
 render() { printf '%s' "$1" | jq -r "$2"; }
