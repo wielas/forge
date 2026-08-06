@@ -740,6 +740,7 @@ metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart fr
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
 metrics/is-read-only              reading a board does not change its sha256
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
+metrics/live-schema-read-survives-an-idle-board  a WAL board with no -shm is still readable, so the check above cannot flake (F67)
 metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
 prejudge/help-exits-zero          scripts/prejudge.sh --help works with no PR
 prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces a checked-in expectation
@@ -1091,23 +1092,81 @@ run_metrics_group() {
   # The fixture declares a schema by hand, so it can drift away from the real
   # one and keep passing. Read the columns metrics.sh depends on off a live
   # board instead of asserting in a comment that they are the same.
+  #
+  # SNAPSHOT FIRST; NEVER OPEN THE LIVE FILE. Every hermes board is WAL, and a
+  # `mode=ro` connection to a WAL database cannot create the `-shm` file it
+  # needs. SQLite deletes `-shm` and `-wal` when the last connection closes, so
+  # the read-only open this check used to do fails — sqlite error 14, "unable
+  # to open database file" — in exactly the windows when the dispatch gateway
+  # is IDLE. That is the reverse of what the audit first recorded (F67): a
+  # concurrent writer provably does not disturb the read at all, and the two
+  # obvious fixes both make it worse. Retrying fails 5 times out of 5 because
+  # nothing about the retry recreates `-shm`, and waiting for quiescence waits
+  # for the very condition that causes it.
+  #
+  # `cp` only reads, so the live board is never opened, locked or mutated by
+  # the suite. The copy is then opened read-write, which is what lets SQLite
+  # build the `-shm` the original could not be given.
   local live
   live="$(ls -1 "${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"/*/kanban.db 2>/dev/null | head -1)"
   if [ -z "$live" ]; then
     skip "live-schema-has-fixture-columns" "no live board to compare against"
   else
-    local missing="" t c
-    for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
-                "task_events:kind,payload,created_at" "task_comments:author,created_at" \
-                "task_links:parent_id,child_id"; do
-      t="${spec%%:*}"
-      for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
-        sqlite3 "file:$live?mode=ro" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
-          || missing="$missing $t.$c"
+    local snap="$TMPROOT/live-schema" board
+    board="$(basename "$(dirname "$live")")"
+    rm -rf "$snap" && mkdir -p "$snap"
+    cp "$live" "$snap/kanban.db" 2>/dev/null
+    [ -f "$live-wal" ] && cp "$live-wal" "$snap/kanban.db-wal" 2>/dev/null
+    # A read failure and a schema change are different findings and must not
+    # share a message. `SELECT 1` needs no table and no column, so it succeeds
+    # on any database that opened at all — which makes every column failure
+    # below unambiguously about the column.
+    if ! sqlite3 "$snap/kanban.db" "SELECT 1;" >/dev/null 2>&1; then
+      bad "live-schema-has-fixture-columns" \
+          "could not read a snapshot of board '$board' — the board was unreadable, which is not a schema change; the fixture is unverified this run, not disproven"
+    else
+      local missing="" t c
+      for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
+                  "task_events:kind,payload,created_at" "task_comments:author,created_at" \
+                  "task_links:parent_id,child_id"; do
+        t="${spec%%:*}"
+        for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
+          sqlite3 "$snap/kanban.db" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
+            || missing="$missing $t.$c"
+        done
       done
-    done
-    [ -z "$missing" ] && ok "live-schema-has-fixture-columns ($(basename "$(dirname "$live")"))" \
-      || bad "live-schema-has-fixture-columns" "a live board no longer has:$missing — the fixture is testing a schema that no longer exists"
+      [ -z "$missing" ] && ok "live-schema-has-fixture-columns ($board)" \
+        || bad "live-schema-has-fixture-columns" "a live board no longer has:$missing — the fixture is testing a schema that no longer exists"
+    fi
+  fi
+
+  # F67 as a regression, offline and on a board this suite builds itself. The
+  # flake was invisible to every previous run of the case above, because it
+  # only appears when `-shm` is absent and a live board usually has one; the
+  # bug reproduces on demand only if the test removes it deliberately.
+  #
+  # F47 IS THE SAME DEFECT, FOUND EARLIER AND NEVER CARRIED ACROSS — see
+  # `metrics/reads-a-quiescent-board` above, which has asserted since F47 that
+  # a board with no WAL sidecars stays readable. That fix landed on metrics.sh
+  # and stopped there, while the check 40 lines below it went on opening a live
+  # board `mode=ro`. Third time this pattern has cost a finding (F43 -> F66,
+  # F65, now F47 -> F67): when a check is fixed, grep for its siblings.
+  local wal="$TMPROOT/walcheck"
+  rm -rf "$wal" && mkdir -p "$wal"
+  sqlite3 "$wal/kanban.db" \
+    "PRAGMA journal_mode=WAL; CREATE TABLE tasks(id TEXT, status TEXT);" >/dev/null 2>&1
+  rm -f "$wal/kanban.db-shm" "$wal/kanban.db-wal"   # what SQLite does on last close
+  if sqlite3 "file:$wal/kanban.db?mode=ro" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
+    skip "live-schema-read-survives-an-idle-board" \
+         "this sqlite3 opens a shm-less WAL database read-only; the F67 flake cannot occur here"
+  else
+    cp "$wal/kanban.db" "$wal/snap.db" 2>/dev/null
+    if sqlite3 "$wal/snap.db" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
+      ok "live-schema-read-survives-an-idle-board (shm-less WAL board reads via snapshot, not mode=ro)"
+    else
+      bad "live-schema-read-survives-an-idle-board" \
+          "a WAL board with no -shm could not be read even from a snapshot — the check above will flake again (F67)"
+    fi
   fi
 
   # /retro must not go back to asking a model for arithmetic. The skill has to

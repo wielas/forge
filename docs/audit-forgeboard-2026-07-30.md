@@ -2736,3 +2736,59 @@ After: `PASS 79 · WARN 4 · FAIL 0`, and the sentinel check makes a real
 assertion — `tier-2 sentinel 'forge-operator-handoff' is correctly absent from
 disk`. Negative-tested: pointing `route_tier2()` at an existing profile fails;
 renaming the function so the name cannot be read fails.
+
+---
+
+### F67 — The suite's one live-board check flaked, and the recorded cause was backwards · `FIXED` · **medium**
+
+`metrics/live-schema-has-fixture-columns` reddened roughly one run in four,
+reporting *"a live board no longer has: \<every column\> — the fixture is
+testing a schema that no longer exists"*. The schema had not changed. The
+message described a defect that did not exist, in a suite `docs/state.md`
+nominates as the arbiter when two files disagree.
+
+**The recorded diagnosis (audit V8) was wrong in both halves, and its
+prescribed fix would not have worked.** V8 recorded that the check "races the
+launchd gateway" and "collides with a write window", and proposed a
+retry/quiescence wait. Measured on a WAL board built for the purpose:
+
+| condition | `mode=ro` open on the live file |
+|---|---|
+| concurrent writer holding an open write transaction | **succeeds** |
+| `-shm` absent, no writer at all | **fails 10/10**, sqlite error 14 |
+| `-shm` absent, retried five times | **fails 5/5** |
+
+Every hermes board is `journal_mode=wal`. A `mode=ro` connection to a WAL
+database cannot create the `-shm` file it requires, and SQLite deletes `-shm`
+and `-wal` when the **last** connection closes. So the check failed in exactly
+the windows when the gateway was **idle** — the reverse of the recorded cause.
+Both obvious remedies make it worse: retrying never recreates `-shm`, and
+waiting for quiescence waits for the very condition that triggers it.
+
+Two failure modes also shared one message. Twelve column probes each swallowed
+their own error, so an open failure presented as twelve missing columns —
+sending the next reader to rewrite a fixture that was correct.
+
+**F47 is the same defect, found earlier and never carried across.**
+`metrics/reads-a-quiescent-board` has asserted since F47 that a board with no
+WAL sidecars stays readable. That fix landed on `metrics.sh` and stopped there,
+while the check forty lines below went on opening a live board `mode=ro`. This
+is the third time the pattern has cost a finding — F43 → F66, F65, now
+F47 → F67 — and the standing remedy holds: **when a check is fixed, grep for
+its siblings.**
+
+**Fix.** Snapshot the board with `cp` (which only reads, so the live file is
+never opened, locked or mutated) and open the *copy* read-write, which is what
+lets SQLite build the `-shm` the original could not be given. A `SELECT 1`
+probe — needing no table and no column — then separates *unreadable board*
+from *schema changed*, so every column failure below it is unambiguously about
+the column.
+
+Measured after: **0/10 → 10/10** under the reproduced condition. Negative-tested
+both paths: a board missing `task_runs.profile` reports schema drift; a file
+that is not a database reports `could not read a snapshot … which is not a
+schema change; the fixture is unverified this run, not disproven`.
+
+Pinned by a new offline case, `metrics/live-schema-read-survives-an-idle-board`,
+which builds a WAL board and deletes its sidecars deliberately — the flake was
+invisible to every previous run because a live board usually *has* an `-shm`.
