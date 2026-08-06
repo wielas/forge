@@ -145,6 +145,21 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    shape — but it is the most load-bearing proven artifact in the repo, four
    climbs depend on it, and this file says never to test two unknowns at once.
    Measured as audit **F64**; deliberately untouched; its own slice.
+
+   **Sliced 2026-08-06 (F64 → `SLICED`).** §2/§3 and §5's audit are programs
+   now — `scripts/lane-setup.sh` and `scripts/lane-blast-radius.sh` — and the
+   lane is **283/300**. The line count was never the point: both `lane/` cases
+   covering those sections were substring matches, and one kept passing after
+   the mechanism was replaced, by matching the *sentence describing it*. They
+   execute the scripts now, against a real repository. Slicing them also
+   surfaced **F68**, a latent defect §5 had carried the whole time.
+
+   **Deliberately not sliced: §4's `codex exec` invocation, and §1a.** §4 is the
+   identified next lever — as a script it would *enforce* the three measured
+   flags (`< /dev/null`, `--add-dir`, `UV_CACHE_DIR`) rather than describe them,
+   and would free ~25 lines of bullet rationale — but it is a different unknown
+   (how Codex is launched) and belongs in its own slice. §1a is decision logic,
+   which ADR-0010 puts in the prompt, not in a script.
 3. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
 
@@ -173,16 +188,13 @@ divergence is the *wrong* instrument for that question.
 
 **Unblocked, and the right thing to pick up next:**
 
-1. **F64 — slice `forge-lane`** (gap 2 above; 299/300 with 12 fenced blocks).
-   A prerequisite, not a cleanup: both remaining doc edits need the headroom,
-   and at 299 they fail `cli/skill-body-budget` outright. Its own PR, green,
-   before anything else. Every line removed must be load-bearing-checked first —
-   the length is accumulated measured failures, and ADR-0010's convention is to
-   move the rationale into the script as a comment.
-2. **Schema canonicalisation** — F1, F2, F44, F26, F48. Needs F64's headroom.
+1. ~~**F64 — slice `forge-lane`**~~ **DONE 2026-08-06.** The lane is 283/300;
+   see gap 2 above for what moved and what deliberately did not.
+2. **Schema canonicalisation** — F1, F2, F44, F26, F48. Has F64's headroom now
+   (17 lines). If it needs more, §4 is the next lever, not the budget.
    Build its `metadata/` suite against **fixtures**, not a live board, and keep
    any live sweep behind an opt-in flag; F67 is the measured argument for that.
-3. **Hygiene** — F36, F53/F55, F34. F34 needs F64 first for the same reason.
+3. **Hygiene** — F36, F53/F55, F34. F34's 4-line note now fits.
 
 Ledger and rationale for every F-number: `docs/audit-forgeboard-2026-07-30.md`.
 
