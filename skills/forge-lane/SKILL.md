@@ -95,20 +95,13 @@ If parent PRs name different bases, or the rebase is not clean, block
 ## 2. Land in the worktree
 
 The dispatcher created the worktree **before it spawned you** and checked it out
-on `$HERMES_KANBAN_BRANCH`. Do not create it. Land in it and verify:
+on `$HERMES_KANBAN_BRANCH`. Do not create it — the branch is already checked out
+at that exact path, so any re-add fails, and you then exit without a terminator,
+which is reaped as `crashed`.
 
 ```bash
 cd "$HERMES_KANBAN_WORKSPACE" || exit 1
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "workspace $HERMES_KANBAN_WORKSPACE is not a git checkout" >&2
-  exit 1   # a substrate fault — block the card, do not try to repair it
-}
 ```
-
-If that check fails, the substrate is broken; report it via `kanban_block` and
-stop. Creating the worktree yourself cannot work — the branch is already checked
-out at that exact path, so any attempt to re-add it fails, and you then exit
-without a terminator, which is reaped as `crashed`.
 
 For a project-linked card the workspace is `<repo>/.worktrees/<task-id>` and the
 main repo is two levels up. Worktrees are **preserved** on completion (scratch
@@ -123,13 +116,15 @@ improvise an environment and hand you a green from a command CI never runs
 (`docs/hermes-field-notes.md` § Codex).
 
 ```bash
-git fetch origin                 # sandbox cannot; start-chunk §3 assumes it
-make setup                       # creates .venv + hooks; needs the network
-make check                       # baseline: green BEFORE the chunk starts
+~/.forge/repo/scripts/lane-setup.sh "$HERMES_KANBAN_WORKSPACE"
 ```
 
-`make setup` failing is a `kanban_block`, not something to hand to Codex. A
-lane that ships a broken environment gets back a fabricated green.
+It verifies the checkout, fetches, runs `make setup`, and proves the baseline
+green **before** the chunk starts. Non-zero is always a `kanban_block`, never
+something to hand to Codex — a lane that ships a broken environment gets back a
+fabricated green. `3` the workspace is not a git checkout, `4` `make setup`
+failed, `5` the baseline was already red. Each prints the `reason_class=` line
+to quote into the block.
 
 ## 4. Hand Codex the contract
 
@@ -202,36 +197,25 @@ unrelated refactors; that is a `kanban_block`, not a retry.
 
 ## 5. Verify it yourself
 
-Capture these **before** §4 runs, and compare after — §4's `--add-dir` hands
-Codex the whole shared `.git`, so "it only touched the worktree" is an
-assumption until you check it:
+§4's `--add-dir` hands Codex the whole shared `.git`, so "it only touched the
+worktree" is an assumption until you check it. Capture **before** §4 runs — a
+hash taken afterwards proves nothing:
 
 ```bash
-main_before="$(git rev-parse main)"
-hooks_dir="$(git rev-parse --git-path hooks)"
-find "$hooks_dir" -maxdepth 1 -type f -exec shasum -a 256 {} + \
-  | sort > .forge/hooks.before
+~/.forge/repo/scripts/lane-blast-radius.sh capture "$HERMES_KANBAN_WORKSPACE"
 ```
 
-After Codex and after every temporary verification mutation has been restored:
+After Codex, and after every temporary verification mutation has been restored:
 
 ```bash
-test "$(git rev-parse main)" = "$main_before"
-find "$hooks_dir" -maxdepth 1 -type f -exec shasum -a 256 {} + \
-  | sort > .forge/hooks.after
-cmp .forge/hooks.before .forge/hooks.after
-test -z "$(git status --porcelain --untracked-files=all)"
+~/.forge/repo/scripts/lane-blast-radius.sh check "$HERMES_KANBAN_WORKSPACE"
 ```
 
-Any mismatch or dirty path is a `kanban_block`, never a push. The old
-`git -C "$(git rev-parse --git-common-dir)" status --short hooks` probe did not
-inspect hooks at all: a common `.git` directory is not a worktree, so the
-command exits 128. Measured on the first Codex-driven bounce repair, where the
-driver dismissed that error and later completed with `.orig` and `.rej` files
-still untracked.
-
-A moved `main` or an edited hook is a `kanban_block`, never a retry — the run
-went outside its contract and you cannot tell what else it did.
+It compares `main`, hashes the shared hooks, and refuses a dirty worktree
+(untracked included). Exit `3` is a moved `main`, an edited hook, or leftover
+files — **always a `kanban_block`, never a push and never a retry.** The run went
+outside its contract and you cannot tell what else it did. Exit `2` means
+capture never ran, so the check could not run either; that is not a pass.
 
 ```bash
 make check

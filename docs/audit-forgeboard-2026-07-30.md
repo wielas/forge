@@ -2624,7 +2624,7 @@ of them: F32's rule used to be a `grep` for the sentence promising it, and is no
 a measurement — **63,164 bytes moved into the prompt file, 2,599 bytes observed
 by the driver.**
 
-### F64 — `forge-lane` is at 299 against a 300 budget that was raised to admit it · `MEASURED` · **low**
+### F64 — `forge-lane` is at 299 against a 300 budget that was raised to admit it · `SLICED` · **low**
 
 `skills/forge-lane/SKILL.md` is 299 lines with 12 fenced blocks — the same shape
 as F61, one layer over. `docs/state.md` records it as **resolved** on 2026-07-29
@@ -2832,3 +2832,39 @@ schema change; the fixture is unverified this run, not disproven`.
 Pinned by a new offline case, `metrics/live-schema-read-survives-an-idle-board`,
 which builds a WAL board and deletes its sidecars deliberately — the flake was
 invisible to every previous run because a live board usually *has* an `-shm`.
+
+---
+
+### F68 — §5's clean-worktree check only worked on projects stamped from our own template · `FIXED` · **medium**
+
+Found while slicing F64, by running the extracted script against a repository
+the forge template did not generate.
+
+`forge-lane` §5 wrote its evidence — `.forge/hooks.before`, `.forge/hooks.after`,
+the contract, the codex transcript — into `.forge/`, and then asserted
+`test -z "$(git status --porcelain --untracked-files=all)"`. **The lane's own
+bookkeeping is untracked, so that check reports the lane's own files as a dirty
+worktree.** It passed for a year because
+`templates/python-service/template/.gitignore:11` carries `.forge/`, so every
+project the ladder ever ran on happened to ignore it.
+
+On any repo not stamped from that template the lane blocks a clean chunk and
+reports it as Codex exceeding its contract — the most alarming block the
+protocol can raise, for a file the lane wrote itself. `docs/open-questions.md`
+records that the operator's projects are **not** all Python and pulls toward a
+`forge graft` skill, which is exactly the case that would have hit this.
+
+Reproduced directly: a fresh `git init` repo, `capture` then `check`, no Codex
+involved at all, exits 3 `worktree-dirty`.
+
+**Fix.** `scripts/lane-blast-radius.sh` excludes the lane's own scratch area by
+pathspec — `git status --porcelain --untracked-files=all -- ':(exclude).forge'` —
+so the check is correct because of what it asks, not because of what the target
+project happens to ignore. Pinned by `lane/lane-final-worktree-is-clean`, which
+now runs `capture` then `check` on a repo with no `.gitignore` at all and
+requires exit 0.
+
+**The general shape:** a check whose correctness depends on a *sibling file in
+someone else's repository* is passing by luck. This one had no way to notice —
+the dependency was invisible from inside the lane, and the only project anyone
+tested it on satisfied it.
