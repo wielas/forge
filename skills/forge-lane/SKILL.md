@@ -116,15 +116,21 @@ improvise an environment and hand you a green from a command CI never runs
 (`docs/hermes-field-notes.md` § Codex).
 
 ```bash
-~/.forge/repo/scripts/lane-setup.sh "$HERMES_KANBAN_WORKSPACE"
+~/.forge/repo/scripts/lane-setup.sh \
+  "$HERMES_KANBAN_WORKSPACE" "$HERMES_KANBAN_RUN_ID"
 ```
 
-It verifies the checkout, fetches, runs `make setup`, and proves the baseline
-green **before** the chunk starts. Non-zero is always a `kanban_block`, never
-something to hand to Codex — a lane that ships a broken environment gets back a
-fabricated green. `3` the workspace is not a git checkout, `4` `make setup`
-failed, `5` the baseline was already red. Each prints the `reason_class=` line
-to quote into the block.
+It verifies the checkout, gives this worktree its own hooks directory, fetches,
+runs `make setup`, proves the baseline clean and green, creates the per-run
+scratch directory, and captures protected Git state **before** the chunk starts.
+Non-zero is always a `kanban_block`, never something to hand to Codex. `3` is a
+bad worktree, `4` fetch/setup failed, `5` the baseline was red, and `6` the
+audit could not capture. Setup-created worktree dirt is also `5`: it predates
+Codex and must not later be reported as Codex escaping its boundary. Each
+failure prints the `reason_class=` line to quote into the block.
+
+Its last stdout line is `FORGE_LANE_RUNTIME=<path>` — export that value, do not
+recompute it. It is the only scratch directory the lane writes to.
 
 ## 4. Hand Codex the contract
 
@@ -132,8 +138,8 @@ Write the contract to a file rather than interpolating it into a shell string,
 and append the role boundary — **always**, whatever the card body says:
 
 ```bash
-mkdir -p .forge && kanban_show body → .forge/contract.md
-cat >> .forge/contract.md << 'EOF'
+kanban_show body → "$FORGE_LANE_RUNTIME/contract.md"
+cat >> "$FORGE_LANE_RUNTIME/contract.md" << 'EOF'
 
 ---
 You implement this contract inside this worktree. That is your whole job.
@@ -151,12 +157,12 @@ Load-bearing, not boilerplate. Reads are **not** sandboxed: the project's
 Then, from inside the worktree:
 
 ```bash
-UV_CACHE_DIR="$PWD/.forge/uv-cache" codex exec \
+UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache" codex exec \
   -C "$HERMES_KANBAN_WORKSPACE" \
   -s workspace-write \
   --add-dir "$(git rev-parse --git-common-dir)" \
-  --output-last-message .forge/codex-last.md \
-  "$(cat .forge/contract.md)" < /dev/null
+  --output-last-message "$FORGE_LANE_RUNTIME/codex-last.md" \
+  "$(cat "$FORGE_LANE_RUNTIME/contract.md")" < /dev/null
 ```
 
 - **`< /dev/null` is mandatory.** `codex exec` reads stdin; without it, it
@@ -172,10 +178,10 @@ UV_CACHE_DIR="$PWD/.forge/uv-cache" codex exec \
   Treat it as bounded instead: §5 checks the blast radius afterwards.
 - **There is no `--full-auto`** in codex-cli 0.145; `-s workspace-write` is the
   sandbox flag. Never use `--dangerously-bypass-approvals-and-sandbox`.
-- **`UV_CACHE_DIR` inside the worktree** — `uv run` writes its cache, and
-  `~/.cache/uv` is outside the sandbox. Unset, Codex notices mid-run and
-  reroutes it somewhere of its own choosing; give it a writable path under
-  `.forge/` (gitignored) so every run resolves the same way.
+- **`UV_CACHE_DIR` in the per-run temp directory** — `uv run` writes its cache,
+  and `~/.cache/uv` is outside the sandbox. `$TMPDIR` is writable by the sandbox;
+  keeping all lane scratch there means worktree cleanliness needs no blind
+  `.forge/` exclusion.
 - Model: the pin lives in `~/.codex/config.toml` (`gpt-5.6-sol`, reasoning
   `xhigh`). Override per card with `-m <model>`; record whichever you used in
   the completion metadata.
@@ -197,25 +203,9 @@ unrelated refactors; that is a `kanban_block`, not a retry.
 
 ## 5. Verify it yourself
 
-§4's `--add-dir` hands Codex the whole shared `.git`, so "it only touched the
-worktree" is an assumption until you check it. Capture **before** §4 runs — a
-hash taken afterwards proves nothing:
-
-```bash
-~/.forge/repo/scripts/lane-blast-radius.sh capture "$HERMES_KANBAN_WORKSPACE"
-```
-
-After Codex, and after every temporary verification mutation has been restored:
-
-```bash
-~/.forge/repo/scripts/lane-blast-radius.sh check "$HERMES_KANBAN_WORKSPACE"
-```
-
-It compares `main`, hashes the shared hooks, and refuses a dirty worktree
-(untracked included). Exit `3` is a moved `main`, an edited hook, or leftover
-files — **always a `kanban_block`, never a push and never a retry.** The run went
-outside its contract and you cannot tell what else it did. Exit `2` means
-capture never ran, so the check could not run either; that is not a pass.
+§3 captured an immutable baseline under `~/.forge/lane-audits/<run-id>`, outside
+every Codex-writable root. Do not recapture or replay the final audit: each run
+id permits one capture and one check.
 
 ```bash
 make check
@@ -236,11 +226,29 @@ Codex's claim that it passed is advisory. **Not green is not done** — no
 `git diff origin/main...HEAD` as a hostile reviewer before you believe the diff:
 dead code, debug leftovers, scope beyond the contract.
 
+After `make check`, the hostile review, and restoration of every temporary
+verification mutation, run the final fail-closed audit:
+
+```bash
+~/.forge/repo/scripts/lane-blast-radius.sh check \
+  "$HERMES_KANBAN_WORKSPACE" "$HERMES_KANBAN_RUN_ID"
+```
+
+It holds a named set immutable: both hooks directories, local and worktree
+config, `refs/heads/main`, `objects/info/alternates`, object reachability, and a
+clean worktree. Sibling branches, `refs/remotes/*` and other worktrees are
+**deliberately** out of scope — from in here they are indistinguishable from a
+sibling lane doing its job. Exit `3` includes an unreadable audit — **always
+block, never push or retry**; the offending path is named in the reason line and
+the full diff is in the run's audit directory. Exit `2` means setup never
+captured, or this run's one audit was already spent — recover with a new card.
+
 ## 6. PR
 
 ```bash
 git push -u origin HEAD
-gh pr create --title "<chunk id>: <title>" --body-file .forge/pr-body.md
+gh pr create --title "<chunk id>: <title>" \
+  --body-file "$FORGE_LANE_RUNTIME/pr-body.md"
 ```
 
 Reuse the PR if one already exists (`gh pr view --json url`) — and check,

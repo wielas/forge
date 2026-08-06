@@ -1,73 +1,148 @@
 #!/usr/bin/env bash
-# Prepare and validate a lane's worktree, before Codex is handed anything.
+# Prepare and validate a lane worktree before Codex receives the contract.
 #
-# This is §2 and §3 of `skills/forge-lane/SKILL.md` as a program. Both sections
-# were pure mechanism — land, check, fetch, build, baseline — described in prose
-# that the driver retyped on every run. ADR-0010 made the same move for
-# `forge-prejudge`: what a driver DOES is a script; what it DECIDES stays in the
-# prompt. The decisions here (block or proceed, and with what reason) are still
-# the model's, and stay in the skill.
+# Setup owns the complete pre-Codex mechanism: validate the dispatcher-created
+# worktree, give it its own hooks directory, refresh origin, build the
+# environment, prove the baseline clean and green, then take the immutable
+# blast-radius capture. If this script returns 0, the environment and the audit
+# control are both ready; otherwise Codex must not run.
 #
-# WHY THE ENVIRONMENT MUST BE BUILT HERE, BY THE LANE, WITH A NETWORK.
-# `codex exec -s workspace-write` has NO network, and a dispatcher worktree is a
-# fresh checkout with no `.venv`. If the lane does not build it while it still
-# can, Codex lands somewhere `make check` cannot run — and it does not stop. It
-# improvises an environment and hands back a green from a command CI never runs
-# (`docs/hermes-field-notes.md` § Codex). A lane that ships a broken environment
-# gets back a fabricated green, so `make setup` failing is a block, never
-# something to hand to Codex.
+# On success the LAST line of stdout is `FORGE_LANE_RUNTIME=<abs path>` — the
+# per-run scratch directory for the contract, the transcript, the PR body and
+# the UV cache. It lives in $TMPDIR because the sandbox must be able to write
+# it, which is exactly why the audit baseline may NOT live there.
 #
-# WHY THE WORKSPACE IS NOT CREATED HERE. The dispatcher creates the worktree
-# BEFORE it spawns the lane and checks it out on $HERMES_KANBAN_BRANCH. Creating
-# it again cannot work: the branch is already checked out at that exact path, so
-# any re-add fails, and the driver then exits without a terminator — which the
-# kernel reaps as `crashed`, ticking the failure counter for a fault that was
-# never the chunk's.
+# Usage: lane-setup.sh <workspace> <run-id>
 #
-# Usage:  lane-setup.sh <workspace>
+# Exit: 0  ready — environment built, baseline green, audit captured
+#       2  usage
+#       3  substrate — workspace is not a non-bare worktree checkout
+#       4  env — origin could not be fetched or `make setup` failed
+#       5  failing-prereq — baseline `make check` was red or setup left dirt
+#       6  audit-control — immutable blast-radius capture failed
 #
-# Exit:  0  ready — baseline green, environment built
-#        2  usage
-#        3  substrate: the workspace is not a git checkout
-#        4  env: `make setup` failed — the environment cannot be built
-#        5  failing-prereq: the baseline was already red before the chunk began
-#
-# 1 is deliberately unused, so a caller running under `set -e` cannot mistake a
-# reported condition for a crash — the same contract ADR-0010 gave the prejudge
-# protocol. Every non-zero exit prints a `reason_class=` line on stdout in the
-# vocabulary the board already uses, so the driver can quote it into a block
-# rather than compose one.
+# Exit 1 remains unused, matching ADR-0010's driver convention. Every runtime
+# failure prints a board-ready reason_class line; command output is deliberately
+# suppressed so credentials or noisy build logs do not enter durable metadata.
 set -uo pipefail
 
-WS="${1:-}"
-[ -n "$WS" ] || { echo "usage: lane-setup.sh <workspace>" >&2; exit 2; }
+[ "$#" -eq 2 ] || {
+  echo "usage: lane-setup.sh <workspace> <run-id>" >&2
+  exit 2
+}
+WS="$1" RUN_ID="$2"
+case "$RUN_ID" in
+  ""|.|..|*[!A-Za-z0-9._-]*)
+    echo "usage: lane-setup.sh <workspace> <safe-run-id>" >&2
+    exit 2
+    ;;
+esac
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)" || {
+  echo "reason_class=env: lane script directory cannot be resolved"
+  exit 6
+}
 
 cd "$WS" 2>/dev/null || {
   echo "reason_class=env: workspace $WS does not exist"
   exit 3
 }
-
-# A worktree that is not a checkout is a substrate fault, not a chunk failure.
-# It must be reported and blocked, never "repaired" by the lane.
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "reason_class=env: workspace $WS is not a git checkout"
+WS_PHYS="$(pwd -P)" || {
+  echo "reason_class=env: workspace $WS cannot be resolved"
   exit 3
 }
 
-# The sandbox cannot fetch; start-chunk §3 assumes this already happened.
-git fetch origin >/dev/null 2>&1 || true
+inside="$(git rev-parse --is-inside-work-tree 2>/dev/null)" || {
+  echo "reason_class=env: workspace $WS is not a git checkout"
+  exit 3
+}
+[ "$inside" = true ] || {
+  echo "reason_class=env: workspace $WS is not a non-bare worktree checkout"
+  exit 3
+}
+BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || {
+  echo "reason_class=env: workspace $WS is detached; a task branch is required"
+  exit 3
+}
+[ "$BRANCH" != main ] || {
+  echo "reason_class=env: workspace $WS is on main, not a task branch"
+  exit 3
+}
+if [ -n "${HERMES_KANBAN_BRANCH:-}" ] && [ "$BRANCH" != "$HERMES_KANBAN_BRANCH" ]; then
+  echo "reason_class=env: workspace branch $BRANCH does not match $HERMES_KANBAN_BRANCH"
+  exit 3
+fi
 
-make setup >/dev/null 2>&1 || {
-  echo "reason_class=env: 'make setup' failed in $WS — the environment cannot be built"
+# GIVE THIS WORKTREE ITS OWN HOOKS DIRECTORY, BEFORE `make setup` INSTALLS ONE.
+# `git rev-parse --git-path hooks` resolves to the SHARED `.git/hooks` in a
+# worktree, and lefthook bakes the installing checkout's `.venv` path into the
+# hook it writes there. Two lanes therefore race on one file, each rewriting the
+# other's (`docs/ladder-2026-07-28.md`) — and once the final audit protects hook
+# content, that race becomes a `kanban_block` blaming Codex for a sibling lane's
+# `make setup` (audit F77). Per-worktree config fixes the contention itself:
+# lefthook honours `core.hooksPath`, `--git-path hooks` follows it, and the
+# shared directory stops being written by lanes at all — which is what makes it
+# safe for the audit to hold the operator's own hooks strictly immutable.
+#
+# Ordered before `make setup` so lefthook installs to the right place, and
+# before the capture so the config change is part of the baseline, not a breach.
+if [ "$(git config --bool --get extensions.worktreeConfig 2>/dev/null)" != true ]; then
+  git config extensions.worktreeConfig true 2>/dev/null || {
+    echo "reason_class=env: cannot enable per-worktree git config in $WS_PHYS"
+    exit 3
+  }
+fi
+# --absolute-git-dir, not --git-dir: the latter may answer relatively, and a
+# relative core.hooksPath resolves against the process CWD rather than the repo.
+WT_GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null)" || WT_GIT_DIR=""
+[ -n "$WT_GIT_DIR" ] && mkdir -p "$WT_GIT_DIR/hooks" 2>/dev/null \
+  && git config --worktree core.hooksPath "$WT_GIT_DIR/hooks" 2>/dev/null || {
+  echo "reason_class=env: cannot give $WS_PHYS its own hooks directory"
+  exit 3
+}
+
+# A stale origin/main makes dependency checks and the final hostile diff lie.
+# Network failure is therefore an environment block, not a best-effort warning.
+git fetch origin >/dev/null 2>&1 || {
+  echo "reason_class=env: 'git fetch origin' failed in $WS_PHYS — remote state is unverified"
   exit 4
 }
 
-# Baseline. A red `make check` here predates the chunk, so it is a failing
-# prerequisite rather than anything Codex did — and running the chunk on top of
-# it would make the two indistinguishable afterwards.
+make setup >/dev/null 2>&1 || {
+  echo "reason_class=env: 'make setup' failed in $WS_PHYS — the environment cannot be built"
+  exit 4
+}
+
 make check >/dev/null 2>&1 || {
   echo "reason_class=failing-prereq: baseline 'make check' was already red before the chunk started"
   exit 5
 }
+baseline_status="$(git status --porcelain=v1 --untracked-files=all 2>/dev/null)" || {
+  echo "reason_class=env: baseline worktree status could not be read"
+  exit 3
+}
+[ -z "$baseline_status" ] || {
+  echo "reason_class=failing-prereq: setup left a dirty baseline before the chunk started"
+  exit 5
+}
 
-echo "lane-setup: ready — environment built, baseline green"
+RUNTIME_DIR="${TMPDIR:-/tmp}/forge-lane-$RUN_ID"
+[ ! -e "$RUNTIME_DIR" ] && mkdir "$RUNTIME_DIR" 2>/dev/null || {
+  echo "reason_class=env: per-run scratch $RUNTIME_DIR exists or cannot be created; refusing reuse"
+  exit 4
+}
+
+BLAST="$SCRIPT_DIR/lane-blast-radius.sh"
+[ -x "$BLAST" ] || {
+  echo "reason_class=env: lane-blast-radius.sh is missing or not executable"
+  exit 6
+}
+"$BLAST" capture "$WS_PHYS" "$RUN_ID" >/dev/null 2>&1 || {
+  echo "reason_class=env: immutable blast-radius capture failed for run $RUN_ID"
+  exit 6
+}
+
+echo "lane-setup: ready — environment built, baseline green, audit captured"
+# THE path, emitted rather than described. The skill used to recompute this
+# string itself, so a `$TMPDIR` that differed between the driver's shell and
+# this script would silently put the contract somewhere setup never created.
+echo "FORGE_LANE_RUNTIME=$RUNTIME_DIR"

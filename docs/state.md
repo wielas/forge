@@ -146,13 +146,23 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    climbs depend on it, and this file says never to test two unknowns at once.
    Measured as audit **F64**; deliberately untouched; its own slice.
 
-   **Sliced 2026-08-06 (F64 → `SLICED`).** §2/§3 and §5's audit are programs
-   now — `scripts/lane-setup.sh` and `scripts/lane-blast-radius.sh` — and the
-   lane is **283/300**. The line count was never the point: both `lane/` cases
-   covering those sections were substring matches, and one kept passing after
-   the mechanism was replaced, by matching the *sentence describing it*. They
-   execute the scripts now, against a real repository. Slicing them also
-   surfaced **F68**, a latent defect §5 had carried the whole time.
+   **Sliced, bounced twice, narrowed and live-validated 2026-08-06 (F64 → `FIXED`).**
+   §2/§3 and §5's audit became `scripts/lane-setup.sh` and
+   `scripts/lane-blast-radius.sh`, and the lane is **291/300**. The first
+   post-merge review proved the new control fail-open: its baseline was writable
+   by Codex, hook identity was discarded, Git inspection errors read as clean,
+   and a failed final audit could be replayed after restoring the breach
+   (F69–F74). The **second** review proved the repair fail-*closed* on the wrong
+   things — it froze the whole shared `.git`, so a sibling lane's commit, any
+   `git fetch`, and pre-existing malformed history each blocked a clean chunk
+   (F75, F76). The audit now protects a named set and states what it cannot
+   protect; `make verify` is 117/0/3 with 35 lane cases, five of them positive
+   cases pinning those false positives shut.
+
+   The opt-in live probe was re-run against the audit that shipped —
+   setup → immutable capture → real Codex commit → final audit clean, run
+   `verify-codex-1786010605-22305`. The earlier `…-80398` run proved the
+   retired design and is not evidence for this one.
 
    **Deliberately not sliced: §4's `codex exec` invocation, and §1a.** §4 is the
    identified next lever — as a script it would *enforce* the three measured
@@ -188,10 +198,12 @@ divergence is the *wrong* instrument for that question.
 
 **Unblocked, and the right thing to pick up next:**
 
-1. ~~**F64 — slice `forge-lane`**~~ **DONE 2026-08-06.** The lane is 283/300;
-   see gap 2 above for what moved and what deliberately did not.
+1. ~~**F64 — slice, narrow and live-validate `forge-lane`**~~ **DONE 2026-08-06.**
+   117/0/3 offline with 35 lane cases, and the live probe re-run against the
+   shipped audit (`verify-codex-1786010605-22305`). F68–F78 record the seams;
+   F75/F76 are why the audit protects a named set rather than the whole `.git`.
 2. **Schema canonicalisation** — F1, F2, F44, F26, F48. Has F64's headroom now
-   (17 lines). If it needs more, §4 is the next lever, not the budget.
+   (9 lines). If it needs more, §4 is the next lever, not the budget.
    Build its `metadata/` suite against **fixtures**, not a live board, and keep
    any live sweep behind an opt-in flag; F67 is the measured argument for that.
 3. **Hygiene** — F36, F53/F55, F34. F34's 4-line note now fits.
