@@ -763,7 +763,8 @@ prejudge/cost-is-storable         the verdict schema takes cost + session_id, op
 prejudge/deriver-sources-without-side-effects  sourcing verdict.sh does not change the caller's shell options
 prejudge/verdict-derives-from-scores     judge-rubric.md's verdict logic, as a table of cases (F29)
 prejudge/unevidenced-score-is-not-a-verdict  a score below 3 naming no finding fails instead of deriving
-prejudge/derivation-is-shadow-not-routing    divergence is recorded; .verdict still routes
+prejudge/derived-verdict-routes             the derived verdict routes; the model's own word is recorded, not obeyed (F29)
+prejudge/undecidable-derivation-falls-back-to-the-scorer  a null derived_verdict routes on .verdict instead of reaching substrate()
 prejudge/shadow-fields-are-stamped-never-trusted  a model-invented derived_verdict cannot survive
 prejudge/shadow-never-destroys-the-verdict  an unstampable verdict file is left exactly as found
 prejudge/shadow-needs-no-writable-tmpdir  the stage does not depend on TMPDIR being writable
@@ -1616,19 +1617,43 @@ TABLE
     ok "unevidenced-score-is-not-a-verdict (exit $?)"
   fi
 
-  # Shadow mode records; it must not route. Whatever the model said stays in
-  # `verdict`, and the routing case statement must keep reading that field.
+  # PROMOTED. The derived verdict routes; the model's own word is recorded and
+  # no longer decides. The model must still be ASKED for `verdict` — that is
+  # what keeps divergence measurable post-gate — so this asserts both halves:
+  # divergence is still recorded, and routing reads the derived field.
   local stamped
   stamped="$(stamp_shadow "$(_env 333233 approve-with-nits '[{"dimension":"scope_discipline","severity":"nit"}]')")"
   if [ "$(printf '%s' "$stamped" | jq -r '.verdict')" = "approve-with-nits" ] \
      && [ "$(printf '%s' "$stamped" | jq -r '.derived_verdict')" = "approve" ] \
      && [ "$(printf '%s' "$stamped" | jq -r '.verdict_divergence')" = "true" ] \
      && grep -q 'case "\$VERDICT" in' scripts/prejudge-review.sh \
-     && grep -q 'VERDICT="\$(jq -r .\.verdict. "\$TMP/verdict.json")"' scripts/prejudge-review.sh; then
-    ok "derivation-is-shadow-not-routing (divergence recorded, verdict still routes)"
+     && grep -q "VERDICT=\"\\\$(jq -r '\.derived_verdict // \.verdict'" scripts/prejudge-review.sh; then
+    ok "derived-verdict-routes (divergence recorded, derived value routes)"
   else
-    bad "derivation-is-shadow-not-routing" \
-        "the derived verdict must be recorded beside the model's, and routing must still read .verdict"
+    bad "derived-verdict-routes" \
+        "routing must read .derived_verdict (falling back to .verdict), and divergence must still be recorded"
+  fi
+
+  # THE FALLBACK IS THE WHOLE SAFETY PROPERTY OF THE PROMOTION. `derived_verdict`
+  # is null on two paths — the stamp could not be applied, or derivation itself
+  # failed — and a bare `jq -r '.derived_verdict'` returns the STRING "null" on
+  # both, which Stage 5's case statement sends to `*)` and substrate(). That is
+  # the PR #14 bug rebuilt one line lower. Asserted on the real file, driving
+  # the same jq the script runs, for both null shapes: key absent, key null.
+  local fb_absent fb_null fb_ok=1
+  fb_absent="$(printf '%s' '{"verdict":"bounce","findings":[]}' | jq -r '.derived_verdict // .verdict')"
+  fb_null="$(printf '%s' '{"verdict":"approve","derived_verdict":null,"verdict_derivation_error":"x"}' \
+             | jq -r '.derived_verdict // .verdict')"
+  [ "$fb_absent" = "bounce" ] || fb_ok=0
+  [ "$fb_null" = "approve" ]  || fb_ok=0
+  # ...and the routed value must be one Stage 5 can actually dispatch.
+  case "$fb_absent" in approve|approve-with-nits|bounce) ;; *) fb_ok=0;; esac
+  case "$fb_null"   in approve|approve-with-nits|bounce) ;; *) fb_ok=0;; esac
+  if [ "$fb_ok" = 1 ]; then
+    ok "undecidable-derivation-falls-back-to-the-scorer (both null shapes route, neither reaches substrate)"
+  else
+    bad "undecidable-derivation-falls-back-to-the-scorer" \
+        "a null derived_verdict must fall back to .verdict; got '$fb_absent' / '$fb_null' — an unroutable value reaches substrate() and reports a completed review as an outage"
   fi
 
   # The model IS shown these three fields, because the model-facing schema is
