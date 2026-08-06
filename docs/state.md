@@ -119,11 +119,28 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 
 ## Known gaps — open, with the shape of the fix
 
-1. **Nothing sweeps merged worktrees.** `worktree` workspaces are preserved on
-   completion, so each finished chunk leaves a full checkout plus a `.venv`
-   behind, holding its branch — measured at **50 MB per chunk**, and
-   `gh pr merge --delete-branch` fails every time because the worktree still
-   holds the branch. Manual today (`docs/operator-guide.md`).
+1. ~~**Nothing sweeps merged worktrees.**~~ **Resolved 2026-08-06.**
+   `make worktree-sweep PROJECT=<abs-path> [APPLY=1]` reclaims them: dry-run by
+   default, path-bounded to `<project>/.worktrees/`, and it removes only a
+   worktree that is clean *and* whose head branch has a merged PR **on the
+   remote**. Merge state is not a local ancestry test, because a squash merge
+   leaves no local ancestry and a local test would sweep nothing. Branch
+   deletion is `git branch -d`, never `-D`; when `-d` refuses the worktree is
+   still reclaimed and the branch is reported `RETAINED`. Seventeen cases in
+   `verify.sh`'s `sweep` group, each mutation-tested against the reintroduced
+   bug (F51's lesson).
+
+   **The same slice closed F19.** `make new` now requires an absolute, durable
+   `DEST` — `/tmp`, `/private/tmp` and `$TMPDIR` are refused, with symlinks
+   resolved before judging, and the refusal names a durable location instead of
+   only saying no. The old `DEST ?= ..` default is gone; a *relative* default is
+   what put `forgeboard-report` in `/private/tmp` in the first place.
+
+   **What this does not reach.** The sweep is path-bounded on purpose, so it
+   only sees `<project>/.worktrees/`. This repo's own 17 stale slice worktrees
+   live in `/Users/goonlab/dev/forge-slices/*` — a sibling directory, created by
+   hand rather than by the dispatcher — and the sweep reports them `REFUSE`.
+   They are still a manual job.
 2. ~~**`forge-lane` exceeds the skill body budget.**~~ **Resolved 2026-07-29**
    by splitting the budget rather than the skill. The seven ceremonies are
    43–89 lines against a 150 limit; `forge-lane` is 283 against a new 300. It
