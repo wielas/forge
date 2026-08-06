@@ -150,6 +150,44 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 
 ---
 
+## Where the work resumes (as of 2026-08-06)
+
+The tier-1 arc is **parked, not stalled**, and the thing it waits on is real
+reviews rather than effort. Read `docs/open-questions.md` — "Does the Opus
+scorer earn its latency?" — before touching anything under `prejudge`. It
+carries the two board queries, the pre-committed decision rule, and the reason
+divergence is the *wrong* instrument for that question.
+
+**Blocked on data (no action available):**
+
+- **ADR-0011 / D9.5.** Needs ~10 post-gate reviews. Accrues by itself now that
+  routing is derived and the scorer still asserts. **Do not add `verdict` to
+  `STAMPED` first** — that ends the measurement permanently.
+- **Phase 4 — S6 incremental review** (`--resume "$session_id"`, `supersedes`,
+  `findings_addressed`, stable finding ids, bounce budget 2). Edits the pinned
+  `claude -p` call, so it is gated on ADR-0011. `session_id` and `cost` are
+  *already* contracted and stamped — S6 was never blocked on a schema change,
+  only on the pin.
+- **Hiding `verdict` from the model** (F29's remainder). One-way, and therefore
+  **the last step of the entire arc**, after D9.5 is answered.
+
+**Unblocked, and the right thing to pick up next:**
+
+1. **F64 — slice `forge-lane`** (gap 2 above; 299/300 with 12 fenced blocks).
+   A prerequisite, not a cleanup: both remaining doc edits need the headroom,
+   and at 299 they fail `cli/skill-body-budget` outright. Its own PR, green,
+   before anything else. Every line removed must be load-bearing-checked first —
+   the length is accumulated measured failures, and ADR-0010's convention is to
+   move the rationale into the script as a comment.
+2. **Schema canonicalisation** — F1, F2, F44, F26, F48. Needs F64's headroom.
+   Build its `metadata/` suite against **fixtures**, not a live board, and keep
+   any live sweep behind an opt-in flag; F67 is the measured argument for that.
+3. **Hygiene** — F36, F53/F55, F34. F34 needs F64 first for the same reason.
+
+Ledger and rationale for every F-number: `docs/audit-forgeboard-2026-07-30.md`.
+
+---
+
 ## Next test, and what it must be
 
 The next run should introduce **exactly one** new variable. In rough order of
@@ -178,4 +216,5 @@ profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
           forge-digest (deepseek-v4-flash) · codex pinned gpt-5.6-sol xhigh
 ```
 
-`make preflight` on the mini: PASS 78 / WARN 3 / FAIL 0.
+`make preflight` on the mini: PASS 80 / WARN 3 / FAIL 0.
+`make verify` on `main`: 95 passed / 0 failed / 3 skipped.
