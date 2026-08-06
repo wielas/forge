@@ -130,11 +130,18 @@ INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, 
 -- forge.block.v1 is absent because it cannot exist: kanban_block takes no
 -- metadata parameter (audit F26). The class is the leading token of the
 -- free-text reason, and only some of these have one.
+--
+-- `env:...` is the discriminating row. Its class IS in the registry, so any
+-- check that tests the class alone — or a reason synthesised from it — calls it
+-- documented; the reason itself is missing the space the contract's pattern
+-- requires, and validate-metadata.py --reason rejects it. It is here so that
+-- `documented` cannot silently degrade back into a restatement of the class.
 INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
   ('t_b1','blocked','{"reason":"failing-prereq: parent PR #1 is OPEN, not merged","kind":"needs_input"}',1785200400),
   ('t_b1','blocked','{"reason":"failing-prereq: parent PR #2 is OPEN, not merged","kind":"needs_input"}',1785200410),
   ('t_b1','blocked','{"reason":"gate-misrouted: tier-2 card dispatched to a lane","kind":"needs_input"}',1785200420),
   ('t_b1','blocked','{"reason":"review-required: CHUNK-1 PR #1 — three fixes applied","kind":"needs_input"}',1785200430),
+  ('t_b1','blocked','{"reason":"env:no-space-after-colon","kind":"needs_input"}',1785200435),
   ('t_b1','blocked','{"reason":"tier-2 operator review required: run /judge, then merge or bounce","kind":"needs_input"}',1785200440),
   ('t_b1','unblocked',NULL,1785200450),
   ('t_b1','unblocked',NULL,1785200460),

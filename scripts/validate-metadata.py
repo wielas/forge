@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run --locked --script
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["jsonschema==4.26.0"]
@@ -33,11 +33,23 @@ class ContractError(Exception):
     """The versioned contract itself is missing or internally inconsistent."""
 
 
+class UnreadableError(Exception):
+    """A path could not be read at all, so nothing about it has been judged.
+
+    Distinct from invalid metadata on purpose. Exit 1 means "this envelope is
+    wrong" and a lane turns that into a block against the chunk; a directory
+    passed where a file belongs is an operator fault, and reporting it as
+    invalid metadata would blame the run for the harness's mistake.
+    """
+
+
 def read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text())
     except FileNotFoundError as exc:
         raise ContractError(f"missing {path.relative_to(ROOT)}") from exc
+    except OSError as exc:
+        raise ContractError(f"cannot read {path.relative_to(ROOT)}: {exc.strerror}") from exc
     except json.JSONDecodeError as exc:
         raise ContractError(
             f"invalid JSON in {path.relative_to(ROOT)}: {exc.msg} at line {exc.lineno}"
@@ -120,9 +132,14 @@ def instance_from(path_arg: str) -> Any:
     try:
         return json.loads(path.read_text())
     except FileNotFoundError as exc:
+        # A lane writes this file itself in §7, so its absence is the run's own
+        # fault and stays exit 1 — the producer really did fail to hand over an
+        # envelope. Every other OS error below is about the path, not the run.
         raise ValueError(f"metadata file does not exist: {path}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"metadata is not JSON: {exc.msg} at line {exc.lineno}") from exc
+    except OSError as exc:
+        raise UnreadableError(f"cannot read {path}: {exc.strerror}") from exc
 
 
 def validate_instance(contract: dict[str, Any], profile: str, instance: Any) -> list[str]:
@@ -246,6 +263,9 @@ def main() -> int:
         return 0
     except ContractError as exc:
         print(f"metadata contract error: {exc}", file=sys.stderr)
+        return 2
+    except UnreadableError as exc:
+        print(f"metadata is unjudged: {exc}", file=sys.stderr)
         return 2
 
 
