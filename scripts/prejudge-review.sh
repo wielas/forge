@@ -338,7 +338,7 @@ pr_url="$PR_URL"
 printf '%s' "$verdict" > "$TMP/verdict.json"
 
 # ---------------------------------------------------------------------------
-# Stage 4b — the verdict, DERIVED. Shadow mode: this records, it never routes.
+# Stage 4b — the verdict, DERIVED. This is what routes.
 #
 # `rubrics/judge-rubric.md` has always stated the verdict logic as four rules
 # over the scores, and nothing ever computed them — the model was asked for
@@ -346,12 +346,26 @@ printf '%s' "$verdict" > "$TMP/verdict.json"
 # stored, routed on and counted (audit F29). `scripts/verdict.sh` is those four
 # rules as a program.
 #
-# ROUTING BELOW IS UNCHANGED AND STILL READS `.verdict`, the model's own word.
-# The derived value is recorded beside it so the two can be compared over real
-# runs. That comparison is the evidence ADR-0009 D9.5 asks for — whether an
-# Opus pass told to pass through adds anything a program cannot — and it has to
-# be collected before anything acts on it. Same instrument -> shadow -> block
-# order the gate itself went through in S1, S3 and S4.
+# PROMOTED FROM SHADOW TO BLOCKING. Routing reads `.derived_verdict`; the
+# model's own word no longer decides anything. This is the third step of the
+# instrument -> shadow -> block order the gate itself went through in S1, S3
+# and S4, and it is taken on measurement: 34 recorded verdicts replayed through
+# `derive_verdict` agreed 33 times, and the single divergence changed no
+# routing (18 of the 34 were discriminating; 17 of those agreed).
+#
+# THE MODEL STILL ASSERTS `verdict`, DELIBERATELY. Leaving it in the
+# model-facing schema costs a few tokens and keeps the instrument running: with
+# routing derived, an asserted verdict decides nothing, so it is free to record
+# — and every review from here is a POST-GATE divergence sample, which is the
+# one thing the replay could not provide. Adding `verdict` to `STAMPED` would
+# end that measurement permanently and must wait until D9.5 is answered and no
+# further sample is wanted. It is the last step of the arc, not this one.
+#
+# WHAT THIS DOES NOT DECIDE. ADR-0009 D9.5 asks whether an Opus pass told to
+# pass through earns its latency GIVEN a gate that catches the mechanical half.
+# Nothing here answers that: the scorer still runs, still costs what it costs,
+# and the pinned region above is untouched. This narrows what the scorer's
+# output is trusted for — its scores and findings, not its conclusion.
 #
 # This block sits deliberately AFTER `end pinned region`. Everything above that
 # marker is the control arm, byte-identical to
@@ -374,14 +388,32 @@ printf '%s' "$verdict" > "$TMP/verdict.json"
 # because a SHADOW record could not be computed. That is measured rather than
 # theoretical: it is exactly what the first version of this stage did, and the
 # empty-output path returns 0, so its exit code could not have caught it.
+#
+# THE FALLBACK BELOW IS THAT SAME RULE, AND PROMOTION IS EXACTLY WHAT PUTS IT
+# AT RISK AGAIN. `.derived_verdict` is null on two separate paths — the stamp
+# could not be applied at all, or it applied and derivation itself failed
+# (malformed scores, or a dimension marked down naming no finding). A bare
+# `jq -r '.derived_verdict'` yields the string "null" on both, Stage 5 falls to
+# its `*)` arm, and a completed review is reported as an outage. That is the
+# PR #14 bug rebuilt one line further down, so `// .verdict` is load-bearing,
+# not defensive: when the program cannot decide, the model's word still routes
+# and the run still lands. Derivation may narrow what we trust; it may never
+# cost a review that was actually performed.
 # ---------------------------------------------------------------------------
 # shellcheck source=scripts/verdict.sh
 . "$HERE/verdict.sh"
 stamp_shadow_file "$TMP/verdict.json" \
   || echo "shadow: derivation unavailable this run; verdict left untouched" >&2
 
-VERDICT="$(jq -r '.verdict' "$TMP/verdict.json")"
-SUMMARY="$(jq -r '"\(.verdict) — \([.findings[]?] | length) finding(s)"' "$TMP/verdict.json")"
+VERDICT="$(jq -r '.derived_verdict // .verdict' "$TMP/verdict.json")"
+[ "$(jq -r '.derived_verdict // "null"' "$TMP/verdict.json")" = "null" ] \
+  && echo "verdict: derivation unavailable; routing on the model's own word — $VERDICT" >&2
+SUMMARY="$(jq -r '
+    (.derived_verdict // .verdict) as $routed
+  | "\($routed) — \([.findings[]?] | length) finding(s)"
+    + (if .verdict_divergence == true then " (derived; the scorer asserted \(.verdict))"
+       elif .derived_verdict == null then " (the scorer asserted this; derivation was unavailable)"
+       else "" end)' "$TMP/verdict.json")"
 
 # ---------------------------------------------------------------------------
 # Stage 5 — route the result to a card something alive will read.
@@ -392,7 +424,7 @@ case "$VERDICT" in
 
 tier-1 gate: clear — $(jq -r '[.checks[]|select(.status=="warn")|.id]
       | if length==0 then "no warnings" else "warnings: "+join(", ") end' "$GATE")
-tier-1 scorer: $VERDICT — scores $(jq -r '.scores
+tier-1 verdict: $SUMMARY — scores $(jq -r '.scores
       | "\(.spec_fidelity)/\(.scenario_integrity)/\(.architectural_conformance)"
       + "/\(.scope_discipline)/\(.debt_honesty)/\(.doc_reconciliation)"' "$TMP/verdict.json")
 spot-check: $(jq -r '.spot_check_suggestion // "not offered"' "$TMP/verdict.json")
