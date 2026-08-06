@@ -794,14 +794,57 @@ run_lane_group() {
   local lane=skills/forge-lane/SKILL.md
   local agents=templates/python-service/template/AGENTS.md.jinja
 
+  # §2/§3 and §5's audit are PROGRAMS now — scripts/lane-setup.sh and
+  # scripts/lane-blast-radius.sh (audit F64). So the two cases below EXECUTE
+  # them rather than grepping the skill for a substring. That is F63's argument
+  # applied one layer up: a protocol living in prose can be approximated but not
+  # tested, and this group already spent eleven cases proving it.
+  #
+  # The substring form was not merely weaker, it was actively misleading. When
+  # §3 became a script call, `sed -n '/^## 3\./,/^## 4\./p' | grep -q 'make
+  # setup'` went on passing — by matching the SENTENCE that describes what the
+  # script does. Deleting the call and keeping the prose would have stayed
+  # green. Same shape as F65: a check that survives the removal of the thing it
+  # guards was never guarding it.
+  #
+  # So each case asserts BOTH halves: the script behaves, and the skill still
+  # invokes it. A behavioural test of a script nothing calls is green and
+  # worthless.
+  local lrepo="$TMPROOT/lane-repo"
+  _lane_fixture() {   # a throwaway project whose `make check` is $1
+    rm -rf "$lrepo"; mkdir -p "$lrepo"
+    ( cd "$lrepo" \
+      && git init -q -b main . \
+      && printf 'setup:\n\t@true\ncheck:\n\t@%s\n' "$1" > Makefile \
+      && git add -A \
+      && git -c user.email=v@v -c user.name=v commit -qm init ) >/dev/null 2>&1
+  }
+  _rc() { "$@" >/dev/null 2>&1; echo $?; }   # exit code, without tripping the shell
+
   # `-s workspace-write` grants NO network. A dispatcher worktree is a fresh
   # checkout with no .venv, so unless the lane builds it while it still has a
   # network, `make check` cannot run inside the sandbox at all.
-  if sed -n '/^## 3\./,/^## 4\./p' "$lane" | grep -q 'make setup'; then
-    ok "env-prepared-before-codex"
-  else
+  local setup=scripts/lane-setup.sh e_ok=1 detail=""
+  if [ ! -x "$setup" ]; then
+    bad "env-prepared-before-codex" "$setup is missing or not executable"
+  elif ! grep -Fq '~/.forge/repo/scripts/lane-setup.sh' "$lane"; then
     bad "env-prepared-before-codex" \
-        "forge-lane §3 must run 'make setup' — the lane has a network, the codex sandbox does not"
+        "forge-lane §3 no longer invokes $setup — a bare relative path cannot resolve from a project worktree, so it must be the ~/.forge/repo form"
+  else
+    _lane_fixture true
+    [ "$(_rc "$setup" "$lrepo")" = 0 ] || { e_ok=0; detail="$detail healthy-not-0"; }
+    [ "$(_rc "$setup")" = 2 ]          || { e_ok=0; detail="$detail no-arg-not-2"; }
+    [ "$(_rc "$setup" "$TMPROOT/absent")" = 3 ] || { e_ok=0; detail="$detail missing-ws-not-3"; }
+    mkdir -p "$TMPROOT/notgit"
+    [ "$(_rc "$setup" "$TMPROOT/notgit")" = 3 ] || { e_ok=0; detail="$detail notgit-not-3"; }
+    _lane_fixture false
+    [ "$(_rc "$setup" "$lrepo")" = 5 ] || { e_ok=0; detail="$detail red-baseline-not-5"; }
+    if [ "$e_ok" = 1 ]; then
+      ok "env-prepared-before-codex (lane-setup.sh builds the env; 0/2/3/5 exact)"
+    else
+      bad "env-prepared-before-codex" \
+          "lane-setup.sh must build the environment and report a blockable reason —$detail"
+    fi
   fi
 
   # Measured: codex followed AGENTS.md to skills/forge-lane and start-chunk,
@@ -831,14 +874,41 @@ run_lane_group() {
 
   # The first Codex-driven role rerun dismissed the old hook check's exit 128
   # and completed with .orig/.rej files untracked. A green test is not a clean
-  # handoff; hash the hooks and fail on any final worktree dirt.
-  if grep -Fq 'shasum -a 256' "$lane" \
-     && grep -Fq 'cmp .forge/hooks.before .forge/hooks.after' "$lane" \
-     && grep -Fq 'git status --porcelain --untracked-files=all' "$lane"; then
-    ok "lane-final-worktree-is-clean"
-  else
+  # handoff; hash the hooks and fail on any final worktree dirt. Now executed
+  # against a real repository rather than asserted about a paragraph — every
+  # branch below is one of the three ways §4's `--add-dir` grant can be abused.
+  local blast=scripts/lane-blast-radius.sh b_ok=1 bdetail="" hooksdir
+  if [ ! -x "$blast" ]; then
+    bad "lane-final-worktree-is-clean" "$blast is missing or not executable"
+  elif ! grep -Fq '~/.forge/repo/scripts/lane-blast-radius.sh' "$lane"; then
     bad "lane-final-worktree-is-clean" \
-        "forge-lane must hash shared hooks and refuse a dirty final worktree"
+        "forge-lane §5 no longer invokes $blast — a bare relative path cannot resolve from a project worktree, so it must be the ~/.forge/repo form"
+  else
+    _lane_fixture true
+    # check before capture must NOT pass: a control that cannot find its
+    # baseline has to fail rather than report clean (F65).
+    [ "$(_rc "$blast" check "$lrepo")" = 2 ] || { b_ok=0; bdetail="$bdetail no-capture-not-2"; }
+    [ "$(_rc "$blast" capture "$lrepo")" = 0 ] || { b_ok=0; bdetail="$bdetail capture-not-0"; }
+    # The lane's own .forge/ bookkeeping must not read as a breach.
+    [ "$(_rc "$blast" check "$lrepo")" = 0 ] || { b_ok=0; bdetail="$bdetail clean-not-0"; }
+    # (1) leftover untracked files — the exact 2026-07-28 failure
+    touch "$lrepo/patch.orig"
+    [ "$(_rc "$blast" check "$lrepo")" = 3 ] || { b_ok=0; bdetail="$bdetail dirty-not-3"; }
+    rm -f "$lrepo/patch.orig"
+    # (2) an edited hook — the whole L2 local tier is inside the grant
+    hooksdir="$(cd "$lrepo" && git rev-parse --git-path hooks)"
+    mkdir -p "$lrepo/$hooksdir"; echo x > "$lrepo/$hooksdir/pre-push"
+    [ "$(_rc "$blast" check "$lrepo")" = 3 ] || { b_ok=0; bdetail="$bdetail hook-not-3"; }
+    rm -f "$lrepo/$hooksdir/pre-push"
+    # (3) a moved main — refs/heads/main is inside the grant too
+    ( cd "$lrepo" && git -c user.email=v@v -c user.name=v commit -q --allow-empty -m moved ) >/dev/null 2>&1
+    [ "$(_rc "$blast" check "$lrepo")" = 3 ] || { b_ok=0; bdetail="$bdetail main-moved-not-3"; }
+    if [ "$b_ok" = 1 ]; then
+      ok "lane-final-worktree-is-clean (dirt, edited hook and moved main each exit 3)"
+    else
+      bad "lane-final-worktree-is-clean" \
+          "the blast-radius audit must catch every way the --add-dir grant can be abused —$bdetail"
+    fi
   fi
 
   # A parent chunk is marked done when its PR opens. Measured on D1 -> D2:
