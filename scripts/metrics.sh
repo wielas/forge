@@ -26,6 +26,12 @@
 # not the connection opens. The snapshot is the pattern `forgeboard-report`'s
 # own `hermes.py` uses, and it fixes both.
 #
+# THE SNAPSHOT NO LONGER LIVES HERE. It is scripts/board-snapshot.sh, shared
+# with verify.sh's live-board check, because the fix above landed on this file
+# and stopped — while a check forty lines inside verify.sh went on opening a
+# live board `mode=ro` for weeks afterwards, and cost a second finding (F67).
+# One implementation, one behaviour, one place to fix it next time.
+#
 # Usage:
 #   ./scripts/metrics.sh <board-slug>                    # human-readable report
 #   ./scripts/metrics.sh <board-slug> --json             # the same numbers, JSON
@@ -38,6 +44,14 @@
 # =============================================================================
 set -uo pipefail
 
+# Anchored to CONTENT, never to line numbers. `sed -n '2,27p'` printed the
+# rationale and stopped one line before `# Usage:`, and the no-board branch's
+# `sed -n '17,25p'` printed nine lines of F47 prose containing no usage line at
+# all — both ranges were pinned to a header that had since moved beneath them,
+# and metrics/help-exits-zero asserted only the exit code, so nothing reddened.
+help_text()  { awk '/^# ={10}/ { n++; if (n == 2) exit; next } n == 1' "$0"; }
+usage_text() { sed -n '/^# Usage:/,/^# Exit:/p' "$0"; }
+
 BOARD=""; SINCE=""; UNTIL=""; FORMAT="text"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,13 +59,13 @@ while [ $# -gt 0 ]; do
     --until) UNTIL="${2:?--until needs YYYY-MM-DD}"; shift 2;;
     --json) FORMAT="json"; shift;;
     --markdown-row) FORMAT="markdown-row"; shift;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0;;
+    -h|--help) help_text; exit 0;;
     -*) echo "unknown arg: $1" >&2; exit 2;;
     *) [ -z "$BOARD" ] || { echo "only one board slug: got '$BOARD' and '$1'" >&2; exit 2; }
        BOARD="$1"; shift;;
   esac
 done
-[ -n "$BOARD" ] || { sed -n '17,25p' "$0"; exit 2; }
+[ -n "$BOARD" ] || { usage_text >&2; exit 2; }
 for tool in sqlite3 jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "$tool is not on PATH" >&2; exit 2; }
 done
@@ -82,55 +96,25 @@ else DB="$KANBAN_ROOT/boards/$BOARD/kanban.db"; fi
 [ -f "$DB" ] || { echo "no board database at $DB" >&2; exit 2; }
 
 # ---------------------------------------------------------------------------
-# The snapshot (audit F47). Copy the board and its durable sidecars to a
-# private directory, then query the copy.
+# The snapshot (audit F47, F67), delegated to the one primitive that does it.
+# scripts/board-snapshot.sh copies the board and its durable sidecars into a
+# private directory, fingerprints the source across the copy so a torn read is
+# refused rather than reported, opens the copy read-write — which is what lets
+# SQLite build the `-shm` that `mode=ro` on the live file could not be given —
+# and prints a path it has already proved will open.
 #
-# `-shm` is deliberately NOT among them, and that is not an omission. `-shm` is
-# the WAL index: shared memory scratch, rebuildable from `-wal`, and rewritten
-# constantly by every attached reader. Copying it risks handing SQLite a torn
-# index, and fingerprinting it would make the consistency check fail against a
-# live board for no reason. SQLite rebuilds it in the private copy — which is
-# precisely the thing `mode=ro` on the live file could not do, and the whole
-# bug. `forgeboard-report`'s hermes.py excludes it for the same reason.
-#
-# The copy is opened READ-WRITE, on purpose: WAL recovery must be able to
-# create `-shm` and checkpoint. Nothing that happens to a copy in $TMPDIR can
-# reach the board, and metrics/is-read-only proves the original's bytes.
+# The `[ -n "$SNAP" ]` guard is not belt-and-braces. It is F47's unrecorded
+# second half asserted at the call site: a failed read that prints nothing and
+# claims success is worse than a failed read, so an empty stdout from the
+# snapshot is an error here even if its exit code were ever to lie.
 # ---------------------------------------------------------------------------
 SNAPDIR="$(mktemp -d "${TMPDIR:-/tmp}/forge-metrics-snap.XXXXXX")"
 SQLF="$SNAPDIR/query.sql"
 trap 'rm -rf "$SNAPDIR"' EXIT
-SNAP="$SNAPDIR/$(basename "$DB")"
-
-# Membership AND bytes: a sidecar that appears or vanishes mid-copy is as much
-# a change as one whose contents move, and only the second kind shows up in a
-# hash of the files we happened to find first.
-fingerprint() {
-  local f
-  for f in "$DB" "$DB-wal" "$DB-journal"; do
-    [ -f "$f" ] && printf '%s %s\n' "${f##*/}" "$(shasum -a 256 "$f" | cut -d' ' -f1)"
-  done
-  return 0
-}
-
-# Three attempts, then an error. A board written faster than it can be copied is
-# a real condition and must be reported, never silently reported stale.
-attempt=1
-while : ; do
-  before="$(fingerprint)"
-  rm -f "$SNAPDIR"/kanban.db*
-  copied=0
-  for f in "$DB" "$DB-wal" "$DB-journal"; do
-    [ -f "$f" ] || continue
-    cp "$f" "$SNAPDIR/${f##*/}" 2>/dev/null || { copied=1; break; }
-  done
-  [ "$copied" = 0 ] && [ "$before" = "$(fingerprint)" ] && break
-  attempt=$((attempt+1))
-  [ "$attempt" -le 3 ] || {
-    echo "board $BOARD changed under every one of 3 snapshot attempts; refusing to report a torn read" >&2
-    exit 2; }
-done
-[ -f "$SNAP" ] || { echo "could not snapshot $DB" >&2; exit 2; }
+SNAP="$("$HERE/board-snapshot.sh" "$DB" "$SNAPDIR/board")" || {
+  echo "could not snapshot board $BOARD; refusing to report numbers from a board that was not read" >&2
+  exit 2; }
+[ -n "$SNAP" ] || { echo "snapshot of board $BOARD returned no path" >&2; exit 2; }
 
 # Timestamps in this schema are true Unix epoch seconds (`int(time.time())` in
 # hermes_cli/kanban_db.py; confirmed by the db file's mtime matching MAX(

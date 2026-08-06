@@ -67,6 +67,6 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
 	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh \
 	  scripts/lane-setup.sh scripts/lane-blast-radius.sh \
-	  scripts/new-dest.sh scripts/worktree-sweep.sh
+	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh
 	@python3 -c 'import ast; [ast.parse(open(f).read()) for f in ["scripts/prejudge-steps.py", "scripts/validate-metadata.py"]]'
 	@echo "forge validate: OK"
