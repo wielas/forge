@@ -22,8 +22,8 @@
 #       6  audit-control — immutable blast-radius capture failed
 #
 # Exit 1 remains unused, matching ADR-0010's driver convention. Every runtime
-# failure prints a board-ready reason_class line; command output is deliberately
-# suppressed so credentials or noisy build logs do not enter durable metadata.
+# failure prints a board-ready `<class>: <reason>`; command output is suppressed
+# so credentials or noisy build logs do not enter durable metadata.
 set -uo pipefail
 
 [ "$#" -eq 2 ] || {
@@ -38,37 +38,37 @@ case "$RUN_ID" in
     ;;
 esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)" || {
-  echo "reason_class=env: lane script directory cannot be resolved"
+  echo "env: lane script directory cannot be resolved"
   exit 6
 }
 
 cd "$WS" 2>/dev/null || {
-  echo "reason_class=env: workspace $WS does not exist"
+  echo "env: workspace $WS does not exist"
   exit 3
 }
 WS_PHYS="$(pwd -P)" || {
-  echo "reason_class=env: workspace $WS cannot be resolved"
+  echo "env: workspace $WS cannot be resolved"
   exit 3
 }
 
 inside="$(git rev-parse --is-inside-work-tree 2>/dev/null)" || {
-  echo "reason_class=env: workspace $WS is not a git checkout"
+  echo "env: workspace $WS is not a git checkout"
   exit 3
 }
 [ "$inside" = true ] || {
-  echo "reason_class=env: workspace $WS is not a non-bare worktree checkout"
+  echo "env: workspace $WS is not a non-bare worktree checkout"
   exit 3
 }
 BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || {
-  echo "reason_class=env: workspace $WS is detached; a task branch is required"
+  echo "env: workspace $WS is detached; a task branch is required"
   exit 3
 }
 [ "$BRANCH" != main ] || {
-  echo "reason_class=env: workspace $WS is on main, not a task branch"
+  echo "env: workspace $WS is on main, not a task branch"
   exit 3
 }
 if [ -n "${HERMES_KANBAN_BRANCH:-}" ] && [ "$BRANCH" != "$HERMES_KANBAN_BRANCH" ]; then
-  echo "reason_class=env: workspace branch $BRANCH does not match $HERMES_KANBAN_BRANCH"
+  echo "env: workspace branch $BRANCH does not match $HERMES_KANBAN_BRANCH"
   exit 3
 fi
 
@@ -87,7 +87,7 @@ fi
 # before the capture so the config change is part of the baseline, not a breach.
 if [ "$(git config --bool --get extensions.worktreeConfig 2>/dev/null)" != true ]; then
   git config extensions.worktreeConfig true 2>/dev/null || {
-    echo "reason_class=env: cannot enable per-worktree git config in $WS_PHYS"
+    echo "env: cannot enable per-worktree git config in $WS_PHYS"
     exit 3
   }
 fi
@@ -96,48 +96,48 @@ fi
 WT_GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null)" || WT_GIT_DIR=""
 [ -n "$WT_GIT_DIR" ] && mkdir -p "$WT_GIT_DIR/hooks" 2>/dev/null \
   && git config --worktree core.hooksPath "$WT_GIT_DIR/hooks" 2>/dev/null || {
-  echo "reason_class=env: cannot give $WS_PHYS its own hooks directory"
+  echo "env: cannot give $WS_PHYS its own hooks directory"
   exit 3
 }
 
 # A stale origin/main makes dependency checks and the final hostile diff lie.
 # Network failure is therefore an environment block, not a best-effort warning.
 git fetch origin >/dev/null 2>&1 || {
-  echo "reason_class=env: 'git fetch origin' failed in $WS_PHYS — remote state is unverified"
+  echo "env: 'git fetch origin' failed in $WS_PHYS — remote state is unverified"
   exit 4
 }
 
 make setup >/dev/null 2>&1 || {
-  echo "reason_class=env: 'make setup' failed in $WS_PHYS — the environment cannot be built"
+  echo "env: 'make setup' failed in $WS_PHYS — the environment cannot be built"
   exit 4
 }
 
 make check >/dev/null 2>&1 || {
-  echo "reason_class=failing-prereq: baseline 'make check' was already red before the chunk started"
+  echo "failing-prereq: baseline 'make check' was already red before the chunk started"
   exit 5
 }
 baseline_status="$(git status --porcelain=v1 --untracked-files=all 2>/dev/null)" || {
-  echo "reason_class=env: baseline worktree status could not be read"
+  echo "env: baseline worktree status could not be read"
   exit 3
 }
 [ -z "$baseline_status" ] || {
-  echo "reason_class=failing-prereq: setup left a dirty baseline before the chunk started"
+  echo "failing-prereq: setup left a dirty baseline before the chunk started"
   exit 5
 }
 
 RUNTIME_DIR="${TMPDIR:-/tmp}/forge-lane-$RUN_ID"
 [ ! -e "$RUNTIME_DIR" ] && mkdir "$RUNTIME_DIR" 2>/dev/null || {
-  echo "reason_class=env: per-run scratch $RUNTIME_DIR exists or cannot be created; refusing reuse"
+  echo "env: per-run scratch $RUNTIME_DIR exists or cannot be created; refusing reuse"
   exit 4
 }
 
 BLAST="$SCRIPT_DIR/lane-blast-radius.sh"
 [ -x "$BLAST" ] || {
-  echo "reason_class=env: lane-blast-radius.sh is missing or not executable"
+  echo "env: lane-blast-radius.sh is missing or not executable"
   exit 6
 }
 "$BLAST" capture "$WS_PHYS" "$RUN_ID" >/dev/null 2>&1 || {
-  echo "reason_class=env: immutable blast-radius capture failed for run $RUN_ID"
+  echo "env: immutable blast-radius capture failed for run $RUN_ID"
   exit 6
 }
 

@@ -33,7 +33,7 @@ continuing. A dependent card is never briefly dispatchable without its edge.
 **D8.2 — A dependent lane requires merged parent PRs.** Before setup or Codex,
 `forge-lane` inspects parent chunk metadata and queries every parent PR. An open
 parent PR produces a sticky `needs_input` block with
-`reason_class=failing-prereq`.
+a reason prefixed `failing-prereq:`.
 
 **D8.3 — Retry rebases onto the integrated base.** After the operator merges
 the parent and unblocks the child, the lane fetches and rebases the still-clean

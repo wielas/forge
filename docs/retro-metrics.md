@@ -112,7 +112,8 @@ made review more permissive.
 ### 3. `reason_class` distribution
 
 **Definition:** counts per class over the period's `blocked` events, where the
-class is the leading `<token>:` of the block reason. Documented vocabulary:
+class is the leading `<token>:` of the block reason. The machine source is
+`rubrics/run-metadata-contract.json`; its current documented vocabulary is:
 `stale-spec`, `failing-prereq`, `env`, `ci-red`, `judge-bounce`,
 `gate-misrouted`, `gate-unrunnable`, `other`. `gate-unrunnable` was added
 2026-08-04 with ADR-0009: it is the prejudge driver's reason when

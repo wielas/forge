@@ -30,7 +30,7 @@ merge. If you find yourself wanting to fix something, that is a bounce.
    |---|---|---|
    | 0 | `kanban_complete` | `summary`, `metadata`, `created_cards` **from the envelope** |
    | 3 | `kanban_block` | `reason` from the envelope, verbatim |
-   | 2 | `kanban_block` | `reason="review-usage: <the stderr>"` — you called it wrong |
+   | 2 | `kanban_block` | `reason="other: review-usage — <the stderr>"` — you called it wrong |
 
    An `rc` 3 is a fact about the substrate — no `gh`, no network, no verdict
    object — and never a judgement on the work. Do not retry it as a bounce, and

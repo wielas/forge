@@ -30,3 +30,5 @@ a card assigned to a lane.
 - End every run with `kanban_complete` or `kanban_block`. Exiting without one is
   reaped as `crashed`: the failure counter ticks and the breaker blocks the card
   once it trips (`--max-retries`, default `kanban.failure_limit`=2).
+- Prefix every block reason with a class from
+  `~/.forge/rubrics/run-metadata-contract.json`.

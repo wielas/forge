@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.local/rubrics/gate-result.schema.json",
+  "title": "forge.gate.v1",
+  "description": "Deterministic tier-1 gate result stored when the gate blocks before a scorer is spawned.",
+  "type": "object",
+  "additionalProperties": true,
+  "propertyNames": {
+    "not": {
+      "pattern": "^forge\\."
+    }
+  },
+  "required": [
+    "schema",
+    "gate",
+    "pr",
+    "repo",
+    "number",
+    "chunk",
+    "branch",
+    "head",
+    "base",
+    "checks",
+    "counts",
+    "blocks",
+    "result"
+  ],
+  "properties": {
+    "schema": {
+      "const": "forge.gate.v1"
+    },
+    "gate": {
+      "const": "forge-prejudge-gate"
+    },
+    "pr": {
+      "type": "string",
+      "pattern": "^https://github\\.com/[^/]+/[^/]+/pull/[1-9][0-9]*$"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$"
+    },
+    "number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "chunk": {
+      "type": ["string", "null"],
+      "pattern": "^CHUNK-[0-9]+$"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "head": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "base": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence", "action"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "block", "warn", "skip"]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": ["string", "null"]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "block"
+                }
+              },
+              "required": ["status"]
+            },
+            "then": {
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": ["pass", "skip"]
+                }
+              },
+              "required": ["status"]
+            },
+            "then": {
+              "properties": {
+                "action": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "block", "warn", "skip"],
+      "properties": {
+        "pass": {"type": "integer", "minimum": 0},
+        "block": {"type": "integer", "minimum": 0},
+        "warn": {"type": "integer", "minimum": 0},
+        "skip": {"type": "integer", "minimum": 0}
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]+$"
+      }
+    },
+    "result": {
+      "type": "string",
+      "enum": ["block", "clear"]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "const": "block"
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "counts": {
+            "properties": {
+              "block": {
+                "minimum": 1
+              }
+            }
+          },
+          "blocks": {
+            "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "counts": {
+            "properties": {
+              "block": {
+                "const": 0
+              }
+            }
+          },
+          "blocks": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schema": "forge.chunk.v1",
+  "chunk_id": "CHUNK-7",
+  "project": "gym-coach",
+  "branch": "chunk/7-sync-engine",
+  "pr": "https://github.com/example/gym-coach/pull/42",
+  "lane": "forge-codex-lane",
+  "scenarios": {
+    "added": 4,
+    "passing": 4,
+    "feature_files": ["tests/features/chunk_7.feature"]
+  },
+  "check": {
+    "green": true,
+    "coverage_pct": 91.4
+  },
+  "files_changed": 6,
+  "lines_changed": 312,
+  "decisions": [],
+  "debt": [],
+  "card_proposals": [],
+  "duration_min": 23,
+  "worker": "codex/gpt-5.6-sol xhigh"
+}

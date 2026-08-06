@@ -55,6 +55,16 @@ done
 for tool in sqlite3 jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "$tool is not on PATH" >&2; exit 2; }
 done
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)" || {
+  echo "metrics script directory cannot be resolved" >&2
+  exit 2
+}
+CONTRACT="$HERE/../rubrics/run-metadata-contract.json"
+BLOCKED_REASON_PATTERN="$(jq -er '.blocked_reason_pattern | select(type == "string")' \
+  "$CONTRACT" 2>/dev/null)" || {
+  echo "blocked reason contract is unreadable at $CONTRACT" >&2
+  exit 2
+}
 for d in $SINCE $UNTIL; do
   case "$d" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
     *) echo "dates must be YYYY-MM-DD: got '$d'" >&2; exit 2;; esac
@@ -238,9 +248,20 @@ env AS (
 -- `token:` the free-text reason happens to start with. Anything that is not a
 -- bare lowercase slug — a sentence, a timestamp like "8:07" — is honestly
 -- (unclassified) rather than quietly coerced into a bucket.
+--
+-- The whole reason is carried alongside the class, because `documented` is a
+-- claim about the REASON and not about its first token: the class extraction
+-- below only requires a slug before the first colon, so `env:no-space` classes
+-- as `env` while the contract's pattern — and validate-metadata.py --reason,
+-- which enforces it on the producer side — reject the string outright. Testing
+-- a synthesised `class + ": reason"` would agree with the SQL by construction
+-- and disagree with the validator in exactly that case. The reasons are used
+-- for the test and then dropped: they are free text on a durable board and
+-- have no business in a metrics document.
 rc AS (
   SELECT CASE WHEN p > 1 AND substr(reason,1,p-1) NOT GLOB '*[^a-z0-9-]*'
-              THEN substr(reason,1,p-1) ELSE '(unclassified)' END AS class
+              THEN substr(reason,1,p-1) ELSE '(unclassified)' END AS class,
+         reason
     FROM (SELECT reason, instr(reason,':') AS p FROM
            (SELECT json_extract(payload,'$.reason') AS reason FROM task_events
              WHERE kind = 'blocked' AND created_at >= :since AND created_at < :until)
@@ -283,10 +304,9 @@ SELECT json_object(
              'by_check', (SELECT COALESCE(json_group_object(id, n), json_object())
                           FROM (SELECT id, COUNT(*) n FROM gk GROUP BY id ORDER BY n DESC, id)))),
   'reason_class', (SELECT json_group_array(json_object('class', class, 'count', n,
-                     'documented', CASE WHEN class IN ('stale-spec','failing-prereq','env',
-                       'ci-red','judge-bounce','gate-misrouted','gate-unrunnable','other')
-                     THEN json('true') ELSE json('false') END))
-                   FROM (SELECT class, COUNT(*) n FROM rc GROUP BY class ORDER BY n DESC, class)),
+                                                       'reasons', json(rs)))
+                   FROM (SELECT class, COUNT(*) n, json_group_array(reason) rs
+                           FROM rc GROUP BY class ORDER BY n DESC, class)),
   -- Counted, not asserted. F26 claims this envelope has never been emitted;
   -- the claim now has a number attached to it on every run.
   'forge_block_v1', (SELECT COUNT(*) FROM task_runs
@@ -310,8 +330,16 @@ JSON="$(sqlite3 "$SNAP" < "$SQLF")"; rc=$?
 [ -n "$JSON" ] || { echo "query produced no output for $DB" >&2; exit 2; }
 printf '%s' "$JSON" | jq -e . >/dev/null 2>&1 \
   || { printf 'querying %s produced non-JSON: %s\n' "$BOARD" "$JSON" >&2; exit 2; }
-JSON="$(printf '%s' "$JSON" | jq --arg b "$BOARD" --arg s "${SINCE:-}" --arg u "${UNTIL:-}" \
-  '.board=$b | .since=(if $s=="" then null else $s end) | .until=(if $u=="" then null else $u end)')"
+JSON="$(printf '%s' "$JSON" | jq \
+  --arg b "$BOARD" --arg s "${SINCE:-}" --arg u "${UNTIL:-}" \
+  --arg reason_pattern "$BLOCKED_REASON_PATTERN" '
+    .board=$b
+    | .since=(if $s=="" then null else $s end)
+    | .until=(if $u=="" then null else $u end)
+    | .reason_class |= map({
+        class, count,
+        documented: ([.reasons[] | test($reason_pattern)] | all)
+      })')"
 
 render() { printf '%s' "$1" | jq -r "$2"; }
 
@@ -371,7 +399,7 @@ text)
     "  verdicts: " + ([.verdicts.by_verdict | to_entries[] | "\(.key) \(.value)"]
                       | if length == 0 then "none" else join(" · ") end),
     "",
-    "reason_class distribution — leading token of the blocked reason; \(.forge_block_v1) runs carry forge.block.v1",
+    "reason class distribution — leading token of the blocked reason; legacy forge.block.v1 envelopes observed: \(.forge_block_v1)",
     (if (.reason_class | length) == 0 then "  empty (0 blocked cards)"
      else ([.reason_class[]
             | "  \(.class) ×\(.count)"
