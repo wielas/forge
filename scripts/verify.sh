@@ -13,7 +13,7 @@
 #   aspiration from observation.
 #
 # Usage:
-#   ./scripts/verify.sh                 # cli + config + substrate(free) + template
+#   ./scripts/verify.sh                 # every group, with free substrate probes
 #   ./scripts/verify.sh cli config      # only these groups
 #   ./scripts/verify.sh --with-codex    # also run the sandbox probes (spend tokens)
 #   ./scripts/verify.sh --list          # list cases without running them
@@ -30,6 +30,8 @@
 #   metrics/    the flywheel's three numbers, computed from a checked-in SQL
 #               fixture and diffed against a checked-in expectation. A schema
 #               drift must fail a check rather than a quarter                (F27)
+#   metadata/   completed-run envelopes against their versioned JSON Schemas,
+#               from fixtures only; no live board is opened              (F1, F2, F44)
 #   prejudge/   tier 1 as a program: the AST walker against a checked-in fixture
 #               of real and near-miss step shapes, and the gate's own safety
 #               properties — absent CI is not a pass, skip is not pass, it does
@@ -53,11 +55,11 @@ while [ $# -gt 0 ]; do
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
-    cli|config|substrate|template|lane|metrics|prejudge) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|metrics|metadata|prejudge) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics prejudge"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics metadata prejudge"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -792,6 +794,22 @@ metrics/is-read-only              reading a board does not change its sha256
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
 metrics/live-schema-read-survives-an-idle-board  a WAL board with no -shm is still readable, so the check above cannot flake (F67)
 metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
+metadata/schemas-are-valid              every run-metadata schema is valid JSON Schema Draft 2020-12
+metadata/profile-contract-is-explicit   each producing profile names the only schemas it may complete with
+metadata/lane-validates-before-complete the nondeterministic lane gates the exact object before its terminator
+metadata/valid-by-profile               canonical chunk/judge fixtures and the recorded gate producer validate by profile
+metadata/published-examples-validate    the two JSON examples in the canonical document satisfy their own schemas
+metadata/rejects-nested-chunk            the historical $."forge.chunk.v1" envelope is not canonical
+metadata/rejects-reserved-nested-copy    a flat envelope cannot hide a second copy under a forge.* key
+metadata/rejects-incomplete-chunk        a chunk missing a required exhaust field cannot complete
+metadata/rejects-coverage-key-drift      check.coverage cannot silently replace check.coverage_pct
+metadata/rejects-semantic-contradictions scenarios, identities, URLs, checks, counts and result cannot disagree
+metadata/allows-additive-hermes-keys     dashboard-native sibling keys remain compatible
+metadata/rejects-profile-schema-mismatch a valid envelope from the wrong producer is still invalid
+metadata/rejects-missing-metadata        a completed producer run cannot carry null metadata
+metadata/validator-runtime-is-locked     the shebang the lane runs pins transitive validation code, not just jsonschema
+metadata/unreadable-path-is-not-invalid-metadata  an unreadable path exits 2; only a real envelope earns exit 1
+metadata/blocked-reason-contract         literal producers and the metrics consumer use the registry vocabulary
 prejudge/help-exits-zero          scripts/prejudge.sh --help works with no PR
 prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces a checked-in expectation
 prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x)==render(x) are both reported
@@ -1190,7 +1208,7 @@ run_lane_group() {
   # Code dependencies need the parent PR integrated, and the wait must be
   # sticky because the board-level parent is already done.
   if grep -Fq 'mergedAt' "$lane" \
-     && grep -Fq 'reason_class=failing-prereq' "$lane" \
+     && grep -Fq 'the `failing-prereq:` classification' "$lane" \
      && grep -Fq 'kanban_block(kind="needs_input"' "$lane" \
      && grep -Fq 'Do **not** use block kind `dependency`' "$lane" \
      && grep -Fq 'unmerged parent branch or silently create a stacked PR' "$lane" \
@@ -1532,6 +1550,295 @@ run_metrics_group() {
   fi
 }
 wants metrics   && run_metrics_group
+
+# ---------------------------------------------------------------------------
+# metadata/ — the structured exhaust contract (F1, F2, F44).
+#
+# This suite is deliberately fixture-only. A live Hermes board is production
+# data, and F67 measured why even a read-only open can flake on an idle WAL
+# database. A later opt-in sweep may snapshot a live board; the default gate
+# proves the contract with immutable files and no board dependency.
+#
+# Validation uses the JSON Schema implementation pinned in
+# scripts/validate-metadata.py. Re-implementing JSON Schema in jq would repeat
+# F23 inside Forge: a handwritten validator beside the machine-readable source
+# of truth, waiting for the two to disagree.
+# ---------------------------------------------------------------------------
+run_metadata_group() {
+  group metadata
+  local validator=scripts/validate-metadata.py
+  local fixtures=scripts/fixtures/metadata
+  local contract=rubrics/run-metadata-contract.json
+  local gate=scripts/prejudge.sh prs=scripts/fixtures/prejudge-prs
+  local validator_log="$TMPROOT/metadata-validator.log"
+
+  if ! command -v uv >/dev/null 2>&1; then
+    # A skip here is honest — this suite cannot run — but it is NOT the whole
+    # story, because forge-lane §7 shells out to this same validator on the
+    # unattended path. `make preflight` requires uv for that reason; a green
+    # verify with this skip does not mean a lane can terminate on this host.
+    skip "schemas-are-valid" "uv not on PATH; cannot run the pinned jsonschema validator"
+    return
+  fi
+  if [ ! -f "$validator" ]; then
+    bad "schemas-are-valid" "$validator is missing"
+    return
+  fi
+  if [ ! -f "$validator.lock" ]; then
+    bad "schemas-are-valid" "$validator.lock is missing; transitive validation code is not pinned"
+    return
+  fi
+
+  # --locked, not merely `--script`: without it uv silently RE-RESOLVES and
+  # rewrites the lock when the inline metadata drifts, so the check above would
+  # keep passing on the lock file's existence while the transitive versions it
+  # names had already moved. The direct jsonschema pin holds either way; attrs,
+  # referencing and rpds-py are what --locked keeps honest (ADR-0003: execute
+  # the claim, do not assert it).
+  metadata_validate() {
+    uv run --quiet --locked --script "$validator" "$@" > /dev/null 2> "$validator_log"
+  }
+  metadata_rc() {
+    metadata_validate "$@"; printf '%s' "$?"
+  }
+
+  if metadata_validate --check-schemas; then
+    ok "schemas-are-valid (Draft 2020-12, every registered schema)"
+  else
+    bad "schemas-are-valid" "$(tail -3 "$validator_log" | tr '\n' ' ')"
+  fi
+
+  if jq -e '
+      .version == 1
+      and .schemas["forge.chunk.v1"] == "chunk-handoff.schema.json"
+      and .schemas["forge.gate.v1"] == "gate-result.schema.json"
+      and .schemas["forge.judge.v1"] == "judge-verdict.schema.json"
+      and .profiles["forge-codex-lane"].completed == ["forge.chunk.v1"]
+      and (.profiles["forge-prejudge"].completed | sort
+           == (["forge.gate.v1","forge.judge.v1"] | sort))
+    ' "$contract" >/dev/null 2>&1; then
+    ok "profile-contract-is-explicit (lane: chunk; prejudge: gate or judge)"
+  else
+    bad "profile-contract-is-explicit" \
+        "$contract must map each completed producer profile to its allowed schema ids"
+  fi
+
+  # The ~/.forge/repo prefix is asserted, not just the script name: §7 is reached
+  # from a project worktree where a relative path cannot resolve, exactly as for
+  # lane-setup.sh and lane-blast-radius.sh above. Matching the bare name would
+  # let `scripts/validate-metadata.py …` keep this case green while every real
+  # lane run died at the terminator.
+  local lane=skills/forge-lane/SKILL.md validate_line complete_line
+  validate_line="$(grep -Fn '~/.forge/repo/scripts/validate-metadata.py --profile forge-codex-lane' \
+                    "$lane" | head -1 | cut -d: -f1)"
+  complete_line="$(grep -n 'kanban_complete(summary=' "$lane" | head -1 | cut -d: -f1)"
+  if [ -n "$validate_line" ] && [ -n "$complete_line" ] \
+     && [ "$validate_line" -lt "$complete_line" ] \
+     && grep -Fq "metadata=<the validated file's exact object>" "$lane"; then
+    ok "lane-validates-before-complete"
+  else
+    bad "lane-validates-before-complete" \
+        "forge-lane must validate the flat file before kanban_complete and pass that exact object"
+  fi
+
+  local valid_ok=1 name profile gate_rc
+  for spec in \
+    "chunk-valid.json:forge-codex-lane" \
+    "judge-valid.json:forge-prejudge"; do
+    name="${spec%%:*}"; profile="${spec#*:}"
+    metadata_validate --profile "$profile" "$fixtures/$name" || valid_ok=0
+  done
+  "$gate" --fixture "$prs/pr-8" --json \
+    > "$TMPROOT/metadata-produced-gate.json" 2> "$TMPROOT/metadata-gate.err"
+  gate_rc=$?
+  [ "$gate_rc" = 1 ] || valid_ok=0
+  metadata_validate --profile forge-prejudge "$TMPROOT/metadata-produced-gate.json" \
+    || valid_ok=0
+  [ "$valid_ok" = 1 ] \
+    && ok "valid-by-profile (chunk, recorded gate producer, judge)" \
+    || bad "valid-by-profile" \
+        "a canonical envelope failed its producer contract: $(tail -3 "$validator_log" | tr '\n' ' ')"
+
+  metadata_example() { # one-based JSON block index
+    awk -v want="$1" '
+      /^```json$/ { seen++; inside=(seen==want); next }
+      inside && /^```$/ { exit }
+      inside { print }
+    ' rubrics/kanban-metadata-schema.md
+  }
+  if metadata_example 1 | metadata_validate --profile forge-codex-lane - \
+     && metadata_example 2 | metadata_validate --profile forge-prejudge -; then
+    ok "published-examples-validate"
+  else
+    bad "published-examples-validate" \
+        "rubrics/kanban-metadata-schema.md contains an example its schema rejects"
+  fi
+
+  if [ "$(metadata_rc --profile forge-codex-lane "$fixtures/chunk-nested.json")" = 1 ]; then
+    ok "rejects-nested-chunk (the historical envelope shape stays noncanonical)"
+  else
+    bad "rejects-nested-chunk" 'metadata nested under $."forge.chunk.v1" must fail, never normalize'
+  fi
+
+  if jq '.["forge.chunk.v1"] = {chunk_id: .chunk_id, pr: .pr}' \
+       "$fixtures/chunk-valid.json" \
+       | metadata_validate --profile forge-codex-lane -; then
+    bad "rejects-reserved-nested-copy" \
+        "a flat chunk carrying a second forge.chunk.v1 object was accepted"
+  else
+    ok "rejects-reserved-nested-copy"
+  fi
+
+  if [ "$(metadata_rc --profile forge-codex-lane "$fixtures/chunk-missing-required.json")" = 1 ]; then
+    ok "rejects-incomplete-chunk"
+  else
+    bad "rejects-incomplete-chunk" "a chunk missing required exhaust fields was accepted"
+  fi
+
+  if [ "$(metadata_rc --profile forge-codex-lane "$fixtures/chunk-coverage-drift.json")" = 1 ]; then
+    ok "rejects-coverage-key-drift (coverage_pct is canonical)"
+  else
+    bad "rejects-coverage-key-drift" "check.coverage silently replaced check.coverage_pct"
+  fi
+
+  # Eight of these ten mutations edit the RECORDED gate output, so a producer
+  # that emitted nothing would silently turn them into no-ops that still report
+  # success: `jq '.result = "clear"' </dev/null` exits 0 with empty output, the
+  # validator then rejects empty stdin with rc 1, and `&& semantic_ok=0` reads
+  # that as "the contradiction was correctly caught". Prove the mutations had
+  # something to mutate before believing any of them. `.checks[1]` and the
+  # `.blocks | reverse` mutation are no-ops on shorter arrays, so the shape
+  # each mutation needs is what gets asserted, not merely non-emptiness.
+  local semantic_ok=1
+  if ! jq -e '
+      type == "object"
+      and (.checks | type) == "array" and (.checks | length) > 1
+      and (.blocks | type) == "array" and (.blocks | length) > 1
+    ' "$TMPROOT/metadata-produced-gate.json" >/dev/null 2>&1; then
+    bad "rejects-semantic-contradictions" \
+        "the recorded gate emitted no mutable envelope; the ten mutations proved nothing"
+  else
+    jq '.scenarios.passing = (.scenarios.added + 1)' "$fixtures/chunk-valid.json" \
+      | metadata_validate --profile forge-codex-lane - && semantic_ok=0
+    jq '.branch = "chunk/8-wrong-id"' "$fixtures/chunk-valid.json" \
+      | metadata_validate --profile forge-codex-lane - && semantic_ok=0
+    jq '.result = "clear"' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.counts.block = 0' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.counts.pass += 1' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.repo = "someone/else"' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.number += 1' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.checks[1].id = .checks[0].id' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.blocks |= reverse' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    jq '.branch = "chunk/6-wrong-id"' "$TMPROOT/metadata-produced-gate.json" \
+      | metadata_validate --profile forge-prejudge - && semantic_ok=0
+    if [ "$semantic_ok" = 1 ]; then
+      ok "rejects-semantic-contradictions (scenarios, ids, URLs, checks, counts and result)"
+    else
+      bad "rejects-semantic-contradictions" \
+          "an envelope whose derived fields contradict its evidence was accepted"
+    fi
+  fi
+
+  if metadata_validate --profile forge-codex-lane "$fixtures/chunk-additive.json"; then
+    ok "allows-additive-hermes-keys (changed_files/tests_run stay siblings)"
+  else
+    bad "allows-additive-hermes-keys" "dashboard-native sibling keys were rejected"
+  fi
+
+  if [ "$(metadata_rc --profile forge-prejudge "$fixtures/chunk-valid.json")" = 1 ]; then
+    ok "rejects-profile-schema-mismatch"
+  else
+    bad "rejects-profile-schema-mismatch" "forge-prejudge accepted a forge.chunk.v1 completion"
+  fi
+
+  if [ "$(metadata_rc --profile forge-codex-lane "$fixtures/metadata-null.json")" = 1 ]; then
+    ok "rejects-missing-metadata"
+  else
+    bad "rejects-missing-metadata" "a completed lane run with null metadata was accepted"
+  fi
+
+  # The lane runs this validator by shebang, not through this suite, so --locked
+  # has to be ON THE SHEBANG or the unattended path is the unpinned one while
+  # `make verify` reports a pinned one.
+  if head -1 "$validator" | grep -Fq 'uv run --locked --script'; then
+    ok "validator-runtime-is-locked (the shebang the lane uses refuses a drifted lock)"
+  else
+    bad "validator-runtime-is-locked" \
+        "$validator's shebang must pass --locked; uv silently re-resolves and rewrites the lock without it"
+  fi
+
+  # Exit 1 is a verdict about the envelope, and forge-lane §7 turns it into a
+  # block against the chunk. A path that cannot be read yields no verdict at
+  # all, so it must not borrow that code and blame the run for it.
+  if [ "$(metadata_rc --profile forge-codex-lane "$fixtures")" = 2 ]; then
+    ok "unreadable-path-is-not-invalid-metadata (exit 2, and no traceback)"
+  else
+    bad "unreadable-path-is-not-invalid-metadata" \
+        "a path that cannot be read must exit 2; exit 1 makes a lane block its chunk for an operator's fault"
+  fi
+
+  # Each producer is swept by a rule matching ITS literal form, and a rule that
+  # matches nothing extracts nothing: the loop below never sees the line, the
+  # class it carries is never validated, and the case still reports ok. That is
+  # the F65/F66 failure mode — a check anchored to content that moved degrades
+  # to silence rather than to red — and it is not hypothetical here. The form
+  # this slice retired from lane-setup.sh, `echo "reason_class=env: …"`, carries
+  # an underscore, which the echo rule's [a-z0-9=-] class does not admit;
+  # reverting a producer to it would go unswept, not caught.
+  #
+  # So the sweep is per producer, not one pooled stream, and a producer that
+  # contributes no class at all fails the case. Pooling hid this: lane-setup.sh
+  # and lane-blast-radius.sh together yield ~46 of the ~61 classes, so either
+  # one could fall silent and any total-count floor would still clear.
+  local reason_ok=1 reason silent="" legacy swept="$TMPROOT/metadata-reasons.txt"
+  : > "$swept"
+  metadata_sweep() { # $1=rule label  $2=sed script  $3=producer file
+    local hits; hits="$(sed -n "$2" "$3")"
+    if [ -n "$hits" ]; then printf '%s\n' "$hits" >> "$swept"
+    else silent="$silent $3($1)"; fi
+  }
+  metadata_sweep substrate 's/.*substrate "\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
+  metadata_sweep json     's/.*"reason":"\([a-z0-9=-]*:\).*/\1/p'   scripts/prejudge-review.sh
+  metadata_sweep quoted   's/^[[:space:]]*"\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
+  metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-setup.sh
+  metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-blast-radius.sh
+  metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-prejudge.SOUL.md
+  metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     skills/forge-lane/SKILL.md
+
+  while IFS= read -r reason; do
+    [ -n "$reason" ] || continue
+    case "$reason" in usage:|lane-setup:|blast-radius:) continue;; esac
+    metadata_validate --reason "$reason reason" || reason_ok=0
+  done < "$swept"
+
+  # Asserted directly, because no sweep rule can see it: the retired form is
+  # what a revert would reintroduce, and it is invisible to the rules above.
+  legacy="$(grep -lF 'reason_class=' \
+              scripts/prejudge-review.sh scripts/lane-setup.sh \
+              scripts/lane-blast-radius.sh hermes/profiles/forge-prejudge.SOUL.md \
+              skills/forge-lane/SKILL.md 2>/dev/null | tr '\n' ' ')"
+
+  for producer in skills/forge-lane/SKILL.md \
+                  hermes/profiles/forge-codex-lane.SOUL.md \
+                  hermes/profiles/forge-orchestrator.SOUL.md; do
+    grep -Fq '~/.forge/rubrics/run-metadata-contract.json' "$producer" || reason_ok=0
+  done
+  grep -Fq 'run-metadata-contract.json' scripts/metrics.sh || reason_ok=0
+  if [ "$reason_ok" = 1 ] && [ -z "$silent" ] && [ -z "$legacy" ]; then
+    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 7 producer rules)"
+  else
+    bad "blocked-reason-contract" \
+        "${silent:+no class matched in:$silent — the sweep went blind, not green; }${legacy:+the retired reason-class form is back in: $legacy; }a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"
+  fi
+}
+wants metadata  && run_metadata_group
 
 # ---------------------------------------------------------------------------
 # prejudge/ — tier 1's deterministic FIRST STAGE (F35, ADR-0009). Modelled on

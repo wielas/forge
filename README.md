@@ -103,7 +103,7 @@ Forge tells every project it stamps that *skills persuade, gates enforce*
 (ADR-0003). `make verify` is that rule applied to Forge:
 
 ```bash
-make verify                     # cli + config + substrate + template + lane + metrics
+make verify                     # cli + config + substrate + template + lane + metrics + metadata + prejudge
 make verify SUITES="cli config" # one or more suites
 make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 ./scripts/verify.sh --list      # what it checks, without running it
@@ -117,6 +117,7 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `template/` | stamp → `make setup` → hooks really installed → `make check` green → the pre-push gate exercised against a real bare remote, both ways: the push that *creates* `main` is allowed, every later one is refused |
 | `lane/` | what the lane must do **for** Codex because Codex cannot: build the venv while a network still exists, and state the role boundary in the prompt (reads are not sandboxed) |
 | `metrics/` | the flywheel's own numbers: a checked-in SQL board must reproduce a checked-in JSON expectation field for field, a nonconforming chunk envelope must be reported rather than normalized away, reading a board must not change it, gate blocks must stay counted apart from bounces, and `/retro` must still run the command instead of doing the arithmetic |
+| `metadata/` | completed-run envelopes against their locked profile contract and versioned schemas, without opening a live board: a recorded PR is run through the real gate producer; chunk/judge fixtures and its gate output pass; nesting, missing keys, derived-field contradictions, drift, profile mismatch, null metadata and undocumented block reasons fail; additive Hermes dashboard keys remain legal |
 | `prejudge/` | tier 1, **run rather than read**: two **recorded** PRs of the audited run reproduce a checked-in severity map with no `gh`, no `git` and no network; a blocking check exits 1; every blocking finding carries an action a fresh worker can execute; the whole protocol routes a block to a bounce with no model spawned and moves a recorded 63 KB patch without printing a byte of it; and the `claude -p` control arm is diffed against `main` line for line |
 
 Run it in CI, after every `hermes update`, and after every `codex`/`claude`
@@ -134,8 +135,10 @@ card t_1b7be3bb → dispatcher worktree → make setup → codex exec → make c
 ```
 
 `forge-hello` board, `wielas/hello-forge`, 4 minutes, one run, no retries, no
-`crashed` reap. Both metadata schemas populated (`forge.chunk.v1`,
-`forge.judge.v1`). The baseline row is in [`docs/retro-metrics.md`](docs/retro-metrics.md).
+`crashed` reap. Both metadata names appeared, but the later audit proved the
+chunk envelope was nested and incomplete while the judge envelope was
+canonical (F1/F2). The baseline row is in
+[`docs/retro-metrics.md`](docs/retro-metrics.md).
 
 Reproduce it on any new project:
 
@@ -174,9 +177,9 @@ handing the operator's review to the model that had just approved the work.
 Those, and the rest, are in
 [`docs/ladder-2026-07-28.md`](docs/ladder-2026-07-28.md) with the commands that
 produced them; the deliberate bounce, the dependency edge and the CI-red repair
-are in [`docs/experiment-2026-07-28.md`](docs/experiment-2026-07-28.md). The
-suite is 54 cases now, not because cases are good but because each one is a
-defect that got out.
+are in [`docs/experiment-2026-07-28.md`](docs/experiment-2026-07-28.md). Each
+later escaped defect adds a regression case; `docs/state.md` records the current
+suite count.
 
 When a run does fail, `hermes kanban runs <task-id>` shows how it ended; a
 `crashed` reap means the worker exited without a terminator. That is **not**

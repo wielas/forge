@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "blocked_reason_pattern": "^(stale-spec|failing-prereq|env|ci-red|judge-bounce|gate-misrouted|gate-unrunnable|other): .+",
+  "schemas": {
+    "forge.chunk.v1": "chunk-handoff.schema.json",
+    "forge.gate.v1": "gate-result.schema.json",
+    "forge.judge.v1": "judge-verdict.schema.json"
+  },
+  "profiles": {
+    "forge-codex-lane": {
+      "completed": ["forge.chunk.v1"]
+    },
+    "forge-prejudge": {
+      "completed": ["forge.gate.v1", "forge.judge.v1"]
+    }
+  }
+}

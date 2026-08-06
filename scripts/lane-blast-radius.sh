@@ -305,7 +305,7 @@ case "$MODE" in
       && expected_branch="$(read_meta branch)" \
       && expected_common="$(read_meta common)" \
       && expected_hooks="$(read_meta hooks-path)" || {
-        echo "reason_class=other: protected blast-radius metadata is unreadable"
+        echo "other: protected blast-radius metadata is unreadable"
         exit 3
       }
 
@@ -316,17 +316,17 @@ case "$MODE" in
     [ "$HOOKS_RAW" = "$expected_hooks" ] || breach="$breach hooks-path-changed"
 
     snapshot_all after || {
-      echo "reason_class=other: blast-radius audit could not inspect every protected Git surface"
+      echo "other: blast-radius audit could not inspect every protected Git surface"
       exit 3
     }
     # fsck before status: a missing object breaks `git status` too, and the
     # object-database diagnosis is the accurate one for the operator to read.
     git fsck --connectivity-only --no-reflogs --no-dangling --no-progress >/dev/null 2>&1 || {
-      echo "reason_class=other: blast-radius audit found unreachable or missing objects"
+      echo "other: blast-radius audit found unreachable or missing objects"
       exit 3
     }
     worktree_status="$(git status --porcelain=v1 --untracked-files=all 2>/dev/null)" || {
-      echo "reason_class=other: blast-radius audit could not read worktree status"
+      echo "other: blast-radius audit could not read worktree status"
       exit 3
     }
 
@@ -347,15 +347,15 @@ case "$MODE" in
 
     if [ -n "$breach" ]; then
       if [ -n "$FIRST_PATH" ]; then
-        echo "reason_class=other: codex exceeded its contract —$breach (first: $FIRST_PATH)"
+        echo "other: codex exceeded its contract —$breach (first: $FIRST_PATH)"
       else
-        echo "reason_class=other: codex exceeded its contract —$breach"
+        echo "other: codex exceeded its contract —$breach"
       fi
       echo "blast-radius: evidence in $STATE/breach.txt" >&2
       exit 3
     fi
     printf '%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$STATE/check.complete" || {
-      echo "reason_class=other: blast-radius result could not be recorded"
+      echo "other: blast-radius result could not be recorded"
       exit 3
     }
     echo "blast-radius: clean — protected Git state unchanged, task commit surfaces only"
