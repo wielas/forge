@@ -1008,7 +1008,7 @@ leading indicator for both bounce rate and token burn, and it is knowable
 
 ---
 
-### F29 — The verdict is a pure function of the scores, and the model is asked to assert it anyway · `SHADOWED` · **high**
+### F29 — The verdict is a pure function of the scores, and the model is asked to assert it anyway · `FIXED` · **high**
 
 `rubrics/judge-rubric.md` § *Verdict logic*:
 
@@ -1087,6 +1087,46 @@ The single divergence: scores `3/3/3/2/3/3` with one `nit` finding, stored as
 dimension scored 1. It is also the only `approve-with-nits` in the entire
 population, and it has **no routing consequence**: `prejudge-review.sh` sends
 `approve` and `approve-with-nits` down the same branch.
+
+**FIXED 2026-08-06 — promoted from shadow to blocking.** `prejudge-review.sh`
+now routes on `.derived_verdict`. The scorer's own word is recorded and no
+longer obeyed, which closes the defect this finding names: an asserted verdict
+can no longer decide anything by itself.
+
+**No pinned bytes were touched.** `end pinned region` is line 331; the routing
+line is 52 lines below it, so the promotion needed no ADR and no edit to the
+control arm — `prejudge/scorer-is-the-control-arm` still reports 24 lines
+byte-identical. The plan had this blocked on retiring the pin for two
+revisions; the block was never real, and nobody had checked the line numbers.
+
+**The model is still asked for `verdict`, deliberately.** That is what keeps
+the instrument running. With routing derived, an asserted verdict decides
+nothing and is free to record — so every review from here is a **post-gate**
+divergence sample, the one thing the 34-verdict replay could not supply (all 34
+predate `prejudge.sh`). Adding `verdict` to `STAMPED` would end that
+measurement permanently, and is now explicitly the last step of the arc, gated
+on D9.5 being answered.
+
+**The risk being accepted, stated plainly.** Divergences now change routing —
+the replay's reassurance that its one divergence had "no routing consequence"
+described *shadow mode* and does not carry forward. Concretely, a scorer that
+says `bounce` on scores of 3/3/3 with no findings will now route `approve`.
+That is not hypothetical: `t_298e46f4`, cited at the top of this finding, did
+exactly that. The rubric is the authority here — a dimension marked down must
+name a finding (V4), so an unevidenced `bounce` is the same rubber stamp as an
+unevidenced `approve`, in the other direction. The blast radius is bounded by
+ADR-0007: `approve` routes to a durable human gate, never to a merge.
+
+**The fallback is load-bearing, not defensive.** `.derived_verdict` is null on
+two paths — the stamp could not be applied, or derivation itself failed — and a
+bare `jq -r '.derived_verdict'` returns the *string* `"null"` on both, which
+Stage 5's `case` sends to `*)` and `substrate()`. That is the PR #14 bug
+rebuilt one line lower: a completed, paid-for review reported as an outage.
+`// .verdict` is asserted against both null shapes by
+`prejudge/undecidable-derivation-falls-back-to-the-scorer`. Verified end-to-end
+across five inputs — agreement, divergence, unevidenced score, absent scores,
+non-JSON. Only the last reaches `substrate()`, which is correct and unreachable
+in practice: Stage 4's `jq -ce` validates the envelope before it is written.
 
 **Two limitations, stated because they bound what this can conclude.** First,
 these are *not* the seventeen approvals F4 counted — that run was on
