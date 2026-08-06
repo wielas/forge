@@ -10,3 +10,8 @@ preflight.md
 # lane runtime artifacts (worktrees, logs) must never enter the forge repo
 .worktrees/
 *.log
+
+# per-machine permission grants. `.claude/settings.json` IS shared — it carries
+# the repo's own read-only tooling (verify/preflight/metrics). The .local file
+# is whatever this particular machine happened to approve, and is not methodology.
+.claude/settings.local.json
