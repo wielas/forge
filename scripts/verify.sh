@@ -425,7 +425,10 @@ run_substrate_group() {
   (
     cd "$lab" || exit 1
     git init -q -b main . >/dev/null 2>&1
-    git -c user.email=v@v -c user.name=v commit -q --allow-empty -m init >/dev/null 2>&1
+    printf 'setup:\n\t@true\ncheck:\n\t@true\n' > Makefile
+    git add Makefile >/dev/null 2>&1
+    git -c user.email=v@v -c user.name=v commit -qm init >/dev/null 2>&1
+    git remote add origin "$lab"
     git worktree add -q ../linked -b probe >/dev/null 2>&1
   )
   if [ -e "$LABROOT/linked/.git" ] && [ ! -d "$LABROOT/linked/.git" ]; then
@@ -478,21 +481,46 @@ run_substrate_group() {
   elif ! command -v codex >/dev/null 2>&1; then
     skip "codex-worktree-commit" "codex not on PATH"
   else
-    local out common
+    local out common live_run setup_out audit_out check_ok=0
+    # The audit root is redirected like every other lane case. Without this the
+    # live probe writes run state into the operator's real ~/.forge/lane-audits
+    # and never reaps it — a test that litters the directory it is testing.
+    local live_audit="$TMPROOT/live-lane-audits"
     common=$(git -C "$LABROOT/linked" rev-parse --git-common-dir)
+    live_run="verify-codex-$(date +%s)-$$"
+    setup_out="$(env FORGE_LANE_AUDIT_ROOT="$live_audit" \
+                 $REPO_ROOT/scripts/lane-setup.sh "$LABROOT/linked" "$live_run" 2>&1)"
+    if [ "$?" != 0 ]; then
+      bad "codex-worktree-commit" \
+          "live lane setup/capture failed: $(printf '%s' "$setup_out" | tail -2 | tr '\n' ' ')"
+      return
+    fi
     out=$(cd "$LABROOT/linked" && codex exec -s workspace-write \
             --ephemeral --ignore-user-config \
             --add-dir "$common" \
             "create a file probe.txt containing hi, then git add and git commit it" \
             </dev/null 2>&1)
+    make -C "$LABROOT/linked" check >/dev/null 2>&1 && check_ok=1
+    audit_out="$(env FORGE_LANE_AUDIT_ROOT="$live_audit" \
+                 $REPO_ROOT/scripts/lane-blast-radius.sh \
+                   check "$LABROOT/linked" "$live_run" 2>&1)"
     # Assert the FILE is in HEAD, not merely that some commit exists — the lab
     # repo already has an `init` commit, so "log is non-empty" proves nothing.
     # (Do not pipe `git log` into `grep -q`: grep exits early, git takes SIGPIPE,
     # and pipefail then reports a failure that did not happen.)
-    if git -C "$LABROOT/linked" cat-file -e HEAD:probe.txt 2>/dev/null; then
-      ok "codex-worktree-commit (--add-dir on git-common-dir still permits the commit)"
+    if git -C "$LABROOT/linked" cat-file -e HEAD:probe.txt 2>/dev/null \
+       && [ "$check_ok" = 1 ] \
+       && [ -f "$live_audit/$live_run/check.complete" ] \
+       && [ "$audit_out" = \
+            "blast-radius: clean — protected Git state unchanged, task commit surfaces only" ]; then
+      # The run id is the citation. `state.md` and the audit ledger record which
+      # run proved the lane, and a claim naming a run nobody can identify is the
+      # kind ADR-0003 exists to stop — so print it rather than making the
+      # operator reconstruct it from a cleaned-up temp directory.
+      ok "codex-worktree-commit (live setup → immutable capture → Codex commit → final audit; run $live_run)"
     else
-      bad "codex-worktree-commit" "commit failed under workspace-write + --add-dir: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+      bad "codex-worktree-commit" \
+          "live lane proof failed: codex=$(printf '%s' "$out" | tail -2 | tr '\n' ' ') audit=$(printf '%s' "$audit_out" | tail -2 | tr '\n' ' ')"
     fi
   fi
 }
@@ -720,13 +748,35 @@ template/branch-rule-has-one-source  lefthook and CI defer to one script; neithe
 template/branch-name-judges-by-argument  the CI path (branch passed in, detached HEAD) is correct
 template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
-lane/env-prepared-before-codex    forge-lane §3 runs make setup — the sandbox has no network
+lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
-lane/final-worktree-is-clean      hook drift and untracked leftovers block the handoff
+lane/blast/missing-run-capture    a check with no current-run immutable baseline cannot pass
+lane/blast/capture-is-single-use  Codex cannot replace the pre-Codex baseline
+lane/blast/check-is-single-use    a completed final audit cannot be overwritten or replayed
+lane/blast/failed-check-cannot-be-retried  a detected breach cannot be restored and re-audited under the same run id
+lane/blast/clean-linked-worktree  the nominal linked-worktree path passes
+lane/blast/baseline-is-outside-codex-roots  protected state never lives in the worktree
+lane/blast/task-commit-is-the-allowed-path  normal objects/ref/reflog/index changes pass
+lane/blast/hook-rename-is-a-breach        hook name is identity, not just content
+lane/blast/hook-mode-is-a-breach          executable mode is protected
+lane/blast/hook-symlink-retarget-is-a-breach  symlink target is protected
+lane/blast/hook-symlink-target-content-is-protected  writable target bytes are protected
+lane/blast/unreadable-hook-fails-closed   hashing failure cannot become an empty clean set
+lane/blast/shared-config-is-protected     local config is outside the task contract
+lane/blast/worktree-config-is-protected   core.hooksPath lives here and --local never shows it
+lane/blast/shared-hooks-are-protected     the OPERATOR's hooks, which lanes no longer write
+lane/blast/forge-dirt-is-not-hidden       no whole-directory .forge exclusion remains
+lane/blast/unreadable-status-fails-closed git status exit 128 cannot read as empty output
+lane/blast/main-is-protected              the protected branch cannot move
+lane/blast/object-alternates-are-protected  object lookup cannot be redirected elsewhere
+lane/blast/pre-existing-objects-are-protected  reachable history cannot lose an object
+lane/blast/sibling-lane-is-not-a-breach   a concurrent lane and a fetch are not escapes (F75)
+lane/blast/pre-existing-fsck-damage-is-not-a-breach  malformed history predating the run is not Codex's (F76)
+lane/blast/breach-names-what-moved        a block names the offending path, not just a category
 lane/dependent-pr-must-be-merged  parent card completion cannot substitute for code integration
 lane/graph-parents-are-atomic     dependent cards carry --parent before the dispatcher can claim them
-lane/uv-cache-dir-is-deterministic  UV_CACHE_DIR points inside the worktree, not ~/.cache/uv
+lane/uv-cache-dir-is-deterministic-and-outside-worktree  one run-specific TMPDIR, no status blind spot
 lane/verification-is-plain-make-check   no UV_OFFLINE/UV_CACHE_DIR green counts
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/prejudge-delegates-its-protocol    the SOUL names the script and the script exists (ADR-0010)
@@ -810,37 +860,100 @@ run_lane_group() {
   # So each case asserts BOTH halves: the script behaves, and the skill still
   # invokes it. A behavioural test of a script nothing calls is green and
   # worthless.
-  local lrepo="$TMPROOT/lane-repo"
-  _lane_fixture() {   # a throwaway project whose `make check` is $1
-    rm -rf "$lrepo"; mkdir -p "$lrepo"
-    ( cd "$lrepo" \
+  local lmain="$TMPROOT/lane-main" lrepo="$TMPROOT/lane-repo" \
+        lorigin="$TMPROOT/lane-origin.git" \
+        laudit="$TMPROOT/lane-audits"
+  _lane_fixture() {   # $1=make setup command, $2=make check command
+    rm -rf "$lmain" "$lrepo" "$lorigin"
+    git init -q --bare "$lorigin" >/dev/null 2>&1 || return 1
+    mkdir -p "$lmain"
+    ( cd "$lmain" \
       && git init -q -b main . \
-      && printf 'setup:\n\t@true\ncheck:\n\t@%s\n' "$1" > Makefile \
+      && printf 'setup:\n\t@%s\ncheck:\n\t@%s\n' "$1" "$2" > Makefile \
       && git add -A \
-      && git -c user.email=v@v -c user.name=v commit -qm init ) >/dev/null 2>&1
+      && git -c user.email=v@v -c user.name=v commit -qm init \
+      && git remote add origin "$lorigin" \
+      && git push -qu origin main \
+      && git branch task \
+      && git worktree add -q "$lrepo" task ) >/dev/null 2>&1
   }
   _rc() { "$@" >/dev/null 2>&1; echo $?; }   # exit code, without tripping the shell
 
   # `-s workspace-write` grants NO network. A dispatcher worktree is a fresh
   # checkout with no .venv, so unless the lane builds it while it still has a
   # network, `make check` cannot run inside the sandbox at all.
-  local setup=scripts/lane-setup.sh e_ok=1 detail=""
+  local setup=scripts/lane-setup.sh e_ok=1 detail="" setup_line codex_line \
+        setup_output setup_rc
   if [ ! -x "$setup" ]; then
     bad "env-prepared-before-codex" "$setup is missing or not executable"
   elif ! grep -Fq '~/.forge/repo/scripts/lane-setup.sh' "$lane"; then
     bad "env-prepared-before-codex" \
         "forge-lane §3 no longer invokes $setup — a bare relative path cannot resolve from a project worktree, so it must be the ~/.forge/repo form"
   else
-    _lane_fixture true
-    [ "$(_rc "$setup" "$lrepo")" = 0 ] || { e_ok=0; detail="$detail healthy-not-0"; }
-    [ "$(_rc "$setup")" = 2 ]          || { e_ok=0; detail="$detail no-arg-not-2"; }
-    [ "$(_rc "$setup" "$TMPROOT/absent")" = 3 ] || { e_ok=0; detail="$detail missing-ws-not-3"; }
+    _lane_fixture true true
+    setup_output="$(env TMPDIR="$TMPROOT" FORGE_LANE_AUDIT_ROOT="$laudit" \
+                    "$setup" "$lrepo" setup-healthy 2>&1)"
+    setup_rc=$?
+    [ "$setup_rc" = 0 ] \
+      || { e_ok=0; detail="$detail healthy-not-0($setup_output)"; }
+    [ -f "$laudit/setup-healthy/capture.complete" ] \
+      || { e_ok=0; detail="$detail healthy-did-not-capture"; }
+    [ -d "$TMPROOT/forge-lane-setup-healthy" ] \
+      || { e_ok=0; detail="$detail healthy-did-not-create-runtime"; }
+    printf '%s' "$setup_output" \
+      | grep -Fq "FORGE_LANE_RUNTIME=$TMPROOT/forge-lane-setup-healthy" \
+      || { e_ok=0; detail="$detail healthy-did-not-emit-runtime-path"; }
+    # F77: the worktree must own its hooks, or two lanes' `make setup` race on
+    # one shared file and the audit blames Codex for the loser.
+    [ "$(git -C "$lrepo" rev-parse --git-path hooks)" \
+        = "$(git -C "$lrepo" rev-parse --git-dir)/hooks" ] \
+      || { e_ok=0; detail="$detail healthy-hooks-not-per-worktree"; }
+    [ "$(_rc "$setup")" = 2 ] || { e_ok=0; detail="$detail no-arg-not-2"; }
+    [ "$(_rc "$setup" "$lrepo" ../unsafe)" = 2 ] \
+      || { e_ok=0; detail="$detail unsafe-run-id-not-2"; }
+    [ "$(_rc "$setup" "$TMPROOT/absent" setup-missing)" = 3 ] \
+      || { e_ok=0; detail="$detail missing-ws-not-3"; }
     mkdir -p "$TMPROOT/notgit"
-    [ "$(_rc "$setup" "$TMPROOT/notgit")" = 3 ] || { e_ok=0; detail="$detail notgit-not-3"; }
-    _lane_fixture false
-    [ "$(_rc "$setup" "$lrepo")" = 5 ] || { e_ok=0; detail="$detail red-baseline-not-5"; }
+    [ "$(_rc "$setup" "$TMPROOT/notgit" setup-notgit)" = 3 ] \
+      || { e_ok=0; detail="$detail notgit-not-3"; }
+    git init -q --bare "$TMPROOT/lane-bare.git"
+    printf 'setup:\n\t@true\ncheck:\n\t@true\n' > "$TMPROOT/lane-bare.git/Makefile"
+    [ "$(_rc "$setup" "$TMPROOT/lane-bare.git" setup-bare)" = 3 ] \
+      || { e_ok=0; detail="$detail bare-not-3"; }
+    _lane_fixture true true
+    [ "$(_rc "$setup" "$lmain" setup-main)" = 3 ] \
+      || { e_ok=0; detail="$detail main-not-3"; }
+    [ "$(_rc env HERMES_KANBAN_BRANCH=other "$setup" "$lrepo" setup-wrong-branch)" = 3 ] \
+      || { e_ok=0; detail="$detail wrong-branch-not-3"; }
+    _lane_fixture false true
+    [ "$(_rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$setup" "$lrepo" setup-fails)" = 4 ] \
+      || { e_ok=0; detail="$detail setup-failure-not-4"; }
+    _lane_fixture true true
+    git -C "$lrepo" remote set-url origin "$TMPROOT/missing-origin"
+    [ "$(_rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$setup" "$lrepo" fetch-fails)" = 4 ] \
+      || { e_ok=0; detail="$detail fetch-failure-not-4"; }
+    _lane_fixture true false
+    [ "$(_rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$setup" "$lrepo" baseline-red)" = 5 ] \
+      || { e_ok=0; detail="$detail red-baseline-not-5"; }
+    _lane_fixture 'touch generated.lock' true
+    [ "$(_rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$setup" "$lrepo" baseline-dirty)" = 5 ] \
+      || { e_ok=0; detail="$detail dirty-baseline-not-5"; }
+    _lane_fixture true true
+    mkdir -p "$TMPROOT/forge-lane-runtime-exists"
+    [ "$(_rc env TMPDIR="$TMPROOT" FORGE_LANE_AUDIT_ROOT="$laudit" \
+              "$setup" "$lrepo" runtime-exists)" = 4 ] \
+      || { e_ok=0; detail="$detail runtime-reuse-not-4"; }
+    _lane_fixture true true
+    mkdir -p "$laudit/capture-exists"
+    [ "$(_rc env TMPDIR="$TMPROOT" FORGE_LANE_AUDIT_ROOT="$laudit" \
+              "$setup" "$lrepo" capture-exists)" = 6 ] \
+      || { e_ok=0; detail="$detail audit-failure-not-6"; }
+    setup_line="$(grep -n '~/.forge/repo/scripts/lane-setup.sh' "$lane" | head -1 | cut -d: -f1)"
+    codex_line="$(grep -n 'UV_CACHE_DIR=.*codex exec' "$lane" | head -1 | cut -d: -f1)"
+    [ -n "$setup_line" ] && [ -n "$codex_line" ] && [ "$setup_line" -lt "$codex_line" ] \
+      || { e_ok=0; detail="$detail setup-not-before-codex"; }
     if [ "$e_ok" = 1 ]; then
-      ok "env-prepared-before-codex (lane-setup.sh builds the env; 0/2/3/5 exact)"
+      ok "env-prepared-before-codex (fetch, setup, baseline and immutable capture; 0/2/3/4/5/6 exact)"
     else
       bad "env-prepared-before-codex" \
           "lane-setup.sh must build the environment and report a blockable reason —$detail"
@@ -872,42 +985,202 @@ run_lane_group() {
         "forge-codex-lane must prohibit direct implementation even for one-line fixes"
   fi
 
-  # The first Codex-driven role rerun dismissed the old hook check's exit 128
-  # and completed with .orig/.rej files untracked. A green test is not a clean
-  # handoff; hash the hooks and fail on any final worktree dirt. Now executed
-  # against a real repository rather than asserted about a paragraph — every
-  # branch below is one of the three ways §4's `--add-dir` grant can be abused.
-  local blast=scripts/lane-blast-radius.sh b_ok=1 bdetail="" hooksdir
+  # The grant is bounded by a NAMED set, not by freezing the shared .git. An
+  # earlier revision asserted whole-.git immutability and blocked clean chunks
+  # on a sibling lane's commit, on any fetch, and on pre-existing malformed
+  # history (audit F75/F76) — so the positive cases below are load-bearing:
+  # they pin the false positives shut. Every case gets a fresh linked worktree
+  # and its own capture, so a previous breach cannot make a later one pass.
+  local blast=scripts/lane-blast-radius.sh
+  local bmain="$TMPROOT/blast-main" brepo="$TMPROOT/blast-task" \
+        bsibling="$TMPROOT/blast-sibling" borigin="$TMPROOT/blast-origin.git" \
+        bhooks="" bshared="" brun=""
+  _blast_fixture() { # $1=run id
+    brun="$1"
+    rm -rf "$bmain" "$brepo" "$bsibling" "$borigin"
+    git init -q --bare "$borigin" >/dev/null 2>&1 || return 1
+    git init -q -b main "$bmain" >/dev/null 2>&1 || return 1
+    mkdir -p "$bmain/.forge"
+    printf 'policy=v1\n' > "$bmain/.forge/policy"
+    git -C "$bmain" add -A >/dev/null 2>&1 \
+      && git -C "$bmain" -c user.email=v@v -c user.name=v commit -qm init \
+      && git -C "$bmain" remote add origin "$borigin" \
+      && git -C "$bmain" push -q origin main \
+      && git -C "$bmain" branch task \
+      && git -C "$bmain" branch sibling \
+      && git -C "$bmain" worktree add -q "$brepo" task \
+      && git -C "$bmain" worktree add -q "$bsibling" sibling || return 1
+    # Mirror what lane-setup.sh does: this worktree gets its own hooks dir, so
+    # the shared one below is the OPERATOR's and must stay untouched.
+    bshared="$bmain/.git/hooks"
+    git -C "$brepo" config extensions.worktreeConfig true >/dev/null 2>&1 || return 1
+    bhooks="$(git -C "$brepo" rev-parse --git-dir)/hooks" || return 1
+    mkdir -p "$bhooks" || return 1
+    git -C "$brepo" config --worktree core.hooksPath "$bhooks" >/dev/null 2>&1 || return 1
+    [ "$(git -C "$brepo" rev-parse --git-path hooks)" = "$bhooks" ] || return 1
+    printf '#!/bin/sh\nexit 0\n' > "$bhooks/pre-commit"
+    chmod 755 "$bhooks/pre-commit"
+    printf '#!/bin/sh\nexit 0\n' > "$bshared/pre-push"
+    chmod 755 "$bshared/pre-push"
+    printf '#!/bin/sh\nexit 0\n' > "$TMPROOT/$brun-hook-ok"
+    printf '#!/bin/sh\nexit 1\n' > "$TMPROOT/$brun-hook-bad"
+    chmod 755 "$TMPROOT/$brun-hook-ok" "$TMPROOT/$brun-hook-bad"
+    ln -s "$TMPROOT/$brun-hook-ok" "$bhooks/pre-push"
+    env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" capture "$brepo" "$brun" \
+      >/dev/null 2>&1
+  }
+  _blast_rc() {
+    _rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" check "$brepo" "$brun"
+  }
+  _expect_blast() { # name expected actual
+    if [ "$3" = "$2" ]; then
+      ok "$1"
+    else
+      bad "$1" "lane-blast-radius expected exit $2, observed $3"
+    fi
+  }
+
   if [ ! -x "$blast" ]; then
     bad "lane-final-worktree-is-clean" "$blast is missing or not executable"
   elif ! grep -Fq '~/.forge/repo/scripts/lane-blast-radius.sh' "$lane"; then
     bad "lane-final-worktree-is-clean" \
         "forge-lane §5 no longer invokes $blast — a bare relative path cannot resolve from a project worktree, so it must be the ~/.forge/repo form"
+  elif ! grep -Fq '"$BLAST" capture "$WS_PHYS" "$RUN_ID"' "$setup"; then
+    bad "lane-capture-is-pre-codex" \
+        "lane-setup must take the immutable capture before it can return ready"
   else
-    _lane_fixture true
-    # check before capture must NOT pass: a control that cannot find its
-    # baseline has to fail rather than report clean (F65).
-    [ "$(_rc "$blast" check "$lrepo")" = 2 ] || { b_ok=0; bdetail="$bdetail no-capture-not-2"; }
-    [ "$(_rc "$blast" capture "$lrepo")" = 0 ] || { b_ok=0; bdetail="$bdetail capture-not-0"; }
-    # The lane's own .forge/ bookkeeping must not read as a breach.
-    [ "$(_rc "$blast" check "$lrepo")" = 0 ] || { b_ok=0; bdetail="$bdetail clean-not-0"; }
-    # (1) leftover untracked files — the exact 2026-07-28 failure
-    touch "$lrepo/patch.orig"
-    [ "$(_rc "$blast" check "$lrepo")" = 3 ] || { b_ok=0; bdetail="$bdetail dirty-not-3"; }
-    rm -f "$lrepo/patch.orig"
-    # (2) an edited hook — the whole L2 local tier is inside the grant
-    hooksdir="$(cd "$lrepo" && git rev-parse --git-path hooks)"
-    mkdir -p "$lrepo/$hooksdir"; echo x > "$lrepo/$hooksdir/pre-push"
-    [ "$(_rc "$blast" check "$lrepo")" = 3 ] || { b_ok=0; bdetail="$bdetail hook-not-3"; }
-    rm -f "$lrepo/$hooksdir/pre-push"
-    # (3) a moved main — refs/heads/main is inside the grant too
-    ( cd "$lrepo" && git -c user.email=v@v -c user.name=v commit -q --allow-empty -m moved ) >/dev/null 2>&1
-    [ "$(_rc "$blast" check "$lrepo")" = 3 ] || { b_ok=0; bdetail="$bdetail main-moved-not-3"; }
-    if [ "$b_ok" = 1 ]; then
-      ok "lane-final-worktree-is-clean (dirt, edited hook and moved main each exit 3)"
+    _blast_fixture blast-base || bad "blast-fixture" "could not create linked-worktree fixture"
+    _expect_blast "blast/missing-run-capture" 2 \
+      "$(_rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" check "$brepo" absent-run)"
+    _expect_blast "blast/capture-is-single-use" 2 \
+      "$(_rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" capture "$brepo" "$brun")"
+    _expect_blast "blast/clean-linked-worktree" 0 "$(_blast_rc)"
+    _expect_blast "blast/check-is-single-use" 2 "$(_blast_rc)"
+    [ -f "$laudit/$brun/capture.complete" ] && [ ! -e "$brepo/.forge/main.before" ] \
+      && ok "blast/baseline-is-outside-codex-roots" \
+      || bad "blast/baseline-is-outside-codex-roots" \
+          "capture must live in the protected audit root, never the worktree"
+
+    _blast_fixture blast-failed-check-retry
+    chmod 644 "$bhooks/pre-commit"
+    first_check="$(_blast_rc)"
+    chmod 755 "$bhooks/pre-commit"
+    second_check="$(_blast_rc)"
+    if [ "$first_check" = 3 ] && [ "$second_check" = 2 ]; then
+      ok "blast/failed-check-cannot-be-retried"
     else
-      bad "lane-final-worktree-is-clean" \
-          "the blast-radius audit must catch every way the --add-dir grant can be abused —$bdetail"
+      bad "blast/failed-check-cannot-be-retried" \
+          "first breach check returned $first_check; replay returned $second_check"
+    fi
+
+    _blast_fixture blast-task-commit
+    printf 'task\n' > "$brepo/task.txt"
+    git -C "$brepo" add task.txt \
+      && git -C "$brepo" -c user.email=v@v -c user.name=v commit -qm task
+    _expect_blast "blast/task-commit-is-the-allowed-path" 0 "$(_blast_rc)"
+
+    _blast_fixture blast-hook-rename
+    mv "$bhooks/pre-commit" "$bhooks/commit-msg"
+    _expect_blast "blast/hook-rename-is-a-breach" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-hook-mode
+    chmod 644 "$bhooks/pre-commit"
+    _expect_blast "blast/hook-mode-is-a-breach" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-hook-link
+    rm "$bhooks/pre-push"
+    ln -s "$TMPROOT/$brun-hook-bad" "$bhooks/pre-push"
+    _expect_blast "blast/hook-symlink-retarget-is-a-breach" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-hook-link-content
+    printf '#!/bin/sh\nexit 1\n' > "$TMPROOT/$brun-hook-ok"
+    _expect_blast "blast/hook-symlink-target-content-is-protected" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-hook-unreadable
+    chmod 000 "$bhooks/pre-commit"
+    _expect_blast "blast/unreadable-hook-fails-closed" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-config
+    git -C "$brepo" config forge.probe changed
+    _expect_blast "blast/shared-config-is-protected" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-forge-dirt
+    printf 'policy=v2\n' > "$brepo/.forge/policy"
+    printf 'leftover\n' > "$brepo/.forge/patch.orig"
+    _expect_blast "blast/forge-dirt-is-not-hidden" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-index
+    printf 'not-an-index\n' > "$(git -C "$brepo" rev-parse --git-path index)"
+    _expect_blast "blast/unreadable-status-fails-closed" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-main-moved
+    git -C "$brepo" -c user.email=v@v -c user.name=v commit -q --allow-empty -m moved \
+      && git -C "$brepo" update-ref refs/heads/main HEAD
+    _expect_blast "blast/main-is-protected" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-worktree-config
+    git -C "$brepo" config --worktree core.hooksPath "$TMPROOT/$brun-elsewhere"
+    _expect_blast "blast/worktree-config-is-protected" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-shared-hooks
+    printf '#!/bin/sh\nexit 1\n' > "$bshared/pre-push"
+    _expect_blast "blast/shared-hooks-are-protected" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-alternates
+    printf '%s\n' "$TMPROOT/$brun-elsewhere" \
+      > "$(git -C "$brepo" rev-parse --git-common-dir)/objects/info/alternates"
+    _expect_blast "blast/object-alternates-are-protected" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-object
+    object_id="$(git -C "$brepo" rev-parse HEAD^{tree})"
+    object_dir="$(git -C "$brepo" rev-parse --git-common-dir)/objects/${object_id%${object_id#??}}"
+    object_file="$object_dir/${object_id#??}"
+    mv "$object_file" "$TMPROOT/$brun-object.saved"
+    _expect_blast "blast/pre-existing-objects-are-protected" 3 "$(_blast_rc)"
+
+    # --- the false positives this audit must NOT raise ------------------------
+    # Each of these was a reproduced block against a clean chunk. They are
+    # positive assertions on purpose: a wide audit passes every negative case
+    # above and is still unusable.
+
+    # A dispatcher runs lanes off ONE shared .git. From in here, a sibling's
+    # branch moving is indistinguishable from Codex moving it, so it cannot be
+    # protected — and must not be reported.
+    _blast_fixture blast-sibling-lane
+    printf 'sib\n' > "$bsibling/sib.txt"
+    git -C "$bsibling" add sib.txt \
+      && git -C "$bsibling" -c user.email=v@v -c user.name=v commit -qm sibling
+    git -C "$brepo" fetch origin >/dev/null 2>&1
+    _expect_blast "blast/sibling-lane-is-not-a-breach" 0 "$(_blast_rc)"
+
+    # `git fsck --full` validates object CONTENT, so a repo carrying malformed
+    # history blocked every chunk on it forever, blaming Codex for a commit
+    # that predated the run. Connectivity is the property that matters.
+    _blast_fixture blast-legacy-object
+    legacy_raw="$TMPROOT/$brun-legacy.raw"
+    printf 'tree %s\nparent %s\nauthor A <a@b> 1000000000 +0000\ncommitter A<a@b> 1000000000 +0000\n\nlegacy import\n' \
+      "$(git -C "$brepo" rev-parse HEAD^{tree})" "$(git -C "$brepo" rev-parse HEAD)" > "$legacy_raw"
+    legacy_oid="$(git -C "$brepo" hash-object -w -t commit --stdin --literally < "$legacy_raw" 2>/dev/null)"
+    if [ -n "$legacy_oid" ] \
+       && ! git -C "$brepo" fsck --full --no-reflogs --no-dangling --no-progress >/dev/null 2>&1; then
+      _expect_blast "blast/pre-existing-fsck-damage-is-not-a-breach" 0 "$(_blast_rc)"
+    else
+      skip "blast/pre-existing-fsck-damage-is-not-a-breach" \
+           "this git does not accept a malformed object even with --literally"
+    fi
+
+    # A breach the operator cannot diagnose is barely better than none: the
+    # manifest hashes the path, so without the display column and the evidence
+    # file a misfire says only that "something" moved.
+    _blast_fixture blast-evidence
+    printf 'leftover\n' > "$brepo/patch.orig"
+    evidence_out="$(env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" check "$brepo" "$brun" 2>/dev/null)"
+    if printf '%s' "$evidence_out" | grep -Fq 'patch.orig' \
+       && grep -Fq 'patch.orig' "$laudit/$brun/breach.txt" 2>/dev/null; then
+      ok "blast/breach-names-what-moved"
+    else
+      bad "blast/breach-names-what-moved" \
+          "the reason line and $laudit/<run>/breach.txt must both name the offending path, not just a category"
     fi
   fi
 
@@ -947,14 +1220,23 @@ run_lane_group() {
         "board-bootstrap must attach graph parents during create and read them back, never create ready children before a later link pass"
   fi
 
-  # `uv run` writes a cache and ~/.cache/uv is outside the sandbox. Unset,
-  # Codex reroutes it mid-run to a path of its own choosing (measured twice,
-  # 2026-07-28) — so hand it a deterministic one inside the worktree.
-  if grep -q 'UV_CACHE_DIR=.*\.forge/uv-cache' "$lane"; then
-    ok "uv-cache-dir-is-deterministic"
+  # `uv run` writes a cache and ~/.cache/uv is outside the sandbox. Keep every
+  # lane-owned scratch file in one run-specific $TMPDIR, which the sandbox can
+  # write without forcing the final worktree check to ignore a whole directory.
+  #
+  # The path has exactly ONE definition. The skill used to recompute the same
+  # `${TMPDIR:-/tmp}/forge-lane-$RUN_ID` string that lane-setup.sh builds, so a
+  # $TMPDIR differing between the driver's shell and the script would put the
+  # contract somewhere setup never created. Setup emits it; the skill consumes it.
+  if grep -Fq 'FORGE_LANE_RUNTIME=$RUNTIME_DIR' "$setup" \
+     && grep -Fq 'UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache"' "$lane" \
+     && grep -Fq 'FORGE_LANE_RUNTIME' "$lane" \
+     && ! grep -Fq 'forge-lane-$HERMES_KANBAN_RUN_ID' "$lane" \
+     && ! grep -Fq '.forge/uv-cache' "$lane"; then
+    ok "uv-cache-dir-is-deterministic-and-outside-worktree"
   else
-    bad "uv-cache-dir-is-deterministic" \
-        "forge-lane must set UV_CACHE_DIR under .forge/ — ~/.cache/uv is not writable in the sandbox"
+    bad "uv-cache-dir-is-deterministic-and-outside-worktree" \
+        "lane-setup must emit FORGE_LANE_RUNTIME and the skill must consume it, never recompute the \$TMPDIR path itself"
   fi
 
   # Codex's workaround for the missing venv was UV_CACHE_DIR + UV_OFFLINE.
