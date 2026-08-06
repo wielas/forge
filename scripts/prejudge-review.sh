@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$PR_URL" ] || { usagetext; exit 2; }
-command -v jq >/dev/null || { echo '{"action":"substrate-block","reason":"jq missing"}'; exit 3; }
+command -v jq >/dev/null || { echo '{"action":"substrate-block","reason":"env: jq missing"}'; exit 3; }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-review.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
@@ -127,7 +127,7 @@ route_tier2() {
   # fails closed if any of those substrate facts change.
   [ "$(kanban show "$review" --json | jq -r '.task.status')" = "blocked" ] || \
     kanban block --kind needs_input "$review" \
-      "tier-2 operator review required: run /judge, then merge or bounce" >/dev/null
+      "other: tier-2 operator review required — run /judge, then merge or bounce" >/dev/null
   kanban assign "$review" none >/dev/null
   kanban show "$review" --json | jq -e '
     .task.assignee == null and .task.status == "blocked"
@@ -147,9 +147,9 @@ route_bounce() {
   board_live || return 0
   ws="$(kanban show "$CHUNK" --json \
         | jq -er '.task.workspace_path | select(type=="string" and length>0)')" \
-    || substrate "bounce-workspace: completed chunk has no recorded workspace"
+    || substrate "env: bounce-workspace — completed chunk has no recorded workspace"
   git -C "$ws" rev-parse --is-inside-work-tree 2>/dev/null | grep -Fxq true \
-    || substrate "bounce-workspace: completed chunk has no reusable git worktree"
+    || substrate "env: bounce-workspace — completed chunk has no reusable git worktree"
 
   fix="$(kanban create "fix: $CHUNK — $why" \
       --assignee forge-codex-lane \
@@ -193,7 +193,7 @@ if [ "$gate_rc" = 1 ]; then
   route_bounce "$(jq -r '.checks[] | select(.status=="block")
                   | "- **\(.id)** — \(.evidence)\n  - action: \(.action)"' "$GATE")" \
                "gate blocked: $ids" \
-    || substrate "handoff-integrity: fix card could not be created or verified"
+    || substrate "other: handoff-integrity — fix card could not be created or verified"
   envelope gate-block "gate blocked: $ids" "$GATE" "" 0
 fi
 
@@ -250,11 +250,11 @@ if [ -n "$FIXTURE" ]; then
   [ -f "$FIXTURE/diff.patch" ] && cat "$FIXTURE/diff.patch" >> "$prompt_file"
 else
   gh pr diff "$PR_URL" >> "$prompt_file" < /dev/null \
-    || substrate "diff-unavailable: the diff fetch returned nothing usable"
+    || substrate "env: diff-unavailable — the diff fetch returned nothing usable"
   # A brief plus a contract is ~2 KB before any diff at all, so a prompt that
   # small means the fetch succeeded and returned nothing.
   [ "$(wc -c < "$prompt_file")" -gt 2500 ] \
-    || substrate "diff-unavailable: prompt is implausibly small for a PR"
+    || substrate "env: diff-unavailable — prompt is implausibly small for a PR"
 fi
 PROMPT_BYTES="$(wc -c < "$prompt_file" | tr -d ' ')"
 
@@ -333,7 +333,7 @@ pr_url="$PR_URL"
    ')"
 # --- end pinned region ------------------------------------------------------
 [ -n "${verdict:-}" ] \
-  || substrate "judge-envelope: claude -p returned no structured verdict"
+  || substrate "other: judge-envelope — claude -p returned no structured verdict"
 
 printf '%s' "$verdict" > "$TMP/verdict.json"
 
@@ -429,15 +429,15 @@ tier-1 verdict: $SUMMARY — scores $(jq -r '.scores
       + "/\(.scope_discipline)/\(.debt_honesty)/\(.doc_reconciliation)"' "$TMP/verdict.json")
 spot-check: $(jq -r '.spot_check_suggestion // "not offered"' "$TMP/verdict.json")
 Run /judge, then merge or bounce." \
-      || substrate "handoff-integrity: tier-2 card could not be created or verified"
+      || substrate "other: handoff-integrity — tier-2 card could not be created or verified"
     envelope approve "$SUMMARY" "$TMP/verdict.json" "" 0;;
   bounce)
     route_bounce "$(jq -r '.findings[]? |
         "- **\(.dimension)** (\(.severity)) — \(.evidence)\n  - action: \(.action)"' \
         "$TMP/verdict.json")" \
       "$(jq -r '[.findings[]? | .dimension] | unique | join(", ")' "$TMP/verdict.json")" \
-      || substrate "handoff-integrity: fix card could not be created or verified"
+      || substrate "other: handoff-integrity — fix card could not be created or verified"
     envelope bounce "$SUMMARY" "$TMP/verdict.json" "" 0;;
   *)
-    substrate "judge-envelope: verdict was '$VERDICT', not one of the three";;
+    substrate "other: judge-envelope — verdict was '$VERDICT', not one of the three";;
 esac

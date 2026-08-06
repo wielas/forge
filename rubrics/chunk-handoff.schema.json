@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.local/rubrics/chunk-handoff.schema.json",
+  "title": "forge.chunk.v1",
+  "description": "Canonical completion handoff from forge-codex-lane. The schema discriminator is top-level; the envelope is never nested under a forge.chunk.v1 key.",
+  "type": "object",
+  "additionalProperties": true,
+  "propertyNames": {
+    "not": {
+      "pattern": "^forge\\."
+    }
+  },
+  "required": [
+    "schema",
+    "chunk_id",
+    "project",
+    "branch",
+    "pr",
+    "lane",
+    "scenarios",
+    "check",
+    "files_changed",
+    "lines_changed",
+    "decisions",
+    "debt",
+    "card_proposals",
+    "docs_reconciled",
+    "duration_min",
+    "worker"
+  ],
+  "properties": {
+    "schema": {
+      "const": "forge.chunk.v1"
+    },
+    "chunk_id": {
+      "type": "string",
+      "pattern": "^CHUNK-[0-9]+$"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "branch": {
+      "type": "string",
+      "pattern": "^chunk/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "pr": {
+      "type": "string",
+      "pattern": "^https://github\\.com/[^/]+/[^/]+/pull/[1-9][0-9]*$"
+    },
+    "lane": {
+      "type": "string",
+      "enum": ["forge-codex-lane", "claude-interactive"]
+    },
+    "scenarios": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["added", "passing", "feature_files"],
+      "properties": {
+        "added": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passing": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "feature_files": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "\\.feature$"
+          }
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["green", "coverage_pct"],
+      "properties": {
+        "green": {
+          "const": true
+        },
+        "coverage_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "files_changed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lines_changed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "decisions": {
+      "$ref": "#/$defs/string_list"
+    },
+    "debt": {
+      "$ref": "#/$defs/string_list"
+    },
+    "card_proposals": {
+      "$ref": "#/$defs/string_list"
+    },
+    "docs_reconciled": {
+      "$ref": "#/$defs/string_list"
+    },
+    "duration_min": {
+      "type": "number",
+      "minimum": 0
+    },
+    "worker": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "string_list": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

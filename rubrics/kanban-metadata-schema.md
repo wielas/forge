@@ -7,7 +7,18 @@ Keys are a convention in the Hermes spirit: enough evidence that the next reader
 answers "what happened, what changed, what's risky, what's next" without prose
 scraping.
 
+The machine contract is [`run-metadata-contract.json`](run-metadata-contract.json):
+it maps each worker profile to the schema ids it may emit. The versioned JSON
+Schemas live beside this document, and `scripts/validate-metadata.py` checks the
+contract with a locked JSON Schema runtime. `make verify SUITES=metadata` runs a
+recorded PR through the real gate producer and validates its output alongside
+chunk/judge fixtures, without reading a live board.
+
 ## Chunk completion — `forge.chunk.v1`
+
+Defined by [`chunk-handoff.schema.json`](chunk-handoff.schema.json). The
+`schema` discriminator and every Forge field are top-level. Consumers reject
+historical nested envelopes rather than normalizing them into the contract.
 
 ```json
 {
@@ -15,8 +26,8 @@ scraping.
   "chunk_id": "CHUNK-7",
   "project": "gym-coach",
   "branch": "chunk/7-sync-engine",
-  "pr": "https://github.com/…/pull/42",
-  "lane": "forge-codex-lane | claude-interactive",
+  "pr": "https://github.com/example/gym-coach/pull/42",
+  "lane": "forge-codex-lane",
   "scenarios": { "added": 4, "passing": 4, "feature_files": ["tests/features/chunk_7.feature"] },
   "check": { "green": true, "coverage_pct": 91.4 },
   "files_changed": 6,
@@ -28,7 +39,7 @@ scraping.
   "card_proposals": ["CARD?: extract shared retry helper"],
   "docs_reconciled": ["ROADMAP.md", "adr/0007 (updated: consequence note)"],
   "duration_min": 23,
-  "worker": "codex/gpt-x | claude-code/opus"
+  "worker": "codex/gpt-5.6-sol xhigh"
 }
 ```
 
@@ -42,25 +53,27 @@ alongside the forge keys; the dashboard renders them for free.
 
 Emitted by `scripts/prejudge.sh --json` and stored **unmodified** as the
 prejudge card's metadata when the gate blocks (ADR-0009 D9.4).
+Defined by [`gate-result.schema.json`](gate-result.schema.json).
 
 ```json
 {
   "schema": "forge.gate.v1",
   "gate": "forge-prejudge-gate",
-  "pr": "https://github.com/…/pull/8",
+  "pr": "https://github.com/wielas/forgeboard-report/pull/8",
   "repo": "wielas/forgeboard-report",
   "number": 8,
   "chunk": "CHUNK-5",
   "branch": "chunk/5",
-  "head": "67c1a12…", "base": "b71fc96…",
+  "head": "67c1a1201234567890abcdef1234567890abcdef",
+  "base": "b71fc9601234567890abcdef1234567890abcdef",
   "checks": [
-    { "id": "branch-name", "status": "pass | block | warn | skip",
+    { "id": "branch-name", "status": "block",
       "evidence": "chunk/5 has no <slug> — AGENTS.md requires chunk/<id>-<slug>",
       "action": "rename the branch and force-push, keeping the same PR: …" }
   ],
-  "counts": { "pass": 2, "block": 2, "warn": 2, "skip": 1 },
-  "blocks": ["branch-name", "scenario-count"],
-  "result": "block | clear"
+  "counts": { "pass": 0, "block": 1, "warn": 0, "skip": 0 },
+  "blocks": ["branch-name"],
+  "result": "block"
 }
 ```
 
@@ -81,24 +94,31 @@ collapses into `pass` — a check that could not run has not passed.
 ## Judge completion — `forge.judge.v1`
 Defined in `rubrics/judge-rubric.md`. Stored as the judge card's metadata — by
 tier 1's model stage when the gate cleared and the scorer ran, and by tier 2.
+Its existing machine contract is
+[`judge-verdict.schema.json`](judge-verdict.schema.json); it remains unchanged
+while ADR-0011 gathers its post-gate control-arm sample.
 
-## Blocked card — `forge.block.v1`
+## Blocked card reasons
 
-```json
-{
-  "schema": "forge.block.v1",
-  "chunk_id": "CHUNK-9",
-  "reason_class": "stale-spec | failing-prereq | env | ci-red | judge-bounce | other",
-  "reason": "chunk expects src/api/v1 but CHUNK-6 moved it to src/api",
-  "needs": "human decision: update chunk spec or revert move",
-  "state": "branch chunk/9-… pushed with WIP commit; HANDOFF entry in decision-log"
-}
-```
+There is no `forge.block.v1` metadata envelope. Hermes `kanban_block` stores a
+reason string and accepts no metadata argument. The reason must start with one
+of these documented class prefixes: `stale-spec`, `failing-prereq`, `env`,
+`ci-red`, `judge-bounce`, `gate-misrouted`, `gate-unrunnable`, or `other`.
+`scripts/metrics.sh` derives the class from the `task_events.reason` prefix and
+uses the registry regex to decide whether it is documented. The registry owns
+the regex; `metadata/blocked-reason-contract` checks every literal program/SOUL
+producer and the metrics consumer against it. A live sweep is still required
+to prove model-authored terminators obey the prompt rather than merely reading
+it.
 
 ## Rules
-- Additive evolution only: bump `.v2` rather than mutating `.v1` meanings;
-  consumers ignore unknown keys.
+- Additive top-level keys are allowed and ignored by consumers. Changing a
+  required field or an existing meaning requires a `.v2` schema id.
+- A completed `forge-codex-lane` run may emit only `forge.chunk.v1`; a completed
+  `forge-prejudge` run may emit `forge.gate.v1` or `forge.judge.v1`. Null
+  metadata and cross-profile schema ids are invalid.
 - Everything here is also human-scannable in the PR body — the board is a
   mirror, git is the source of truth.
-- /retro mines `decisions[]`, `debt[]`, `reason_class`, and judge `findings[]`
-  across cards; keep them honest and specific or the flywheel learns nothing.
+- /retro mines `decisions[]`, `debt[]`, the blocked-event reason prefix, and
+  judge `findings[]` across cards; keep them honest and specific or the
+  flywheel learns nothing.

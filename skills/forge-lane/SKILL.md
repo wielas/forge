@@ -70,7 +70,7 @@ alone, a `fix:` title, PR prose, or an operator comment is not an exemption.
 
 Otherwise:
 
-1. comment with the PR, its state, and `reason_class=failing-prereq`;
+1. comment with the PR, its state, and the `failing-prereq:` classification;
 2. call `kanban_block(kind="needs_input", reason="failing-prereq: parent PR … is not merged")`;
 3. stop without changing the branch.
 
@@ -127,7 +127,7 @@ Non-zero is always a `kanban_block`, never something to hand to Codex. `3` is a
 bad worktree, `4` fetch/setup failed, `5` the baseline was red, and `6` the
 audit could not capture. Setup-created worktree dirt is also `5`: it predates
 Codex and must not later be reported as Codex escaping its boundary. Each
-failure prints the `reason_class=` line to quote into the block.
+failure prints a canonical `<class>: <reason>` to pass into the block verbatim.
 
 Its last stdout line is `FORGE_LANE_RUNTIME=<path>` — export that value, do not
 recompute it. It is the only scratch directory the lane writes to.
@@ -257,13 +257,21 @@ Never push to `main`.
 
 ## 7. Terminate — exactly once
 
-Success path: create the tier-1 review card, then complete.
+Success path: write the complete flat object to
+`$FORGE_LANE_RUNTIME/chunk-metadata.json`, then gate it before creating a card:
+
+```bash
+~/.forge/repo/scripts/validate-metadata.py --profile forge-codex-lane \
+  "$FORGE_LANE_RUNTIME/chunk-metadata.json"
+```
+
+Only exit 0 may proceed. Create the tier-1 review card, then complete.
 
 ```python
 child = kanban_create(title="prejudge: <chunk id>", assignee="forge-prejudge",
                       parents=[HERMES_KANBAN_TASK], body="<PR url> + what to check")
 kanban_complete(summary="<one sentence landed, one sentence to watch>",
-                metadata={...forge.chunk.v1..., "pr": ..., "check": {"green": true}},
+                metadata=<the validated file's exact object>,
                 created_cards=[child_id])
 ```
 
@@ -273,9 +281,9 @@ rejects invented ids and refuses the completion. Metadata keys: see
 `tests_run`, `decisions`) alongside the forge keys so the dashboard reads them
 for free. No secrets in `summary` or `metadata` — run rows are durable forever.
 
-Failure path: `kanban_block(reason="<the contradiction, plainly>")`, after a
-`kanban_comment` carrying the evidence (`kanban_block` only stores the reason
-string).
+Failure path: `kanban_block(reason="<class>: <contradiction>")`, using a class
+from `~/.forge/rubrics/run-metadata-contract.json`, after a `kanban_comment`
+carrying the evidence (`kanban_block` only stores the reason string).
 
 **Exiting without one of these is a protocol violation** — the kernel reaps the
 run as `crashed`, the failure counter ticks, and the work is wasted.

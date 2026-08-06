@@ -159,9 +159,23 @@ Present: `chunk_id`, `pr`, `check{green,tests_passed,coverage|coverage_pct}`,
 `check.coverage`; CHUNK-3–6 write `check.coverage_pct`. Nothing caught the
 change of key between two consecutive cards.
 
-`docs/state.md` claims as *proven*: "Both metadata schemas populate —
-`forge.chunk.v1` and `forge.judge.v1` **complete** on the real cards." That
-claim is false and should be corrected: they are *present*, never *complete*.
+**Contract status, 2026-08-06.** The repository now has a flat
+`forge.chunk.v1` JSON Schema, a profile-to-schema registry, and a fixture-only
+`make verify SUITES=metadata` gate that rejects the historical nested shape,
+missing required fields, `coverage`/`coverage_pct` drift, reserved nested copies
+and cross-field contradictions. A recorded PR now runs through the real gate
+producer and that output is validated, rather than copied into a parallel
+fixture. `forge-lane` gates its complete flat file before `kanban_complete`.
+This is not closure: one genuine lifecycle proof must show that the model obeys
+the producer gate and that the consumer reads the resulting card. The default
+suite does not open a live board; F67 records why any live sweep must be
+explicit and snapshot-based.
+
+At audit time `docs/state.md` claimed as *proven*: "Both metadata schemas
+populate — `forge.chunk.v1` and `forge.judge.v1` **complete** on the real
+cards." That claim was false: they were *present*, not both complete. The
+2026-08-06 contract slice corrects the state document; a genuine lifecycle is
+still required before it may claim the chunk producer fixed in reality.
 
 ### F3 — The official bounce-rate metric reads 0.00 on a run with 12 bounces · `OPEN` · **high**
 
@@ -883,6 +897,13 @@ skill bodies, one regex, one query. `gate-misrouted` is the class
 `retro-metrics.md` already said should be added after it happened twice, and
 never was.
 
+**Contract status, 2026-08-06.** The impossible `forge.block.v1` envelope has
+been removed. One registry regex now owns the vocabulary (including
+`gate-unrunnable`); literal script/SOUL producers and the metrics consumer are
+checked against it, and the historical unclassified tier-2 sentinel reason is
+now `other:`. F26 remains open until a live sweep proves model-authored
+terminators obey the contract.
+
 ---
 
 ### F27 — The flywheel's three numbers are computed by a model reading prose · `OPEN` · **critical**
@@ -945,8 +966,9 @@ SELECT COUNT(*) FROM task_runs WHERE json_extract(metadata,'$.\"forge.chunk.v1\"
 
 Twenty-two chunk completions, **not one of them in the documented shape**, and
 the Forge ran for three days without noticing because nothing ever queried its
-own exhaust. `docs/state.md` asserts *"Both metadata schemas populate"* on the
-strength of a human having looked at one card once.
+own exhaust. At audit time `docs/state.md` asserted *"Both metadata schemas
+populate"* on the strength of a human having looked at one card once; the
+2026-08-06 contract slice corrects that claim.
 
 **This is the highest value-per-line fix in the entire audit.** It is under an
 hour of work, it costs nothing to run, it converts the flywheel's inputs from
@@ -1804,8 +1826,10 @@ being implemented; F-numbers are what each closes.
 
 ## Corrections this audit owes the Forge's own docs
 
-- `docs/state.md` "Proven": *"Both metadata schemas populate — complete on the
-  real cards"* — **false** (F2). They are present and incomplete.
+- ~~`docs/state.md` "Proven": *"Both metadata schemas populate — complete on
+  the real cards"*~~ — **corrected 2026-08-06** (F2). The historical chunk
+  objects are recorded as incomplete; the replacement contract remains
+  lifecycle-unproven.
 - `docs/state.md` "Not proven": *"A genuine idea through the whole lifecycle"* —
   now largely **proven** (5/6 chunks merged), with F1 as the caveat.
 - `docs/retro-metrics.md` — **no row exists** for the largest run to date. The
@@ -2648,7 +2672,7 @@ slice, with a real run behind it.
 scripts; a post-merge review found six fail-open classes in that implementation
 (F69–F74); a second review found the repair for those fail-*closed* on normal
 non-Codex activity (F75, F76). What shipped protects a named set and states what
-it cannot protect. The skill is 291/300 and `make verify` is 117/0/3 with 35
+it cannot protect. The skill is 299/300 and `make verify` is 117/0/3 with 35
 lane cases.
 
 **Live-validated against what shipped.** The earlier probe
@@ -3065,4 +3089,4 @@ changed, even by diffing the retained manifests.
 **Fix.** Manifest lines carry a trailing display-only path column (hash stays
 first, so ordering is unchanged); a breach writes the differing lines to
 `<audit-root>/<run-id>/breach.txt` and names the first offending path in the
-`reason_class=` line. Pinned by `blast/breach-names-what-moved`.
+classified reason line. Pinned by `blast/breach-names-what-moved`.

@@ -1,10 +1,9 @@
 # Forge — current state
 
-**Updated 2026-07-28, after a second full climb of the ladder on a fresh
-project (`ladder-forge`), plus the four exercises that followed it. The first
-run proved the chain runs; this one attacked it, and the exercises made it fail
-on purpose — a deliberate bounce, a dependency edge, a killed worker and a red
-CI. Two sessions ran that day and their histories are reconciled here.**
+**Updated 2026-08-06, after the audit repair slices through the lane boundary
+and completed-run metadata producer contract. The 2026-07-28 ladder and fault
+exercises remain the live baseline; later sections distinguish repaired code
+from behavior that has been re-proven on a genuine lifecycle.**
 
 This is the orientation doc for a session starting with no context. It says what
 is *proven*, what is merely *claimed*, and what to do next. `README.md` is the
@@ -41,7 +40,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 |---|---|
 | A chunk flows card → PR → merge, unattended | `forge-hello` board, card `t_1b7be3bb`, PR #1 merged 2026-07-28, 4 min, one run, no retries |
 | The cheap driver holds the 7-section lane protocol | `deepseek-v4-flash` executed every section in order, narrating its position |
-| Both metadata schemas populate | `forge.chunk.v1` and `forge.judge.v1` complete on the real cards |
+| The historical metadata split is measured | judge runs stored flat `forge.judge.v1`; chunk runs stored incomplete nested objects. The new producer contract is fixture-proven, not yet lifecycle-proven (F1/F2/F44) |
 | Tier-1 review works | prejudge waited for CI, invoked `claude -p --json-schema`, returned a schema-valid verdict. Since ADR-0009 the waiting is the gate's job; since ADR-0010 the whole protocol is `scripts/prejudge-review.sh`. The scorer call itself is byte-identical to the day it was written, and `prejudge/scorer-is-the-control-arm` fails the suite if that stops being true |
 | The tier-1 gate blocks, offline | `make verify prejudge` — two recorded PRs of the audited run reproduce a checked-in severity map with no gh, git or network; PR #8 exits 1 on `branch-name` + `scenario-count` |
 | The tier-1 protocol runs, offline | the same fixtures drive `prejudge-review.sh --dry-run`: a block routes to a bounce with no model spawned, a clear assembles a 64 KB prompt, and a recorded 63,164-byte patch reaches the prompt file while the driver observes 2,599 bytes |
@@ -62,12 +61,10 @@ per rung) reproduced the whole chain and found eight more findings — see
 run were confirmed working under load: Codex never read `forge-lane`, and it
 hit zero sandbox denials because §3 had built the venv first.
 
-`make verify` — 54 cases — is the executable form of most of the above. On this
-checkout it reports **53 pass, 0 fail, 1 opt-in Codex skip**. (Run from a
-different worktree it will fail `config/external-dirs` for every profile, which
-is not a defect: the check is checkout-relative and the live profiles point at
-whichever checkout last ran `profiles-bootstrap.sh`.) Run it in CI,
-after every `hermes update`, and after every `codex`/`claude` upgrade.
+`make verify` is the executable form of most of the above. Its current count and
+the linked-worktree deployment caveat are recorded under “Environment as of
+this writing” below. Run it in CI, after every `hermes update`, and after every
+`codex`/`claude` upgrade.
 
 ## Not proven (do not write these into a skill body)
 
@@ -148,7 +145,8 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 
    **Sliced, bounced twice, narrowed and live-validated 2026-08-06 (F64 → `FIXED`).**
    §2/§3 and §5's audit became `scripts/lane-setup.sh` and
-   `scripts/lane-blast-radius.sh`, and the lane is **291/300**. The first
+   `scripts/lane-blast-radius.sh`, and the lane is **299/300** after the metadata
+   producer gate. The first
    post-merge review proved the new control fail-open: its baseline was writable
    by Codex, hook identity was discarded, Git inspection errors read as clean,
    and a failed final audit could be replayed after restoring the breach
@@ -202,11 +200,24 @@ divergence is the *wrong* instrument for that question.
    117/0/3 offline with 35 lane cases, and the live probe re-run against the
    shipped audit (`verify-codex-1786010605-22305`). F68–F78 record the seams;
    F75/F76 are why the audit protects a named set rather than the whole `.git`.
-2. **Schema canonicalisation** — F1, F2, F44, F26, F48. Has F64's headroom now
-   (9 lines). If it needs more, §4 is the next lever, not the budget.
-   Build its `metadata/` suite against **fixtures**, not a live board, and keep
-   any live sweep behind an opt-in flag; F67 is the measured argument for that.
-3. **Hygiene** — F36, F53/F55, F34. F34's 4-line note now fits.
+2. **Schema canonicalisation — producer contract implemented 2026-08-06.**
+   `rubrics/run-metadata-contract.json` maps each producer profile to the only
+   completed-run schemas it may emit; chunk and gate now have Draft 2020-12
+   schemas beside the unchanged judge schema. `metadata/` runs a recorded PR
+   through the real gate producer, rejects shape and semantic contradictions,
+   and checks literal block producers plus the metrics consumer against the
+   registry regex. `forge-lane` gates its complete flat file before completion.
+   The lane is 299/300; §4 is now the only honest lever for another protocol
+   addition.
+3. **Next: prove the producer on reality** — one genuine lifecycle run, then an
+   explicit snapshot-based sweep of its completed rows. F1/F2/F44 and F26 stay
+   open until the card is valid, the consumer reads it, and no model-authored
+   block reason falls outside the registry. F67 is why this is opt-in, not part
+   of the default suite.
+4. **Then discover and contract metered-driver telemetry** — establish what
+   Hermes exposes before adding F48's optional chunk `cost` block. Do not stamp
+   invented zeroes for a signal the substrate cannot report.
+5. **Hygiene** — F36, F53/F55, F34. F34's 4-line note now fits.
 
 Ledger and rationale for every F-number: `docs/audit-forgeboard-2026-07-30.md`.
 
@@ -240,5 +251,10 @@ profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
           forge-digest (deepseek-v4-flash) · codex pinned gpt-5.6-sol xhigh
 ```
 
-`make preflight` on the mini: PASS 80 / WARN 3 / FAIL 0.
-`make verify` on `main`: 95 passed / 0 failed / 3 skipped.
+`make preflight` on the mini: PASS 82 / WARN 3 / FAIL 0.
+`make verify` on this linked worktree: 124 passed / 3 failed / 7 skipped. The
+three failures are the expected live SOUL-sync checks: deploying the new SOULs
+before this contract reaches `main` would leave workers referring to a contract
+that is not installed yet. Four live profile-path checks also skip outside the
+main checkout. After merge, run `./hermes/profiles-bootstrap.sh`; the expected
+main-equivalent count is 131 passed / 0 failed / 3 skipped.

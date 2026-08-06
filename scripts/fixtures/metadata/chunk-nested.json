@@ -1,0 +1,9 @@
+{
+  "forge.chunk.v1": {
+    "chunk_id": "CHUNK-7",
+    "pr": "https://github.com/example/gym-coach/pull/42",
+    "branch": "chunk/7-sync-engine"
+  },
+  "changed_files": ["src/sync.py"],
+  "tests_run": 44
+}
