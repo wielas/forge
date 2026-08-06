@@ -1,5 +1,5 @@
 # forge repo-level commands
-.PHONY: install new validate verify preflight metrics prejudge worktree-sweep
+.PHONY: install new validate verify preflight metrics prejudge worktree-sweep roadmap-check
 
 verify:                        ## execute this repo's own claims (see scripts/verify.sh)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
@@ -21,6 +21,17 @@ metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..
 prejudge:                      ## make prejudge PR=<url|number> [REPO=owner/name] — tier 1 stage 1; exit 1 on a block
 	@test -n "$(PR)" || { echo "usage: make prejudge PR=<url|number> [REPO=owner/name] [WAIT=secs]"; exit 1; }
 	./scripts/prejudge.sh $(PR) $(if $(REPO),--repo $(REPO),) $(if $(WAIT),--wait $(WAIT),) $(if $(JSON),--json,)
+
+# THIS DOES NOT BLOCK, and that is the decision, not an omission (ADR-0012).
+# It is prejudge's sizing rules read off the plan instead of off a diff, at the
+# one moment the contract is still free to edit and no model has been spawned.
+# F53: `size-budget` fires on 11 of 11 PRs of the only real run — correct every
+# time, and every time after the money was spent. A gate that blocks everything
+# is not a filter either, so this warns; blocking is a later recorded decision
+# taken after a real roadmap has been fixed until it passes.
+roadmap-check:                 ## make roadmap-check PROJECT=<abs-path> — the sizing rules, at plan time; advisory
+	@test -n "$(PROJECT)" || { echo "usage: make roadmap-check PROJECT=<abs-path> [VERBOSE=1]"; exit 1; }
+	./scripts/roadmap-check.sh $(PROJECT) $(if $(VERBOSE),--verbose,)
 
 preflight:                     ## revalidate the mini before unattended work (read-only)
 	./scripts/preflight.sh $(if $(OUT),--out $(OUT),)
@@ -67,6 +78,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
 	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh \
 	  scripts/lane-setup.sh scripts/lane-blast-radius.sh \
-	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh
+	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh \
+	  scripts/roadmap-check.sh scripts/touches-exempt.sh
 	@python3 -c 'import ast; [ast.parse(open(f).read()) for f in ["scripts/prejudge-steps.py", "scripts/validate-metadata.py"]]'
 	@echo "forge validate: OK"

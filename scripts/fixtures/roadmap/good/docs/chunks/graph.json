@@ -1,0 +1,5 @@
+[
+  {"id": "CHUNK-1", "lane": "forge-codex-lane",   "depends_on": []},
+  {"id": "CHUNK-2", "lane": "claude-interactive", "depends_on": ["CHUNK-1"]},
+  {"id": "CHUNK-3", "lane": "forge-codex-lane",   "depends_on": ["CHUNK-1", "CHUNK-2"]}
+]

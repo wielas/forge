@@ -1,0 +1,15 @@
+### CHUNK-2: Decide the digest's public record shape
+- **Goal:** Fix the field names, ordering and null semantics of `digest.run.v1` and record the choice as an ADR.
+- **Milestone:** M1  ·  **Depends on:** `CHUNK-1`
+- **Serves:** `FR-4`, `NFR-1`  ·  **Relevant ADRs:** `0002`, `0003`
+- **Touches:** `src/digest/schema.json`, `docs/adr/0004-record-shape.md`, `tests/features/record_shape.feature`, `tests/steps/test_record_shape_steps.py`
+- **Contract decisions:**
+  - Field order is part of the contract, because the artifact is diffed by humans.
+  - Unavailable is JSON null and never zero; the two are different facts.
+- **Scenarios:**
+  - Given a record with every field populated, when it is serialised, then the field order matches the schema exactly.
+  - Given a record with an unavailable metric, when it is serialised, then that field is null.
+  - Given a record carrying an unknown extra key, when it is validated, then validation fails and names the key.
+- **Out of scope:** reading the board, rendering Markdown, publication.
+- **Done when:** `make check` green + all three scenarios pass + ADR-0004 written
+- **Lane:** claude-interactive  ·  **Risk:** high

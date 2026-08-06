@@ -295,8 +295,11 @@ branch_name() {
 # manufactures a finding on every single PR, which is a gate nobody will read.
 # ---------------------------------------------------------------------------
 # Not a convenience list: each entry is a path the METHODOLOGY obliges a chunk to
-# touch and the contract template has no slot to declare.
-TOUCHES_EXEMPT='^docs/decision-log\.md$|^docs/ROADMAP\.md$|^docs/chunks/'
+# touch and the contract template has no slot to declare. The list itself lives
+# in ONE file, because `scripts/roadmap-check.sh` applies the same exemption at
+# plan time (ADR-0012) and two copies disagree the first time one is edited.
+# shellcheck source=./touches-exempt.sh
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/touches-exempt.sh"
 touches() {
   [ -n "$CONTRACT" ] || { emit touches skip "no contract for ${CHUNK:-this branch} in the PR tree"; return; }
   local listed drift changed

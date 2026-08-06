@@ -38,6 +38,9 @@
 #               of real and near-miss step shapes, and the gate's own safety
 #               properties — absent CI is not a pass, skip is not pass, it does
 #               not speak the verdict schema, and it gates nothing       (F35)
+#   roadmap/    the sizing rules at PLAN time: one checked-in passing roadmap,
+#               one mutation per rule family, and the audited run's own CHUNK-5
+#               driven through the real check              (F11, F53, ADR-0012)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -57,11 +60,11 @@ while [ $# -gt 0 ]; do
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
-    cli|config|substrate|template|lane|metrics|metadata|prejudge|sweep) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|metrics|metadata|prejudge|sweep|roadmap) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics metadata prejudge sweep"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics metadata prejudge sweep roadmap"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -866,6 +869,29 @@ sweep/sweep-tolerates-missing-remote-branch the merge deletes origin/<branch>; t
 prejudge/shadow-preserves-the-routing-field  stamping never alters .verdict
 prejudge/stamped-envelope-declares-every-key  no key the schema does not declare (additionalProperties:false)
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
+roadmap/real-run-contract-fails-on-serves  the audited run's own CHUNK-5 serves 12 requirements, cap 4 (F11)
+roadmap/counting-bullets-is-not-counting-scenarios  5 bullets specifying 8 scenarios are 8, not 5
+roadmap/compound-bullet-is-not-one-scenario  the run's verbatim six-in-one Given is worth six
+roadmap/conjunctive-list-is-still-one-scenario  'Given A, B, and C' is one scenario, not three
+roadmap/bijection-id-with-no-file       a graph id with no docs/chunks/<id>.md is reported
+roadmap/bijection-file-with-no-id       a chunk file the graph forgot is reported (bootstrap cannot see this)
+roadmap/bijection-dangling-depends-on   depends_on naming an id the graph does not define
+roadmap/acyclic-catches-a-cycle         a cycle is named before a board exists
+roadmap/single-root-catches-two-roots   Track E's --root-only needs exactly one root
+roadmap/fields-names-the-missing-one    a missing contract field fails and is named
+roadmap/serves-over-four                more than 4 requirements per chunk (F11's own number)
+roadmap/touches-over-six                more than 6 declarable paths per chunk
+roadmap/scenario-count-over-five        more than 5 scenarios per chunk
+roadmap/scenario-shape-needs-one-given-when-then  a bullet that is not one Given/When/Then
+roadmap/lane-catches-an-unknown-assignee  an unknown assignee strands the card silently, so catch it here
+roadmap/process-docs-do-not-count-against-touches  the F55 exemption applies at plan time too
+roadmap/touches-exemption-has-one-definition  plan time and review time share one list, not two
+roadmap/warns-without-blocking          findings do not gate — F53's ruling, shipped
+roadmap/unrunnable-is-exit-2-not-a-pass  an absent plan is not a clean plan
+roadmap/unreadable-assignee-list-skips-never-passes  a check that could not run has not passed
+roadmap/every-warning-carries-an-action  no finding a planner cannot execute
+roadmap/skill-delegates-to-the-checker  /roadmap names the script, via ~/.forge/repo (ADR-0003)
+roadmap/thresholds-are-the-skills-own-numbers  the caps have not drifted from skills/roadmap/SKILL.md
 EOF
   exit 0
 fi
@@ -2850,6 +2876,233 @@ GHSTUB
   rm -rf "$lab"
 }
 wants sweep     && run_sweep_group
+
+# ---------------------------------------------------------------------------
+# roadmap/ — the sizing rules at PLAN time (ADR-0012, audit F53).
+#
+# Every case below is a MUTATION of one checked-in passing roadmap: copy the
+# good fixture, reintroduce exactly one defect, and assert that the one check
+# responsible warns. A fixture that cannot reproduce production behaviour proves
+# nothing (F51), so the group's first two cases are not mutations at all — they
+# run the real contract the audited run shipped, straight out of the prejudge
+# recording, and assert the check reports the defects the audit counted by hand.
+# ---------------------------------------------------------------------------
+run_roadmap_group() {
+  group roadmap
+  local rc="$REPO_ROOT/scripts/roadmap-check.sh"
+  local good="$REPO_ROOT/scripts/fixtures/roadmap/good"
+  # Offline and deterministic: never `hermes kanban assignees` from a test.
+  export FORGE_ASSIGNEES="forge-codex-lane forge-operator-handoff forge-prejudge"
+
+  # Status/evidence of one check id, from the real script's real output. The
+  # `|| true` is load-bearing under `set -o pipefail`: these two read OUTPUT,
+  # and without it the checker's exit status leaks into every case that uses
+  # them — a mutation making the script block was reported by three cases as
+  # "CHUNK-5 does not serve 12 requirements", which it does. `warns-without-
+  # blocking` is the case that owns the exit status, and it owns it alone.
+  _rc_status() { { "$rc" "$1" 2>/dev/null || true; } | awk -v id="$2" '$2==id{print tolower($1)}'; }
+  _rc_evidence() { { "$rc" "$1" 2>/dev/null || true; } | awk -v id="$2" '$2==id{getline; print}'; }
+  # a copy of the passing fixture with ONE defect reintroduced
+  _rc_mutate() {  # $1=name $2=shell snippet run inside the copy
+    local d="$TMPROOT/roadmap-$1"
+    rm -rf "$d"; mkdir -p "$d"; cp -R "$good/." "$d/"
+    ( cd "$d" && eval "$2" ) || return 1
+    printf '%s' "$d"
+  }
+  _rc_case() {  # $1=name $2=snippet $3=check-id $4=expected status
+    local d got
+    d="$(_rc_mutate "$1" "$2")" || { bad "$1" "the mutation itself failed to apply"; return; }
+    got="$(_rc_status "$d" "$3")"
+    if [ "$got" = "$4" ]; then ok "$1"
+    else bad "$1" "$3 reported '$got', expected '$4' with the defect reintroduced"; fi
+  }
+
+  # -- the fixture is a claim about production, so check it against production --
+  # The audited run's CHUNK-5, byte-identical to the copy in the prejudge
+  # recording. Serves 12 requirements; F11 caps it at 4.
+  local real="$TMPROOT/roadmap-real/docs/chunks"
+  mkdir -p "$real"
+  cp "$REPO_ROOT/scripts/fixtures/prejudge-prs/pr-9/tree/docs/chunks/CHUNK-5.md" "$real/"
+  printf '[{"id":"CHUNK-5","lane":"forge-codex-lane","depends_on":[]}]\n' > "$real/graph.json"
+  if [ "$(_rc_status "$TMPROOT/roadmap-real" serves)" = warn ] \
+     && _rc_evidence "$TMPROOT/roadmap-real" serves | grep -q 'CHUNK-5(12)'; then
+    ok "real-run-contract-fails-on-serves"
+  else
+    bad "real-run-contract-fails-on-serves" \
+        "the run's own CHUNK-5 serves FR-1..9 + NFR-1,2,5 and this did not report 12 over the cap of 4"
+  fi
+
+  # Its five bullets specify eight scenarios. Counting bullets would say five
+  # and clear it, which is the naive count F11 says passes.
+  if [ "$(_rc_status "$TMPROOT/roadmap-real" scenarios)" = warn ] \
+     && _rc_evidence "$TMPROOT/roadmap-real" scenarios | grep -q '8 from 5 bullet(s)'; then
+    ok "counting-bullets-is-not-counting-scenarios"
+  else
+    bad "counting-bullets-is-not-counting-scenarios" \
+        "CHUNK-5's 5 bullets specify 8 scenarios; a check that reports 5 is counting bullets"
+  fi
+
+  # The audit's verbatim CHUNK-6 scenario 2 — six scenarios in one bullet. The
+  # single sentence this whole check exists for.
+  _rc_case compound-bullet-is-not-one-scenario \
+    "python3 - <<'PY'
+import io
+p='docs/chunks/CHUNK-2.md'
+s=open(p).read().split('\n')
+for i,l in enumerate(s):
+    if l.startswith('  - Given a record with every field'):
+        s[i]='  - Given invalid input, an unknown/changing board, cyclic graph, unavailable/old GitHub CLI, malformed canonical evidence, or publication failure, when the command runs, then a specific error is raised.'
+        break
+open(p,'w').write('\n'.join(s))
+PY" \
+    scenarios warn
+
+  # ...and the conjunctive twin must NOT fire. 'Given A, B, and C' is one
+  # scenario with a compound setup: one report containing several kinds of
+  # field is still one report. Without this case the arity heuristic could
+  # degenerate into 'any comma list', which fires on almost every real bullet.
+  _rc_case conjunctive-list-is-still-one-scenario \
+    "python3 - <<'PY'
+p='docs/chunks/CHUNK-2.md'
+s=open(p).read().split('\n')
+for i,l in enumerate(s):
+    if l.startswith('  - Given a record with every field'):
+        s[i]='  - Given a record with populated, unavailable, nested, and escaped fields, when it is serialised, then the field order matches the schema exactly.'
+        break
+open(p,'w').write('\n'.join(s))
+PY" \
+    scenarios pass
+
+  # -- one mutation per rule family --
+  _rc_case bijection-id-with-no-file "rm docs/chunks/CHUNK-3.md" bijection warn
+  _rc_case bijection-file-with-no-id \
+    "cp docs/chunks/CHUNK-3.md docs/chunks/CHUNK-4.md" bijection warn
+  _rc_case bijection-dangling-depends-on \
+    "jq '(.[]|select(.id==\"CHUNK-3\")|.depends_on) = [\"CHUNK-9\"]' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    bijection warn
+  _rc_case acyclic-catches-a-cycle \
+    "jq '(.[]|select(.id==\"CHUNK-1\")|.depends_on) = [\"CHUNK-3\"]' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    acyclic warn
+  _rc_case single-root-catches-two-roots \
+    "jq '(.[]|select(.id==\"CHUNK-2\")|.depends_on) = []' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    single-root warn
+  _rc_case fields-names-the-missing-one "sed -i.bak '/\*\*Done when:\*\*/d' docs/chunks/CHUNK-1.md && rm -f docs/chunks/*.bak" \
+    fields warn
+  _rc_case serves-over-four \
+    "sed -i.bak 's/\*\*Serves:\*\* \`FR-4\`, \`NFR-1\`/**Serves:** \`FR-4\`, \`NFR-1\`, \`NFR-2\`, \`NFR-3\`, \`NFR-4\`/' docs/chunks/CHUNK-2.md && rm -f docs/chunks/*.bak" \
+    serves warn
+  _rc_case touches-over-six \
+    "sed -i.bak 's#\`tests/fixtures/board.sql\`#\`tests/fixtures/board.sql\`, \`src/digest/cli.py\`#' docs/chunks/CHUNK-1.md && rm -f docs/chunks/*.bak" \
+    touches warn
+  _rc_case scenario-count-over-five \
+    "sed -i.bak 's#^- \*\*Out of scope:\*\*#  - Given a sixth condition, when it happens, then it is handled.\n- **Out of scope:**#' docs/chunks/CHUNK-1.md && rm -f docs/chunks/*.bak" \
+    scenarios warn
+  _rc_case scenario-shape-needs-one-given-when-then \
+    "sed -i.bak 's#, when the reader runs, then exactly one record is emitted\.#and it is read.#' docs/chunks/CHUNK-1.md && rm -f docs/chunks/*.bak" \
+    scenarios warn
+  _rc_case lane-catches-an-unknown-assignee \
+    "sed -i.bak 's/forge-codex-lane/forge-code-lane/' docs/chunks/graph.json && rm -f docs/chunks/*.bak" \
+    lane warn
+
+  # -- the F55 exemption, at plan time --
+  # CHUNK-1 declares eight paths and clears a six-path budget, because two of
+  # them are process docs the methodology obliges every chunk to change. Adding
+  # three more of the same kind must not move the count. A check that counted
+  # them would punish the one planner honest enough to write them down, and the
+  # cheapest way to pass it would be to delete them from Touches — which then
+  # manufactures prejudge's `touches` drift finding on the same chunk.
+  _rc_case process-docs-do-not-count-against-touches \
+    "sed -i.bak 's#\`docs/ROADMAP.md\`#\`docs/ROADMAP.md\`, \`docs/chunks/CHUNK-1.md\`, \`docs/chunks/CHUNK-2.md\`, \`docs/chunks/CHUNK-3.md\`#' docs/chunks/CHUNK-1.md && rm -f docs/chunks/*.bak" \
+    touches pass
+
+  # One definition of that exemption in the whole repo, or the two ends of it
+  # disagree the first time one is edited (F30's defect class). Assignments
+  # only: a comment naming the variable is documentation, not a second copy.
+  local defs
+  defs="$(grep -rn '^[[:space:]]*TOUCHES_EXEMPT=' "$REPO_ROOT/scripts" "$REPO_ROOT/hermes" \
+          "$REPO_ROOT/skills" 2>/dev/null | grep -c . || true)"
+  if [ "$defs" = 1 ] && grep -q 'touches-exempt\.sh' "$REPO_ROOT/scripts/prejudge.sh" \
+     && grep -q 'touches-exempt\.sh' "$REPO_ROOT/scripts/roadmap-check.sh"; then
+    ok "touches-exemption-has-one-definition"
+  else
+    bad "touches-exemption-has-one-definition" \
+        "$defs TOUCHES_EXEMPT assignment(s) found; plan time and review time must source scripts/touches-exempt.sh"
+  fi
+
+  # -- the properties of the check itself --
+  # Warn-first is the shipped decision (F53), not an accident, and an exit
+  # status is how a caller would find out. A plan full of findings still exits
+  # 0; only a substrate failure is non-zero. When this flips to blocking it
+  # flips as a recorded decision and this case is the one that has to change.
+  local d; d="$(_rc_mutate exit-status "rm docs/chunks/CHUNK-3.md")"
+  if "$rc" "$d" >/dev/null 2>&1; then
+    ok "warns-without-blocking"
+  else
+    bad "warns-without-blocking" \
+        "a plan with findings exited non-zero — ADR-0012 ships this advisory; blocking is a later recorded decision"
+  fi
+  if "$rc" "$TMPROOT/no-such-project-dir" >/dev/null 2>&1; then
+    bad "unrunnable-is-exit-2-not-a-pass" "a missing project exited 0 — an absent plan is not a clean plan"
+  elif [ "$?" = 2 ]; then ok "unrunnable-is-exit-2-not-a-pass"
+  else bad "unrunnable-is-exit-2-not-a-pass" "expected exit 2 for a missing project"; fi
+
+  # skip is not pass: with no assignee list readable, `lane` has cleared nothing.
+  if [ "$(env -u FORGE_ASSIGNEES PATH=/usr/bin:/bin "$rc" "$good" 2>/dev/null \
+          | awk '$2=="lane"{print tolower($1)}')" = skip ]; then
+    ok "unreadable-assignee-list-skips-never-passes"
+  else
+    bad "unreadable-assignee-list-skips-never-passes" \
+        "with no hermes and no \$FORGE_ASSIGNEES the lane check must skip; a check that could not run has not passed (F5)"
+  fi
+
+  # Every warning must carry an action a planner can execute — the same
+  # contract prejudge's blocking findings are held to.
+  # Counted over every mutation this group made, so the set grows with the
+  # group rather than with a list somebody has to remember to extend.
+  local seen=0 missing=0 m out
+  for m in "$TMPROOT"/roadmap-*; do
+    [ -d "$m/docs/chunks" ] || continue
+    out="$("$rc" "$m" 2>/dev/null | awk '
+      /^  WARN   /   { if (pend) miss++; pend = 1; warns++; next }
+      /^      -> /   { pend = 0 }
+      END { if (pend) miss++; printf "%d %d", warns + 0, miss + 0 }')"
+    seen=$(( seen + ${out% *} )); missing=$(( missing + ${out#* } ))
+  done
+  if [ "$missing" = 0 ] && [ "$seen" -gt 0 ]; then
+    ok "every-warning-carries-an-action ($seen warning(s) over $(ls -d "$TMPROOT"/roadmap-* | wc -l | tr -d ' ') mutated plans)"
+  else
+    bad "every-warning-carries-an-action" \
+        "$missing of $seen warning(s) named a defect without saying what to do about it"
+  fi
+
+  # ADR-0003 applied to the claim this slice just added to a skill body: the
+  # roadmap ceremony tells a machine to run this script, through the
+  # ~/.forge/repo form that resolves from a project worktree, and the script it
+  # names has to exist. A bare relative path here cannot resolve at all.
+  if grep -q '~/\.forge/repo/scripts/roadmap-check\.sh' skills/roadmap/SKILL.md \
+     && [ -x "$rc" ]; then
+    ok "skill-delegates-to-the-checker"
+  else
+    bad "skill-delegates-to-the-checker" \
+        "skills/roadmap/SKILL.md must name ~/.forge/repo/scripts/roadmap-check.sh, and it must be executable"
+  fi
+
+  # The skill states the numbers; the checker must not have drifted from them.
+  # ADR-0003 applied to the one skill body this slice makes executable.
+  if grep -q '<= 5 BDD scenarios' skills/roadmap/SKILL.md \
+     || grep -q '≤ 5 BDD scenarios' skills/roadmap/SKILL.md; then
+    if grep -q '^SCENARIO_MAX=5' "$rc" && grep -q '^TOUCHES_MAX=6' "$rc" \
+       && grep -q '^SERVES_MAX=4' "$rc"; then
+      ok "thresholds-are-the-skills-own-numbers"
+    else
+      bad "thresholds-are-the-skills-own-numbers" \
+          "roadmap-check.sh's caps drifted from skills/roadmap/SKILL.md's '<= ~6 files, <= 5 BDD scenarios' and F11's '~4 requirements'"
+    fi
+  else
+    skip "thresholds-are-the-skills-own-numbers" "SKILL.md no longer states the scenario cap"
+  fi
+}
+wants roadmap   && run_roadmap_group
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1
