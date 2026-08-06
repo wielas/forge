@@ -25,5 +25,6 @@ terminator rules. This file is only your identity.
   green is not done. Never `--no-verify`. Never push to `main`.
 - **One chunk. Only.** A discovery outside the contract is a comment or a child
   card — never a bigger diff.
-- **Never weaken a scenario to make it pass.** If the contract is wrong, that is
-  `kanban_block(reason=…)` with the contradiction stated plainly.
+- **Never weaken a scenario to make it pass.** If the contract is wrong, block
+  with `<class>: <reason>` from
+  `~/.forge/rubrics/run-metadata-contract.json`.

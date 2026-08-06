@@ -1,0 +1,19 @@
+{
+  "schema": "forge.judge.v1",
+  "chunk_id": "CHUNK-7",
+  "pr": "https://github.com/example/gym-coach/pull/42",
+  "verdict": "approve",
+  "scores": {
+    "spec_fidelity": 3,
+    "scenario_integrity": 3,
+    "architectural_conformance": 3,
+    "scope_discipline": 3,
+    "debt_honesty": 3,
+    "doc_reconciliation": 3
+  },
+  "findings": [],
+  "nits_as_cards": [],
+  "spot_check_suggestion": "",
+  "judge_model": "opus",
+  "tokens_estimate": 1200
+}
