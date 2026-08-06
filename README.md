@@ -81,8 +81,9 @@ uv tool install copier
 ./install.sh
 
 # 2. Stamp a new project — Chunk 0 in one command
-make new NAME=my-project           # wraps: copier copy templates/python-service ../my-project
-cd ../my-project && make setup
+# DEST is required, absolute and durable — a temp dir is refused (F19)
+make new NAME=my-project DEST=$HOME/dev
+cd $HOME/dev/my-project && make setup
 
 # 3. Plan interactively (Claude Code, subscription-covered, you present)
 claude                             # then: /scope → /architect → /roadmap
@@ -144,8 +145,8 @@ Reproduce it on any new project:
 
 ```bash
 make preflight                      # must be FAIL 0 before anything is dispatched
-make new NAME=hello-forge
-cd ../hello-forge && git init -b main . && make setup
+make new NAME=hello-forge DEST=$HOME/dev
+cd $HOME/dev/hello-forge && git init -b main . && make setup
 gh repo create hello-forge --public --source=. --remote=origin --push
 make protect
 ../forge/hermes/board-bootstrap.sh forge-hello --hello
