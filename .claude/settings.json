@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./scripts/verify.sh)",
+      "Bash(./scripts/verify.sh cli *)",
+      "Bash(./scripts/verify.sh config *)",
+      "Bash(./scripts/verify.sh substrate *)",
+      "Bash(./scripts/verify.sh template *)",
+      "Bash(./scripts/verify.sh lane *)",
+      "Bash(./scripts/verify.sh metrics *)",
+      "Bash(./scripts/verify.sh prejudge *)",
+      "Bash(./scripts/verify.sh --list)",
+      "Bash(./scripts/preflight.sh *)",
+      "Bash(./scripts/metrics.sh *)",
+      "Bash(make verify)",
+      "Bash(make validate)",
+      "Bash(make preflight)",
+      "Bash(make metrics *)"
+    ]
+  }
+}
