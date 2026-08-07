@@ -52,7 +52,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | A card parked on a non-existent profile is detectable | `make preflight` walks every board and WARNs; caught `forge-operator` on `forge-ladder`, the shape the first two tier-2 attempts produced |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
-| Branch protection is a real merge gate | a red or unreviewed merge is refused by GitHub, not by prose |
+| Branch protection is a real merge gate | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **And now on this repository too** — ruleset `mainprotect`, active 2026-08-07, requires a PR plus green `validate` and `verify`; a red PR reports `mergeStateStatus: BLOCKED`. Zero approvals required, deliberately. **Caveat: no check in this repo asserts this**, so it is the one Proven row `make verify` cannot arbitrate (F79) |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
 **The driver model moved on 2026-08-07, and that makes one Proven row
@@ -181,6 +181,29 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    which ADR-0010 puts in the prompt, not in a script.
 3. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
+4. ~~**This repository has no merge gate at all**~~ **Mostly closed 2026-08-07**
+   (audit **F79**). On 2026-08-06 `wielas/forge` was private on a free plan, both
+   `…/branches/main/protection` and `…/rulesets` returned 403, and no pre-push
+   hook was installed — the repository that *ships* the merge gate had never run
+   one. It is now public, and ruleset `mainprotect` requires a pull request,
+   blocks deletion and non-fast-forward pushes, and requires the `validate` and
+   `verify` checks to pass. A red PR reports `mergeStateStatus: BLOCKED`.
+
+   **And the claim is executed now, which is the half that mattered.**
+   `make preflight` section 3 asks the repository directly and separates four
+   outcomes: *gated* (a PR rule plus required status checks) PASSes; *a PR rule
+   with no required checks* FAILs, because that is the state this repo was
+   actually in for several hours and it is the most dangerous of the three —
+   the gate exists and does not gate; *no PR rule at all* FAILs; and *cannot be
+   read* (403, no access) **WARNs rather than passing**, because a control that
+   could not run has not passed (F65/F66). All four branches were exercised, not
+   only the one that happens to be true today.
+
+   Two smaller facts worth keeping: `required_approving_review_count` is **0** on
+   purpose — every PR here is self-authored, so the gate is CI rather than a
+   second person — and `strict_required_status_checks_policy` is **false**, so a
+   branch need not be up to date with `main` to merge. Tightening the latter is
+   reasonable once nothing is stacked.
 
 ---
 

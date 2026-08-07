@@ -41,7 +41,9 @@ new:                           ## make new NAME=my-project [DEST=..]
 	@# which every one of those gates is silently inert.
 	@echo "→ cd $(or $(DEST),..)/$(NAME) && git init -b main && make setup && claude (/scope)"
 	@echo "→ then, once the GitHub repo exists: make protect"
-	@echo "   (branch protection is the ONLY merge gate — the pre-push hook is advisory)"
+	@echo "   (where it succeeds, branch protection is the ONLY merge gate and the"
+	@echo "    pre-push hook is advisory. It FAILS on a private repo on a free plan"
+	@echo "    — 403 — and then the hook is your whole gate. Check, do not assume: F79)"
 
 validate:                      ## sanity-check skill frontmatter + shell syntax
 	@for f in skills/*/SKILL.md; do \
