@@ -905,6 +905,9 @@ metrics/snapshot/fixture-reproduces-the-idle-failure  the fixture is WAL and shm
 metrics/snapshot/idle-wal-board-is-readable  a board at rest snapshots and reads (F47, F67)
 metrics/snapshot/source-is-byte-identical    reading a board changes neither it nor its sidecars
 metrics/snapshot/unreadable-input-is-silent-on-stdout  a failed read exits non-zero AND prints nothing (F47's second half)
+metrics/snapshot/empty-input-is-not-an-empty-board  a zero-byte file is a VALID empty database; no query closes that
+metrics/snapshot/path-with-a-space-is-a-path  a board under a directory with a space still snapshots
+metrics/snapshot/help-names-its-exit-contract  --help is anchored to the header rules, not to line numbers
 metrics/snapshot/torn-source-is-refused      a board moving under every attempt fails; no partial success
 metrics/snapshot/no-second-implementation    the WAL snapshot exists once, and both live-board readers call it
 metadata/schemas-are-valid              every run-metadata schema is valid JSON Schema Draft 2020-12
@@ -1660,16 +1663,24 @@ run_metrics_group() {
   sqlite3 "$wal/kanban.db" \
     "PRAGMA journal_mode=WAL; CREATE TABLE tasks(id TEXT, status TEXT);" >/dev/null 2>&1
   rm -f "$wal/kanban.db-shm" "$wal/kanban.db-wal"   # what SQLite does on last close
+  #
+  # This is the THIRD copy of the pattern, and it survived the slice that exists
+  # to unify it: `live-schema-has-fixture-columns` above was converted to call
+  # the primitive and this one was not, so it went on proving that a hand-rolled
+  # `cp` survives an idle board — which is not the claim. It is routed through
+  # scripts/board-snapshot.sh here, which is also what gives
+  # `snapshot/no-second-implementation` a real second caller to hold.
   if sqlite3 "file:$wal/kanban.db?mode=ro" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
     skip "live-schema-read-survives-an-idle-board" \
          "this sqlite3 opens a shm-less WAL database read-only; the F67 flake cannot occur here"
   else
-    cp "$wal/kanban.db" "$wal/snap.db" 2>/dev/null
-    if sqlite3 "$wal/snap.db" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
-      ok "live-schema-read-survives-an-idle-board (shm-less WAL board reads via snapshot, not mode=ro)"
+    local wsnap
+    wsnap="$(scripts/board-snapshot.sh "$wal/kanban.db" "$wal/snap" 2>/dev/null)"
+    if [ -n "$wsnap" ] && sqlite3 "$wsnap" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
+      ok "live-schema-read-survives-an-idle-board (shm-less WAL board reads via the snapshot primitive, not mode=ro)"
     else
       bad "live-schema-read-survives-an-idle-board" \
-          "a WAL board with no -shm could not be read even from a snapshot — the check above will flake again (F67)"
+          "a WAL board with no -shm could not be read even through scripts/board-snapshot.sh — the check above will flake again (F67)"
     fi
   fi
 
@@ -1712,11 +1723,32 @@ run_snapshot_cases() {
   CURRENT_GROUP=metrics
   local bs=scripts/board-snapshot.sh lab="$TMPROOT/snapshot"
 
+  # Six cases are declared in the --list manifest. Both early exits below used
+  # to name ONE of them and return, so five declared claims vanished with no
+  # skip line and nothing reconciling what was emitted against what was
+  # promised — a check that could not run has not passed (F5), and one that does
+  # not even say it did not run cannot be noticed.
+  local SNAPSHOT_CASES="fixture-reproduces-the-idle-failure
+idle-wal-board-is-readable
+source-is-byte-identical
+unreadable-input-is-silent-on-stdout
+empty-input-is-not-an-empty-board
+path-with-a-space-is-a-path
+help-names-its-exit-contract
+torn-source-is-refused
+no-second-implementation"
+  _snapshot_all() { # $1=skip|bad  $2=reason
+    local c
+    while IFS= read -r c; do [ -n "$c" ] && "$1" "snapshot/$c" "$2"; done <<EOF
+$SNAPSHOT_CASES
+EOF
+  }
+
   if ! command -v sqlite3 >/dev/null 2>&1; then
-    skip "snapshot/idle-wal-board-is-readable" "sqlite3 not on PATH"; return
+    _snapshot_all skip "sqlite3 not on PATH"; return
   fi
   if [ ! -x "$bs" ]; then
-    bad "snapshot/idle-wal-board-is-readable" "$bs is missing or not executable"
+    _snapshot_all bad "$bs is missing or not executable"
     return
   fi
   rm -rf "$lab" && mkdir -p "$lab/src"
@@ -1736,8 +1768,14 @@ run_snapshot_cases() {
     bad "snapshot/fixture-reproduces-the-idle-failure" \
         "the fixture board is journal_mode=${mode:-unknown}, not wal — F47 is unreachable on it, so every case below would pass against the reintroduced bug (F51)"
   elif sqlite3 "file:$src?mode=ro" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
+    # THIS IS THE STATE OF `ubuntu-latest`, so it is the state of every pull
+    # request. When this skips, `snapshot/idle-wal-board-is-readable` below goes
+    # on to report `ok` on a host where the bug is unreachable — true, and
+    # evidence of nothing. F47/F67 is therefore gated by `make preflight` on the
+    # mini, which builds this same fixture and FAILS if the read breaks; see
+    # scripts/preflight.sh §10. A green CI is not a run of this regression.
     skip "snapshot/fixture-reproduces-the-idle-failure" \
-         "this sqlite3 opens a shm-less WAL database read-only; the F47/F67 failure cannot occur on this host"
+         "this sqlite3 opens a shm-less WAL database read-only; F47/F67 is unreachable here and is gated by 'make preflight' on the mini instead"
   else
     ok "snapshot/fixture-reproduces-the-idle-failure (wal, no -shm, and mode=ro provably refuses it)"
   fi
@@ -1789,6 +1827,49 @@ run_snapshot_cases() {
         "an unreadable board must exit non-zero AND print nothing to stdout: missing file exit $rc printed '$out'; not-a-database exit $rc2 printed '$out2'"
   fi
 
+  # A ZERO-BYTE board is the one unreadable shape no query closes, because it is
+  # not malformed — SQLite treats an empty file as a valid EMPTY database and
+  # answers happily. A board truncated to nothing was therefore reported as a
+  # board with no runs, at exit 0 with a path on stdout, which is the difference
+  # between "your run produced nothing" and "I could not read your board".
+  local out3 rc3
+  : > "$lab/empty.db"
+  out3="$("$bs" "$lab/empty.db" "$lab/emptysnap" 2>/dev/null)"; rc3=$?
+  if [ "$rc3" != 0 ] && [ -z "$out3" ]; then
+    ok "snapshot/empty-input-is-not-an-empty-board (exit $rc3, no path)"
+  else
+    bad "snapshot/empty-input-is-not-an-empty-board" \
+        "a zero-byte board must not read as a board with no rows: exit $rc3 printed '$out3'"
+  fi
+
+  # Every path here was carried in a space-separated string and re-split on
+  # whitespace, so any board under a directory with a space in its name failed —
+  # and failed with a message about the filesystem rather than about quoting.
+  # `metrics.sh` exited 2 for any $HOME or $HERMES_KANBAN_HOME containing one.
+  local sp="$lab/sp/my board/src" out4 rc4
+  mkdir -p "$sp" "$lab/sp/dest"
+  sqlite3 "$sp/kanban.db" "CREATE TABLE tasks(id TEXT);" >/dev/null 2>&1
+  out4="$("$bs" "$sp/kanban.db" "$lab/sp/dest" 2>/dev/null)"; rc4=$?
+  if [ "$rc4" = 0 ] && [ -n "$out4" ] && [ -f "$out4" ]; then
+    ok "snapshot/path-with-a-space-is-a-path"
+  else
+    bad "snapshot/path-with-a-space-is-a-path" \
+        "a board under a directory with a space failed to snapshot: exit $rc4 printed '$out4'"
+  fi
+
+  # --help was `sed -n '2,55p' "$0"` — correct the day it was written, asserted
+  # by nothing, and blind the first time a paragraph was added above it. The
+  # same commit removed exactly this pattern from metrics.sh.
+  local bshelp; bshelp="$("$bs" --help 2>/dev/null)"
+  if printf '%s' "$bshelp" | grep -q 'Usage:' \
+     && printf '%s' "$bshelp" | grep -q 'Exit codes:' \
+     && ! grep -qE "sed -n '[0-9]+,[0-9]+p' \"\\\$0\"" "$bs"; then
+    ok "snapshot/help-names-its-exit-contract"
+  else
+    bad "snapshot/help-names-its-exit-contract" \
+        "--help must carry the whole header block (Usage: and Exit codes:) and must not be pinned to line numbers"
+  fi
+
   # A source that moves under every attempt. The writer is injected through a
   # `cp` shim rather than a background loop on purpose: a real concurrent
   # writer makes this case a coin toss, and a flaky case in the suite that
@@ -1811,19 +1892,72 @@ SHIM
         "a board that changed under every copy attempt must fail, never return a partial success: exit $rc printed '$out'"
   fi
 
-  # The point of the slice. The bracketed [r] keeps this line from matching the
-  # pattern it carries — without it, verify.sh would report itself as a second
-  # implementation of the thing it is checking for.
-  local impls
-  impls="$(grep -lE 'refusing to return a torn [r]ead' scripts/*.sh 2>/dev/null | tr '\n' ' ')"
-  impls="${impls% }"
-  if [ "$impls" = "scripts/board-snapshot.sh" ] \
-     && grep -Fq 'board-snapshot.sh' scripts/metrics.sh \
-     && grep -Fq 'board-snapshot.sh' scripts/verify.sh; then
-    ok "snapshot/no-second-implementation (both live-board readers call the one primitive)"
-  else
+  # The point of the slice, and the one case that holds its entire thesis — so
+  # it is asserted by EXECUTION, not by grep.
+  #
+  # It used to be three greps for the string `board-snapshot.sh`, which matched
+  # metrics.sh's header COMMENT and six comments in this file. Mutation-proven:
+  # replacing the real call `SNAP="$("$HERE/board-snapshot.sh" …)"` with
+  # `SNAP="$(false)"` still printed `ok no-second-implementation`. A check that
+  # a comment can satisfy is not checking the code.
+  #
+  # So: stand up a copy of the two scripts, make the primitive unusable, and
+  # require metrics.sh to FAIL. Nothing but a real dependency can produce that.
+  # Two runs, not one. "It failed with the primitive removed" proves nothing on
+  # its own — metrics.sh could be failing for any reason at all — so the SAME
+  # sandbox is run first with the primitive intact and must SUCCEED. The pair is
+  # the check; either half alone is a coin toss.
+  local ns="$TMPROOT/nosecond" dep_rc=-1 ctrl_rc=-1 dep_ready=0
+  rm -rf "$ns"; mkdir -p "$ns/scripts" "$ns/rubrics" "$ns/kanban/boards/metrics-fixture"
+  if command -v jq >/dev/null 2>&1 \
+     && cp scripts/metrics.sh scripts/board-snapshot.sh "$ns/scripts/" 2>/dev/null \
+     && cp rubrics/run-metadata-contract.json "$ns/rubrics/" 2>/dev/null \
+     && sqlite3 "$ns/kanban/boards/metrics-fixture/kanban.db" \
+          < scripts/fixtures/metrics-board.sql >/dev/null 2>&1; then
+    dep_ready=1
+    HERMES_KANBAN_HOME="$ns/kanban" "$ns/scripts/metrics.sh" metrics-fixture --json \
+      >/dev/null 2>&1; ctrl_rc=$?
+    chmod -x "$ns/scripts/board-snapshot.sh" 2>/dev/null
+    HERMES_KANBAN_HOME="$ns/kanban" "$ns/scripts/metrics.sh" metrics-fixture --json \
+      >/dev/null 2>&1; dep_rc=$?
+  fi
+
+  # And both live-board readers must CALL it, counted on non-comment lines only.
+  # The original check was three `grep -Fq 'board-snapshot.sh'`, which matched
+  # metrics.sh's header comment and six comments in this file — so it reported
+  # a call that had been deleted. Comments are stripped first, for the same
+  # reason `sweep-carries-no-forced-delete` strips them: prose about a rule is
+  # not the rule (F65, running the other way).
+  #
+  # Two in this file, because there are two live-board readers here: the
+  # live-schema column check and the idle-board read beside it. That count is
+  # what stopped the third hand-rolled `cp` from surviving the unification.
+  # The pattern is an INVOCATION inside a command substitution — `$(… board-
+  # snapshot.sh …)`. Counting bare mentions on non-comment lines is not enough:
+  # two of them in this file are the text of failure messages, and a `cp` of the
+  # script into a sandbox is not a call to it either.
+  local calls='\$\([^)]*board-snapshot\.sh'
+  local m_calls v_calls
+  m_calls=$(grep -v '^[[:space:]]*#' scripts/metrics.sh | grep -cE "$calls")
+  v_calls=$(grep -v '^[[:space:]]*#' scripts/verify.sh  | grep -cE "$calls")
+  local impls=""
+  [ "$m_calls" -ge 1 ] || impls="scripts/metrics.sh does not call it ($m_calls)"
+  [ "$v_calls" -ge 2 ] || impls="${impls:+$impls; }this suite's live-board readers call it $v_calls time(s), expected 2"
+
+  if [ "$dep_ready" = 0 ]; then
+    skip "snapshot/no-second-implementation" \
+         "could not stand up the metrics sandbox (jq missing, or the fixture would not load)"
+  elif [ "$ctrl_rc" != 0 ]; then
     bad "snapshot/no-second-implementation" \
-        "the WAL snapshot must exist exactly once: retry loops in [${impls:-none}], and scripts/metrics.sh plus this suite's live-schema check must both call scripts/board-snapshot.sh — a second copy is what F67 cost a finding to find"
+        "the control arm failed: metrics.sh exited $ctrl_rc against the fixture with the primitive INTACT, so the dependency probe below could not have meant anything"
+  elif [ "$dep_rc" = 0 ]; then
+    bad "snapshot/no-second-implementation" \
+        "metrics.sh still succeeded with board-snapshot.sh made non-executable — it is not really calling the primitive. A grep for the filename cannot tell the difference: it matches the header comment"
+  elif [ -n "$impls" ]; then
+    bad "snapshot/no-second-implementation" \
+        "a live-board reader is not routed through the primitive — $impls. One copy going stale while the other was fixed is what F67 cost a finding to find"
+  else
+    ok "snapshot/no-second-implementation (metrics.sh: exit $ctrl_rc with the primitive, exit $dep_rc without it; $m_calls + $v_calls real call sites)"
   fi
 }
 
