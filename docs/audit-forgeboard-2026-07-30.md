@@ -106,7 +106,7 @@ genuine run.*
 | F40 | `PARTLY FIXED 2026-08-06` | second symptom closed here — the F-number allocator below. First symptom (the slice-worktree rule written into `docs/operator-guide.md`) still owed |
 | F53 | `OPEN` | C1/C2 — move `size-budget` and `real-source` to plan time; both still `warn` at review time |
 | F57 | `OPEN` | D1 — report the *widening* rather than passing on it |
-| F79 | `OPEN` | new, below. `wielas/forge` has no branch protection and no installed pre-push hook, so the roadmap's own PRs land through no gate at all, and E1's `make commission` cannot assert what it is specified to assert |
+| F79 | `PARTLY FIXED 2026-08-07` | new, below. Measured 2026-08-06 with no gate at all; the repo went public and ruleset `mainprotect` gained `required_status_checks` (`validate`, `verify`) on 2026-08-07, so a red PR is now blocked. Still open: nothing in `verify`/`preflight` asserts it, so it is the one Proven row `make verify` cannot arbitrate |
 
 ### Blocked on ADR-0011 data — the run supplies it
 
@@ -2268,12 +2268,14 @@ being implemented; F-numbers are what each closes.
   converge (F6).
 - ~~`docs/state.md` "Proven": *"Branch protection is a real merge gate — a red or
   unreviewed merge is refused by GitHub, not by prose"*~~ — **corrected
-  2026-08-06** (F79). Measured true on `wielas/forgeboard-report` (public,
-  `enforce_admins: true`) and **false on `wielas/forge` itself**, which is
-  private on a free plan and returns 403 for both protection and rulesets. The
-  row now names where it was proven and says it does not hold here. `CLAUDE.md`
-  and `Makefile:44` carried the same claim as an unconditional statement and now
-  state the condition instead.
+  2026-08-06**, then **restored with its subject 2026-08-07** (F79). It was
+  measured true on `wielas/forgeboard-report` (public, `enforce_admins: true`)
+  and false on `wielas/forge` itself, which was private on a free plan and
+  returned 403 for both protection and rulesets. `wielas/forge` is now public
+  with ruleset `mainprotect` requiring a PR plus green `validate` and `verify`,
+  so the row holds again — with the caveat, stated in the row, that **no check
+  in this repo asserts it**. `CLAUDE.md` and `Makefile:44` carried the same
+  claim as an unconditional statement and now state the condition instead.
 
 ---
 
@@ -3135,7 +3137,9 @@ a measurement — **63,164 bytes moved into the prompt file, 2,599 bytes observe
 by the driver.**
 
 *Header promoted `MEASURED` → `FIXED` 2026-08-06. Re-checked in the tree: the
-`prejudge/` group is 23 cases, none of them a `grep -Fq` against a SOUL, and
+`prejudge/` group is 30 cases (`./scripts/verify.sh --list | grep -c '^prejudge/'`,
+2026-08-07 — the 23 first written here was already stale when it was written),
+none of them a `grep -Fq` against a SOUL, and
 `prejudge/scorer-is-the-control-arm` compares against a recorded fixture rather
 than a git ref — which is the repair F65 forced after the first version of that
 pin went inert at a merge.*
@@ -3591,7 +3595,41 @@ classified reason line. Pinned by `blast/breach-names-what-moved`.
 commands three documents assert the answer to. Minted from D1a's reservation —
 see **F-number allocation** above.*
 
-### F79 — Branch protection does not exist on this repository, and three documents say it is the merge gate · `OPEN` · **high**
+### F79 — Branch protection does not exist on this repository, and three documents say it is the merge gate · `PARTLY FIXED 2026-08-07` · **high**
+
+> **Follow-up, 2026-08-07 — the repository changed under this finding, and the
+> measurement below is preserved as the 2026-08-06 observation it was.**
+>
+> `wielas/forge` is now **public**, and ruleset `mainprotect` (id `20540381`) is
+> **active** on the default branch:
+>
+> ```
+> $ gh repo view wielas/forge --json visibility     → PUBLIC
+> $ gh api repos/wielas/forge/rulesets/20540381 --jq '[.rules[].type]'
+>   ["deletion","non_fast_forward","pull_request"]
+> ```
+>
+> So "there is no protected-branch configuration" stopped being true. **The
+> finding did not close — it got sharper.** That ruleset required a pull request
+> and blocked deletion and non-fast-forward updates, and required
+> **zero approving reviews and zero status checks**. A red PR was still
+> mergeable. The `state.md` Proven row *"a red or unreviewed merge is refused by
+> GitHub"* remained false, for a new reason: the gate existed and did not gate.
+>
+> **Closed the same day** by adding a fourth rule, `required_status_checks`,
+> naming the `validate` and `verify` contexts. Confirmed biting: a PR reported
+> `mergeStateStatus: BLOCKED` while `verify` was still running.
+> `strict_required_status_checks_policy` is deliberately `false` — requiring
+> every branch to be up to date with `main` would mean re-running CI on every
+> remaining branch after every merge across an ordered stack, and the gap this
+> finding names is *red PRs are mergeable*, which is now shut.
+>
+> **What stays open:** nothing in `make verify` or `make preflight` asserts any
+> of this, so the claim is still unexecuted prose. `CLAUDE.md` says `make verify`
+> arbitrates when two files disagree, and it cannot arbitrate this one. The
+> `preflight` check that distinguishes *protected with required checks* /
+> *protected without them* / **403, cannot be asked** is the remaining work, and
+> it is why the header reads `PARTLY FIXED` rather than `FIXED`.
 
 **Measured, 2026-08-06, against `wielas/forge`:**
 
