@@ -1885,11 +1885,16 @@ SHIM
   chmod +x "$lab/shim/cp"
   cp "$src" "$lab/torn.db"
   out="$(PATH="$lab/shim:$PATH" "$bs" "$lab/torn.db" "$lab/tornsnap" 2>"$lab/torn.err")"; rc=$?
-  if [ "$rc" != 0 ] && [ -z "$out" ]; then
-    ok "snapshot/torn-source-is-refused (exit $rc after 3 attempts, no path returned)"
+  # …and it must leave NOTHING BEHIND. Refusing on stdout while leaving a
+  # half-copied board on disk only moves the problem to whoever finds the file.
+  # Both in-repo callers happen to pass a subdirectory of an `mktemp -d` they
+  # clean up, which is luck rather than a property of this script.
+  local torn_left; torn_left="$(ls -A "$lab/tornsnap" 2>/dev/null | tr '\n' ' ')"
+  if [ "$rc" != 0 ] && [ -z "$out" ] && [ -z "$torn_left" ]; then
+    ok "snapshot/torn-source-is-refused (exit $rc after 3 attempts, no path, no partial copy left)"
   else
     bad "snapshot/torn-source-is-refused" \
-        "a board that changed under every copy attempt must fail, never return a partial success: exit $rc printed '$out'"
+        "a board changing under every copy attempt must fail, return no path AND leave no partial copy: exit $rc printed '$out', left [${torn_left:-nothing}]"
   fi
 
   # The point of the slice, and the one case that holds its entire thesis — so
