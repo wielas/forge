@@ -226,7 +226,13 @@ second symptom).
 - **Goal:** every reader of a live board gets identical WAL-safe behaviour, from
   one implementation instead of three.
 - **Touches:** new `scripts/board-snapshot.sh`, `scripts/metrics.sh`,
-  `verify.sh`, `docs/operator-guide.md`
+  `scripts/verify.sh`, `scripts/preflight.sh`, `docs/operator-guide.md`,
+  `docs/audit-forgeboard-2026-07-30.md`
+  <br>*`preflight.sh` was added in review: `ubuntu-latest` cannot reach the
+  F47/F67 failure at all, so CI is structurally unable to gate this slice's
+  headline guarantee and the mini has to. `docs/operator-guide.md` was declared
+  here from the start and was **not** touched until review noticed — the
+  declaration was the honest one and the PR was what drifted.*
 - **Scenarios:**
   - Given a WAL board with no `-shm`/`-wal` sidecars, When snapshotted, Then it
     reads (this is F67's exact failure: `mode=ro` fails when the board is *idle*).
