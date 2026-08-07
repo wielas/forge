@@ -52,7 +52,7 @@ run() {
 # checked in precisely so a rebuild reproduces the running system. Confirm ids
 # against `hermes model` / OpenRouter before bumping them.
 MODEL_ROUTER="${FORGE_MODEL_ROUTER:-z-ai/glm-5.2}"        # orchestrator: decomposition quality matters
-MODEL_DRIVER="${FORGE_MODEL_DRIVER:-deepseek/deepseek-v4-flash}"  # lane + prejudge + digest: shell driver only
+MODEL_DRIVER="${FORGE_MODEL_DRIVER:-deepseek/deepseek-v4-flash-0731}"  # lane + prejudge + digest: shell driver only
 
 # `codex exec` and `make check` run SYNCHRONOUSLY inside a worker. The 180s
 # stock default kills the lane at `make check` — after the code is written and
