@@ -1003,6 +1003,15 @@ roadmap/touches-over-six                more than 6 declarable paths per chunk
 roadmap/scenario-count-over-five        more than 5 scenarios per chunk
 roadmap/scenario-shape-needs-one-given-when-then  a bullet that is not one Given/When/Then
 roadmap/lane-catches-an-unknown-assignee  an unknown assignee strands the card silently, so catch it here
+roadmap/graph-schema-rejects-a-numeric-id  a non-string id killed the jq graph program and PASSed a cycle
+roadmap/graph-schema-rejects-an-id-with-a-space  a word-split id skipped all five content checks, reporting pass
+roadmap/graph-schema-rejects-duplicate-ids  two records for one id corrupt the tab-separated result
+roadmap/graph-schema-rejects-a-scalar-depends-on  depends_on must be an array of strings
+roadmap/range-is-not-a-disjunction      "5 or more fields" is one scenario, not a compound bullet
+roadmap/disjunction-counts-every-alternative  a clause is worth as many scenarios as it lists (D12.3)
+roadmap/wrapped-bullet-is-still-one-scenario  a bullet wrapped over two lines is not malformed
+roadmap/touches-findings-are-independent  a missing Touches list must not hide another chunk's overage
+roadmap/lane-accepts-only-on-disk-profiles  the hermes branch: on_disk names only, never the table's tokens
 roadmap/process-docs-do-not-count-against-touches  the F55 exemption applies at plan time too
 roadmap/touches-exemption-has-one-definition  plan time and review time share one list, not two
 roadmap/warns-without-blocking          findings do not gate — F53's ruling, shipped
@@ -3365,7 +3374,12 @@ run_roadmap_group() {
   local rc="$REPO_ROOT/scripts/roadmap-check.sh"
   local good="$REPO_ROOT/scripts/fixtures/roadmap/good"
   # Offline and deterministic: never `hermes kanban assignees` from a test.
-  export FORGE_ASSIGNEES="forge-codex-lane forge-operator-handoff forge-prejudge"
+  #
+  # `forge-operator-handoff` was in this list and is `on_disk: false` on the live
+  # host — a name that exists only because it once stranded a card. The fixture
+  # was encoding the contract the checker got wrong, so a check written against
+  # the fixture could not have found it. Only names a profile actually backs.
+  export FORGE_ASSIGNEES="forge-codex-lane forge-prejudge"
 
   # Status/evidence of one check id, from the real script's real output. The
   # `|| true` is load-bearing under `set -o pipefail`: these two read OUTPUT,
@@ -3477,6 +3491,85 @@ PY" \
     "sed -i.bak 's/forge-codex-lane/forge-code-lane/' docs/chunks/graph.json && rm -f docs/chunks/*.bak" \
     lane warn
 
+  # -- the graph's SHAPE, before any algorithm reads it --
+  #
+  # `type == "array" and length > 0` was the whole of the validation. Three
+  # shapes got past it and each produced PASS lines over a broken plan, so each
+  # must now be exit 2 — the substrate code, because a plan that cannot be
+  # parsed has not been checked.
+  _rc_schema() {  # $1=case  $2=graph.json body  $3=extra snippet
+    local d rc_out rc_code
+    d="$(_rc_mutate "$1" "cat > docs/chunks/graph.json <<'GJSON'
+$2
+GJSON
+${3:-true}")" || { bad "$1" "the mutation itself failed to apply"; return; }
+    rc_out="$("$rc" "$d" 2>&1)"; rc_code=$?
+    if [ "$rc_code" = 2 ] && ! printf '%s' "$rc_out" | grep -q 'PASS'; then
+      ok "$1"
+    else
+      bad "$1" "expected exit 2 and no PASS line; got exit $rc_code: $(printf '%s' "$rc_out" | tr '\n' ' ' | cut -c1-160)"
+    fi
+  }
+
+  # A numeric id killed the jq graph program, and the error went to stderr while
+  # GRAPHFACTS was left empty and unchecked — so `acyclic` and `reachable` read
+  # an empty fact string as "no cycle" and "nothing unreachable". Measured: a
+  # graph with a genuine three-node cycle printed PASS acyclic, PASS reachable.
+  _rc_schema graph-schema-rejects-a-numeric-id \
+    '[{"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":["CHUNK-3"]},
+      {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+      {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-2"]},
+      {"id":7,"lane":"forge-codex-lane","depends_on":[]}]'
+
+  # An id with a space was word-split by every content loop, so all five content
+  # checks skipped it and each reported pass — eight PASS lines over a chunk
+  # nothing had read.
+  _rc_schema graph-schema-rejects-an-id-with-a-space \
+    '[{"id":"CHUNK 1","lane":"forge-codex-lane","depends_on":[]}]' \
+    "mv 'docs/chunks/CHUNK-1.md' 'docs/chunks/CHUNK 1.md' && rm -f docs/chunks/CHUNK-2.md docs/chunks/CHUNK-3.md"
+
+  # Duplicate ids make the lane lookup return two records, whose embedded
+  # newline splits one tab-separated result into several — and the display loop
+  # then reads an action line as a status and uppercases it.
+  _rc_schema graph-schema-rejects-duplicate-ids \
+    '[{"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+      {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]}]'
+
+  # A depends_on that is a bare string rather than an array reached the same jq
+  # program and produced the same false pass.
+  _rc_schema graph-schema-rejects-a-scalar-depends-on \
+    '[{"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+      {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":"CHUNK-1"}]'
+
+  # -- scenario arity, both directions --
+  # `" or "` scored a flat 2, which is wrong twice over. A comparative is a
+  # RANGE: "a record of 5 or more fields" is one scenario, and reporting it as
+  # compound tells a planner to edit a correct plan.
+  _rc_case range-is-not-a-disjunction \
+    "sed -i.bak 's#^  - Given a record#  - Given a record of 5 or more fields, when it is parsed, then it is accepted.\n  - Given a record#' docs/chunks/CHUNK-1.md 2>/dev/null; sed -i.bak 's#^- \*\*Out of scope:\*\*#  - Given a record of 5 or more fields, when it is parsed, then it is accepted.\n- **Out of scope:**#' docs/chunks/CHUNK-2.md && rm -f docs/chunks/*.bak" \
+    scenarios pass
+
+  # …and a clause is worth as many scenarios as it LISTS (ADR-0012 D12.3). Five
+  # alternatives scored 2 under the old rule — the same undercount the check
+  # exists to catch, in the check itself.
+  local d5
+  d5="$(_rc_mutate disjunction-counts-every-alternative \
+    "sed -i.bak 's#^- \*\*Out of scope:\*\*#  - Given an empty or partial or corrupt or truncated or absent record, when read, then it is refused.\n- **Out of scope:**#' docs/chunks/CHUNK-2.md && rm -f docs/chunks/*.bak")"
+  if [ -n "$d5" ] && _rc_evidence "$d5" scenarios | grep -q '=5'; then
+    ok "disjunction-counts-every-alternative"
+  else
+    bad "disjunction-counts-every-alternative" \
+        "five alternatives in one bullet must score 5: $(_rc_evidence "$d5" scenarios | tr '\n' ' ' | cut -c1-140)"
+  fi
+
+  # A bullet wrapped over two physical lines is ordinary Markdown — and is how
+  # docs/roadmap-first-run.md writes its own C1 scenarios. The scorer was
+  # line-oriented, so it reported the plan document that specified it as
+  # malformed. Every fixture bullet was one long line, so verify could not see.
+  _rc_case wrapped-bullet-is-still-one-scenario \
+    "sed -i.bak 's#^- \*\*Out of scope:\*\*#  - Given a bullet that wraps, when it is scored,\n    then it is one scenario.\n- **Out of scope:**#' docs/chunks/CHUNK-2.md && rm -f docs/chunks/*.bak" \
+    scenarios pass
+
   # -- the F55 exemption, at plan time --
   # CHUNK-1 declares eight paths and clears a six-path budget, because two of
   # them are process docs the methodology obliges every chunk to change. Adding
@@ -3500,6 +3593,63 @@ PY" \
   else
     bad "touches-exemption-has-one-definition" \
         "$defs TOUCHES_EXEMPT assignment(s) found; plan time and review time must source scripts/touches-exempt.sh"
+  fi
+
+  # Two independent defects in two independent contracts, and an if/elif chain
+  # meant the first hid the second: one chunk missing its Touches list
+  # suppressed the over-budget finding for every OTHER chunk in the plan.
+  local dt
+  dt="$(_rc_mutate touches-findings-are-independent \
+    "sed -i.bak 's#^- \*\*Touches:\*\*.*##' docs/chunks/CHUNK-2.md \
+     && sed -i.bak 's#^\(- \*\*Touches:\*\*\).*#\1 \`a/1.py\`, \`a/2.py\`, \`a/3.py\`, \`a/4.py\`, \`a/5.py\`, \`a/6.py\`, \`a/7.py\`, \`a/8.py\`, \`a/9.py\`, \`a/10.py\`#' docs/chunks/CHUNK-1.md \
+     && rm -f docs/chunks/*.bak")"
+  if [ -n "$dt" ] \
+     && _rc_evidence "$dt" touches | grep -q 'CHUNK-2' \
+     && _rc_evidence "$dt" touches | grep -q 'CHUNK-1'; then
+    ok "touches-findings-are-independent"
+  else
+    bad "touches-findings-are-independent" \
+        "a chunk with no Touches list must not suppress the over-budget finding for another chunk: $(_rc_evidence "$dt" touches | tr '\n' ' ' | cut -c1-160)"
+  fi
+
+  # -- the hermes branch, which had NO coverage at all --
+  #
+  # $FORGE_ASSIGNEES is exported for this whole group, so every case above takes
+  # the offline path and the `hermes kanban assignees` branch was never executed
+  # by anything. That is the branch the defect was in: it read the formatted
+  # TABLE and matched any space-delimited token in it, so `yes`, `no`, `NAME`,
+  # `COUNTS`, `done=1` and `(idle)` all cleared the check — and so did any name
+  # with `on_disk: false`, which is to say any lane that had ALREADY stranded a
+  # card, since that list is derived from cards.
+  local hstub="$TMPROOT/roadmap-hermes"
+  mkdir -p "$hstub/bin"
+  cat > "$hstub/bin/hermes" <<'HSTUB'
+#!/usr/bin/env bash
+# Stands in for `hermes kanban assignees [--json]`, reproducing the live shape:
+# a name present in the card-derived list but with NO profile on disk.
+for a in "$@"; do [ "$a" = "--json" ] && { cat <<'J'
+[{"name":"forge-codex-lane","on_disk":true,"counts":{"done":22}},
+ {"name":"forge-operator","on_disk":false,"counts":{"done":1}}]
+J
+  exit 0; }; done
+printf 'NAME                  ON DISK   COUNTS\n'
+printf 'forge-codex-lane      yes       done=22\n'
+printf 'forge-operator        no        done=1\n'
+HSTUB
+  chmod +x "$hstub/bin/hermes"
+  local dh hstatus
+  dh="$(_rc_mutate lane-accepts-only-on-disk-profiles \
+    "sed -i.bak 's/\"forge-codex-lane\"/\"forge-operator\"/' docs/chunks/graph.json && rm -f docs/chunks/*.bak")"
+  hstatus="$( { env -u FORGE_ASSIGNEES PATH="$hstub/bin:$PATH" "$rc" "$dh" 2>/dev/null || true; } \
+              | awk '$2=="lane"{print tolower($1)}')"
+  local hgood
+  hgood="$( { env -u FORGE_ASSIGNEES PATH="$hstub/bin:$PATH" "$rc" "$good" 2>/dev/null || true; } \
+            | awk '$2=="lane"{print tolower($1)}')"
+  if [ "$hstatus" = warn ] && [ "$hgood" = pass ]; then
+    ok "lane-accepts-only-on-disk-profiles"
+  else
+    bad "lane-accepts-only-on-disk-profiles" \
+        "reading the assignee list from hermes must accept on_disk names only: an on_disk:false lane reported '$hstatus' (expected warn) and a real one reported '$hgood' (expected pass)"
   fi
 
   # -- the properties of the check itself --

@@ -31,7 +31,7 @@ prejudge:                      ## make prejudge PR=<url|number> [REPO=owner/name
 # taken after a real roadmap has been fixed until it passes.
 roadmap-check:                 ## make roadmap-check PROJECT=<abs-path> — the sizing rules, at plan time; advisory
 	@test -n "$(PROJECT)" || { echo "usage: make roadmap-check PROJECT=<abs-path> [VERBOSE=1]"; exit 1; }
-	./scripts/roadmap-check.sh $(PROJECT) $(if $(VERBOSE),--verbose,)
+	./scripts/roadmap-check.sh "$(PROJECT)" $(if $(VERBOSE),--verbose,)
 
 preflight:                     ## revalidate the mini before unattended work (read-only)
 	./scripts/preflight.sh $(if $(OUT),--out $(OUT),)

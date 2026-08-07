@@ -82,11 +82,14 @@ Sizing rules:
 ROADMAP.md + docs/chunks/* + docs/chunks/graph.json committed; graph acyclic and
 its ids match the chunk files 1:1; every FR covered by ≥1 chunk; human sign-off.
 
-Before sign-off run `~/.forge/repo/scripts/roadmap-check.sh <project>`. It reads
-the sizing rules above off the plan and is advisory (ADR-0012). Every finding it
-prints is a defect in THIS document at the last moment fixing one is cheap — the
-same defects cost a spawned model and a full review to find on a PR. Fix the
-plan. Do not adjust the numbers to clear it.
+Before sign-off run `~/.forge/repo/scripts/roadmap-check.sh <project>`. It is
+advisory (ADR-0012) and it counts three of the numbers above off the plan: ≤ 4
+`Serves:`, ≤ 6 declarable `Touches:`, ≤ 5 scenarios. It cannot evaluate the
+≤ ~400-line budget; nothing can, at plan time.
+
+Read every finding and fix the plan — this is the last moment fixing one is
+cheap. Do not adjust the numbers to clear it. Where a finding is wrong about
+your plan, record why in the sign-off instead of editing the plan to satisfy it.
 
 ## Handoff
 Human runs `hermes/board-bootstrap.sh <project>`, which reads `graph.json`,

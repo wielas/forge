@@ -96,6 +96,66 @@ CHUNKDIR="$PROJECT/docs/chunks"
 jq -e 'type == "array" and length > 0' "$GRAPH" >/dev/null 2>&1 || {
   echo "FATAL: $GRAPH is not a non-empty JSON array" >&2; exit 2; }
 
+# ---------------------------------------------------------------------------
+# 0. THE SHAPE OF EACH ENTRY, before any graph algorithm reads one.
+#
+# `type == "array" and length > 0` was the whole of the validation, and every
+# check below assumed far more than that. Two measured consequences, both of
+# them a PASS printed over a broken plan:
+#
+#   A numeric `id` makes the Kahn/reachability jq program die with `Cannot use
+#   number (7) as object key`. The error goes to stderr, `GRAPHFACTS` is left
+#   EMPTY and unchecked, and `acyclic` and `reachable` then read an empty fact
+#   string as "no cycle" and "nothing unreachable". A graph with a genuine
+#   three-node cycle reported `PASS acyclic` / `PASS reachable` and exit 0. A
+#   cycle is a plan that can never start; reporting it clear is strictly worse
+#   than crashing.
+#
+#   An id containing a space is word-split by every `for id in $IDS` loop, so
+#   `CHUNK 1` becomes `CHUNK` and `1`, neither of which has a file. All five
+#   content checks `continue` past it and each reports PASS. A chunk serving 40
+#   requirements with 30 scenarios is never sized, and nothing says so.
+#
+# So an id must be a non-empty, unique, filename-safe string — it becomes
+# `docs/chunks/<id>.md` and a shell word — and this exits 2, the substrate code,
+# because a plan that cannot be parsed has not been checked. That is the same
+# distinction prejudge.sh draws: a warning is a statement about the plan, a 2 is
+# a fact about whether the check could run at all.
+# ---------------------------------------------------------------------------
+SCHEMA_ERRORS="$(jq -r '
+  def entryerr($i; $e):
+    if ($e | type) != "object" then
+      "entry \($i) is a \($e | type), not an object"
+    elif ($e | has("id") | not) then
+      "entry \($i) has no \"id\""
+    elif ($e.id | type) != "string" then
+      "entry \($i): id \($e.id | tojson) is a \($e.id | type), not a string"
+    elif ($e.id | length) == 0 then
+      "entry \($i): id is empty"
+    elif ($e.id | test("[[:space:]/]")) then
+      "entry \($i): id \($e.id | tojson) contains a space or a slash — it becomes docs/chunks/<id>.md and a shell word"
+    elif ($e.id == "." or $e.id == "..") then
+      "entry \($i): id \($e.id | tojson) is not a chunk name"
+    elif ($e | has("lane")) and ($e.lane | type) != "string" then
+      "\($e.id): lane \($e.lane | tojson) is a \($e.lane | type), not a string"
+    elif ($e | has("depends_on")) and ($e.depends_on | type) != "array" then
+      "\($e.id): depends_on \($e.depends_on | tojson) is a \($e.depends_on | type), not an array"
+    elif ($e | has("depends_on")) and ([$e.depends_on[] | select(type != "string")] | length) > 0 then
+      "\($e.id): depends_on contains a non-string: \([$e.depends_on[] | select(type != "string")] | tojson)"
+    else empty end;
+  [ (to_entries[] | entryerr(.key; .value)),
+    ( [.[] | select(type == "object" and (.id | type) == "string") | .id]
+      | group_by(.) | map(select(length > 1) | .[0])
+      | .[] | "duplicate id \(. | tojson): the lane lookup returns two records and the display loop reads the second as a status" )
+  ] | .[]' "$GRAPH" 2>&1)"
+
+[ -z "$SCHEMA_ERRORS" ] || {
+  echo "FATAL: $GRAPH does not describe a checkable plan:" >&2
+  printf '%s\n' "$SCHEMA_ERRORS" | sed 's/^/  - /' >&2
+  echo "Nothing below this point can be trusted about that graph, so no check has run." >&2
+  exit 2
+}
+
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-roadmap.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 RESULTS="$TMP/results.tsv"; : > "$RESULTS"
@@ -171,7 +231,20 @@ GRAPHJQ='
       total: ($dep | length),
       unreachable: (if $reach == null then null else (($dep | keys) - $reach | sort) end) }'
 
-GRAPHFACTS="$(jq -c "$GRAPHJQ" "$GRAPH")"
+# Guarded, and checked for emptiness. This assignment was bare, `set -e` is not
+# in force, and every consumer below treated an empty result as good news.
+# Schema validation above should make failure unreachable — which is exactly why
+# a failure here means something is wrong that nobody has understood yet, and
+# the one response that must not happen is nine PASS lines.
+GRAPHFACTS="$(jq -c "$GRAPHJQ" "$GRAPH" 2>"$TMP/graph.err")" || {
+  echo "FATAL: could not compute the dependency graph from $GRAPH:" >&2
+  sed 's/^/  /' "$TMP/graph.err" >&2
+  exit 2
+}
+[ -n "$GRAPHFACTS" ] || {
+  echo "FATAL: the dependency graph computed from $GRAPH is empty; refusing to report an unchecked plan as clear" >&2
+  exit 2
+}
 gfact() { printf '%s' "$GRAPHFACTS" | jq -r "$1"; }
 
 acyclic() {
@@ -251,7 +324,8 @@ field_value() {  # $1=file $2=field
 
 fields() {
   local id f missing all_missing="" n=0
-  for id in $IDS; do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     f="$CHUNKDIR/$id.md"
     [ -f "$f" ] || continue
     missing=""
@@ -262,7 +336,9 @@ fields() {
       all_missing="$all_missing $id misses:${missing%,};"
       n=$((n+1))
     fi
-  done
+  done <<EOF
+$IDS
+EOF
   if [ "$n" = 0 ]; then
     emit fields pass "every chunk carries all $(printf '%s\n' "$REQUIRED_FIELDS" | grep -c .) contract fields"
   else
@@ -289,12 +365,15 @@ count_list() {  # comma-separated, backticks stripped, `none` is zero
 
 serves() {
   local id v c over="" worst=0
-  for id in $IDS; do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     [ -f "$CHUNKDIR/$id.md" ] || continue
     v="$(field_value "$CHUNKDIR/$id.md" "Serves")"
     c="$(count_list "$v")"
     [ "$c" -gt "$SERVES_MAX" ] && { over="$over $id($c),"; [ "$c" -gt "$worst" ] && worst="$c"; }
-  done
+  done <<EOF
+$IDS
+EOF
   if [ -z "$over" ]; then
     emit serves pass "no chunk serves more than $SERVES_MAX requirement(s)"
   else
@@ -315,7 +394,8 @@ path_list() { printf '%s' "$1" | tr -d '`' | tr ',' '\n' \
                 | sed 's/^[ \t]*//; s/[ \t]*$//' | grep . || true; }
 touches() {
   local id v paths listed c over="" nolist=""
-  for id in $IDS; do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     [ -f "$CHUNKDIR/$id.md" ] || continue
     v="$(field_value "$CHUNKDIR/$id.md" "Touches")"
     paths="$(path_list "$v")"
@@ -323,16 +403,25 @@ touches() {
     if [ "$listed" = 0 ]; then nolist="$nolist $id,"; continue; fi
     c="$(printf '%s\n' "$paths" | grep -vcE "$TOUCHES_EXEMPT" || true)"
     [ "$c" -gt "$TOUCHES_MAX" ] && over="$over $id($c of $listed listed),"
-  done
-  if [ -n "$nolist" ]; then
-    emit touches warn "no parseable Touches list in:${nolist%,}" \
-      "add a comma-separated Touches list to each of these contracts; without one nothing at plan time or review time can tell scope from drift"
-  elif [ -z "$over" ]; then
+  done <<EOF
+$IDS
+EOF
+  # Both findings, never one instead of the other. This was an if/elif chain, so
+  # a single chunk missing its Touches list suppressed the over-budget finding
+  # for every OTHER chunk in the plan — reproduced with one chunk stripped of
+  # `**Touches:**` and another given ten paths against a cap of six: only the
+  # missing-list warning printed. They are independent defects in independent
+  # contracts and there is no reason one should hide the other.
+  if [ -z "$nolist" ] && [ -z "$over" ]; then
     emit touches pass "no chunk declares more than $TOUCHES_MAX non-process path(s)"
-  else
-    emit touches warn "over the $TOUCHES_MAX-file budget:${over%,}" \
-      "split each of these so no chunk declares more than $TOUCHES_MAX paths. Process docs (docs/decision-log.md, docs/ROADMAP.md, docs/chunks/*) are already excluded from this count, so every path counted here is real implementation surface"
+    return
   fi
+  local ev="" act=""
+  [ -n "$nolist" ] && { ev="$ev no parseable Touches list in:${nolist%,};"; \
+    act="$act Add a comma-separated Touches list to each of those contracts; without one nothing at plan time or review time can tell scope from drift."; }
+  [ -n "$over" ] && { ev="$ev over the $TOUCHES_MAX-file budget:${over%,};"; \
+    act="$act Split each of those so no chunk declares more than $TOUCHES_MAX paths. Process docs (docs/decision-log.md, docs/ROADMAP.md, docs/chunks/*) are already excluded, so every path counted is real implementation surface."; }
+  ev="${ev# }"; emit touches warn "${ev%;}" "${act# }"
 }
 
 # ---------------------------------------------------------------------------
@@ -359,29 +448,80 @@ touches() {
 SCENARIO_MAX=5
 SCENARIO_AWK='
   function nkw(s, w,   t) { t = " " s " "; gsub(/[^a-z0-9]+/, " ", t); return gsub(" " w " ", " ", t) }
-  function arity(c,   pre) {
-    if (index(c, ", or ") > 0) { pre = substr(c, 1, index(c, ", or ")); return gsub(/,/, ",", pre) + 1 }
-    if (index(c, " or ") > 0) return 2
-    return 1 }
-  /^- \*\*Scenarios:\*\*/ { f = 1; next }
-  /^- \*\*/ { f = 0 }
-  f && /^[ \t]*- / {
+
+  # A comparative after "or" is a RANGE, not an alternative. "a record of 5 or
+  # more fields" is one scenario; scoring it as two reported a defect in a
+  # correct plan, and a checker that tells a planner to edit a correct plan is
+  # worse than no checker.
+  function is_range(w) {
+    return (w == "more" || w == "less" || w == "fewer" || w == "greater" ||
+            w == "later" || w == "earlier" || w == "equal" || w == "newer" ||
+            w == "older" || w == "higher" || w == "lower" || w == "longer" ||
+            w == "shorter" || w == "so") }
+
+  # A disjunctive clause is worth as many scenarios as it lists (ADR-0012
+  # D12.3). The old rule returned a flat 2 for anything containing " or ", so
+  # "empty or partial or corrupt or truncated or absent" — five alternatives —
+  # scored 2, which is the same undercount the check exists to catch.
+  #
+  # Two shapes, and the answer is the larger: an Oxford list ("A, B, or C")
+  # where the commas carry the alternatives, and a repeated-or list ("A or B or
+  # C") where the separators do. A clause mixing both is scored by whichever
+  # reads higher — under-, never over-counting, because a false finding costs a
+  # planner more than a missed one at this severity.
+  function arity(c,   n, i, w, ors, prefix, commas, best) {
+    n = split(c, part, / or /)
+    if (n == 1) return 1
+    ors = 0; commas = 0; prefix = part[1]
+    for (i = 2; i <= n; i++) {
+      w = part[i]
+      sub(/^[^a-z0-9]*/, "", w); sub(/[^a-z0-9].*$/, "", w)
+      if (!is_range(w)) { ors++; commas = gsub(/,/, ",", prefix) }
+      prefix = prefix " or " part[i]
+    }
+    if (ors == 0) return 1
+    best = ors + 1
+    if (commas + 1 > best) best = commas + 1
+    return best }
+
+  # Scoring happens on a BUFFERED bullet, not on a line.
+  #
+  # This was strictly line-oriented, so a bullet wrapped over two physical lines
+  # — ordinary Markdown, and how docs/roadmap-first-run.md writes its own C1
+  # scenarios — was read as a bullet with a Given and no Then and reported
+  # malformed. The plan document that specified this checker failed it, on
+  # formatting. Every fixture bullet was one long line, so `verify` could not
+  # see it.
+  function flush(   l, g, w, t, ig, iw, it, gc, wc, a, b) {
+    if (buf == "") return
     bullets++
-    l = tolower($0); sub(/^[ \t]*-[ \t]*/, "", l)
+    l = tolower(buf)
     g = nkw(l, "given"); w = nkw(l, "when"); t = nkw(l, "then")
-    if (g != 1 || w != 1 || t != 1) { shape = shape " #" bullets "(given=" g ",when=" w ",then=" t ")"; effective++; next }
+    if (g != 1 || w != 1 || t != 1) {
+      shape = shape " #" bullets "(given=" g ",when=" w ",then=" t ")"
+      effective++; buf = ""; return }
     ig = index(l, "given"); iw = index(l, "when"); it = index(l, "then")
     gc = substr(l, ig + 5, iw - ig - 5)
     wc = substr(l, iw + 4, it - iw - 4)
     a = arity(gc); b = arity(wc); if (b > a) a = b
     if (a > 1) compound = compound " #" bullets "=" a
     effective += a
-  }
-  END { printf "%d\t%d\t%s\t%s\n", bullets + 0, effective + 0, (compound == "" ? "-" : compound), (shape == "" ? "-" : shape) }'
+    buf = "" }
+
+  /^- \*\*Scenarios:\*\*/ { flush(); f = 1; next }
+  /^- \*\*/               { flush(); f = 0 }
+  f && /^[ \t]*- /        { flush(); line = $0; sub(/^[ \t]*-[ \t]*/, "", line); buf = line; next }
+  f && /^[ \t]*$/         { flush(); next }
+  f                       { line = $0; sub(/^[ \t]+/, "", line)
+                            if (buf != "") buf = buf " " line
+                            next }
+  END { flush()
+        printf "%d\t%d\t%s\t%s\n", bullets + 0, effective + 0, (compound == "" ? "-" : compound), (shape == "" ? "-" : shape) }'
 
 scenarios() {
   local id out bullets eff compound shape over="" bad_shape="" packed=""
-  for id in $IDS; do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     [ -f "$CHUNKDIR/$id.md" ] || continue
     out="$(awk "$SCENARIO_AWK" "$CHUNKDIR/$id.md")"
     IFS=$'\t' read -r bullets eff compound shape <<< "$out"
@@ -389,7 +529,9 @@ scenarios() {
     [ "$eff" -gt "$SCENARIO_MAX" ] && over="$over $id($eff from $bullets bullet(s)),"
     [ "$compound" != "-" ] && packed="$packed $id:$compound,"
     [ "$shape" != "-" ] && bad_shape="$bad_shape $id:$shape,"
-  done
+  done <<EOF
+$IDS
+EOF
   if [ -z "$over" ] && [ -z "$bad_shape" ] && [ -z "$packed" ]; then
     emit scenarios pass "every chunk specifies at most $SCENARIO_MAX scenarios, one Given/When/Then each"
     return
@@ -416,9 +558,26 @@ scenarios() {
 # ---------------------------------------------------------------------------
 lane() {
   local known="${FORGE_ASSIGNEES:-}" src="\$FORGE_ASSIGNEES"
+  known="$(printf '%s' "$known" | tr ' ' '\n' | grep . || true)"
   if [ -z "$known" ]; then
     if command -v hermes >/dev/null 2>&1; then
-      known="$(hermes kanban assignees 2>/dev/null)"; src="hermes kanban assignees"
+      # --json, and ONLY the names with a profile on disk.
+      #
+      # `hermes kanban assignees` prints a formatted TABLE, and the old check
+      # matched any space-delimited token in it. Measured against live output,
+      # all of these PASSED: `yes` and `no` (the ON DISK column), `NAME`,
+      # `DISK` and `COUNTS` (the header row), `done=1` and `(idle)` (the COUNTS
+      # column), and `forge-operator`, which is `on_disk: false`.
+      #
+      # The second half is worse than the first. That list is derived from
+      # CARDS, so a lane name that has already stranded a card appears in it
+      # forever: `no-such-profile-xyz` was in the live output *because* it
+      # stranded one. The check validated the exact failure mode its own header
+      # says it exists to catch, and got more permissive every time the bug
+      # fired. `on_disk` is the only field that answers "can this run a card".
+      known="$(hermes kanban assignees --json 2>/dev/null \
+               | jq -r '.[] | select(.on_disk == true) | .name' 2>/dev/null)"
+      src="hermes kanban assignees --json (on_disk only)"
     fi
   fi
   if [ -z "$known" ]; then
@@ -426,13 +585,16 @@ lane() {
     return
   fi
   local id l unknown="" seen=0
-  for id in $IDS; do
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
     l="$(jq -r --arg id "$id" '.[] | select(.id == $id) | (.lane // "")' "$GRAPH")"
     [ -n "$l" ] || { unknown="$unknown $id(no lane),"; continue; }
     seen=$((seen+1))
     [ "$l" = "claude-interactive" ] && continue
-    printf '%s\n' "$known" | tr ' ' '\n' | grep -qxF "$l" || unknown="$unknown $id($l),"
-  done
+    printf '%s\n' "$known" | grep -qxF "$l" || unknown="$unknown $id($l),"
+  done <<EOF
+$IDS
+EOF
   if [ -z "$unknown" ]; then
     emit lane pass "$seen lane(s), each claude-interactive or a known assignee (per $src)"
   else
