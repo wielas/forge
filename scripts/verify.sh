@@ -277,6 +277,42 @@ run_cli_group() {
   else
     ok "retro-metrics (log table present and referenced by /retro)"
   fi
+
+  # The driver pin is the F22/F36 shape on the metered side. F22 measured what a
+  # model pin changing mid-run costs: it confounded the one chunk that failed,
+  # because nothing recorded that the pin had moved. F36 found the same staleness
+  # in a load-bearing skill body. Both were about Codex; nothing ever watched the
+  # *driver*, and on 2026-08-07 MODEL_DRIVER spent a day reading
+  # `deepseek-v4-flash-latest-latest` — an id that resolves nowhere — with every
+  # check in this repo green. profiles-bootstrap.sh is what republishes the three
+  # driver profiles, so that value is one `./hermes/profiles-bootstrap.sh` away
+  # from every unattended run.
+  #
+  # This half is offline, so it belongs HERE rather than in config/: that group
+  # returns early without hermes and is not in CI, so the one assertion that
+  # could have caught the bad pin on a pull request would never have run. The
+  # live comparison stays in config/ as model-pin-live/<profile>.
+  #
+  # state.md names the bare model without its vendor prefix, so compare on that.
+  local pin_drv pin_rtr env_block
+  pin_drv="$(sed -n 's/^MODEL_DRIVER="\${FORGE_MODEL_DRIVER:-\([^}"]*\)}".*/\1/p' \
+               hermes/profiles-bootstrap.sh | head -1)"
+  pin_rtr="$(sed -n 's/^MODEL_ROUTER="\${FORGE_MODEL_ROUTER:-\([^}"]*\)}".*/\1/p' \
+               hermes/profiles-bootstrap.sh | head -1)"
+  env_block="$(sed -n '/^profiles: forge-orchestrator/,/codex pinned/p' docs/state.md)"
+  if [ -z "$pin_drv" ] || [ -z "$pin_rtr" ]; then
+    bad "model-pin-documented" \
+        "could not read MODEL_DRIVER/MODEL_ROUTER out of hermes/profiles-bootstrap.sh — the check went blind, which is not a pass (F65)"
+  elif [ -z "$env_block" ]; then
+    bad "model-pin-documented" \
+        "docs/state.md has no 'profiles: forge-orchestrator … codex pinned' environment block to compare against"
+  elif printf '%s' "$env_block" | grep -Fq "${pin_drv#*/}" \
+    && printf '%s' "$env_block" | grep -Fq "${pin_rtr#*/}"; then
+    ok "model-pin-documented ($pin_drv)"
+  else
+    bad "model-pin-documented" \
+        "profiles-bootstrap.sh pins '$pin_drv' / '$pin_rtr'; docs/state.md's environment block does not name both"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -330,6 +366,15 @@ run_config_group() {
     bad "preflight-agrees-about-real-profiles" \
         "preflight must filter assignees by on_disk (F43) and read the tier-2 sentinel out of route_tier2() in prejudge-review.sh, not out of the SOUL (F65)"
   fi
+  # The live half of the driver pin; the offline half is cli/model-pin-documented,
+  # which lives in the cli group deliberately — this group skips wholesale
+  # without hermes, so an offline assertion placed here would never run in CI.
+  local pin_drv pin_rtr
+  pin_drv="$(sed -n 's/^MODEL_DRIVER="\${FORGE_MODEL_DRIVER:-\([^}"]*\)}".*/\1/p' \
+               hermes/profiles-bootstrap.sh | head -1)"
+  pin_rtr="$(sed -n 's/^MODEL_ROUTER="\${FORGE_MODEL_ROUTER:-\([^}"]*\)}".*/\1/p' \
+               hermes/profiles-bootstrap.sh | head -1)"
+
   local p v
   for p in $profs; do
     v="$(hermes -p "$p" config get terminal.timeout 2>/dev/null | tail -1)"
@@ -370,6 +415,25 @@ run_config_group() {
         ok "soul-in-sync/$p"
       else
         bad "soul-in-sync/$p" "live SOUL differs from git — run ./hermes/profiles-bootstrap.sh"
+      fi
+    fi
+
+    # The live half of the driver pin. Same failure shape as soul-in-sync: the
+    # value can be correct in git and stale on the worker, and only a republish
+    # closes the gap. Reported as a WARN-equivalent skip rather than a failure
+    # when the pin is merely un-republished would be wrong — an unattended run
+    # uses the LIVE value, so a divergence is a real defect, not a caveat.
+    if [ -n "$pin_drv" ] && [ -n "$pin_rtr" ]; then
+      local want live
+      case "$p" in forge-orchestrator) want="$pin_rtr";; *) want="$pin_drv";; esac
+      live="$(hermes -p "$p" config get model.default 2>/dev/null | tail -1)"
+      if [ -z "$live" ]; then
+        skip "model-pin-live/$p" "could not read model.default from the live profile"
+      elif [ "$live" = "$want" ]; then
+        ok "model-pin-live/$p"
+      else
+        bad "model-pin-live/$p" \
+            "live model.default is '$live', profiles-bootstrap.sh pins '$want' — run ./hermes/profiles-bootstrap.sh"
       fi
     fi
   done
@@ -729,10 +793,12 @@ cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim marke
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 300
 cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not protocol)
 cli/no-programs-in-souls          no fenced block in a SOUL exceeds 6 lines
+cli/model-pin-documented          profiles-bootstrap.sh's model pins are named in state.md (F22/F36)
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
 config/external-dirs/<profile>    points at this checkout's skills/
 config/soul-in-sync/<profile>     live ~/.hermes SOUL matches the one in git
+config/model-pin-live/<profile>   live model.default matches the pin that would republish it
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/board-default-workdir      every forge board has a worktree anchor
 substrate/worktree-ownership      dispatcher resolves the worktree before spawning
