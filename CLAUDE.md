@@ -49,12 +49,13 @@ relocates what a check reads can blind it without turning anything red.
 
 ## Conventions
 
-- Work happens on `slice/*` branches merged via PR. **On this repository nothing
-  enforces that** — `wielas/forge` is private on a free plan, so branch protection
-  and rulesets both return 403, and no pre-push hook is installed either
-  (audit **F79**, measured 2026-08-06). Where protection *can* be turned on
-  (`make protect`, public or paid), it is the only real merge gate and the
-  pre-push hook is advisory. Here the convention is the gate: open a PR, never
-  push to `main`.
+- Work happens on `slice/*` branches merged via PR, and since 2026-08-07 that is
+  **enforced**: `wielas/forge` is public and ruleset `mainprotect` requires a PR,
+  blocks deletion and non-fast-forward pushes, and requires the `validate` and
+  `verify` checks to be green. It requires **zero approving reviews**, which is
+  deliberate for self-authored PRs — the gate is CI, not a second person.
+  No pre-push hook is installed; the ruleset is the whole gate (audit **F79**).
+  **Nothing in `make verify` asserts any of this**, so confirm it rather than
+  trusting this paragraph: `gh api repos/wielas/forge/rulesets`.
 - Findings carry stable `F<n>` identifiers across the audit docs. Reuse the existing
   number when revisiting one; do not renumber.

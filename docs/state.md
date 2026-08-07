@@ -52,7 +52,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | A card parked on a non-existent profile is detectable | `make preflight` walks every board and WARNs; caught `forge-operator` on `forge-ladder`, the shape the first two tier-2 attempts produced |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
-| Branch protection is a real merge gate **on a repo where it can be turned on** | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **Not true of this repository** — `wielas/forge` is private on a free plan and `gh api …/branches/main/protection` returns 403, so nothing gates its `main` (F79) |
+| Branch protection is a real merge gate | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **And now on this repository too** — ruleset `mainprotect`, active 2026-08-07, requires a PR plus green `validate` and `verify`; a red PR reports `mergeStateStatus: BLOCKED`. Zero approvals required, deliberately. **Caveat: no check in this repo asserts this**, so it is the one Proven row `make verify` cannot arbitrate (F79) |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
 A second, independent climb on 2026-07-28 (`ladder-forge`, three chunks, one
@@ -170,21 +170,29 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    which ADR-0010 puts in the prompt, not in a script.
 3. **`start-chunk`/`end-chunk` may be redundant** — `open-questions.md` has asked
    since day one whether they should merge. The lane never invoked them.
-4. **This repository has no merge gate at all** (audit **F79**, measured
-   2026-08-06). `wielas/forge` is private on a free plan, so both
-   `…/branches/main/protection` and `…/rulesets` return 403 — there is no
-   protected branch. The documented fallback is absent too: `.git/hooks` holds
-   nothing but samples and `core.hooksPath` is unset, because the Forge is not
-   stamped from its own template and `make protect` lives only in
-   `templates/python-service/template/Makefile`. CI runs on `pull_request`, so a
-   red merge is visible afterwards but refused by nothing, and a direct push to
-   `main` is refused by nothing either. **Shape of the fix:** decide the gate —
-   make the repo public (protection is free there, and measured working on
-   `forgeboard-report`), upgrade, or install the pre-push hook and stop calling
-   it advisory — then add a `make preflight` check that distinguishes
-   *protected* / *not protected* / **403, cannot be asked**. A 403 is a control
-   that could not run, and F65/F66 already settled that such a control has not
-   passed.
+4. ~~**This repository has no merge gate at all**~~ **Mostly closed 2026-08-07**
+   (audit **F79**). On 2026-08-06 `wielas/forge` was private on a free plan, both
+   `…/branches/main/protection` and `…/rulesets` returned 403, and no pre-push
+   hook was installed — the repository that *ships* the merge gate had never run
+   one. It is now public, and ruleset `mainprotect` requires a pull request,
+   blocks deletion and non-fast-forward pushes, and requires the `validate` and
+   `verify` checks to pass. A red PR reports `mergeStateStatus: BLOCKED`.
+
+   **What is left, and why it is not a footnote.** *Nothing in `make verify` or
+   `make preflight` asserts any of this.* The gate is real but the claim is still
+   unexecuted prose, in a file whose whole job is separating proven from claimed —
+   and `CLAUDE.md` routes every cold session here first. **Shape of the fix:** a
+   `preflight` check that distinguishes *protected with required checks* /
+   *protected without them* / **403, cannot be asked**, and never lets the third
+   read as a pass. A 403 is a control that could not run, and F65/F66 already
+   settled that such a control has not passed. Until that ships, this is the one
+   Proven row that `make verify` cannot arbitrate.
+
+   Two smaller facts worth keeping: `required_approving_review_count` is **0** on
+   purpose — every PR here is self-authored, so the gate is CI rather than a
+   second person — and `strict_required_status_checks_policy` is **false**, so a
+   branch need not be up to date with `main` to merge. Tightening the latter is
+   reasonable once nothing is stacked.
 
 ---
 
