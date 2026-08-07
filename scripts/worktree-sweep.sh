@@ -88,8 +88,25 @@ git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 \
 # The one directory this command is allowed to touch. Physical, because a
 # worktree path reported by git is physical and a string compare against an
 # unresolved prefix would silently match nothing (or, worse, something else).
+#
+# FAIL CLOSED. `-d` needs only `+x` on the PARENT; `cd` needs `+x` on the
+# directory itself. When the two disagreed the command substitution produced the
+# empty string, `BOUND` became "", and the guard below turned into
+# `case "$path" in "/*")` — a glob matching EVERY absolute path. The bound, which
+# is this command's entire safety property, silently became "everywhere":
+# measured, a sibling checkout outside the bound was removed and its branch
+# deleted, at exit 0, with `0 refused` in the summary. This is the same defect
+# `new-dest.sh`'s `physical()` was hardened against in this slice, not carried
+# across at the time.
 BOUND="$PROJECT/.worktrees"
-[ -d "$BOUND" ] && BOUND="$(cd "$BOUND" && pwd -P)"
+if [ -e "$BOUND" ]; then
+  BOUND="$(cd "$BOUND" 2>/dev/null && pwd -P)" || {
+    echo "worktree-sweep: $PROJECT/.worktrees exists but cannot be entered; refusing to run with an unresolved bound" >&2
+    exit 2; }
+fi
+[ -n "$BOUND" ] || {
+  echo "worktree-sweep: the bound resolved to nothing; refusing to run" >&2
+  exit 2; }
 
 command -v gh >/dev/null 2>&1 \
   || { echo "worktree-sweep: gh is not on PATH; merge state cannot be read from the remote" >&2; exit 2; }
@@ -108,10 +125,17 @@ pr_merged() { # $1=branch  $2=the worktree's current HEAD oid
   out="$(printf '%s' "$out" | tr -d '[:space:]')"
   case "$out" in ""|"[]") return 1;; esac
 
-  # Extracted with sed rather than jq: `gh` is already required, jq is not, and
+  # Extracted with grep rather than jq: `gh` is already required, jq is not, and
   # this is one flat object. Whitespace is stripped above so the same expression
   # matches gh's compact and pretty output.
-  oid="$(printf '%s' "$out" | sed -n 's/.*"headRefOid":"\([0-9a-fA-F]\{7,40\}\)".*/\1/p')"
+  #
+  # `grep -o | head -1` takes the FIRST match. A `sed 's/.*"headRefOid":"…"/'`
+  # is greedy and takes the LAST, which is only safe while `--limit 1` stays on
+  # the line above — a guard depending on another guard staying correct, which is
+  # the arrangement this slice argues against everywhere else.
+  oid="$(printf '%s' "$out" \
+         | grep -o '"headRefOid":"[0-9a-fA-F]\{7,40\}"' \
+         | head -1 | sed 's/.*:"//; s/"$//')"
   [ -n "$oid" ] || return 2      # a merged PR we cannot pin to a commit is unanswered
   [ "$oid" = "$2" ] || return 3
   return 0
@@ -226,11 +250,14 @@ flush() {
 # same output. This is the whole input to the command; it cannot be guessed at.
 LISTING="$(mktemp "${TMPDIR:-/tmp}/forge-sweep.XXXXXX")" \
   || { echo "worktree-sweep: could not create a temporary file" >&2; exit 2; }
-trap 'rm -f "$LISTING"' EXIT
+trap 'rm -f "$LISTING" "$LISTING.err"' EXIT
 
-if ! git -C "$PROJECT" worktree list --porcelain > "$LISTING" 2>&1; then
+# stderr goes to its OWN file. Merged into $LISTING it would be parsed as
+# porcelain, and a git warning whose first word happened to be `worktree` or
+# `branch` would be read as a record.
+if ! git -C "$PROJECT" worktree list --porcelain > "$LISTING" 2>"$LISTING.err"; then
   echo "worktree-sweep: could not enumerate worktrees in $PROJECT" >&2
-  sed 's/^/  /' "$LISTING" >&2
+  sed 's/^/  /' "$LISTING.err" >&2
   exit 2
 fi
 
