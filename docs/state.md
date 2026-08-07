@@ -178,15 +178,15 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    blocks deletion and non-fast-forward pushes, and requires the `validate` and
    `verify` checks to pass. A red PR reports `mergeStateStatus: BLOCKED`.
 
-   **What is left, and why it is not a footnote.** *Nothing in `make verify` or
-   `make preflight` asserts any of this.* The gate is real but the claim is still
-   unexecuted prose, in a file whose whole job is separating proven from claimed —
-   and `CLAUDE.md` routes every cold session here first. **Shape of the fix:** a
-   `preflight` check that distinguishes *protected with required checks* /
-   *protected without them* / **403, cannot be asked**, and never lets the third
-   read as a pass. A 403 is a control that could not run, and F65/F66 already
-   settled that such a control has not passed. Until that ships, this is the one
-   Proven row that `make verify` cannot arbitrate.
+   **And the claim is executed now, which is the half that mattered.**
+   `make preflight` section 3 asks the repository directly and separates four
+   outcomes: *gated* (a PR rule plus required status checks) PASSes; *a PR rule
+   with no required checks* FAILs, because that is the state this repo was
+   actually in for several hours and it is the most dangerous of the three —
+   the gate exists and does not gate; *no PR rule at all* FAILs; and *cannot be
+   read* (403, no access) **WARNs rather than passing**, because a control that
+   could not run has not passed (F65/F66). All four branches were exercised, not
+   only the one that happens to be true today.
 
    Two smaller facts worth keeping: `required_approving_review_count` is **0** on
    purpose — every PR here is self-authored, so the gate is CI rather than a
