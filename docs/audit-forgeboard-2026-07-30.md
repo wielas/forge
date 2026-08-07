@@ -97,8 +97,8 @@ genuine run.*
 |---|---|---|
 | F11 | `OPEN` | C1 — cap contracts by countable scenarios, split on `Serves:` > ~4 |
 | F14 | `OPEN` | C2 — freeze acceptance scenarios at planning time |
-| F18 | `OPEN` | A1 — the worktree sweep |
-| F19 | `OPEN` | A1 — `make new` refuses a temp destination |
+| F18 | `FIXED 2026-08-07` | A1. `scripts/worktree-sweep.sh` + `make worktree-sweep`; the `sweep/sweep-*` cases. Removal needs clean **and** a merged PR whose `headRefOid` is this worktree's HEAD, so a branch merged once and later rebuilt is kept. Bounded to `<project>/.worktrees/`, which is **not** where this repo's own stale worktrees live — F80 |
+| F19 | `FIXED 2026-08-07` | A1. `scripts/new-dest.sh` + the `sweep/dest-*` cases. Symlinks **and** `..` are resolved to a fixed point before judging, and the judgement is on the final `<dest>/<name>`, not on `DEST` alone. F82 records why nothing caught this before |
 | F25 | `OPEN` | C2 — a `@real-source` scenario per contract naming an external source |
 | F28 | `OPEN` | C1 — size budget at plan time, where the contract is still editable |
 | F34 | `OPEN` | D1 — the `<skill> §<n>` cross-reference check. Still reproducible today, and it has widened: `end-chunk/SKILL.md:37` points at `forge-lane` §5 for `.forge/pr-body.md`, but the PR step is §6 **and** the path became `$FORGE_LANE_RUNTIME/pr-body.md` with F68 |
@@ -188,8 +188,8 @@ is that every track owns a disjoint block and nobody mints outside their own.
 |---|---|
 | F1–F78 | this audit and the S1–S5 slices. **Spent.** |
 | F79 | slice D1a (ledger reconciliation). **Spent.** |
-| F80–F89 | Track A — the artifact survives |
-| F90–F99 | Track B — the instrument |
+| F80–F89 | Track A — the artifact survives. **F80, F81, F82 spent** (A1, 2026-08-07) |
+| F90–F99 | Track B — the instrument. **F90, F91, F92, F93 spent** (B1, 2026-08-07) |
 | F100–F109 | Track C — planning-time gates |
 | F110–F119 | Track D — hygiene and the spike |
 | F120–F129 | Track E — the staged launch |
@@ -3758,3 +3758,160 @@ model's word for a decidable property" took its own word for one.
    authenticated `gh`, and F67 is the standing reason a live check is explicit
    and opt-in rather than a source of flake in the suite that arbitrates
    disagreements.
+
+---
+
+## Ledger additions from the durable-destinations slice (A1)
+
+*Minted from Track A's block F80–F89 — see **F-number allocation** above. All
+three were found by building A1, not by reading it. The defects A1's own review
+found in A1 are deliberately **not** here: they were on an unmerged branch, were
+fixed before it landed, and left no trace in the system this ledger records.*
+
+### F80 — The stale worktrees on this machine are not where F18 says worktrees live, so a path-bounded sweep does not reclaim them · `OPEN` · **low**
+
+F18 describes `<project>/.worktrees/<task-id>`, which is where the *dispatcher*
+puts them. This repository's stale ones were made by hand somewhere else.
+
+Measured 2026-08-07, `git worktree list` in the main checkout: 19 worktrees — 1
+main checkout, **1** under `/Users/goonlab/dev/forge/.worktrees/`, **16** under
+`/Users/goonlab/dev/forge-slices/`, 1 at `/Users/goonlab/dev/forge-exercises-20260728`.
+`du -sh`: `forge-slices` 15M, `.worktrees` 1.2M.
+
+**The bound is deliberate and has not been widened.** A sweep that can reach an
+arbitrary sibling directory is one whose output you must read before trusting,
+which is the opposite of a command you can run unattended. The consequence is
+operator-facing and real: **`make worktree-sweep` does not clean this repo**,
+and `docs/state.md`'s gap #1 says so. Reclaiming those 16 is a separate,
+explicitly-targeted decision, not a loosening of this guard.
+
+### F81 — The repo's own audit prescribes the recipe this slice now refuses · `OPEN` · **low**
+
+`docs/audit-2026-07-27.md:220`, inside F9's **Assert** block, reads
+`make new NAME=probe-$$ DEST=/tmp && cd /tmp/probe-$$ && make setup …`.
+
+So stamping a product into `/tmp` was not an operator slip: it was a
+documented, copy-pasteable instruction inside this repository, which is a more
+complete root cause for F19 than "the default was `..`". That assert is now
+unrunnable as written — `make new` refuses it, which is the guard working on the
+document that caused the finding.
+
+It is **not edited here**. It is a historical audit record, and F41 already
+settled that a measurement is not corrected by rewriting what it said (see also
+`CLAUDE.md`: never renumber a finding). Superseding it is the orchestrator's
+call.
+
+### F82 — Nothing asserted where a stamped project goes, so F19 could not have been caught by the suite · `FIXED 2026-08-07` · **medium**
+
+Before A1, `verify.sh`'s `template` group stamped into `$TMPROOT` — under
+`$TMPDIR` — and asserted the stamp came up green. It never asserted anything
+about where a *real* `make new` would land. The one property that mattered had
+no check at any layer, which is why a filesystem sweep, and not a red suite, is
+what eventually found the missing product.
+
+The `sweep/` group is the layer that was absent: 29 cases, in CI as of this
+slice. Its `make new` cases **run the target** against a copier stub rather than
+grepping the recipe — the recipe-reading case that shipped first stayed green
+through four separate ways of walking around the guard, which is F65's lesson
+arriving one layer up.
+
+---
+
+## Ledger additions from the WAL snapshot slice (B1)
+
+*Minted from Track B's block F90–F99. As with A1, the defects B1's own review
+found in B1 are not here: they were on an unmerged branch and the system never
+carried them.*
+
+### F90 — `sqlite3` reports the same open failure on a different stream, with a different exit code, depending on invocation form · `FIXED 2026-08-07` · **medium**
+
+F47's second half is recorded as "`sqlite3` writes `Error: unable to open
+database file` to stdout". Measured on sqlite3 3.51.0, that is true of exactly
+one form:
+
+| form | stream | exit |
+|---|---|---|
+| `sqlite3 "file:db?mode=ro" "SELECT 1;"` | **stderr** | 14 |
+| `sqlite3 "file:db?mode=ro" < query.sql` | **stdout** | 1 |
+
+`metrics.sh` uses the second form — it assembles its query into a file because
+macOS bash 3.2 mishandles a heredoc nested inside `$(…)`. So the stdout leak
+that made F47 silent was a consequence of a workaround for an unrelated bash
+bug, and it is **invisible to anyone who checks the claim using the query
+form**: a reader testing F47 the obvious way concludes the defect does not
+exist. The exit code is no better a discriminator — 1 versus 14 for one
+underlying failure — so a caller keying on 14 misses the form that broke.
+
+`scripts/board-snapshot.sh` is stream-agnostic by construction: it redirects
+both streams on its probe and keys on the exit code alone, and its own stdout is
+structurally unreachable (fd 1 is pointed at stderr for the whole body, the real
+stdout held on fd 3), so only the final path can ever appear there.
+
+### F91 — Line-pinned `--help` extractors print the wrong text, and the help cases assert only the exit code · `PARTLY FIXED 2026-08-07` · **medium**
+
+Four extractors used `sed -n '<n>,<m>p' "$0"`, each pinned to a header that had
+since moved:
+
+- `metrics.sh --help` stopped **one line before `# Usage:`** — it printed the
+  F27/F47 rationale and none of the flags.
+- `metrics.sh` with no board printed nine lines of F47 prose containing **no
+  usage line at all**, then exited 2.
+- `verify.sh --help` truncated the group list mid-entry: `metadata/` and
+  `prejudge/` were never shown, though both are accepted arguments.
+- `preflight.sh --help` over-ran into `WHY EACH CHECK EXISTS:` and stopped
+  mid-section.
+
+Every one stayed green, because the help cases asserted exit 0 and nothing else.
+This is `CLAUDE.md`'s own warning arriving from inside: *a check anchored to
+content that moved degrades rather than failing loudly.*
+
+**Fixed:** `metrics.sh` (B1), `scripts/board-snapshot.sh` (B1, which shipped the
+same defect in a brand-new file and had it caught in review), and
+`scripts/worktree-sweep.sh` (A1, where `sed -n '2,33p'` cut off the `Exit:`
+contract). Each is executed by a case: `metrics/help-names-its-usage`,
+`metrics/snapshot/help-names-its-exit-contract`,
+`sweep/sweep-help-names-its-exit-contract`.
+
+**Still open: `scripts/verify.sh:59` and `scripts/preflight.sh:33`**, both still
+line-pinned and both asserted by nothing. Deliberately left: they are shared with
+the sibling slices in flight, and the remedy is one line each —
+
+```sh
+help_text() { awk 'NR==1{next} /^# ={10,}/{if (seen) exit; seen=1; next} seen {sub(/^#[ ]?/,""); print}' "$0"; }
+```
+
+### F92 — `metrics/is-read-only` hashes the database, so it cannot see a reader that writes sidecars beside a live board · `PARTLY FIXED 2026-08-07` · **medium**
+
+A snapshot mutated to open its source read-write left `kanban.db`
+**byte-identical** — `224b7b0d…` before and after — while creating a `-wal` and
+a 32 KB `-shm` next to it. `metrics/is-read-only` hashes only `kanban.db`, so it
+passes on that mutation. The new `metrics/snapshot/source-is-byte-identical`
+catches it, because it records sidecar **membership** — `absent` is a value —
+alongside bytes.
+
+**Fixed:** the new case. **Still open:** `metrics/is-read-only` itself, which
+should hash the sidecar set rather than the file.
+
+**Correction to this finding's first draft, measured 2026-08-07.** It was
+written up as *"running the mutation put a `-wal` and `-shm` beside
+`~/.hermes/kanban/boards/digest/kanban.db`, because
+`live-schema-has-fixture-columns` is the one default-suite case that touches
+live data"*. Re-measured, that does not reproduce: those sidecars exist and did
+**not** change across a full `./scripts/verify.sh metrics` run, and the live
+`hermes gateway run --replace` process holding the board open accounts for them.
+The default suite reaches a live board only through `cp`. The general argument
+survives and is the reason to keep it that way — *a default-suite case pointed
+at production is one bug away from a write* — but the incident is not evidence
+for it, and is recorded here as retracted rather than deleted.
+
+### F93 — The suite's only live-board case changes what it proves depending on which board sorts first · `OPEN` · **low**
+
+`live-schema-has-fixture-columns` picks its subject with
+`ls -1 …/boards/*/kanban.db | head -1`. On this host that is `digest` — 14
+tasks, never written by a forge lane. The case reports `ok (digest)` and reads
+as *"a live board still has the columns `metrics.sh` needs"*, while proving that
+about whichever board happens to sort first: possibly a legacy board whose
+schema is frozen at whatever Hermes version created it, and therefore the board
+*least* able to reveal drift. Creating a board named `aaa-scratch` silently
+repoints the only live check in the suite. Naming the subject in the `ok` line
+at least discloses which board was asked.

@@ -192,7 +192,14 @@ second symptom).
 - **Serves:** F19, F18 · **ADRs:** 0003, 0008 · **Risk:** low
 - **Goal:** the product cannot be stamped somewhere macOS purges, and finished
   chunks stop holding 50 MB and a branch each.
-- **Touches:** `Makefile`, one lifecycle script, `verify.sh`, `docs/operator-guide.md`
+- **Touches:** `Makefile`, `scripts/new-dest.sh`, `scripts/worktree-sweep.sh`,
+  `scripts/verify.sh`, `.github/workflows/verify.yml`, `docs/operator-guide.md`,
+  `README.md`, `docs/state.md`, `docs/audit-forgeboard-2026-07-30.md`
+  <br>*Corrected 2026-08-07, after the fact. As written this said "one lifecycle
+  script" and named four paths; A1 shipped nine, including two new scripts. That
+  is F55/F57 happening to Track A, and `make roadmap-check` (C1) is the thing
+  that would have said so at plan time — it does not exist yet when A1 is
+  planned, which is precisely the sequencing C1 exists to fix.*
 - **Scenarios:**
   - Given `DEST` resolves under `/tmp`, `/private/tmp` or the active `$TMPDIR`,
     When `make new` runs, Then it refuses and names a durable location.
@@ -219,7 +226,13 @@ second symptom).
 - **Goal:** every reader of a live board gets identical WAL-safe behaviour, from
   one implementation instead of three.
 - **Touches:** new `scripts/board-snapshot.sh`, `scripts/metrics.sh`,
-  `verify.sh`, `docs/operator-guide.md`
+  `scripts/verify.sh`, `scripts/preflight.sh`, `docs/operator-guide.md`,
+  `docs/audit-forgeboard-2026-07-30.md`
+  <br>*`preflight.sh` was added in review: `ubuntu-latest` cannot reach the
+  F47/F67 failure at all, so CI is structurally unable to gate this slice's
+  headline guarantee and the mini has to. `docs/operator-guide.md` was declared
+  here from the start and was **not** touched until review noticed — the
+  declaration was the honest one and the PR was what drifted.*
 - **Scenarios:**
   - Given a WAL board with no `-shm`/`-wal` sidecars, When snapshotted, Then it
     reads (this is F67's exact failure: `mode=ro` fails when the board is *idle*).
