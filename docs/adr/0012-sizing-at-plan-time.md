@@ -121,8 +121,28 @@ one. The procedure to flip it:
 4. Flip to blocking, before bootstrap, as a new recorded decision.
 
 Step 3 is the one that is not optional and the one an impatient reader will skip
-to step 4 without. The severity map is a single table at the top of the script
-so that each flip is one line, deliberately taken.
+to step 4 without.
+
+**There is no severity mechanism, and this ADR claimed one.** It read: *"The
+severity map is a single table at the top of the script so that each flip is one
+line, deliberately taken."* That table is a **prose comment**. Editing it changes
+nothing — `grep -niE 'strict|FORGE_ROADMAP|SEVERITY='` over
+`scripts/roadmap-check.sh` returns no matches, every finding's severity is a
+literal `warn` at its own `emit` call site, and the script ends in an
+unconditional `exit 0`. A future editor following that sentence would have made
+a no-op change and believed the gate had flipped. That is the most expensive
+kind of error a document like this can hold, because it is discovered only by a
+plan that should have been blocked and was not.
+
+The comment table stays — `scripts/prejudge.sh:23-32` uses the same style and it
+is a useful index of what the script checks. It is a **convention, not a
+mechanism**, and this ADR now says which.
+
+**So step 4 is real work, not a formality:** a severity value read at each `emit`
+site plus a non-zero exit path, with its own PR and its own recorded decision.
+Until that exists, C1 is advisory and **stays advisory through the first product
+run** — F11, F28 and F53 stay open through it by decision, rather than being
+recorded as half-closed by a mechanism nobody built.
 
 **D12.6 — It emits no metadata envelope.** The gate emits `forge.gate.v1`
 because a card exists to attach it to. Here nothing exists yet — that is the
