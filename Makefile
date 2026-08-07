@@ -48,7 +48,9 @@ new:                           ## make new NAME=my-project DEST=$HOME/dev
 	@# where init.defaultBranch is not main, plain `git init` yields a repo in
 	@# which every one of those gates is silently inert.
 	@echo "→ then, once the GitHub repo exists: make protect"
-	@echo "   (branch protection is the ONLY merge gate — the pre-push hook is advisory)"
+	@echo "   (where it succeeds, branch protection is the ONLY merge gate and the"
+	@echo "    pre-push hook is advisory. It FAILS on a private repo on a free plan"
+	@echo "    — 403 — and then the hook is your whole gate. Check, do not assume: F79)"
 
 # Dry-run by default: with no APPLY it prints and changes nothing. It only ever
 # reaches worktrees under <project>/.worktrees/, only removes ones that are

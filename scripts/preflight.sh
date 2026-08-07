@@ -297,6 +297,47 @@ if command -v gh >/dev/null 2>&1; then
     say  "      'gh auth login' (device flow works over SSH; needs repo scope). If the"
     say  "      gateway's children need it too, put GH_TOKEN in ~/.hermes/.env."
   fi
+
+  # F79. Three documents said branch protection was the merge gate, and on
+  # 2026-08-06 this repository had none: private on a free plan, so protection
+  # and rulesets both 403'd, and no pre-push hook was installed either. It was
+  # made public and gated on 2026-08-07 — but nothing executed the claim either
+  # way, which is why a false Proven row survived for weeks in the one document
+  # whose job is separating proven from claimed.
+  #
+  # THREE outcomes, and the third is the point. A 403 is a control that could
+  # not run, and F65/F66 settled that such a control has NOT passed — so it
+  # warns rather than passing. "Protected but requiring no checks" is the state
+  # this repo was actually in for several hours, and it is the most dangerous of
+  # the three, because the gate exists and does not gate: it FAILS.
+  # FORGE_DIR is not resolved until section 7, so ask this script's own repo.
+  _here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  _slug="$(git -C "$_here" remote get-url origin 2>/dev/null \
+            | sed -e 's#^git@github.com:##' -e 's#^https://github.com/##' -e 's#\.git$##')"
+  if [ -z "$_slug" ]; then
+    warn "no GitHub origin on $FORGE_DIR — cannot ask whether main is gated (F79)"
+  else
+    _rs="$(gh api "repos/$_slug/rulesets" 2>/dev/null)" || _rs=""
+    if [ -z "$_rs" ]; then
+      warn "cannot read rulesets for $_slug (403, or no access) — a control that could"
+      say  "      not run has NOT passed (F79). Confirm by hand before unattended work."
+    else
+      _rules="$(printf '%s' "$_rs" | jq -r '.[].id' 2>/dev/null \
+                 | while read -r _id; do
+                     gh api "repos/$_slug/rulesets/$_id" 2>/dev/null \
+                       | jq -r 'select(.enforcement=="active") | .rules[].type' 2>/dev/null
+                   done)"
+      if printf '%s\n' "$_rules" | grep -qx 'required_status_checks'; then
+        pass "$_slug main is gated: PR + required status checks (F79)"
+      elif printf '%s\n' "$_rules" | grep -qx 'pull_request'; then
+        fail "$_slug requires a PR but NO status checks — a red PR is mergeable."
+        say  "      The gate exists and does not gate (F79). Add a required_status_checks"
+        say  "      rule naming the 'validate' and 'verify' contexts."
+      else
+        fail "$_slug main has no active PR rule — nothing gates a direct push (F79)"
+      fi
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
