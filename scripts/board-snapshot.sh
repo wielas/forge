@@ -39,7 +39,10 @@
 # On failure: STDOUT IS EMPTY. Diagnostics go to stderr. Exit codes:
 #   2  usage, environment, or missing/instructionally-unsafe input
 #   3  the source changed under all 3 snapshot attempts (a torn read, refused)
-#   4  the snapshot exists but will not open as a database
+#   4  the snapshot is zero bytes, or will not open as a database
+#
+# On 3 and 4 the partial copies are removed before exit, so no later reader can
+# find a half-written board and trust it.
 #
 # The empty-stdout guarantee is structural, not a promise (audit F47's
 # unrecorded second half): `sqlite3` writes `Error: unable to open database
@@ -59,8 +62,18 @@ set -uo pipefail
 # reach the caller's stdout by accident — see the header.
 exec 3>&1 1>&2
 
+# Anchored to the `# ====` rules, not to line numbers. `sed -n '2,55p'` was
+# correct the day it was written and nothing asserted it, so it would have gone
+# blind the first time a paragraph was added above it — which is the very defect
+# this same commit removed from metrics.sh.
+help_text() {
+  awk 'NR==1 { next }
+       /^# ={10,}/ { if (seen) exit; seen=1; next }
+       seen { sub(/^#[ ]?/, ""); print }' "$0"
+}
+
 case "${1:-}" in
-  -h|--help) sed -n '2,55p' "$0" >&3; exit 0;;
+  -h|--help) help_text >&3; exit 0;;
 esac
 
 DB="${1:-}"; DEST="${2:-}"
@@ -72,7 +85,14 @@ command -v sqlite3 >/dev/null 2>&1 || { echo "sqlite3 is not on PATH"; exit 2; }
 [ -f "$DB" ] || { echo "no board database at $DB"; exit 2; }
 [ -r "$DB" ] || { echo "board database is not readable: $DB"; exit 2; }
 
+CREATED_DEST=0
+[ -d "$DEST" ] || CREATED_DEST=1
 mkdir -p "$DEST" 2>/dev/null || { echo "cannot create snapshot directory $DEST"; exit 2; }
+# A snapshot is a full copy of a board. Where this script created the directory
+# it also owns its mode, and the ambient umask is not a decision anyone made:
+# a caller passing /tmp/foo got a world-readable directory holding the copy.
+# A directory the caller already had is left exactly as the caller set it.
+[ "$CREATED_DEST" = 0 ] || chmod 700 "$DEST" 2>/dev/null || true
 
 # Refusing to snapshot a board onto itself is not defensive padding: the copy
 # is opened READ-WRITE below, and a dest that resolves to the board's own
@@ -93,18 +113,39 @@ SNAP="$DESTDIR/$BASE"
 # private copy — precisely the thing `mode=ro` on the live file could not do,
 # and the whole of F47. forgeboard-report's hermes.py excludes it for the same
 # reason.
-PARTS="$DB $DB-wal $DB-journal"
+#
+# An ARRAY, and every expansion below is quoted. As a space-separated string
+# this was re-split on whitespace at both use sites, so every board under a path
+# containing a space failed — each fragment failed `[ -f ]`, so nothing copied,
+# `before` and `after` were both empty, the loop "succeeded" on attempt 1, and
+# only the `[ -f "$SNAP" ]` backstop caught it, reporting a filesystem problem.
+# `metrics.sh` therefore exited 2 for any $HOME or HERMES_KANBAN_HOME with a
+# space in it. Unquoted it was also glob-expanded, which is the worse half: a
+# fragment whose basename happened to match $BASE would have been copied over
+# the snapshot and returned as the board, at exit 0.
+PARTS=("$DB" "$DB-wal" "$DB-journal")
 
 # Membership AND bytes: a sidecar that appears or vanishes mid-copy is as much
 # a change as one whose contents move, and only the second kind shows up in a
 # hash of the files we happened to find first.
 fingerprint() {
   local f
-  for f in $PARTS; do
+  for f in "${PARTS[@]}"; do
     [ -f "$f" ] && printf '%s %s\n' "${f##*/}" "$(shasum -a 256 "$f" | cut -d' ' -f1)"
   done
   return 0
 }
+
+# Exit 3 (torn) and exit 4 (unreadable) both leave copies behind. Contained
+# today only because both in-repo callers pass a subdirectory of an `mktemp -d`
+# they clean up; a third-party caller had no such luck, and a half-copied board
+# left on disk is exactly the thing a later reader must not find and trust.
+SNAPSHOT_OK=0
+cleanup_partial() {
+  [ "$SNAPSHOT_OK" = 1 ] && return 0
+  rm -f "$SNAP" "$SNAP-wal" "$SNAP-journal" "$SNAP-shm" 2>/dev/null || true
+}
+trap cleanup_partial EXIT
 
 # Three attempts, then an error. A board written faster than it can be copied
 # is a real condition and must be REPORTED, never silently reported stale.
@@ -115,7 +156,7 @@ while : ; do
   before="$(fingerprint)"
   rm -f "$SNAP" "$SNAP-wal" "$SNAP-journal" "$SNAP-shm"
   failed=0
-  for f in $PARTS; do
+  for f in "${PARTS[@]}"; do
     [ -f "$f" ] || continue
     cp "$f" "$DESTDIR/${f##*/}" || { failed=1; break; }
   done
@@ -127,13 +168,33 @@ while : ; do
 done
 [ -f "$SNAP" ] || { echo "could not snapshot $DB"; exit 2; }
 
-# `SELECT 1` needs no table and no column, so it succeeds on any database that
-# opened at all. That is what separates UNREADABLE BOARD from SCHEMA CHANGED
-# for every caller below this line (F67): twelve column probes each swallowing
-# their own error once presented one open failure as twelve missing columns,
-# sending the next reader off to rewrite a fixture that was correct.
-sqlite3 "$SNAP" "SELECT 1;" >/dev/null 2>&1 || {
+# Two separate questions, and neither one answers the other.
+#
+# FIRST: is there anything here at all? SQLite treats a zero-byte file as a
+# valid EMPTY database and answers every query below happily, so a board
+# truncated to nothing was reported as a board with no runs rather than as
+# unreadable — at exit 0, with a path on stdout. No query closes that hole,
+# because the file is not malformed; it is empty, which is a legal database.
+[ -s "$SNAP" ] || {
+  echo "snapshot of $DB is zero bytes; a truncated board is not an empty board"
+  exit 4; }
+
+# SECOND: does it parse as a database? `SELECT 1` resolves no table, so on
+# builds that defer schema initialisation to the first name resolution it never
+# reads page 1 and never checks the 16-byte `SQLite format 3\0` header — it
+# accepted a text file as a board, and did so on ubuntu while rejecting it on
+# macOS sqlite 3.51, which made this suite host-dependent and turned the ubuntu
+# job red on the one case proving this script's headline guarantee.
+#
+# `sqlite_master` cannot be answered without parsing the schema, which cannot
+# happen without reading and validating that header, on every version. It is
+# what separates UNREADABLE BOARD from SCHEMA CHANGED for every caller below
+# this line (F67): twelve column probes each swallowing their own error once
+# presented one open failure as twelve missing columns, sending the next reader
+# off to rewrite a fixture that was correct.
+sqlite3 "$SNAP" "SELECT count(*) FROM sqlite_master;" >/dev/null 2>&1 || {
   echo "snapshot of $DB will not open as a database"
   exit 4; }
 
+SNAPSHOT_OK=1
 printf '%s\n' "$SNAP" >&3

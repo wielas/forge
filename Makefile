@@ -46,14 +46,25 @@ install:                       ## symlink skills into all harnesses
 # DEST is REQUIRED and absolute. It used to default to `..`, which is how the
 # first real product the Forge built ended up in /private/tmp — purged by macOS,
 # unindexed by Spotlight, 41 commits behind origin when a filesystem sweep
-# finally found it (F19). scripts/new-dest.sh resolves symlinks before judging,
-# so /tmp and /private/tmp are the same refusal.
+# finally found it (F19). scripts/new-dest.sh resolves symlinks AND `..` before
+# judging, so /tmp and /private/tmp are the same refusal, and so is a path that
+# only reaches them through a component that does not exist yet.
+#
+# NAME goes THROUGH the guard rather than around it. Validating DEST and then
+# appending NAME to it is not validating what gets stamped:
+# `NAME=../../../private/tmp/x` defeated the entire slice by typing the other
+# variable. The guard prints the final target and this recipe uses that string,
+# so there is no second place where the path is assembled.
+#
+# The chain is `&&`, not `;`. With `;` the recipe line's exit status was
+# `echo`'s, so a copier that failed still printed "→ cd <dir>" for a directory
+# that was never created, and `make` exited 0.
 new:                           ## make new NAME=my-project DEST=$HOME/dev
 	@test -n "$(NAME)" || { echo "usage: make new NAME=my-project DEST=\$$HOME/dev"; exit 1; }
-	@dest="$$(./scripts/new-dest.sh "$(DEST)")" || exit 1; \
-	uvx copier copy templates/python-service "$$dest/$(NAME)" --defaults \
-	  --data project_name="$(NAME)"; \
-	echo "→ cd $$dest/$(NAME) && git init -b main && make setup && claude (/scope)"
+	@target="$$(./scripts/new-dest.sh "$(DEST)" --name "$(NAME)")" || exit 1; \
+	uvx copier copy templates/python-service "$$target" --defaults \
+	  --data project_name="$(NAME)" \
+	  && echo "→ cd $$target && git init -b main && make setup && claude (/scope)"
 	@# `-b main` is not a style preference: the pre-push guard, ci.yml's
 	@# `push: branches: [main]` and `make protect` all hardcode main. On a host
 	@# where init.defaultBranch is not main, plain `git init` yields a repo in
@@ -68,9 +79,17 @@ new:                           ## make new NAME=my-project DEST=$HOME/dev
 # clean with a merged PR on the remote, and deletes branches with `git branch
 # -d` — never -D, because that refusal is what stands between an unpushed
 # commit and nothing. See state.md gap #1 / audit F18.
+#
+# `$(if $(APPLY),…)` is a NON-EMPTY test, not a truth test, so APPLY=0,
+# APPLY=false and APPLY=no all passed --apply and deleted things — and APPLY=0
+# is how an operator writes "don't". The flag is now `$(filter 1,…)`, and any
+# other non-empty value is REFUSED rather than reinterpreted: silently doing the
+# opposite of what was typed is worse than an error, on a command that removes
+# worktrees and deletes branches.
 worktree-sweep:                ## make worktree-sweep PROJECT=<abs-path> [APPLY=1] — reclaim merged chunk worktrees
 	@test -n "$(PROJECT)" || { echo "usage: make worktree-sweep PROJECT=<abs-path> [APPLY=1]"; exit 1; }
-	./scripts/worktree-sweep.sh "$(PROJECT)" $(if $(APPLY),--apply,)
+	@case "$(APPLY)" in ""|1) ;; *) echo "make worktree-sweep: APPLY='$(APPLY)' is not understood. The only value that acts is APPLY=1; omit it entirely for a dry run."; exit 1;; esac
+	./scripts/worktree-sweep.sh "$(PROJECT)" $(if $(filter 1,$(APPLY)),--apply,)
 
 validate:                      ## sanity-check skill frontmatter + shell syntax
 	@for f in skills/*/SKILL.md; do \

@@ -114,16 +114,29 @@ make worktree-sweep PROJECT=$HOME/dev/my-project           # dry run: prints, ch
 make worktree-sweep PROJECT=$HOME/dev/my-project APPLY=1   # act
 ```
 
-Dry-run is the default and `APPLY=1` is the whole difference. What it will and
-will not do, because you should not have to read the script to trust it:
+Dry-run is the default and `APPLY=1` is the whole difference — literally `1`,
+and nothing else. `APPLY=0`, `APPLY=false` and `APPLY=no` are **refused with an
+error**: on a command that removes worktrees and deletes branches, quietly doing
+the opposite of what you typed is worse than making you type it again. Omit
+`APPLY` entirely for a dry run.
+
+What it will and will not do, because you should not have to read the script to
+trust it:
 
 - It only reaches worktrees under `<project>/.worktrees/`. Anything else — a
   sibling checkout, an agent worktree, the main checkout — is printed `REFUSE`
   and left alone. `PROJECT` must be absolute.
 - It removes a worktree only if it is clean **and** GitHub reports a merged PR
-  on that head branch. Merge state is read from the remote, not from local
-  ancestry: a squash merge leaves no local ancestry, so a local test would call
-  every squash-merged chunk unmerged and sweep nothing.
+  on that head branch **whose head commit is the one checked out here**. Merge
+  state is read from the remote, not from local ancestry: a squash merge leaves
+  no local ancestry, so a local test would call every squash-merged chunk
+  unmerged and sweep nothing. The commit comparison is what stops a branch that
+  was merged once, deleted, and later recreated with new work from reading as
+  merged — a branch name is not the identity of the work on it.
+- **Every git question it asks is checked for failure.** A worktree whose
+  `git status` cannot be read is kept and named as unreadable, never assumed
+  clean; and if it cannot enumerate the worktrees at all it exits non-zero
+  rather than reporting that there was nothing to sweep.
 - It deletes branches with `git branch -d`, never `-D`. When `-d` refuses — a
   squash merge makes the commit unreachable from `main`, so this is common —
   the worktree is still reclaimed and the branch is reported `RETAINED` for you
@@ -132,6 +145,28 @@ will not do, because you should not have to read the script to trust it:
 Sweep when the board is idle. Anything it refuses is still yours to remove by
 hand — `git worktree remove --force <path>` then `git branch -D <branch>` — but
 you are then the one deciding that nothing in there was unpushed.
+
+**Reading a live board is never a direct read.** `make metrics` and the suite's
+live-board checks both go through `scripts/board-snapshot.sh`, which copies the
+board and its durable sidecars and opens the *copy*. This is not caution, it is
+the only thing that works: every Hermes board is `journal_mode=wal`, and a
+read-only open of a WAL database fails when the board is **idle** — the reverse
+of the intuition, and exactly the state a board is in when you sit down to run
+`/retro` (audit F47/F67). A `cp` only reads, so the live board is never opened,
+locked or written.
+
+What you will see if it refuses, and what each one means:
+
+| exit | meaning |
+|---|---|
+| 2 | bad usage, no `sqlite3`, or no board at that path |
+| 3 | the board changed under all three copy attempts — a torn read, refused rather than reported |
+| 4 | the copy is zero bytes or will not open as a database |
+
+On 3 and 4 nothing is printed to stdout and the partial copies are removed, so
+there is never a half-written board left for a later reader to trust. **A number
+you did not get is the point**: reporting a board that could not be read as a
+board with no runs is the failure this replaced.
 
 ## Where projects go
 

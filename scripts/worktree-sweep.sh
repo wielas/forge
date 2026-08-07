@@ -30,16 +30,40 @@
 # nothing. Without `gh` the question cannot be answered, and an unanswerable
 # question is refused rather than guessed.
 #
+# But the branch NAME is not the identity of the work. "Was a PR with this name
+# ever merged" is answered `yes` forever, including for a branch that was merged
+# in March, deleted, and recreated in August with entirely new commits — and
+# this command then removed that live chunk's worktree and deleted its branch,
+# reproduced end to end. So the merged PR's `headRefOid` must equal the
+# worktree's current HEAD. A merged PR whose head has moved on is a branch with
+# unmerged work on it.
+#
+# Every git question asked here is checked for FAILURE, not just for output. An
+# empty `git status --porcelain` means "clean"; a git that could not run also
+# prints nothing, and reading the second as the first is how an unreadable
+# worktree full of uncommitted work gets classified clean and taken to removal.
+# A question that could not be answered keeps the worktree and says so.
+#
 # Usage: scripts/worktree-sweep.sh <abs-project-path> [--apply]
 # Exit:  0 = ran (dry-run or applied)   2 = refused to run at all
 # =============================================================================
 set -uo pipefail
 
+# `sed -n '2,33p'` cut the header off two lines short of the `Exit:` contract —
+# the one line a caller most needs — and would have gone further wrong every
+# time a paragraph was added above it. Anchored to the `# ====` rules instead,
+# so the help is whatever the header block says it is.
+help_text() {
+  awk 'NR==1 { next }
+       /^# ={10,}/ { if (seen) exit; seen=1; next }
+       seen { sub(/^#[ ]?/, ""); print }' "$0"
+}
+
 PROJECT=""; APPLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1; shift;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0;;
+    -h|--help) help_text; exit 0;;
     -*) echo "worktree-sweep: unknown flag: $1" >&2; exit 2;;
     *) [ -z "$PROJECT" ] || { echo "worktree-sweep: one project at a time" >&2; exit 2; }
        PROJECT="$1"; shift;;
@@ -73,16 +97,24 @@ command -v gh >/dev/null 2>&1 \
 REMOVED=0; KEPT=0; REFUSED=0
 say() { printf '%s\n' "$*"; }
 
-# 0 merged · 1 not merged · 2 could not ask
-pr_merged() { # $1=branch
-  local out rc
-  out="$(cd "$PROJECT" && gh pr list --head "$1" --state merged --limit 1 --json number 2>/dev/null)"
+# 0 merged AT THIS HEAD · 1 no merged PR · 2 could not ask · 3 merged, but the
+# branch has moved since — new work under a name that was merged once before.
+pr_merged() { # $1=branch  $2=the worktree's current HEAD oid
+  local out rc oid
+  out="$(cd "$PROJECT" && gh pr list --head "$1" --state merged --limit 1 \
+           --json number,headRefOid 2>/dev/null)"
   rc=$?
   [ "$rc" -eq 0 ] || return 2
-  case "$(printf '%s' "$out" | tr -d '[:space:]')" in
-    ""|"[]") return 1;;
-    *) return 0;;
-  esac
+  out="$(printf '%s' "$out" | tr -d '[:space:]')"
+  case "$out" in ""|"[]") return 1;; esac
+
+  # Extracted with sed rather than jq: `gh` is already required, jq is not, and
+  # this is one flat object. Whitespace is stripped above so the same expression
+  # matches gh's compact and pretty output.
+  oid="$(printf '%s' "$out" | sed -n 's/.*"headRefOid":"\([0-9a-fA-F]\{7,40\}\)".*/\1/p')"
+  [ -n "$oid" ] || return 2      # a merged PR we cannot pin to a commit is unanswered
+  [ "$oid" = "$2" ] || return 3
+  return 0
 }
 
 say "worktree-sweep: $PROJECT"
@@ -118,15 +150,33 @@ flush() {
     KEPT=$((KEPT+1)); return 0
   fi
 
-  local dirty
-  dirty="$(git -C "$path" status --porcelain 2>/dev/null)"
+  # `git status` failing prints nothing, and so does a clean worktree. The rc is
+  # the only thing that tells them apart, and without it a worktree holding
+  # uncommitted work was classified clean and taken all the way to removal —
+  # surviving only because `git worktree remove` has its own check, and then
+  # being reported with the wrong reason.
+  local dirty rc
+  dirty="$(git -C "$path" status --porcelain 2>/dev/null)"; rc=$?
+  if [ "$rc" != 0 ]; then
+    say "  KEEP    $path  [$branch]"
+    say "          could not read 'git status' here (exit $rc) — refusing to call it clean"
+    KEPT=$((KEPT+1)); return 0
+  fi
   if [ -n "$dirty" ]; then
     say "  KEEP    $path  [$branch]"
     say "          dirty: $(printf '%s\n' "$dirty" | grep -c '') uncommitted/untracked path(s)"
     KEPT=$((KEPT+1)); return 0
   fi
 
-  pr_merged "$branch"; local m=$?
+  local head
+  head="$(git -C "$path" rev-parse HEAD 2>/dev/null)"; rc=$?
+  if [ "$rc" != 0 ] || [ -z "$head" ]; then
+    say "  KEEP    $path  [$branch]"
+    say "          could not read HEAD here (exit $rc) — nothing to compare a merged PR against"
+    KEPT=$((KEPT+1)); return 0
+  fi
+
+  pr_merged "$branch" "$head"; local m=$?
   if [ "$m" = 2 ]; then
     say "  KEEP    $path  [$branch]"
     say "          could not read merge state from the remote — not guessing"
@@ -135,6 +185,12 @@ flush() {
   if [ "$m" = 1 ]; then
     say "  KEEP    $path  [$branch]"
     say "          no merged PR for this head branch on the remote"
+    KEPT=$((KEPT+1)); return 0
+  fi
+  if [ "$m" = 3 ]; then
+    say "  KEEP    $path  [$branch]"
+    say "          a PR on this branch NAME was merged, but at a different commit than"
+    say "          ${head} — this branch has moved since, so the work here is unmerged"
     KEPT=$((KEPT+1)); return 0
   fi
 
@@ -163,6 +219,21 @@ flush() {
   fi
 }
 
+# Materialised to a file rather than read from a process substitution, because
+# `done < <(cmd)` throws the command's exit status away. An enumeration that
+# failed produced an empty stream, which printed "0 would be removed · 0 kept ·
+# 0 refused" and exited 0 — "nothing to sweep" and "I could not look" were the
+# same output. This is the whole input to the command; it cannot be guessed at.
+LISTING="$(mktemp "${TMPDIR:-/tmp}/forge-sweep.XXXXXX")" \
+  || { echo "worktree-sweep: could not create a temporary file" >&2; exit 2; }
+trap 'rm -f "$LISTING"' EXIT
+
+if ! git -C "$PROJECT" worktree list --porcelain > "$LISTING" 2>&1; then
+  echo "worktree-sweep: could not enumerate worktrees in $PROJECT" >&2
+  sed 's/^/  /' "$LISTING" >&2
+  exit 2
+fi
+
 while IFS= read -r line; do
   case "$line" in
     "worktree "*) flush; wt="${line#worktree }";;
@@ -170,7 +241,7 @@ while IFS= read -r line; do
     "detached") br="";;
     "") ;;
   esac
-done < <(git -C "$PROJECT" worktree list --porcelain 2>/dev/null)
+done < "$LISTING"
 flush
 
 say ""
