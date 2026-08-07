@@ -81,7 +81,8 @@ uv tool install copier
 ./install.sh
 
 # 2. Stamp a new project — Chunk 0 in one command
-# DEST is required, absolute and durable — a temp dir is refused (F19)
+# DEST is required, absolute and durable — a temp dir is refused (F19), and so
+# is any DEST or NAME that walks into one. NAME is a single path component.
 make new NAME=my-project DEST=$HOME/dev
 cd $HOME/dev/my-project && make setup
 

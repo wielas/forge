@@ -192,7 +192,14 @@ second symptom).
 - **Serves:** F19, F18 · **ADRs:** 0003, 0008 · **Risk:** low
 - **Goal:** the product cannot be stamped somewhere macOS purges, and finished
   chunks stop holding 50 MB and a branch each.
-- **Touches:** `Makefile`, one lifecycle script, `verify.sh`, `docs/operator-guide.md`
+- **Touches:** `Makefile`, `scripts/new-dest.sh`, `scripts/worktree-sweep.sh`,
+  `scripts/verify.sh`, `.github/workflows/verify.yml`, `docs/operator-guide.md`,
+  `README.md`, `docs/state.md`, `docs/audit-forgeboard-2026-07-30.md`
+  <br>*Corrected 2026-08-07, after the fact. As written this said "one lifecycle
+  script" and named four paths; A1 shipped nine, including two new scripts. That
+  is F55/F57 happening to Track A, and `make roadmap-check` (C1) is the thing
+  that would have said so at plan time — it does not exist yet when A1 is
+  planned, which is precisely the sequencing C1 exists to fix.*
 - **Scenarios:**
   - Given `DEST` resolves under `/tmp`, `/private/tmp` or the active `$TMPDIR`,
     When `make new` runs, Then it refuses and names a durable location.
