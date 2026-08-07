@@ -953,26 +953,38 @@ prejudge/shadow-fields-are-stamped-never-trusted  a model-invented derived_verdi
 prejudge/shadow-never-destroys-the-verdict  an unstampable verdict file is left exactly as found
 prejudge/shadow-needs-no-writable-tmpdir  the stage does not depend on TMPDIR being writable
 prejudge/stamp-reports-its-own-failure    emitting nothing returns non-zero, not 0
+prejudge/shadow-preserves-the-routing-field  stamping never alters .verdict
+prejudge/stamped-envelope-declares-every-key  no key the schema does not declare (additionalProperties:false)
+prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
+sweep/dest-refuses-traversal-past-a-missing-component  `..` through a dir that does not exist yet still lands in /tmp
 sweep/dest-refuses-active-tmpdir            $TMPDIR is volatile and is not under /tmp on macOS
 sweep/dest-refuses-relative-and-empty       a relative DEST is the F19 mechanism itself
+sweep/dest-refuses-a-non-directory          a regular file and / are not durable directories
+sweep/dest-refuses-an-unreadable-ancestor   an un-enterable ancestor must refuse, never emit a bare tail
+sweep/dest-refuses-a-traversing-name        NAME is one component; it cannot walk out of DEST
 sweep/dest-refusal-names-a-durable-location the refusal shows a usable DEST=, not only "no"
 sweep/dest-accepts-durable                  a durable path still works, resolved physically
+sweep/dest-accepts-durable-with-a-name      --name returns the final target, the string make new uses
 sweep/make-new-routes-through-the-guard     `make new` calls it and no longer defaults DEST to ..
+sweep/make-new-sends-name-through-the-guard NAME is validated, not appended to a validated DEST
+sweep/make-new-fails-when-copier-fails      a failed stamp exits non-zero and prints no next steps
+sweep/sweep-apply-acts-only-on-1            APPLY=0/false/no do not delete; they are refused
 sweep/sweep-refuses-relative-project        a command that deletes must not inherit its target
 sweep/sweep-dry-run-changes-nothing         no APPLY: names the removal, performs none of it
 sweep/sweep-refuses-outside-the-bound       worktrees outside <project>/.worktrees/ are REFUSEd
 sweep/sweep-removes-clean-merged            clean + merged PR on the remote is reclaimed
 sweep/sweep-keeps-dirty                     uncommitted work is never swept
 sweep/sweep-keeps-unmerged                  no merged PR on the remote means no removal
+sweep/sweep-keeps-a-rebuilt-branch          a merged PR at a DIFFERENT head is not this branch's merge
+sweep/sweep-keeps-what-it-cannot-read       a git that fails is not a clean worktree
+sweep/sweep-fails-when-it-cannot-enumerate  "nothing to sweep" and "I could not look" are different exits
 sweep/sweep-never-touches-outside-the-bound APPLY still cannot reach outside the bound
 sweep/sweep-never-force-deletes-a-branch    unreachable commit survives; reported, never -D'd
 sweep/sweep-carries-no-forced-delete        the script contains no `git branch -D`
 sweep/sweep-tolerates-missing-remote-branch the merge deletes origin/<branch>; that is normal
-prejudge/shadow-preserves-the-routing-field  stamping never alters .verdict
-prejudge/stamped-envelope-declares-every-key  no key the schema does not declare (additionalProperties:false)
-prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
+sweep/sweep-help-names-its-exit-contract    --help is anchored to the header, not to line numbers
 EOF
   exit 0
 fi
@@ -2878,7 +2890,13 @@ wants prejudge  && run_prejudge_group
 run_sweep_group() {
   group sweep
   local nd=scripts/new-dest.sh sw=scripts/worktree-sweep.sh
-  local lab="$LABROOT/sweep"
+  # Under TMPROOT, not LABROOT. LABROOT exists because codex `workspace-write`
+  # grants /tmp unconditionally, so a SANDBOX probe there passes for the wrong
+  # reason — a rationale that does not apply to a git fixture the sweep walks;
+  # worktree-sweep.sh has no volatility logic of any kind. Under $HOME the whole
+  # fixture collapsed to a single skip whenever $HOME was not writable, which is
+  # exactly what a codex sandbox does: ten cases, no red.
+  local lab="$TMPROOT/sweep"
 
   # -- new-dest: refusing a non-durable destination ------------------------
   _dest_rc() { "./$nd" "$1" >/dev/null 2>&1; echo $?; }
@@ -2901,6 +2919,18 @@ run_sweep_group() {
     bad "dest-refuses-tmp-via-traversal" "'/Users/../tmp/x' was accepted; symlinks and .. must be resolved BEFORE judging"
   fi
 
+  # …and the case above passes for the wrong reason on its own: every component
+  # of /Users/../tmp exists, so a single `-d` test resolves it. The shape that
+  # got through walked `..` past a component that does NOT exist yet, which is
+  # the shape `make new` actually produces, because the target is new.
+  local esc="$REPO_ROOT/__forge_missing__/../../../../../../../../private/tmp/forge-probe"
+  if [ "$(_dest_rc "$esc")" != 0 ]; then
+    ok "dest-refuses-traversal-past-a-missing-component"
+  else
+    bad "dest-refuses-traversal-past-a-missing-component" \
+        "'$esc' was accepted; it normalises into /private/tmp and mkdir -p walks it"
+  fi
+
   if [ -n "${TMPDIR:-}" ]; then
     if [ "$(_dest_rc "${TMPDIR%/}/forge-probe")" != 0 ]; then
       ok "dest-refuses-active-tmpdir"
@@ -2920,6 +2950,53 @@ run_sweep_group() {
         "'..' rc=$rel_rc, '' rc=$empty_rc — a relative DEST is the F19 mechanism itself"
   fi
 
+  # The contract word is DIRECTORY. A regular file was accepted at rc 0, and so
+  # was `/` — which made `make new NAME=x DEST=/` target `//x`.
+  local file_rc root_rc probe_file="$TMPROOT/not-a-dir"
+  : > "$probe_file"
+  file_rc=$(_dest_rc "$probe_file"); root_rc=$(_dest_rc "/")
+  if [ "$file_rc" != 0 ] && [ "$root_rc" != 0 ]; then
+    ok "dest-refuses-a-non-directory"
+  else
+    bad "dest-refuses-a-non-directory" \
+        "a regular file rc=$file_rc, '/' rc=$root_rc — the contract promises a durable directory"
+  fi
+
+  # An ancestor that cannot be entered used to emit the bare TAIL as if it were
+  # an absolute path: `<unreadable>/sub/proj` came back as `/sub/proj`, rc 0,
+  # and `make new` would have stamped a project at the filesystem root.
+  local noperm="$TMPROOT/noperm" noperm_rc noperm_out
+  mkdir -p "$noperm/sub" && chmod 000 "$noperm"
+  noperm_out="$("./$nd" "$noperm/sub/proj" 2>/dev/null)"; noperm_rc=$?
+  chmod 755 "$noperm" 2>/dev/null
+  if [ "$noperm_rc" != 0 ] && [ "$noperm_out" != "/sub/proj" ]; then
+    ok "dest-refuses-an-unreadable-ancestor"
+  elif [ "$(id -u)" = 0 ]; then
+    skip "dest-refuses-an-unreadable-ancestor" "running as root; chmod 000 does not deny"
+  else
+    bad "dest-refuses-an-unreadable-ancestor" \
+        "rc=$noperm_rc out='$noperm_out' — an un-enterable ancestor must refuse, not emit its tail"
+  fi
+
+  # DEST was validated and NAME was appended to it unchecked, so the guard was
+  # defeated by typing the other variable. NAME is one path component.
+  #
+  # The third probe is what makes this a check rather than a coincidence. The
+  # first two are ALSO refused by the volatile-root test on the final target, so
+  # with NAME validation deleted outright this case stayed green — F65's shape,
+  # caught by mutation-testing it. `../elsewhere` escapes DEST and lands
+  # somewhere perfectly durable: nothing but the NAME rule refuses that.
+  local nm_rc dot_rc esc_rc
+  "./$nd" "$HOME/dev" --name "../../../private/tmp/x" >/dev/null 2>&1; nm_rc=$?
+  "./$nd" "$HOME/dev" --name ".." >/dev/null 2>&1; dot_rc=$?
+  "./$nd" "$HOME/dev" --name "../elsewhere" >/dev/null 2>&1; esc_rc=$?
+  if [ "$nm_rc" != 0 ] && [ "$dot_rc" != 0 ] && [ "$esc_rc" != 0 ]; then
+    ok "dest-refuses-a-traversing-name"
+  else
+    bad "dest-refuses-a-traversing-name" \
+        "NAME='../../../private/tmp/x' rc=$nm_rc, '..' rc=$dot_rc, '../elsewhere' rc=$esc_rc — NAME is one component"
+  fi
+
   # Refusing is half a fix. The operator has to be told where to put it.
   local refusal; refusal="$("./$nd" "/tmp/forge-probe" 2>&1)"
   if printf '%s' "$refusal" | grep -q 'DEST=' && printf '%s' "$refusal" | grep -q "$HOME"; then
@@ -2937,6 +3014,16 @@ run_sweep_group() {
     bad "dest-accepts-durable" "\$HOME/dev was not accepted/resolved: got '$good'"
   fi
 
+  # With --name it returns the FINAL TARGET. That string is what `make new`
+  # stamps, so the guard and the recipe cannot disagree about where it went.
+  local named; named="$("./$nd" "$HOME/dev" --name hello-forge 2>/dev/null)"
+  if [ "$named" = "$(cd "$HOME" && pwd -P)/dev/hello-forge" ]; then
+    ok "dest-accepts-durable-with-a-name"
+  else
+    bad "dest-accepts-durable-with-a-name" \
+        "--name must print the resolved <dest>/<name>; got '$named'"
+  fi
+
   # The guard is worthless if `make new` stops calling it, or if the relative
   # default comes back. F65's lesson: a check that survives the removal of the
   # thing it guards was never guarding it — so this reads the RECIPE, not the
@@ -2952,24 +3039,104 @@ run_sweep_group() {
         "the new: recipe must call scripts/new-dest.sh and must not default DEST to '..'"
   fi
 
+  # Reading the recipe is not enough, and this is where that stopped being a
+  # theoretical objection: the case above passed while `make new` was accepting
+  # NAME=../../../private/tmp/x and while a failed copier exited 0. So RUN it,
+  # with copier replaced by a stub that only reports its argv.
+  local mk="$TMPROOT/mknew"; mkdir -p "$mk/bin"
+  printf '#!/bin/sh\necho "UVX: $*"\nexit ${UVX_RC:-0}\n' > "$mk/bin/uvx"
+  chmod +x "$mk/bin/uvx"
+
+  local nout nrc
+  nout="$( PATH="$mk/bin:$PATH" make new NAME="../../../private/tmp/x" DEST="$HOME/dev" 2>&1 )"; nrc=$?
+  if [ "$nrc" != 0 ] && ! printf '%s' "$nout" | grep -q 'UVX:'; then
+    ok "make-new-sends-name-through-the-guard"
+  else
+    bad "make-new-sends-name-through-the-guard" \
+        "NAME='../../../private/tmp/x' exited $nrc and reached copier — DEST is validated and NAME is not"
+  fi
+
+  local fout frc
+  fout="$( PATH="$mk/bin:$PATH" UVX_RC=1 make new NAME=probe DEST="$HOME/dev" 2>&1 )"; frc=$?
+  if [ "$frc" != 0 ] && ! printf '%s' "$fout" | grep -q '→ cd'; then
+    ok "make-new-fails-when-copier-fails"
+  else
+    bad "make-new-fails-when-copier-fails" \
+        "a failed copier exited $frc and still printed next steps for a directory that was never created"
+  fi
+
+  # APPLY was a non-empty test, so APPLY=0 — how an operator writes "don't" —
+  # passed --apply to a command that removes worktrees and deletes branches.
+  #
+  # The refusal is read by its MESSAGE, not by a non-zero exit. Judged on rc
+  # alone this passed with the refusal deleted, because the sweep then ran and
+  # exited 2 on the nonexistent PROJECT — a second mutation-testing catch, and
+  # the same "passed for the wrong reason" shape as the case above.
+  local dr0 dr1 refuse_out refuse_rc
+  dr0="$(make -n worktree-sweep PROJECT=/nonexistent APPLY=0 2>&1)"
+  dr1="$(make -n worktree-sweep PROJECT=/nonexistent APPLY=1 2>&1)"
+  refuse_out="$(make worktree-sweep PROJECT=/nonexistent APPLY=0 2>&1)"; refuse_rc=$?
+  if ! printf '%s' "$dr0" | grep -qE 'worktree-sweep\.sh.*--apply' \
+     && printf '%s' "$dr1" | grep -qE 'worktree-sweep\.sh.*--apply' \
+     && [ "$refuse_rc" != 0 ] \
+     && printf '%s' "$refuse_out" | grep -q 'is not understood'; then
+    ok "sweep-apply-acts-only-on-1"
+  else
+    bad "sweep-apply-acts-only-on-1" \
+        "APPLY=0 must neither pass --apply nor be silently reinterpreted (rc=$refuse_rc)"
+  fi
+
   # -- worktree-sweep ------------------------------------------------------
   if ! command -v git >/dev/null 2>&1; then
     skip "sweep-fixture" "git not on PATH"; return
   fi
 
-  # The lab is under $HOME on purpose: the sweep judges paths, and building its
-  # fixture under a volatile root would be building it in the blast zone.
-  rm -rf "$lab"; mkdir -p "$lab/bin"
+  # Fixture construction FAILS; it does not skip. "The git fixture is broken"
+  # and "the lab root was denied" printed the same single skip line, and ten
+  # cases disappearing without a red is the shape F5 names.
+  rm -rf "$lab"
+  if ! mkdir -p "$lab/bin"; then
+    bad "sweep-fixture" "could not create the lab root at $lab — the worktree cases cannot run"
+    return
+  fi
+  local realgit; realgit="$(command -v git)"
   cat > "$lab/bin/gh" <<'GHSTUB'
 #!/usr/bin/env bash
 # Stand-in for the ONE question the sweep asks the remote: is there a merged PR
-# on this head branch? Answers from $MERGED_BRANCHES.
+# on this head branch, and at which commit? Answers from $MERGED_BRANCHES, whose
+# entries are `branch` (merged at that branch's current head) or `branch=<oid>`
+# (merged at a specific, possibly stale, commit).
 head=""
 while [ $# -gt 0 ]; do case "$1" in --head) head="$2"; shift 2;; *) shift;; esac; done
-for b in $MERGED_BRANCHES; do [ "$b" = "$head" ] && { echo '[{"number":7}]'; exit 0; }; done
+for spec in $MERGED_BRANCHES; do
+  b="${spec%%=*}"
+  [ "$b" = "$head" ] || continue
+  oid="${spec#*=}"
+  [ "$oid" != "$spec" ] || oid="$(git rev-parse "$b" 2>/dev/null)"
+  printf '[{"number":7,"headRefOid":"%s"}]\n' "$oid"
+  exit 0
+done
 echo '[]'
 GHSTUB
   chmod +x "$lab/bin/gh"
+
+  # A git that fails for exactly one question, so "could not read" can be told
+  # apart from "read, and the answer was empty". $FAIL_GIT_ON names the
+  # subcommand to fail; everything else is the real git.
+  cat > "$lab/bin/git" <<GITSTUB
+#!/usr/bin/env bash
+# The calls this stands in for are always: -C <dir> <subcommand> [...]
+# The -n test is load-bearing: without it an unset FAIL_GIT_ON matched an unset
+# \$3, so every OTHER git invocation in the fixture failed instead of none.
+if [ -n "\${FAIL_GIT_ON:-}" ] && [ "\${FAIL_GIT_ON}" = "\${3:-}" ]; then
+  case "\${FAIL_GIT_ON:-}" in
+    worktree) [ "\${4:-}" = list ] && { echo "fatal: stubbed failure" >&2; exit 128; };;
+    *) echo "fatal: stubbed failure" >&2; exit 128;;
+  esac
+fi
+exec "$realgit" "\$@"
+GITSTUB
+  chmod +x "$lab/bin/git"
 
   local proj="$lab/proj"
   _sweep_fixture() {
@@ -2981,23 +3148,34 @@ GHSTUB
       && git -c user.email=v@v -c user.name=v commit -qm init \
       && for spec in "merged:.worktrees/wt-merged" "unmerged:.worktrees/wt-unmerged" \
                      "dirty:.worktrees/wt-dirty" "ahead:.worktrees/wt-ahead" \
-                     "elsewhere:outside-wt"; do
+                     "rebuilt:.worktrees/wt-rebuilt" "elsewhere:outside-wt"; do
            git branch "${spec%%:*}" && git worktree add -q "$proj/${spec#*:}" "${spec%%:*}"
          done ) >/dev/null 2>&1 || return 1
     printf 'junk\n' > "$proj/.worktrees/wt-dirty/junk.txt"
     # `ahead` is the squash-merge shape: PR merged on the remote, but the commit
     # is not reachable from main, so `git branch -d` legitimately refuses.
-    printf 'a\n' > "$proj/.worktrees/wt-ahead/a.txt"
-    ( cd "$proj/.worktrees/wt-ahead" && git add -A \
-      && git -c user.email=v@v -c user.name=v commit -qm ahead ) >/dev/null 2>&1
+    # `rebuilt` has the identical local shape and a different REMOTE answer: the
+    # merged PR's head is the commit below it, not this one. Same picture on
+    # disk, opposite verdict — which is the point.
+    local w
+    for w in ahead rebuilt; do
+      printf '%s\n' "$w" > "$proj/.worktrees/wt-$w/$w.txt"
+      ( cd "$proj/.worktrees/wt-$w" && git add -A \
+        && git -c user.email=v@v -c user.name=v commit -qm "$w" ) >/dev/null 2>&1
+    done
+    BASE_OID="$(git -C "$proj" rev-parse main 2>/dev/null)"
+    [ -n "$BASE_OID" ]
   }
   # every branch below is "merged" as far as the remote is concerned, so the
-  # only thing keeping wt-dirty and outside-wt alive is the sweep's own guards
-  _sweep() { MERGED_BRANCHES="merged dirty ahead elsewhere" PATH="$lab/bin:$PATH" \
-             "./$sw" "$@" 2>&1; }
+  # only thing keeping wt-dirty, wt-rebuilt and outside-wt alive is the sweep's
+  # own guards. `rebuilt=$BASE_OID` is a PR merged at a commit this branch has
+  # since moved past — the branch NAME matches, the work does not.
+  _sweep() { MERGED_BRANCHES="merged dirty ahead elsewhere rebuilt=$BASE_OID" \
+             PATH="$lab/bin:$PATH" "./$sw" "$@" 2>&1; }
 
   if ! _sweep_fixture; then
-    skip "sweep-fixture" "could not build the git fixture"; return
+    bad "sweep-fixture" "could not build the git fixture under $lab — the worktree cases cannot run"
+    return
   fi
 
   # PROJECT must be absolute for the same reason DEST must be: a relative path
@@ -3050,6 +3228,19 @@ GHSTUB
     bad "sweep-keeps-unmerged" "a branch with no merged PR on the remote was swept"
   fi
 
+  # A merged PR on a branch NAME is not a merged branch. Reproduced end to end:
+  # a chunk branch merged once, deleted, recreated with new unmerged commits —
+  # its worktree was removed and its branch deleted, and the commits survived
+  # only because they happened to have been pushed.
+  if [ -d "$proj/.worktrees/wt-rebuilt" ] \
+     && git -C "$proj" show-ref --verify --quiet refs/heads/rebuilt \
+     && printf '%s' "$app" | grep -q 'at a different commit'; then
+    ok "sweep-keeps-a-rebuilt-branch"
+  else
+    bad "sweep-keeps-a-rebuilt-branch" \
+        "a branch whose merged PR points at an EARLIER commit was swept; the head OID must match"
+  fi
+
   if [ -d "$proj/outside-wt" ] && git -C "$proj" show-ref --verify --quiet refs/heads/elsewhere; then
     ok "sweep-never-touches-outside-the-bound"
   else
@@ -3077,9 +3268,48 @@ GHSTUB
     bad "sweep-carries-no-forced-delete" "worktree-sweep.sh executes 'git branch -D'"
   fi
 
+  # An empty `git status --porcelain` means clean; a git that could not run also
+  # prints nothing. Reading the second as the first took a worktree holding an
+  # untracked file all the way to removal — it survived only because `git
+  # worktree remove` has its own independent check, and was then reported with
+  # the wrong reason ("remove refused it", not "could not read status").
+  _sweep_fixture || { bad "sweep-keeps-what-it-cannot-read" "fixture rebuild failed"; return; }
+  printf 'precious\n' > "$proj/.worktrees/wt-merged/precious.txt"
+  local blind; blind="$( export FAIL_GIT_ON=status; _sweep "$proj" --apply )"
+  if [ -d "$proj/.worktrees/wt-merged" ] \
+     && printf '%s' "$blind" | grep -q "could not read 'git status'"; then
+    ok "sweep-keeps-what-it-cannot-read"
+  else
+    bad "sweep-keeps-what-it-cannot-read" \
+        "a worktree whose status could not be read was judged clean; it must be kept AND named"
+  fi
+
+  # And an enumeration that failed is not an empty repository. This printed
+  # "0 would be removed · 0 kept · 0 refused" and exited 0 — "nothing to sweep"
+  # and "I could not look" were the same output.
+  local enum_out enum_rc
+  enum_out="$( export FAIL_GIT_ON=worktree; _sweep "$proj" )"; enum_rc=$?
+  if [ "$enum_rc" != 0 ] && ! printf '%s' "$enum_out" | grep -q '0 would be removed'; then
+    ok "sweep-fails-when-it-cannot-enumerate"
+  else
+    bad "sweep-fails-when-it-cannot-enumerate" \
+        "a failed 'git worktree list' exited $enum_rc and read as an empty repository"
+  fi
+
+  # --help was `sed -n '2,33p'` over a 35-line header: it cut off the `Exit:`
+  # contract, which is the line a caller most needs, and every paragraph added
+  # above it would have moved the window further off.
+  local helped; helped="$("./$sw" --help 2>&1)"
+  if printf '%s' "$helped" | grep -q 'Exit:' && printf '%s' "$helped" | grep -q 'Usage:'; then
+    ok "sweep-help-names-its-exit-contract"
+  else
+    bad "sweep-help-names-its-exit-contract" \
+        "--help must carry the whole header block, including Usage: and Exit:"
+  fi
+
   # The merge may already have deleted the remote branch. That is the normal
   # end state, not an error: nothing here may require origin/<branch> to exist.
-  _sweep_fixture || { skip "sweep-tolerates-missing-remote-branch" "fixture rebuild failed"; return; }
+  _sweep_fixture || { bad "sweep-tolerates-missing-remote-branch" "fixture rebuild failed"; return; }
   git -C "$proj" config branch.merged.remote origin >/dev/null 2>&1
   git -C "$proj" config branch.merged.merge refs/heads/merged >/dev/null 2>&1
   _sweep "$proj" --apply >/dev/null 2>&1
@@ -3090,7 +3320,7 @@ GHSTUB
         "a branch whose upstream no longer exists blocked the sweep; the merge deletes it, so this is the common case"
   fi
 
-  rm -rf "$lab"
+  rm -rf "$lab" "$mk"
 }
 wants sweep     && run_sweep_group
 

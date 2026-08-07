@@ -114,16 +114,29 @@ make worktree-sweep PROJECT=$HOME/dev/my-project           # dry run: prints, ch
 make worktree-sweep PROJECT=$HOME/dev/my-project APPLY=1   # act
 ```
 
-Dry-run is the default and `APPLY=1` is the whole difference. What it will and
-will not do, because you should not have to read the script to trust it:
+Dry-run is the default and `APPLY=1` is the whole difference — literally `1`,
+and nothing else. `APPLY=0`, `APPLY=false` and `APPLY=no` are **refused with an
+error**: on a command that removes worktrees and deletes branches, quietly doing
+the opposite of what you typed is worse than making you type it again. Omit
+`APPLY` entirely for a dry run.
+
+What it will and will not do, because you should not have to read the script to
+trust it:
 
 - It only reaches worktrees under `<project>/.worktrees/`. Anything else — a
   sibling checkout, an agent worktree, the main checkout — is printed `REFUSE`
   and left alone. `PROJECT` must be absolute.
 - It removes a worktree only if it is clean **and** GitHub reports a merged PR
-  on that head branch. Merge state is read from the remote, not from local
-  ancestry: a squash merge leaves no local ancestry, so a local test would call
-  every squash-merged chunk unmerged and sweep nothing.
+  on that head branch **whose head commit is the one checked out here**. Merge
+  state is read from the remote, not from local ancestry: a squash merge leaves
+  no local ancestry, so a local test would call every squash-merged chunk
+  unmerged and sweep nothing. The commit comparison is what stops a branch that
+  was merged once, deleted, and later recreated with new work from reading as
+  merged — a branch name is not the identity of the work on it.
+- **Every git question it asks is checked for failure.** A worktree whose
+  `git status` cannot be read is kept and named as unreadable, never assumed
+  clean; and if it cannot enumerate the worktrees at all it exits non-zero
+  rather than reporting that there was nothing to sweep.
 - It deletes branches with `git branch -d`, never `-D`. When `-d` refuses — a
   squash merge makes the commit unreachable from `main`, so this is common —
   the worktree is still reclaimed and the branch is reported `RETAINED` for you
