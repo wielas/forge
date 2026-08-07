@@ -10,7 +10,204 @@ local `main` is 41 commits behind `origin`). Board `forge-ladder`, live db at
 `~/.hermes/kanban/boards/forge-ladder/kanban.db`. Hand-assembled review prompts
 and verdicts are loose in `/private/tmp/*.json|txt|md`.
 
-Status legend: `OPEN` · `IN PROGRESS` · `FIXED` · `WONTFIX` · `NEEDS-DECISION`
+Status legend, as actually used below — the original three-word legend had
+drifted from the headers it describes, so this is the vocabulary reconciled
+against the file rather than the one it was opened with:
+
+| Status | Means |
+|---|---|
+| `OPEN` | no fix has shipped |
+| `PARTLY FIXED <date>` | one half of the finding's own fix shipped; the body names which half and what is left |
+| `FIXED <date>` / `RESOLVED <date>` | the fix is in the tree and something executes it |
+| `CONTRACTED — AWAITING LIVE PROOF` | the fix shipped and is fixture-proven; one genuine lifecycle run must show it holds on reality |
+| `RESOLVED-BY-DECISION <date>` | the finding asked a question; data answered it and the answer is implemented |
+| `RESOLVED-BY-RECORD` | nothing to fix; the finding exists so the event is on the record |
+| `MEASURED` / `RECORDED` | an observation, not a defect with a fix |
+| `WONTFIX` / `NEEDS-DECISION` | reserved; unused today |
+
+---
+
+## Disposition — what is done, what waits, what was dropped
+
+*Reconciled 2026-08-06 (slice D1a). Before this pass the `### F<n>` headers had
+drifted from their own bodies. F7's header read `OPEN` over a body that records
+**FIXED 2026-08-05**; twenty headers in total disagreed with their body, with
+the tree, or with both, which is why nothing downstream could be planned against
+them.*
+
+**The body is the evidence and the header is the bug — but a body is a claim,
+not a proof.** Every promotion below was checked against the tree before it was
+made, so the "why" column names the file, the verify case or the slice that
+executes it. Findings whose bodies proposed a fix that has **not** shipped kept
+their `OPEN` header regardless of how confident the prose around them sounds.
+
+**Nothing here is marked fixed on a body's word alone.** Every body that claimed
+a fix turned out to have one in the tree; there is no claimed-but-unverifiable
+row. Two bodies claimed *more* than the tree supports and were demoted rather
+than promoted — F35 (the gate shipped, the scorer it wanted deleted did not) and
+F3 (the metric split shipped, the producer gate is fixture-proven only). Both
+now read `PARTLY FIXED`.
+
+Exactly one bucket per finding. `docs/roadmap-first-run.md` §4 — the first-run
+roadmap, which is what the "Track" column below refers to; it is on
+`slice/run-roadmap` at the time of writing — carries a first pass of this table.
+Where the two disagree, this one is the one that was checked against the tree,
+and the differences are listed under "Where this table corrects the roadmap's
+draft" below.
+
+### Fixed — the fix is in the tree and something executes it
+
+| Finding | Status | Why, and what executes it |
+|---|---|---|
+| F5 | `FIXED 2026-08-04` | ADR-0009's gate: `scripts/prejudge.sh:209` blocks on an empty `statusCheckRollup` after `--wait`; `prejudge/absent-ci-is-not-a-pass`. The SOUL's missing fourth row is moot — the SOUL no longer decides |
+| F7 | `FIXED 2026-08-05` | `templates/python-service/template/scripts/branch-name.sh`, called from `lefthook.yml:96` (pre-push) and `.github/workflows/ci.yml:16` (`pull_request`, not skippable); `template/branch-rule-has-one-source`, `template/branch-name-judges-by-argument` |
+| F8 | `RESOLVED-BY-DECISION 2026-08-04` | F55 counted the drift and the number chose: `Touches` is advisory. Implemented at `scripts/prejudge.sh:299` (`TOUCHES_EXEMPT`) with `touches` emitting `warn`. The residual — a branch legalising its own drift — is F57, not F8 |
+| F27 | `FIXED 2026-07-30` | S1 / PR #3. `scripts/metrics.sh` (23 KB), `make metrics`, the `metrics/` verify group |
+| F29 | `FIXED 2026-08-06` | header already agreed. `prejudge-review.sh` routes on `.derived_verdict`; `prejudge/derived-verdict-routes` |
+| F30 | `FIXED 2026-07-31` | S2. `prejudge-review.sh:310–332` stamps `tokens_estimate`, `cost` and `session_id` from the harness envelope. Formula refined 2026-08-03 by F45 |
+| F37 | `FIXED 2026-07-31` | S2. `prejudge-review.sh:252` redirects `gh pr diff` into the prompt file; `lane/driver-never-reads-the-diff`, `prejudge/review-never-prints-the-diff` (63,164 bytes moved, 2,599 observed) |
+| F39 | `RESOLVED-BY-RECORD` | header already agreed. Its live carry-forward hazard (CHUNK-6 resuming under a new pin) died with the product |
+| F41 | `FIXED 2026-07-30` | corrected in `docs/retro-metrics.md:306–309`; the audit body is left as written on purpose, so the error stays legible |
+| F42, F43, F45, F47, F49, F50, F51, F56 | as headed | headers already agreed with their bodies; re-checked, not changed |
+| F55 | `RESOLVED-BY-DECISION 2026-08-04` | the exclusion list is `scripts/prejudge.sh:299`, and it is documented there as methodology-obliged paths rather than a convenience list |
+| F61 | `FIXED 2026-08-05` | ADR-0010. `forge-prejudge.SOUL.md` is 56 lines; `cli/soul-body-budget` (60) and `cli/no-programs-in-souls` (6) hold every SOUL |
+| F62 | `FIXED 2026-08-05` | the fix F62 prescribes is a number, and both numbers shipped with ADR-0010 — same two cases |
+| F63 | `FIXED 2026-08-05` | the eleven `grep -Fq` cases are gone; the `prejudge/` group is four identity assertions plus executions against recorded `gh` responses |
+| F64–F78 | as headed | the lane slice and its two review rounds; headers already agreed, re-checked, not changed |
+
+### Contracted, awaiting live proof — the run closes these
+
+*The contract shipped, `make verify SUITES=metadata` executes it against
+fixtures, and `forge-lane` gates its own envelope before `kanban_complete`.
+None of that is a live lifecycle. F67 is why the default suite does not open a
+live board, so the proof has to be an explicit, snapshot-based sweep after a
+genuine run.*
+
+| Finding | Status | What is still owed |
+|---|---|---|
+| F1 | `CONTRACTED — AWAITING LIVE PROOF` | one real card carrying canonical flat `forge.chunk.v1`, read by a consumer |
+| F2 | `CONTRACTED — AWAITING LIVE PROOF` | the same card, complete rather than a 3-of-15 subset |
+| F3 | `PARTLY FIXED 2026-08-04` | the metric half is closed — `retro-metrics.md` §0 adds gate block rate and §1 splits tier 1 from tier 2, and the missing row for the largest run now exists. The producer half (a card cannot complete without canonical metadata) is contracted and unproven live |
+| F26 | `CONTRACTED — AWAITING LIVE PROOF` | one sweep showing every **model-authored** block reason inside the registry regex. Literal producers are already checked |
+| F44 | `CONTRACTED — AWAITING LIVE PROOF` | the same proof on the review producer. F1 and F44 are one defect on two producers |
+
+### Blocking the run — this is what the roadmap's tracks are for
+
+| Finding | Status | Track |
+|---|---|---|
+| F11 | `OPEN` | C1 — cap contracts by countable scenarios, split on `Serves:` > ~4 |
+| F14 | `OPEN` | C2 — freeze acceptance scenarios at planning time |
+| F18 | `OPEN` | A1 — the worktree sweep |
+| F19 | `OPEN` | A1 — `make new` refuses a temp destination |
+| F25 | `OPEN` | C2 — a `@real-source` scenario per contract naming an external source |
+| F28 | `OPEN` | C1 — size budget at plan time, where the contract is still editable |
+| F34 | `OPEN` | D1 — the `<skill> §<n>` cross-reference check. Still reproducible today, and it has widened: `end-chunk/SKILL.md:37` points at `forge-lane` §5 for `.forge/pr-body.md`, but the PR step is §6 **and** the path became `$FORGE_LANE_RUNTIME/pr-body.md` with F68 |
+| F36 | `OPEN` | D1 — `config/codex-pin-agrees`. The three sites happen to agree today (`~/.codex/config.toml` `gpt-5.6-sol`/`xhigh`, `forge-lane` §4, `docs/state.md`); nothing enforces that they keep agreeing, which is the finding |
+| F40 | `PARTLY FIXED 2026-08-06` | second symptom closed here — the F-number allocator below. First symptom (the slice-worktree rule written into `docs/operator-guide.md`) still owed |
+| F53 | `OPEN` | C1/C2 — move `size-budget` and `real-source` to plan time; both still `warn` at review time |
+| F57 | `OPEN` | D1 — report the *widening* rather than passing on it |
+| F79 | `PARTLY FIXED 2026-08-07` | new, below. Measured 2026-08-06 with no gate at all; the repo went public and ruleset `mainprotect` gained `required_status_checks` (`validate`, `verify`) on 2026-08-07, so a red PR is now blocked. Still open: nothing in `verify`/`preflight` asserts it, so it is the one Proven row `make verify` cannot arbitrate |
+
+### Blocked on ADR-0011 data — the run supplies it
+
+*`docs/open-questions.md` carries the pre-committed decision rule. Nothing here
+is actionable until ~10 post-gate reviews accrue, and **adding `verdict` to
+`STAMPED` first ends the measurement permanently.***
+
+| Finding | Status | Note |
+|---|---|---|
+| F4 | `OPEN` | "delete tier 1's model call" is D9.5's question, not a decision anyone may take now |
+| F6 | `OPEN` | bounce budget is S6, gated on the pin |
+| F15, F21, F32, F33, F38 | `OPEN` | the delta-review cluster; S6 edits the pinned `claude -p` call |
+| F20 | `OPEN` | the *observation* stands; §M reversed its **recommendation**, so read it with §M |
+| F35 | `PARTLY FIXED 2026-08-05` | the mechanical half is a program (ADR-0009/0010) and the scorer's brief is now explicitly disjoint from the gate's — `prejudge-review.sh:223–226` tells it the gate already decided CI, branch name, scenario count, `Touches` and assertion shape. **Not fixed:** the scorer still reads tier 2's `judge-rubric.md` and still emits the same six-dimension shape, and whether it should exist at all is D9.5. Two of its eight checks were also wrong (F52) |
+| F58 | `OPEN` | this is the *number to beat* for D9.5 — 6 bounces on the 2 PRs the gate clears |
+
+### Deferred, post-run
+
+| Finding | Status | Note |
+|---|---|---|
+| F9 | `OPEN` | **moved out of the draft's "moot" bucket.** The evidence is forgeboard's commits, but the fix is a live methodology rule — a contract must not restate a signed constraint in looser words — and no other finding carries it |
+| F10 | `OPEN` | a *dispatcher* defect. F52 proved a PR-time gate is structurally incapable of catching it. The run counts the wasted dispatches (E9) and that number decides the scheduler |
+| F16 | `PARTLY FIXED 2026-08-05` | tier 1's prompt is now assembled by a program (`prejudge-review.sh` stages 2–4). Tier 2's is still hand-written per pass, which is the half that mattered |
+| F17 | `OPEN` | **moved out of the draft's "moot" bucket.** `forge-ladder` is the Forge's own board and still exists; "a card title is not a verdict" applies to every future run |
+| F22 | `PARTLY FIXED` | the record F22 asked for exists (F39) and `state.md` is corrected. Enforcement is F36's; the `sol xhigh` vs `terra high` re-run is post-run and needs a mid-size chunk to run against |
+| F31 | `OPEN` | needs no code — `scripts/metrics.sh` already emits operator touches. It needs a column in `retro-metrics.md` |
+| F46 | `OPEN` | stamping the resolved id changes what `lane/prejudge-judge-model-is-observed` asserts; that case gets rewritten on purpose or not at all |
+| F48 | `OPEN` | D2's spike answers *what the substrate exposes* before any chunk is written. Do not stamp invented zeroes |
+| F52 | `OPEN` | a constraint on the run, not an item to fix. Accept the wasted dispatches and count them |
+| F60 | `RECORDED` | the workaround is standing policy (post-merge `./hermes/profiles-bootstrap.sh`); the policy question — merge-base comparison vs an explicit post-merge gate — is unanswered |
+
+### Moot with forgeboard abandoned
+
+**This means the *product-specific evidence* is moot. It does not mean the
+lesson is.** `wielas/forgeboard-report`'s code is not being maintained, so a
+finding whose subject is a line of `normalize.py` or a ratio between two of its
+files can never be "fixed" — there is nothing to fix it in. Each of these has a
+methodology half that is alive and tracked under a different number, and the
+right reading of this bucket is *"the instance is closed, the class is open
+elsewhere"* — not *"seven findings were waved away"*.
+
+| Finding | Its evidence | Where the methodology half lives |
+|---|---|---|
+| F12 | 1,250 lines of signed planning for a read-only CLI | F11 (contract sizing), C1 |
+| F13 | feature files at 10% of their step files | F14 (scenario theater), C2 |
+| F15b | that run's 386,300 tier-2 tokens | F28/F53 (size drives cost); F45 marked the series break, so these numbers cannot be carried forward even as a baseline |
+| F23 | 230 hand-rolled validator lines in `normalize.py` | F25 (strictness ratchet), and the live dependency-allowlist question in `AGENTS.md` |
+| F24 | coverage inverted against integration risk | F25 (nothing ran against reality) |
+| F54 | `render(report) == render(report)`, still on that repo's `main` | F14 (the defect class), F6 (the judge relents) |
+| F59 | the gate's blocks decompose to one convention and one tautology | F53 (a gate that fires on everything is not a filter). Its live half is a **prediction** the roadmap records: the severity map was validated on two defects and must be re-validated on the next real run |
+
+### Where this table corrects the roadmap's draft
+
+`docs/roadmap-first-run.md` §4 was a first pass from reading the bodies. Checked
+against the tree, five rows move:
+
+- **F5 → Fixed**, not "deferred, post-run". The draft read F52's "the backtest
+  can say nothing about `ci-state`'s recall" as the fix being absent. It is
+  present: `prejudge.sh:209` blocks, and `prejudge/absent-ci-is-not-a-pass` runs it.
+- **F35 → partly, not delivered.** ADR-0009/0010 shipped the gate; the scorer
+  still reads tier 2's rubric and its existence is D9.5's open question.
+- **F62, F63 → Fixed**, not "deferred". Both bodies name a fix, and both fixes
+  are in `verify.sh` today.
+- **F9, F17 → out of "moot".** Neither is about forgeboard's code.
+- **F8, F10, F15b, F16, F22, F40, F41, F55, F60, F61** were absent from the draft
+  entirely and are classified here.
+
+---
+
+## F-number allocation
+
+F78 was the highest number ever minted; F79 is minted below. This section exists
+because **F40's second symptom happened for real** — two disjoint F37s existed
+until someone renumbered at review — and the ledger has no allocator that
+`make verify` can read. It is prose, so it is a convention, not a gate; the gate
+is that every track owns a disjoint block and nobody mints outside their own.
+
+| Range | Owner |
+|---|---|
+| F1–F78 | this audit and the S1–S5 slices. **Spent.** |
+| F79 | slice D1a (ledger reconciliation). **Spent.** |
+| F80–F89 | Track A — the artifact survives |
+| F90–F99 | Track B — the instrument |
+| F100–F109 | Track C — planning-time gates |
+| F110–F119 | Track D — hygiene and the spike |
+| F120–F129 | Track E — the staged launch |
+| F130+ | the run itself, and anything found while reading it |
+
+Rules, because a range alone did not stop it last time:
+
+1. **Mint only from your own block.** A finding discovered by track B while
+   reading track C's code is still a B number — the block follows the *finder*,
+   because the finder is the one worktree that knows what it has spent.
+2. **Spend a number in the same PR that writes the finding.** A reserved-but-unwritten
+   number is exactly the state that produced the two F37s.
+3. **If a block is exhausted, take the next unallocated block and record the
+   extension in this table in the same PR** that spends its first number.
+4. **Never renumber, ever** (`CLAUDE.md`). Reuse the existing number when
+   revisiting a finding.
+5. **`F<n>b` suffixes** (there is one, F15b) are for a further *measurement of
+   the same defect*, never for a new one. A new defect gets a new number.
 
 ---
 
@@ -82,7 +279,7 @@ prejudge passes, and 20 hours wall clock. It is also the largest module
 
 ## A. The integration hole (the finding that matters)
 
-### F1 — The product cannot read the board that produced it · `OPEN` · **critical**
+### F1 — The product cannot read the board that produced it · `CONTRACTED — AWAITING LIVE PROOF` · **critical**
 
 `forgeboard-report` exits **4** (invalid-core) on `forge-ladder`:
 
@@ -142,7 +339,24 @@ gate that validates real card metadata against
 which does not exist yet). Candidate: extend `make verify` with a `metadata/`
 suite that reads the last N completed cards off a live board and validates them.
 
-### F2 — Not one field of `forge.chunk.v1` is canonical · `OPEN` · **high**
+**Contract status, 2026-08-06.** The producer defect this finding names is
+closed *in contract*. `rubrics/run-metadata-contract.json` maps each producing
+profile to the only completed-run schemas it may emit; `forge.chunk.v1` is now a
+flat Draft 2020-12 schema; and the `metadata/` verify group rejects the
+historical nested envelope by name (`metadata/rejects-nested-chunk`) along with
+reserved nested copies, missing required fields and the `coverage` /
+`coverage_pct` drift. `forge-lane` validates its exact object before
+`kanban_complete` (`metadata/lane-validates-before-complete`).
+
+**That is why this header says `CONTRACTED` and not `FIXED`.** Every one of
+those cases runs against a fixture. What F1 records is a *producer under a
+model's control* — the failure was never that the shape was undocumented, it was
+that a model emitted a different shape and nothing looked. The proof is one
+genuine lifecycle: a real card carrying canonical flat `forge.chunk.v1`, and a
+consumer that reads it. F67 records why that sweep must be explicit and
+snapshot-based rather than folded into the default suite.
+
+### F2 — Not one field of `forge.chunk.v1` is canonical · `CONTRACTED — AWAITING LIVE PROOF` · **high**
 
 Measured against `rubrics/kanban-metadata-schema.md`, every one of the six
 envelopes is a different, smaller, ad-hoc subset.
@@ -177,7 +391,7 @@ cards." That claim was false: they were *present*, not both complete. The
 2026-08-06 contract slice corrects the state document; a genuine lifecycle is
 still required before it may claim the chunk producer fixed in reality.
 
-### F3 — The official bounce-rate metric reads 0.00 on a run with 12 bounces · `OPEN` · **high**
+### F3 — The official bounce-rate metric reads 0.00 on a run with 12 bounces · `PARTLY FIXED 2026-08-04` · **high**
 
 `docs/retro-metrics.md` defines bounce rate as *tier-1* verdicts where
 `.verdict == "bounce"`. Tier-1 bounced **0 of 17** times this run, so the
@@ -211,6 +425,24 @@ executed (state.md gap: "The flywheel").
 **Fix:** count bounces at the tier that bounces; gate card completion on
 canonical metadata so tier-1 cannot complete without it.
 
+**Status, 2026-08-06 — the first half shipped, the second is contracted.**
+
+*Counting at the tier that bounces:* done, and it required two changes rather
+than one. `docs/retro-metrics.md` §1 now reports tier 1 and tier 2 side by side
+and says why a blended rate would hide the same defect from the other side; §0
+adds **gate block rate** as a separate number, because since ADR-0009 a block
+costs zero model tokens and a bounce costs a full review, and averaging them
+would make D9.5's experiment unreadable. The missing row for the largest run to
+date also now exists (`retro-metrics.md`, the 2026-07-30 `forge-ladder` row).
+
+*Gating card completion on canonical metadata:* contracted, not proven. It is
+the same producer contract F1/F2/F44 wait on, and it is fixture-proven only —
+see F1's contract-status note. `/retro` has still never executed.
+
+The header therefore reads `PARTLY FIXED`, not `FIXED`: the metric can no
+longer read 0.00 on a run with 12 bounces, but nothing has yet observed a live
+producer refusing to complete without canonical metadata.
+
 ---
 
 ## B. Review economics — tier 1 costs and does not filter
@@ -243,7 +475,7 @@ boundary, metadata schema valid) with **no model call at all**; (c) keep the
 model but give it a bounce quota / adversarial framing. **(b) is the
 recommendation** — every tier-1 finding of value this run was mechanical.
 
-### F5 — Tier-1 reports CI state it never actually observed · `OPEN` · **medium**
+### F5 — Tier-1 reports CI state it never actually observed · `FIXED 2026-08-04` · **medium**
 
 Four prejudge summaries claim "CI unreported (no checks configured)" or "No CI
 checks configured (empty statusCheckRollup)" — e.g. `t_faf57139`, `t_f41b333c`,
@@ -263,6 +495,30 @@ resolved by the model in the unsafe direction.
 
 **Fix:** L2, not prose. Absent-checks must be a hard wait-then-block, and the
 SOUL's table needs the fourth row.
+
+**FIXED 2026-08-04, by ADR-0009's gate.** `scripts/prejudge.sh` owns CI state
+now, and its fourth state is a block, not a pass:
+
+```
+scripts/prejudge.sh:209
+  emit ci-state block "empty statusCheckRollup after ${WAIT_SECS}s
+                       — absent CI is not green CI (F5)"
+```
+
+It waits `--wait` seconds (default 180) first, so the race F5 measured is
+absorbed rather than merely detected, and a still-pending rollup after the wait
+blocks too (`prejudge.sh:220`). Pinned by `prejudge/absent-ci-is-not-a-pass`.
+
+The second half of the fix — *"the SOUL's table needs the fourth row"* — is moot
+in the way ADR-0010 makes things moot: there is no table, because the SOUL no
+longer decides anything. It is 56 lines of identity and the protocol is a
+script. That is the correct disposition for a prose fix whose prose was deleted.
+
+**What F52 says about this, so the two are not read as contradicting.** F52
+records that `ci-state` returns zero findings across all 11 backtested PRs and
+that the backtest *cannot* measure its recall, because the race is seconds wide
+and the rollup is populated forever after. That is a statement about what the
+backtest can prove, not about whether the fix shipped. It shipped.
 
 ### F6 — The judge does not converge; it relents · `OPEN` · **high**
 
@@ -319,7 +575,7 @@ changed since its own prior verdict on the same chunk.
 
 ## C. Deterministic rules enforced by expensive models
 
-### F7 — Branch naming burned 4 PRs and 4 bounce cycles · `OPEN` · **high**
+### F7 — Branch naming burned 4 PRs and 4 bounce cycles · `FIXED 2026-08-05` · **high**
 
 `AGENTS.md:27` requires `chunk/<id>-<slug>`. The lane pushed `chunk/1`…`chunk/6`
 every time. Consequences:
@@ -374,7 +630,7 @@ only in branch name), plus eight names driven through the script directly to
 exercise the CI path, which takes the branch as an argument because a
 `pull_request` checkout is a detached merge ref whose HEAD is not the branch.
 
-### F8 — The `Touches` list is planner fiction, and the judge scores against it · `OPEN` · **medium**
+### F8 — The `Touches` list is planner fiction, and the judge scores against it · `RESOLVED-BY-DECISION 2026-08-04` · **medium**
 
 Contract `Touches` lists were written by `/roadmap` before any code existed and
 are repeatedly wrong. The judge treats them as authoritative and bounces
@@ -391,6 +647,29 @@ most expensive possible way to discover that a planner guessed a file list.
 **Fix (needs decision):** either (a) `Touches` is advisory and scope is judged
 against the Goal, or (b) the lane may amend `Touches` in-branch with a one-line
 justification, making the deviation visible without a bounce.
+
+**DECIDED 2026-08-04 — (a), and the data decided it, not an argument.** F55
+counted the drift across all six chunks rather than reasoning about it: three of
+the five distinct drifting paths are process documents every chunk is *required*
+to change and no contract in the entire run ever listed, and a fourth is the
+contract recording its own amendment. Exactly one of five was real
+implementation outside its plan.
+
+Implemented at `scripts/prejudge.sh:299`, where the exclusion is written down as
+a rule rather than a convenience list — *"each entry is a path the METHODOLOGY
+obliges a chunk to touch and the contract template has no slot to declare"*:
+
+```
+TOUCHES_EXEMPT='^docs/decision-log\.md$|^docs/ROADMAP\.md$|^docs/chunks/'
+```
+
+with `touches` emitting `warn`, never `block`. With the exclusion the check
+fires on 2 of 10 PRs instead of 5, and both remaining hits are the same real one.
+
+**The residual is F57, not F8.** Reading the contract from the PR's own tree
+makes the check self-certifying — a branch can legalise its own drift in the
+same commit. That is a new check (report the *widening*), not a reopening of
+this decision.
 
 ### F9 — Judge oscillation on operator-identity escaping · `OPEN` · **medium**
 
@@ -557,7 +836,7 @@ demote tier 1 (F4), and cap bounces (F6). Note also that the per-pass cost
 *rose* through CHUNK-3's bounce sequence (46k → 34k → 56k → 38k → 48k) rather
 than falling as the delta shrank — direct evidence for F15's delta-review fix.
 
-### F16 — Review prompts were assembled by the operator, off-board · `OPEN` · **medium**
+### F16 — Review prompts were assembled by the operator, off-board · `PARTLY FIXED 2026-08-05` · **medium**
 
 *(Corrected from an earlier draft: every prejudge and judge card **was**
 dispatched and **does** have `task_runs` rows. The dispatch machinery worked.)*
@@ -578,6 +857,18 @@ card has a `forge-operator-handoff` run that ends `blocked`, then an unassigned
 **Fix:** `skills/judge/SKILL.md` should emit the prompt from the card + contract
 + prior verdict mechanically, so review quality stops being operator-dependent
 (and so F15's delta-only reviewing becomes possible).
+
+**PARTLY FIXED 2026-08-05 — at tier 1 only, which is the half that was easier
+and not the half that mattered.** `scripts/prejudge-review.sh` assembles the
+tier-1 prompt as a program: a pinned scorer brief, then the contract, then the
+diff moved byte-wise into the file (F37). Review quality at tier 1 no longer
+depends on who wrote the prompt that hour, and the assembly is pinned by
+`prejudge/scorer-is-the-control-arm`.
+
+**Tier 2's prompt is still hand-written per pass**, and tier 2 is the tier this
+audit found worth its cost (§G). Nothing in `skills/judge/` generates it.
+Mechanising it is also the precondition F31 names for counting operator touches
+honestly, so this remains open on the axis the finding was about.
 
 ### F17 — Card titles record outcomes that did not happen · `OPEN` · **low**
 
@@ -677,7 +968,7 @@ at ~5k each instead of 56k/38k/48k/30k takes CHUNK-3 from 252k to roughly 100k.
 Combined with F20's tier-1 removal (~134k), of the ~520k tokens this run spent
 on review, **roughly 60–65% was avoidable without weakening a single gate.**
 
-### F22 — The Codex model pin changed mid-run, undocumented, confounding the one chunk that failed · `OPEN` · **high**
+### F22 — The Codex model pin changed mid-run, undocumented, confounding the one chunk that failed · `PARTLY FIXED` · **high**
 
 - `docs/state.md` documents the pin as `gpt-5.6-sol xhigh`.
 - `~/.codex/config.toml` today reads `model = "gpt-5.6-terra"`,
@@ -699,6 +990,27 @@ project's history is uninterpretable as evidence because of it.
 keep it), treat a pin change as a ladder rung requiring its own row in
 `retro-metrics.md`, and correct `state.md`. Then re-run one mid-size chunk on
 `sol xhigh` vs `terra high` to get a clean read.
+
+**Status, 2026-08-06 — partly, and the part that is done is the part that
+records rather than the part that enforces.**
+
+*Done:* the next pin change was recorded as it happened (F39), which is what
+this finding says should have existed. `docs/state.md` is corrected. Measured on
+the mini today, all three sites agree:
+
+```
+~/.codex/config.toml   model = "gpt-5.6-sol", model_reasoning_effort = "xhigh"
+skills/forge-lane §4   "gpt-5.6-sol, reasoning xhigh"
+docs/state.md          "codex pinned gpt-5.6-sol xhigh"
+```
+
+*Not done, and the agreement above is luck rather than enforcement.* Nothing
+executes that comparison — the staleness self-corrected when the pin was changed
+back, which is not the same as being prevented. That check is **F36**, and it is
+where the live work on this belongs.
+
+*Not done, deferred:* the clean `sol xhigh` vs `terra high` read. It needs a
+mid-size chunk to run against and is therefore post-run.
 
 ### F23 — 230 lines of hand-rolled validator duplicating a JSON Schema the repo already ships · `OPEN` · **high**
 
@@ -848,7 +1160,7 @@ those it also makes the answers *correct*, which the models' answers were not.
 
 ---
 
-### F26 — `forge.block.v1` has never existed; one third of the flywheel is unpopulatable by construction · `OPEN` · **high**
+### F26 — `forge.block.v1` has never existed; one third of the flywheel is unpopulatable by construction · `CONTRACTED — AWAITING LIVE PROOF` · **high**
 
 `rubrics/kanban-metadata-schema.md` defines `forge.block.v1` with a
 `reason_class` enum, and `docs/retro-metrics.md` makes its distribution one of
@@ -906,7 +1218,7 @@ terminators obey the contract.
 
 ---
 
-### F27 — The flywheel's three numbers are computed by a model reading prose · `OPEN` · **critical**
+### F27 — The flywheel's three numbers are computed by a model reading prose · `FIXED 2026-07-30` · **critical**
 
 `/retro` step 1 opens: *"Compute the three in `docs/retro-metrics.md` — bounce
 rate, mean judge score on dimensions 1–3, and the `reason_class` distribution."*
@@ -973,6 +1285,19 @@ populate"* on the strength of a human having looked at one card once; the
 **This is the highest value-per-line fix in the entire audit.** It is under an
 hour of work, it costs nothing to run, it converts the flywheel's inputs from
 narrative to data, and it retroactively detects the critical finding.
+
+**FIXED 2026-07-30 — slice S1, PR #3.** `scripts/metrics.sh` exists (93 lines of
+bash over 130 of SQL at the time; 23 KB today), wired to `make metrics` and to
+`/retro` step 1 as a command whose output the model reads. The `metrics/` verify
+group executes it, and the fixture it runs against was corrected to
+`journal_mode=wal` by F51 so the group can reach the failure modes a live board
+has.
+
+The finding's own claim about itself held: the slice found three errors in this
+document within one slice (F41, F42, F44), every one of them a number the audit
+had produced by prose rather than by query. Two later findings (F47, and its
+unrecorded second half) came from running the deliverable rather than reading
+it, which is the same lesson one layer down.
 
 ---
 
@@ -1173,7 +1498,7 @@ prose.
 
 ## I. Provenance — the Forge measures itself with numbers it asks models to invent
 
-### F30 — `tokens_estimate` is self-reported by the model being measured, and the fix is written one paragraph away · `OPEN` · **high**
+### F30 — `tokens_estimate` is self-reported by the model being measured, and the fix is written one paragraph away · `FIXED 2026-07-31` · **high**
 
 Every cost number in this audit — the 386,300 tier-2 tokens, the 65%
 concentration on CHUNK-3, the ~520k total — descends from one field:
@@ -1218,6 +1543,33 @@ first, before any optimisation, or the next audit will be guessing too.
 
 Do the same for the lane: `codex exec` reports usage, and `forge.chunk.v1` has
 no cost field at all, so implementation cost is currently invisible.
+
+**FIXED 2026-07-31 — slice S2; the stamping moved to `scripts/prejudge-review.sh`
+with ADR-0010 and is pinned there.** The model is no longer asked for any of it:
+
+```
+prejudge-review.sh:310   STAMPED='["pr","judge_model","tokens_estimate","cost","session_id"]'
+prejudge-review.sh:316   claude -p --model opus --output-format json …
+prejudge-review.sh:329   .tokens_estimate = ($u.input_tokens + $u.cache_creation_input_tokens
+                                             + $u.output_tokens)
+prejudge-review.sh:331   .cost = ($u | del(.iterations)) + {total_cost_usd: …}
+prejudge-review.sh:332   .session_id = …
+```
+
+`STAMPED` is subtracted from the schema the model is shown
+(`prejudge/schema-hides-stamped-fields`), so a field the operator stamps cannot
+be invented — which is stronger than the fix this finding proposed.
+
+Two follow-ons rather than caveats. **F45** measured that the original formula
+counted output alone, because Claude Code bills the prompt to
+`cache_creation_input_tokens`; the corrected formula above is the ruling, with
+the series break marked at 2026-08-01. **F46** notes that the CLI *argument* is
+still not the best source for `judge_model` — the envelope carries the resolved
+id — and is deliberately left open.
+
+The lane half of the fix is **not** done: `forge.chunk.v1` still has no cost
+block, and that is F48, which also records that the metered engine has no
+telemetry to put in one.
 
 ---
 
@@ -1386,7 +1738,7 @@ in a skill exists; it does not check that a section a skill points at exists.
 
 ---
 
-### F35 — Tier 1 is given tier 2's rubric and a narrower mandate, so it can only ever duplicate · `OPEN` · **critical**
+### F35 — Tier 1 is given tier 2's rubric and a narrower mandate, so it can only ever duplicate · `PARTLY FIXED 2026-08-05` · **critical**
 
 The two tiers are not two tiers. They read the same PR, against the same rubric
 file, scoring the same six dimensions:
@@ -1442,6 +1794,39 @@ per run (F20), and the accuracy goes **up**.
 What is left for a model is what genuinely needs one: does this code do what the
 contract *meant*. That is tier 2, it is the one component whose cost this audit
 found justified (§G), and it should get the whole budget.
+
+**PARTLY FIXED 2026-08-05, and the header says `PARTLY` on purpose.**
+
+*Delivered.* ADR-0009 made tier 1 two stages and put the mechanical half in a
+program: `scripts/prejudge.sh` runs `ci-state`, `branch-name`, `then-asserts`,
+`scenario-count` at `block` and `touches`, `size-budget`, `real-source` at
+`warn`, with the severity map set by backtesting all 11 PRs of the audited run
+rather than written first. ADR-0010 made the surrounding protocol
+`scripts/prejudge-review.sh`. The scorer's brief is now explicitly *disjoint*
+from the gate's, which is the sentence this finding asked for
+(`prejudge-review.sh:223–226`):
+
+> Machines already checked what machines can check … a deterministic gate
+> cleared this PR's CI state, branch name, scenario count, `Touches` boundary
+> and assertion shape before you were called. Do not spend a line re-deciding
+> any of them. Look for the one thing no program can see.
+
+*Not delivered, and not deliverable yet.* The model call still exists, still
+reads `~/.forge/rubrics/judge-rubric.md`, and still emits the same
+six-dimension shape. Whether it earns its latency is ADR-0011 / D9.5's
+experiment, `docs/open-questions.md` carries the pre-committed decision rule,
+and this finding is not licence to pre-empt it.
+`prejudge/gate-is-a-stage-not-a-replacement` pins exactly that: no model in the
+gate, and the scorer still there.
+
+*Two of the eight checks in the table above were wrong.* F52 measured it:
+`parents-merged` is a **dispatcher** check and is structurally incapable of
+firing at PR time, and `ci-state`'s recall cannot be established by backtest.
+Six checks, not eight — and per F56 the `no-assertion` walker F35 singles out as
+"a five-line AST visitor" found **nothing at all** across 11 PRs, while the
+recall actually delivered for F14 comes from a tautology detector this finding
+never mentions. The conclusion survives; the specific mechanisation it proposed
+did not survive contact.
 
 ---
 
@@ -1558,7 +1943,7 @@ the metered profile.
 
 ---
 
-### F37 — The metered driver reads the 127 KB diff into its own context, then pays a second time to send it somewhere free · `OPEN` · **critical**
+### F37 — The metered driver reads the 127 KB diff into its own context, then pays a second time to send it somewhere free · `FIXED 2026-07-31` · **critical**
 
 This is the largest metered cost in the system, and the audit missed it by
 counting reviewer tokens instead of driver tokens.
@@ -1605,6 +1990,26 @@ Apply the identical rule to `forge-lane`: the lane driver should never `cat` the
 Codex transcript or the full `git diff` into its own context. §5's hostile-reader
 step is the one place it genuinely must look — and that is an argument for
 bounding diff size (F28), not for reading unboundedly.
+
+**FIXED 2026-07-31 — slice S2; carried into `scripts/prejudge-review.sh` by
+ADR-0010.**
+
+```
+prejudge-review.sh:252   gh pr diff "$PR_URL" >> "$prompt_file" < /dev/null
+```
+
+and the SOUL's two voices are split: everything under *"What you are looking
+for"* is now the pinned scorer brief inside the prompt file, addressed to the
+scorer, not to the driver.
+
+This is one of the few findings whose fix is **measured rather than asserted**.
+`prejudge/review-never-prints-the-diff` replays a recorded 63,164-byte patch and
+observes that 63,164 bytes reach the prompt file while the driver sees 2,599
+(F63 records why that matters: the old check was a `grep` for the sentence
+promising it). `lane/driver-never-reads-the-diff` pins the redirect itself.
+The comment above the code names the reasoning so a later editor cannot undo it
+by accident — *"sampling it with `head` or a summariser is the same purchase at
+a discount."*
 
 ---
 
@@ -1704,7 +2109,7 @@ because review has a free cached engine.
 
 ---
 
-### F40 — The orchestrator and the implementer shared one working tree, with no isolation · `OPEN` · **medium**
+### F40 — The orchestrator and the implementer shared one working tree, with no isolation · `PARTLY FIXED 2026-08-06` · **medium**
 
 Measured 2026-07-30 during slice S1. The implementing session ran in
 `/Users/goonlab/dev/forge` — the main checkout — on branch
@@ -1742,6 +2147,27 @@ while a slice runs. Add it to `docs/operator-guide.md` alongside the manual
 worktree sweep (F18), and state the ownership rule explicitly: **the audit
 ledger is the orchestrator's file; a slice may read it and commit it once as a
 source document, and must never be the only writer.**
+
+**PARTLY FIXED 2026-08-06.**
+
+*The second symptom is closed.* The ledger now has an allocator — see
+**F-number allocation** near the top of this file. Every track owns a disjoint
+block, a number is spent in the PR that writes the finding rather than reserved,
+and an exhausted block extends the table in the same PR. That is the control
+whose absence produced two disjoint F37s.
+
+*The first symptom is closed in practice and not in writing.* Every slice since
+2026-08-04 has run in its own worktree, including this one — and F49 exists
+because the suite had to be taught that a linked worktree is where the work now
+happens. But `docs/operator-guide.md` still carries no slice-worktree rule and
+no ownership sentence for this file, so the practice is a habit rather than an
+instruction a fresh session would find. That is what is left, and it belongs
+with F18's sweep in the same guide.
+
+**The allocator is prose, and prose is not a gate.** `make verify` does not read
+this ledger, so nothing executes the block boundaries. Stating that plainly is
+ADR-0003's own rule applied here: the honest claim is a convention two
+orchestrators can follow, not an enforcement.
 
 ---
 
@@ -1840,6 +2266,16 @@ being implemented; F-numbers are what each closes.
 - `README.md` VERIFY list: *"The bounce path"* is checked `[x]` on n=1. It has
   now run 12 times; the finding is that it works mechanically and does not
   converge (F6).
+- ~~`docs/state.md` "Proven": *"Branch protection is a real merge gate — a red or
+  unreviewed merge is refused by GitHub, not by prose"*~~ — **corrected
+  2026-08-06**, then **restored with its subject 2026-08-07** (F79). It was
+  measured true on `wielas/forgeboard-report` (public, `enforce_admins: true`)
+  and false on `wielas/forge` itself, which was private on a free plan and
+  returned 403 for both protection and rulesets. `wielas/forge` is now public
+  with ruleset `mainprotect` requiring a PR plus green `validate` and `verify`,
+  so the row holds again — with the caveat, stated in the row, that **no check
+  in this repo asserts it**. `CLAUDE.md` and `Makefile:44` carried the same
+  claim as an unconditional statement and now state the condition instead.
 
 ---
 
@@ -1848,7 +2284,7 @@ being implemented; F-numbers are what each closes.
 Appended 2026-07-30 while implementing F27. Each was found by running the
 queries rather than by reading, which is the point.
 
-### F41 — This audit's own tier-2 mean is wrong, and only the number with a query attached survived · `OPEN` · **medium**
+### F41 — This audit's own tier-2 mean is wrong, and only the number with a query attached survived · `FIXED 2026-07-30` · **medium**
 
 Three places in this document report mean tier-2 d1–3 as **1.90** (§"The run, in
 numbers", F3, and the parenthetical in F27's SQL block). The value is **1.88**:
@@ -1870,6 +2306,12 @@ the numbers a model computes by reading are wrong at a rate you cannot predict
 from how confident the surrounding text sounds. Corrected in
 `docs/retro-metrics.md`; the audit body is left as written so the error stays
 legible.
+
+**FIXED 2026-07-30.** Verified in the tree: `docs/retro-metrics.md:306–309`
+carries the correction and the reason — *"the number that survived came with an
+executed query attached; 1.90 was asserted in prose beside it."* The three
+prose occurrences in this document are still 1.90, deliberately, per the
+paragraph above. Do not "fix" them; that would delete the evidence.
 
 ### F42 — Kanban timestamps are true epoch, not local-epoch · `FIXED` · **low**
 
@@ -1923,7 +2365,7 @@ in any worktree) and F50 (one, on `main`, since the commit that resolved F45).
 F43's own thesis — that a red suite hides the next failure — was demonstrated by
 F43's own write-up, which recorded a third of the redness.
 
-### F44 — More than half of all tier-1 runs left no readable verdict · `OPEN` · **high**
+### F44 — More than half of all tier-1 runs left no readable verdict · `CONTRACTED — AWAITING LIVE PROOF` · **high**
 
 Found while validating the F27 slice, by running the query the slice made
 possible. The board's own producers, board lifetime:
@@ -1964,6 +2406,28 @@ of F27 in a single slice.
 against the schema its profile is contracted to emit, and fails on a run that
 emits none. Until then, treat every tier-1 count in this document as an upper
 bound.
+
+**Contract status, 2026-08-06.** The fix above is implemented as a contract and
+proven on fixtures. `rubrics/run-metadata-contract.json` names, per producing
+profile, the only completed-run schemas it may emit;
+`metadata/profile-contract-is-explicit` asserts that mapping exists for every
+producer, `metadata/rejects-profile-schema-mismatch` fails a valid envelope from
+the wrong producer, and `metadata/rejects-missing-metadata` fails the exact shape
+this finding measured — a completed producer run carrying null metadata. A
+recorded PR runs through the **real** gate producer and that output is validated,
+rather than a parallel fixture being hand-copied.
+
+**Still `CONTRACTED`, not `FIXED`, and this finding is the clearest case for
+why.** What F44 measured is not a schema that was missing; it is a producer that
+silently stopped emitting one, 10 times in 17, clustered late, with nothing
+looking. A fixture cannot fail that way. The proof is a snapshot-based sweep of
+one genuine run's completed rows, scoped to a recorded run-start, reporting
+`valid / invalid / unjudged` separately — `unjudged` is not `valid`, and
+`scripts/validate-metadata.py` already separates exit 1 from exit 2 for exactly
+that reason. Until that sweep runs, every tier-1 count in this document remains
+an upper bound.
+
+F1 and F44 are one defect on two producers and close together or not at all.
 
 ---
 
@@ -2401,7 +2865,7 @@ been the subject of the previous bounce.
 **The cheap fix is the one this slice already built.** A finding that names a
 `file:line` is checkable at the next push for nothing. Nothing checked it.
 
-### F55 — `Touches` drift is dominated by process files no contract has ever listed, which decides F8 · `OPEN` · **medium** *(resolves the F8 decision)*
+### F55 — `Touches` drift is dominated by process files no contract has ever listed, which decides F8 · `RESOLVED-BY-DECISION 2026-08-04` · **medium** *(resolves the F8 decision)*
 
 F8 was left deliberately undecided: `Touches` advisory, or amendable in-branch.
 The instruction was to count the drift across the six chunks and let the number
@@ -2434,6 +2898,20 @@ be **advisory**, and the comparison must exclude `docs/decision-log.md`,
 because including a file every chunk must edit and no chunk may declare
 manufactures a finding on every single PR. With that exclusion the check fires
 on 2 of 10 PRs instead of 5, and both remaining hits are the same real one.
+
+**Implemented 2026-08-04**, and the exclusion is written down as a rule rather
+than as a list, so a later reader cannot mistake it for convenience —
+`scripts/prejudge.sh:297–299`:
+
+```
+# Not a convenience list: each entry is a path the METHODOLOGY obliges a chunk to
+# touch and the contract template has no slot to declare.
+TOUCHES_EXEMPT='^docs/decision-log\.md$|^docs/ROADMAP\.md$|^docs/chunks/'
+```
+
+`touches` emits `warn`, never `block`, which is the other half of the ruling.
+This closes **F8**'s open decision; what remains is F57's self-certification
+problem, which is a new check rather than a re-opening of this one.
 
 ### F56 — The gate's first version produced four false positives, and only reading the flagged code found them · `RESOLVED 2026-08-04` · **medium**
 
@@ -2578,7 +3056,7 @@ the merge-base for a branch, or SOUL publication becomes an explicit post-merge
 step with its own gate. Publishing from an unmerged branch — the current
 instruction — is the one option that is actively wrong while a board is live.
 
-### F61 — ADR-0003 is unenforced above L2 for *drivers*, and F35 named only half the problem · `MEASURED` · **high**
+### F61 — ADR-0003 is unenforced above L2 for *drivers*, and F35 named only half the problem · `FIXED 2026-08-05` · **high**
 
 F35 found eight mechanical properties being checked by a language model, in
 prose, and called it "ADR-0003's obituary above L2". The fix, ADR-0009, moved
@@ -2608,7 +3086,11 @@ four climbs, and was never applied to the one profile that needed it most.
 Closed by ADR-0010: the protocol is `scripts/prejudge-review.sh`, the SOUL is 56
 lines, and `cli/soul-body-budget` holds every SOUL at 60.
 
-### F62 — A slice can satisfy its contract and still move the measured quantity backwards · `MEASURED` · **medium**
+*Header promoted `MEASURED` → `FIXED` 2026-08-06 after re-measuring: the four
+SOULs are 30 / 27 / 34 / 56 lines, `cli/soul-body-budget` and
+`cli/no-programs-in-souls` both exist in `verify.sh` and both fail on breach.*
+
+### F62 — A slice can satisfy its contract and still move the measured quantity backwards · `FIXED 2026-08-05` · **medium**
 
 S4's thesis was that properties a program can decide belong in a program. It
 narrowed the tier-1 scorer's brief by two bullets — and grew the driver's system
@@ -2625,7 +3107,13 @@ removes and not the thing it adds will report a saving it did not make.** The
 fix is a number, not a review — `cli/soul-body-budget` (60 lines) and
 `cli/no-programs-in-souls` (6-line fenced blocks) both land with ADR-0010.
 
-### F63 — Eleven `make verify` cases asserted runtime behaviour by substring, and one by comparing line numbers · `MEASURED` · **medium**
+*Header promoted `MEASURED` → `FIXED` 2026-08-06. Both numbers are in
+`verify.sh` and both are enforced; the largest per-run prompt in the repo is no
+longer the only one with no budget. The general shape this finding names —
+**a slice that measures the thing it removes and not the thing it adds will
+report a saving it did not make** — is a standing rule, not a closed item.*
+
+### F63 — Eleven `make verify` cases asserted runtime behaviour by substring, and one by comparing line numbers · `FIXED 2026-08-05` · **medium**
 
 Because tier 1's protocol lived in prose, the suite could only describe it a
 second time and diff the descriptions. As of `slice/gate-blocks`, the `lane/`
@@ -2647,6 +3135,14 @@ recorded `gh` responses. `prejudge/review-never-prints-the-diff` is the clearest
 of them: F32's rule used to be a `grep` for the sentence promising it, and is now
 a measurement — **63,164 bytes moved into the prompt file, 2,599 bytes observed
 by the driver.**
+
+*Header promoted `MEASURED` → `FIXED` 2026-08-06. Re-checked in the tree: the
+`prejudge/` group is 30 cases (`./scripts/verify.sh --list | grep -c '^prejudge/'`,
+2026-08-07 — the 23 first written here was already stale when it was written),
+none of them a `grep -Fq` against a SOUL, and
+`prejudge/scorer-is-the-control-arm` compares against a recorded fixture rather
+than a git ref — which is the repair F65 forced after the first version of that
+pin went inert at a merge.*
 
 ### F64 — `forge-lane` is at 299 against a 300 budget that was raised to admit it · `FIXED` · **low**
 
@@ -3090,3 +3586,175 @@ changed, even by diffing the retained manifests.
 first, so ordering is unchanged); a breach writes the differing lines to
 `<audit-root>/<run-id>/breach.txt` and names the first offending path in the
 classified reason line. Pinned by `blast/breach-names-what-moved`.
+
+---
+
+## Ledger addition from the ledger-reconciliation slice (D1a)
+
+*Found 2026-08-06 while orchestrating the first-run roadmap, by running the
+commands three documents assert the answer to. Minted from D1a's reservation —
+see **F-number allocation** above.*
+
+### F79 — Branch protection does not exist on this repository, and three documents say it is the merge gate · `PARTLY FIXED 2026-08-07` · **high**
+
+> **Follow-up, 2026-08-07 — the repository changed under this finding, and the
+> measurement below is preserved as the 2026-08-06 observation it was.**
+>
+> `wielas/forge` is now **public**, and ruleset `mainprotect` (id `20540381`) is
+> **active** on the default branch:
+>
+> ```
+> $ gh repo view wielas/forge --json visibility     → PUBLIC
+> $ gh api repos/wielas/forge/rulesets/20540381 --jq '[.rules[].type]'
+>   ["deletion","non_fast_forward","pull_request"]
+> ```
+>
+> So "there is no protected-branch configuration" stopped being true. **The
+> finding did not close — it got sharper.** That ruleset required a pull request
+> and blocked deletion and non-fast-forward updates, and required
+> **zero approving reviews and zero status checks**. A red PR was still
+> mergeable. The `state.md` Proven row *"a red or unreviewed merge is refused by
+> GitHub"* remained false, for a new reason: the gate existed and did not gate.
+>
+> **Closed the same day** by adding a fourth rule, `required_status_checks`,
+> naming the `validate` and `verify` contexts. Confirmed biting: a PR reported
+> `mergeStateStatus: BLOCKED` while `verify` was still running.
+> `strict_required_status_checks_policy` is deliberately `false` — requiring
+> every branch to be up to date with `main` would mean re-running CI on every
+> remaining branch after every merge across an ordered stack, and the gap this
+> finding names is *red PRs are mergeable*, which is now shut.
+>
+> **What stays open:** nothing in `make verify` or `make preflight` asserts any
+> of this, so the claim is still unexecuted prose. `CLAUDE.md` says `make verify`
+> arbitrates when two files disagree, and it cannot arbitrate this one. The
+> `preflight` check that distinguishes *protected with required checks* /
+> *protected without them* / **403, cannot be asked** is the remaining work, and
+> it is why the header reads `PARTLY FIXED` rather than `FIXED`.
+
+**Measured, 2026-08-06, against `wielas/forge`:**
+
+```
+$ gh api repos/wielas/forge/branches/main/protection
+{"message":"Upgrade to GitHub Pro or make this repository public to enable
+ this feature.", "status":"403"}
+
+$ gh api repos/wielas/forge/rulesets
+{"message":"Upgrade to GitHub Pro or make this repository public to enable
+ this feature.", "status":"403"}
+
+$ gh repo view wielas/forge --json visibility,isPrivate
+{"isPrivate":true,"visibility":"PRIVATE"}
+```
+
+Both classic protection and rulesets are unavailable on a private repository on
+a free plan. There is no protected-branch configuration on `main` because there
+cannot be one.
+
+**And the documented fallback is not there either.** The three claim sites all
+say the pre-push hook is the *advisory* backstop. On this repository it is not
+installed at all:
+
+```
+$ git rev-parse --git-common-dir            → /Users/goonlab/dev/forge/.git
+$ ls .git/hooks | grep -v '\.sample$'       → (nothing)
+$ git config --get core.hooksPath           → (unset)
+```
+
+The Forge is not stamped from its own template, and `make protect` — the target
+that installs protection — exists only in
+`templates/python-service/template/Makefile`. The root `Makefile` has no
+`protect` target and never had one. So the repository that *ships* the merge
+gate has never run it.
+
+**What it falsifies, exactly, in three places:**
+
+| Where | The claim |
+|---|---|
+| `docs/state.md` **Proven** table | "Branch protection is a real merge gate \| a red or unreviewed merge is refused by GitHub, not by prose" |
+| `CLAUDE.md` Conventions | "`main` is protected, and branch protection is the only real merge gate — the pre-push hook is advisory" |
+| `Makefile:44` (`make new` output) | "(branch protection is the ONLY merge gate — the pre-push hook is advisory)" |
+
+The `state.md` row is the one that matters, because `CLAUDE.md` routes every
+cold session to that file first and the whole point of the **Proven** table is
+that its rows were observed rather than believed.
+
+**The row was not fabricated — it was proven somewhere else and filed without
+its subject.** Measured in the same sitting:
+
+```
+$ gh repo view wielas/forgeboard-report --json visibility,isPrivate
+{"isPrivate":false,"visibility":"PUBLIC"}
+
+$ gh api repos/wielas/forgeboard-report/branches/main/protection
+required_status_checks: {"strict":true,"contexts":["check"]}
+enforce_admins:         {"enabled":true}
+allow_force_pushes:     {"enabled":false}
+allow_deletions:        {"enabled":false}
+```
+
+`make protect` works, and the evidence for the claim is real — on a **public**
+repo, which is where protection is free. The defect is that a proven-on-the-
+product row was written into the state document of a **different** repository
+where the same command returns 403.
+
+**Why it was invisible, and this is the transferable half.** The failure mode
+was known, written down, and never checked. `templates/python-service/template/Makefile:59`
+already anticipates this exact case in its own error string:
+
+> `branch protection FAILED (admin rights? private repo on a free plan?)`
+
+So the Forge predicted the failure at the point of **use** and asserted the
+success at the point of **claim**, and nothing connected the two. Neither
+`make verify` nor `make preflight` has a case that asks GitHub whether the gate
+exists — the suite that exists to execute this repo's claims does not execute
+this one. That is ADR-0003's own prohibition turned inward: a decidable
+property (`gh api …/protection` returns 200 or it does not) asserted in prose,
+never executed, for months.
+
+It is also **F65 and F66 a third time**, in the one shape those two did not
+cover. F65: a control anchored to a baseline the next merge redefined. F66: a
+control that went quiet when its target moved. Here: a control that was never
+built, and whose absence reads exactly like a control that passes, because a
+claim in a table looks the same either way.
+
+**Consequence, stated without inflation.** On `wielas/forge` the only thing
+between a slice branch and `main` is the operator's habit of opening a PR. CI
+runs on `pull_request` and on `push: branches: [main]` (`.github/workflows/verify.yml`),
+so a red merge is *visible* after the fact but not *refused*, and a direct push
+to `main` is refused by nothing at all. No bad merge has been observed — every
+merge to date went through a PR — but "no gate, and it has been fine" is the
+state `docs/state.md` exists to stop anyone from mistaking for "gated".
+
+**Severity: high, and the argument rather than the label.** Not `critical`:
+this repository has one committer, every merge so far went through a PR, and no
+defective merge has been measured — the blast radius today is a convention
+nobody has broken. Not `medium`: a false row in the **Proven** table is the most
+expensive kind of error this repo can hold, because that table is the one thing
+CLAUDE.md tells every context-free session to trust, and because the claim
+being false is specifically ADR-0003's — *gates enforce* — asserted about a gate
+that does not exist. A methodology whose founding commitment is "do not take a
+model's word for a decidable property" took its own word for one.
+
+**Fix, in the order the layers allow:**
+
+1. **Correct the three claim sites** — done in this slice. `docs/state.md`'s row
+   now names where it *was* proven (`forgeboard-report`, public) and says
+   plainly that it does not hold here; `CLAUDE.md` and `Makefile` state the
+   condition rather than the conclusion.
+2. **Decide the gate, and it is the operator's decision, not a slice's.** Three
+   options, all cheap: make `wielas/forge` public (protection is free there, and
+   measured working on the sibling repo); upgrade the plan; or accept the
+   pre-push hook as the only gate — in which case **install it**, because it is
+   not installed, and stop calling it advisory when it is the whole gate.
+3. **Add the check that would have caught this**, wherever the decision lands.
+   `make preflight` is the natural home: it is the read-only readiness gate, and
+   this is a readiness fact. It must distinguish three states, not two —
+   *protected*, *not protected*, and **403 / cannot be asked**. A 403 is not a
+   pass and it is not a failure of the repository; it is the control being
+   unable to run, which F65 and F66 both settled: *a control that cannot find
+   the thing it guards is not passing.* If the answer is "we accept no
+   protection", the check asserts a recorded, dated waiver rather than skipping.
+4. **Do not add it to `make verify`'s default suite.** It needs network and an
+   authenticated `gh`, and F67 is the standing reason a live check is explicit
+   and opt-in rather than a source of flake in the suite that arbitrates
+   disagreements.
