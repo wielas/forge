@@ -796,6 +796,45 @@ if [ -n "$FORGE_DIR" ]; then
   fi
   ( cd "$FORGE_DIR" && make validate >/dev/null 2>&1 ) \
     && pass "make validate green" || fail "make validate failed — run it to see why"
+
+  # THE GATE FOR F47/F67, because `make verify` cannot be it.
+  #
+  # The snapshot group's headline regression — a WAL board with no `-shm`
+  # refusing a `mode=ro` open — is only reachable on a build of SQLite that
+  # actually refuses it. `ubuntu-latest` does not, so on the only automated
+  # platform verify.sh reports `skip` for the fixture and then `ok` for the
+  # read, on a host where the bug cannot occur. That proves nothing, and a green
+  # CI must not be mistaken for having exercised it.
+  #
+  # This host is the one that reproduces it, so this is where it is gated. It
+  # builds its own board under a temp dir; no live board is opened (F67 is the
+  # standing reason a live sweep stays explicit and opt-in).
+  if command -v sqlite3 >/dev/null 2>&1 && [ -x "$FORGE_DIR/scripts/board-snapshot.sh" ]; then
+    PFWAL="$(mktemp -d "${TMPDIR:-/tmp}/forge-preflight-wal.XXXXXX")"
+    sqlite3 "$PFWAL/kanban.db" \
+      "PRAGMA journal_mode=WAL;
+       CREATE TABLE tasks(id TEXT, status TEXT);
+       INSERT INTO tasks VALUES('t1','done');" >/dev/null 2>&1
+    sqlite3 "$PFWAL/kanban.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1
+    rm -f "$PFWAL/kanban.db-wal" "$PFWAL/kanban.db-shm" "$PFWAL/kanban.db-journal"
+
+    if sqlite3 "file:$PFWAL/kanban.db?mode=ro" "SELECT id FROM tasks LIMIT 0;" >/dev/null 2>&1; then
+      warn "this host's sqlite3 opens a shm-less WAL board read-only, so F47/F67 is"
+      say  "      not reachable here either. Nothing on this machine is gating that"
+      say  "      regression — say so before trusting a green suite."
+    else
+      PFSNAP="$("$FORGE_DIR/scripts/board-snapshot.sh" "$PFWAL/kanban.db" "$PFWAL/snap" 2>/dev/null)"
+      if [ -n "$PFSNAP" ] && [ "$(sqlite3 "$PFSNAP" "SELECT id FROM tasks;" 2>/dev/null)" = "t1" ]; then
+        pass "idle WAL board reads through board-snapshot.sh (F47/F67 — CI cannot check this)"
+      else
+        fail "an idle WAL board could NOT be read through scripts/board-snapshot.sh."
+        say  "      This is the F47/F67 regression, on the only host that can see it."
+      fi
+    fi
+    rm -rf "$PFWAL"
+  else
+    warn "no sqlite3, or scripts/board-snapshot.sh is missing — F47/F67 is ungated here."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
