@@ -190,7 +190,7 @@ is that every track owns a disjoint block and nobody mints outside their own.
 | F79 | slice D1a (ledger reconciliation). **Spent.** |
 | F80–F89 | Track A — the artifact survives. **F80, F81, F82 spent** (A1, 2026-08-07) |
 | F90–F99 | Track B — the instrument. **F90, F91, F92, F93 spent** (B1, 2026-08-07) |
-| F100–F109 | Track C — planning-time gates |
+| F100–F109 | Track C — planning-time gates. **F100, F101, F102, F103 spent** (C1, 2026-08-07) |
 | F110–F119 | Track D — hygiene and the spike |
 | F120–F129 | Track E — the staged launch |
 | F130+ | the run itself, and anything found while reading it |
@@ -3915,3 +3915,84 @@ schema is frozen at whatever Hermes version created it, and therefore the board
 *least* able to reveal drift. Creating a board named `aaa-scratch` silently
 repoints the only live check in the suite. Naming the subject in the `ok` line
 at least discloses which board was asked.
+
+---
+
+## Ledger additions from the plan-time sizing slice (C1)
+
+*Minted from Track C's block F100–F109. Each claim below was re-measured before
+it was written here — S5's lesson from F92, where a finding drafted in a PR body
+turned out not to reproduce.*
+
+### F100 — Under `set -o pipefail`, a test that reads OUTPUT silently becomes a test of exit status, and the misattribution is plausible · `FIXED 2026-08-07` · **medium**
+
+A mutation that made `roadmap-check.sh` exit 1 on findings turned **three** cases
+red, and only one of them was about exit status. `_rc_status` and `_rc_evidence`
+read the checker's *stdout*; under `pipefail` its non-zero return propagated
+through the pipeline and inverted every condition of the form
+`_rc_evidence … | grep -q …`.
+
+The reported offence was *"the run's own CHUNK-5 serves FR-1..9 + NFR-1,2,5 and
+this did not report 12 over the cap of 4"* — specific, checkable, and **entirely
+false** about a contract that does serve 12. A reader would have gone looking for
+a counting bug that was not there.
+
+Fixed with `{ "$rc" … || true; } | awk …` and a comment naming the one case that
+owns the exit status (`warns-without-blocking`). **The general form, which is the
+part worth keeping:** under `pipefail`, a test reading output must neutralise
+status explicitly, or every case sharing that helper quietly becomes a duplicate
+assertion about status wearing a content assertion's name. This is F56's
+underscore and A1's self-pinning defect in a third costume — the wrong output
+looked exactly like the finding being searched for.
+
+### F101 — `reachable` has no recall independent of `acyclic` and `single-root` · `OPEN` · **low**
+
+In a finite DAG every node has a path back to some source, so *exactly one root*
+plus *no cycle* implies every chunk is reachable. The check cannot fail where it
+is defined, and where it could fail it is not defined — on a multi-root graph it
+`skip`s, deliberately, and skip is not pass.
+
+It ships anyway and honestly: its job is to **name** the stranded chunks once one
+of the other two has already fired. Recorded so that a later reader counting
+detectors does not count three where there are two. Compare F56's `no-assertion`
+walker: zero recall across 11 PRs, kept only because it was named.
+
+### F102 — Step 2 of ADR-0012's own flip procedure has no input in this repository · `OPEN` · **medium**
+
+The procedure is: ship warning → **run it against the real product roadmap** →
+fix the plan until it passes → flip to blocking. Step 2 cannot be executed.
+
+Measured 2026-08-07: this repo has no `docs/chunks/` at all, the audited product
+lived in `/private/tmp` and its `ROADMAP.md` and `graph.json` are gone, and the
+only surviving fragment of a real plan is `CHUNK-5.md` — one chunk of six,
+present twice as two byte-identical copies inside the prejudge PR recordings.
+That single chunk is what both production-facing cases run against. So
+`bijection`, `acyclic`, `single-root` and `lane` **have never been run against a
+real plan**, only against fixtures this slice wrote.
+
+Consequence for sequencing: the flip to blocking must not be taken until a
+genuine `/roadmap` emission has been read by this script. Cheapest close — have
+the next `/roadmap` in any project commit its `docs/chunks/` and record the
+output. This is why C1 stays advisory through the first run (see ADR-0012, and
+the roadmap's §2/§3).
+
+### F103 — The plan-time and review-time arguments for the `Touches` exemption are different, and only the review-time one is written down · `OPEN` · **low**
+
+F55 justifies the exemption by measurement: three of five drifting paths are
+process docs, so counting them manufactures a finding on every PR. **That
+argument does not transfer to plan time.** At plan time the exemption is close to
+a no-op on the contracts that survive: `CHUNK-5.md`'s `Touches` list is six
+paths, all of them `src/` or `tests/`, and no process doc among them.
+
+Its plan-time job is an **incentive** one, not an accounting one. Without it, the
+cheapest way to clear a six-path budget is to *omit* `docs/decision-log.md` from
+`Touches` — which then manufactures prejudge's drift finding on that same file at
+review time. Sharing one list makes declaring a process doc free at both ends.
+
+Recorded because a future reader who checks the exemption against F55's numbers
+alone will find it unmotivated and delete it.
+
+*Evidence caveat, stated rather than glossed: the surviving sample is **one
+contract**, so "no contract in the run listed a process doc" is not something
+this repo can still establish. What is established is that the one that survives
+does not, and that the incentive argument does not depend on the count.*
