@@ -55,7 +55,7 @@ suggest() {
   a board, a git history and 41-commits-behind-origin worth of delivered work.
   Stamp it somewhere durable and name the path explicitly:
 
-      make new NAME=my-project DEST=$HOME/dev
+      make new NAME=my-project DEST=${HOME:-/path/to/your/home}/dev
 
   There is no default. A default for this is what produced F19.
 EOF
@@ -73,6 +73,11 @@ EOF
 physical() {
   local p="$1" tail="" base resolved
   while [ ! -d "$p" ] && [ "$p" != "/" ]; do
+    # A DANGLING SYMLINK is not `-d`, so it would otherwise fall into the tail
+    # and never be resolved — breaking lexnorm()'s premise that a component
+    # which does not exist cannot be a symlink. `mkdir -p` refuses to traverse
+    # one, so this is a destination no stamp could ever be created at.
+    if [ -L "$p" ] && [ ! -e "$p" ]; then return 1; fi
     base="$(basename "$p")"
     tail="/$base$tail"
     p="$(dirname "$p")"
