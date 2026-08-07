@@ -68,8 +68,22 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # ONE definition of the F55 exemption, shared with review time. See the header
 # of the sourced file for why a second copy is a defect and not a convenience.
+#
+# GUARDED, for the reason this whole script exists. Unguarded, a missing file
+# left `TOUCHES_EXEMPT` unbound; `set -u` then killed the `$( )` SUBSHELL that
+# counts paths — only the subshell — so `touches()` fell through to
+# `emit touches pass` and the run printed `CLEAR — 9 pass, 0 warn` at exit 0.
+# That is this file's headline defect happening inside this file: a PASS for a
+# check that could not run. `prejudge.sh` guards the same source, and it must.
 # shellcheck source=./touches-exempt.sh
-. "$HERE/touches-exempt.sh"
+TOUCHES_EXEMPT_FILE="$HERE/touches-exempt.sh"
+[ -f "$TOUCHES_EXEMPT_FILE" ] || {
+  echo "roadmap-check: missing $TOUCHES_EXEMPT_FILE — the Touches exemption has one definition and this is it" >&2
+  exit 2; }
+. "$TOUCHES_EXEMPT_FILE"
+[ -n "${TOUCHES_EXEMPT:-}" ] || {
+  echo "roadmap-check: $TOUCHES_EXEMPT_FILE did not define TOUCHES_EXEMPT" >&2
+  exit 2; }
 
 PROJECT=""; VERBOSE=0
 helptext() { awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; }
@@ -136,11 +150,15 @@ SCHEMA_ERRORS="$(jq -r '
       "entry \($i): id \($e.id | tojson) contains a space or a slash — it becomes docs/chunks/<id>.md and a shell word"
     elif ($e.id == "." or $e.id == "..") then
       "entry \($i): id \($e.id | tojson) is not a chunk name"
-    elif ($e | has("lane")) and ($e.lane | type) != "string" then
+    # `null` and an ABSENT key are the same thing to every consumer below —
+    # `(.lane // "")` and `(.depends_on // [])` — so rejecting one while warning
+    # about the other is the validator disagreeing with the script it guards.
+    # `json.dump` of a dict holding None is the obvious way to produce it.
+    elif ($e.lane != null) and ($e.lane | type) != "string" then
       "\($e.id): lane \($e.lane | tojson) is a \($e.lane | type), not a string"
-    elif ($e | has("depends_on")) and ($e.depends_on | type) != "array" then
+    elif ($e.depends_on != null) and ($e.depends_on | type) != "array" then
       "\($e.id): depends_on \($e.depends_on | tojson) is a \($e.depends_on | type), not an array"
-    elif ($e | has("depends_on")) and ([$e.depends_on[] | select(type != "string")] | length) > 0 then
+    elif ($e.depends_on != null) and ([$e.depends_on[] | select(type != "string")] | length) > 0 then
       "\($e.id): depends_on contains a non-string: \([$e.depends_on[] | select(type != "string")] | tojson)"
     else empty end;
   [ (to_entries[] | entryerr(.key; .value)),
@@ -447,7 +465,26 @@ EOF
 # ---------------------------------------------------------------------------
 SCENARIO_MAX=5
 SCENARIO_AWK='
-  function nkw(s, w,   t) { t = " " s " "; gsub(/[^a-z0-9]+/, " ", t); return gsub(" " w " ", " ", t) }
+  # Count CLAUSE MARKERS, not word occurrences. Counting occurrences reported
+  # ordinary English as malformed — "then the record GIVEN to the caller"
+  # scored given=2, and "then the operator is told WHEN it started" scored
+  # when=2. Both are well-formed single scenarios, and a bullet rejected on
+  # vocabulary is never sized either, because the shape branch returns early.
+  # A marker is the word at the start of the bullet or after , ; or .
+  function nkw(s, w,   n, i, rest, before, after, off) {
+    n = 0; rest = s; off = 0
+    while ((i = index(rest, w)) > 0) {
+      before = (off + i == 1) ? "^" : substr(s, off + i - 1, 1)
+      after  = substr(rest, i + length(w), 1)
+      if (before == " " && (off + i) >= 3) {
+        before = substr(s, off + i - 2, 1)
+        if (before != "," && before != ";" && before != ".") before = "x" }
+      if ((before == "^" || before == "," || before == ";" || before == ".") \
+          && (after == " " || after == "")) n++
+      off = off + i + length(w) - 1
+      rest = substr(rest, i + length(w))
+    }
+    return n }
 
   # A comparative after "or" is a RANGE, not an alternative. "a record of 5 or
   # more fields" is one scenario; scoring it as two reported a defect in a
@@ -469,14 +506,35 @@ SCENARIO_AWK='
   # C") where the separators do. A clause mixing both is scored by whichever
   # reads higher — under-, never over-counting, because a false finding costs a
   # planner more than a missed one at this severity.
-  function arity(c,   n, i, w, ors, prefix, commas, best) {
+  # The commas only count when they belong to the SAME list as the "or" — that
+  # is, when the separator is the Oxford ", or ". Counting every earlier comma
+  # made an ordinary conjunctive list followed by one plain "or" score as a
+  # disjunction of the whole list:
+  #
+  #   "Given a record carrying a start time, an end time, a status, a cost, a
+  #    model name, a lane name, a card id, and a digest that is absent or stale"
+  #
+  # scored 9. The truth is 2 — "absent or stale" — and one correct bullet
+  # single-handedly blew the five-scenario cap and produced two findings telling
+  # the planner to split a correct chunk, which the header of this file calls
+  # an outcome worse than no checker.
+  function arity(c,   n, i, w, ors, prefix, commas, best, trimmed) {
     n = split(c, part, / or /)
     if (n == 1) return 1
     ors = 0; commas = 0; prefix = part[1]
     for (i = 2; i <= n; i++) {
       w = part[i]
       sub(/^[^a-z0-9]*/, "", w); sub(/[^a-z0-9].*$/, "", w)
-      if (!is_range(w)) { ors++; commas = gsub(/,/, ",", prefix) }
+      if (!is_range(w)) {
+        ors++
+        # Oxford form only: the text immediately before this separator ends in a
+        # comma. "a, b, or c" qualifies; "…a digest that is absent or stale"
+        # does not, and its earlier commas belong to a different list.
+        trimmed = prefix
+        sub(/[ \t]+$/, "", trimmed)
+        if (trimmed ~ /,$/) commas = gsub(/,/, ",", prefix)
+        else commas = 0
+      }
       prefix = prefix " or " part[i]
     }
     if (ors == 0) return 1

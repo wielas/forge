@@ -1012,6 +1012,10 @@ roadmap/disjunction-counts-every-alternative  a clause is worth as many scenario
 roadmap/wrapped-bullet-is-still-one-scenario  a bullet wrapped over two lines is not malformed
 roadmap/touches-findings-are-independent  a missing Touches list must not hide another chunk's overage
 roadmap/lane-accepts-only-on-disk-profiles  the hermes branch: on_disk names only, never the table's tokens
+roadmap/missing-touches-exemption-is-exit-2-not-a-pass  an unguarded source printed PASS touches at exit 0
+roadmap/conjunctive-commas-are-not-alternatives  a comma list plus one plain "or" is not a disjunction of the list
+roadmap/keyword-inside-a-clause-is-not-a-marker  "the record given to the caller" is not a second Given
+roadmap/null-is-the-same-as-an-absent-key  a null lane/depends_on is what every consumer already tolerates
 roadmap/process-docs-do-not-count-against-touches  the F55 exemption applies at plan time too
 roadmap/touches-exemption-has-one-definition  plan time and review time share one list, not two
 roadmap/warns-without-blocking          findings do not gate — F53's ruling, shipped
@@ -3650,6 +3654,71 @@ HSTUB
   else
     bad "lane-accepts-only-on-disk-profiles" \
         "reading the assignee list from hermes must accept on_disk names only: an on_disk:false lane reported '$hstatus' (expected warn) and a real one reported '$hgood' (expected pass)"
+  fi
+
+  # -- what independent review found in this branch --
+  #
+  # N1, and it is this file's headline defect happening inside this file: the
+  # `touches-exempt.sh` source was UNGUARDED, so a missing file left
+  # TOUCHES_EXEMPT unbound; `set -u` killed only the `$( )` SUBSHELL that counts
+  # paths, `touches()` fell through to `emit touches pass`, and the run printed
+  # `CLEAR — 9 pass, 0 warn` at exit 0. `prejudge.sh` guarded the same source.
+  local dexempt de_out de_rc
+  dexempt="$TMPROOT/roadmap-noexempt"
+  rm -rf "$dexempt"; mkdir -p "$dexempt"
+  cp -R "$REPO_ROOT/scripts" "$REPO_ROOT/rubrics" "$dexempt/" 2>/dev/null
+  rm -f "$dexempt/scripts/touches-exempt.sh"
+  de_out="$("$dexempt/scripts/roadmap-check.sh" "$good" 2>&1)"; de_rc=$?
+  if [ "$de_rc" = 2 ] && ! printf '%s' "$de_out" | grep -q 'PASS'; then
+    ok "missing-touches-exemption-is-exit-2-not-a-pass"
+  else
+    bad "missing-touches-exemption-is-exit-2-not-a-pass" \
+        "a missing touches-exempt.sh must exit 2, not report PASS touches: exit $de_rc: $(printf '%s' "$de_out" | tr '\n' ' ' | cut -c1-160)"
+  fi
+
+  # N2. The commas only belong to the "or" when the separator is the Oxford
+  # ", or ". A conjunctive list followed by one plain "or" was scored as a
+  # disjunction of the whole list — 9 for a bullet worth 2 — which blows the cap
+  # and tells a planner to split a correct chunk.
+  # The bullet IS a two-way disjunction ("absent or stale"), so it is correctly
+  # reported as compound — at 2. What must not happen is 9, which is what the
+  # conjunctive commas produced, and which blows the five-scenario cap.
+  local dcc
+  dcc="$(_rc_mutate conjunctive-commas \
+    "sed -i.bak 's#^- \*\*Out of scope:\*\*#  - Given a run record carrying a start time, an end time, a status, a cost, a model name, a lane name, a card id, and a digest that is absent or stale, when the reader reads it, then the run is marked unavailable.\n- **Out of scope:**#' docs/chunks/CHUNK-2.md && rm -f docs/chunks/*.bak")"
+  local cc_ev; cc_ev="$(_rc_evidence "$dcc" scenarios)"
+  if printf '%s' "$cc_ev" | grep -q '=2' \
+     && ! printf '%s' "$cc_ev" | grep -qE '=[3-9]|scenario cap'; then
+    ok "conjunctive-commas-are-not-alternatives"
+  else
+    bad "conjunctive-commas-are-not-alternatives" \
+        "a comma list plus one plain 'or' is a 2-way disjunction, not a 9-way one: $(printf '%s' "$cc_ev" | tr '\n' ' ' | cut -c1-140)"
+  fi
+
+  # N3. Given/When/Then were counted as WORD OCCURRENCES, so ordinary English
+  # tripped the shape check: "then the record GIVEN to the caller" scored
+  # given=2. A bullet rejected on vocabulary is never sized either, because the
+  # shape branch returns before arity is computed.
+  _rc_case keyword-inside-a-clause-is-not-a-marker \
+    "sed -i.bak 's#^- \*\*Out of scope:\*\*#  - Given a board snapshot, when the reader runs, then the record given to the caller is immutable and is returned when it is ready.\n- **Out of scope:**#' docs/chunks/CHUNK-2.md && rm -f docs/chunks/*.bak" \
+    scenarios pass
+
+  # N4. `null` and an ABSENT key are the same thing to every consumer —
+  # `(.lane // "")`, `(.depends_on // [])` — so rejecting one while warning
+  # about the other was the validator disagreeing with the script it guards.
+  # A validator that rejects valid plans is worse than the bug it fixed.
+  local dnull dn_rc
+  dnull="$(_rc_mutate accepts-null "cat > docs/chunks/graph.json <<'GJSON'
+[{\"id\":\"CHUNK-1\",\"lane\":null,\"depends_on\":null},
+ {\"id\":\"CHUNK-2\",\"lane\":\"forge-codex-lane\",\"depends_on\":[\"CHUNK-1\"]},
+ {\"id\":\"CHUNK-3\",\"lane\":\"forge-codex-lane\",\"depends_on\":[\"CHUNK-2\"]}]
+GJSON")" || { bad "null-is-the-same-as-an-absent-key" "the mutation itself failed to apply"; return; }
+  "$rc" "$dnull" >/dev/null 2>&1; dn_rc=$?
+  if [ "$dn_rc" = 0 ] && [ "$(_rc_status "$dnull" lane)" = warn ]; then
+    ok "null-is-the-same-as-an-absent-key"
+  else
+    bad "null-is-the-same-as-an-absent-key" \
+        "a null lane/depends_on must be treated as absent (warn), not rejected as unparseable: exit $dn_rc, lane '$(_rc_status "$dnull" lane)'"
   fi
 
   # -- the properties of the check itself --
