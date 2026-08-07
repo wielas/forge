@@ -81,6 +81,15 @@ DB="${1:-}"; DEST="${2:-}"
   echo "usage: board-snapshot.sh <board.db> <dest-dir>"; exit 2; }
 [ $# -le 2 ] || { echo "board-snapshot.sh takes exactly two arguments"; exit 2; }
 
+# A relative path beginning with `-` is an OPTION to every helper below —
+# dirname, basename, shasum and cp each rejected it in turn, and because the
+# copy loop only records that a copy failed, the run came back as exit 3, "the
+# board changed under every one of 3 snapshot attempts". A naming problem
+# diagnosed as a torn read is the same species of misdiagnosis this file exists
+# to remove. `./` costs nothing and makes every helper read it as a path.
+case "$DB"   in -*) DB="./$DB";; esac
+case "$DEST" in -*) DEST="./$DEST";; esac
+
 command -v sqlite3 >/dev/null 2>&1 || { echo "sqlite3 is not on PATH"; exit 2; }
 [ -f "$DB" ] || { echo "no board database at $DB"; exit 2; }
 [ -r "$DB" ] || { echo "board database is not readable: $DB"; exit 2; }
@@ -103,6 +112,28 @@ DESTDIR="$(cd "$DEST" 2>/dev/null && pwd -P)" || { echo "cannot resolve $DEST"; 
   echo "refusing to snapshot $DB into its own directory; the copy is opened read-write"; exit 2; }
 
 BASE="$(basename "$DB")"
+SNAP_PRE="$DESTDIR/$BASE"
+
+# THIS SCRIPT MUST NEVER DELETE A FILE IT DID NOT WRITE.
+#
+# Both the retry loop and the exit trap remove `$SNAP` and its sidecars by
+# COMPUTED path, without ever checking who put them there. So a caller whose
+# destination already held a file of the same basename lost it — including on a
+# run that failed and returned nothing:
+#
+#   board-snapshot.sh live.db "$HOME"     ->  exit 4, and $HOME/kanban.db gone
+#
+# Neither in-repo caller can reach this (both pass a fresh `mktemp -d`
+# subdirectory), but the header above advertises this as a reusable primitive,
+# and "the caller owns <dest-dir>" is a statement about cleanup, not a licence
+# to destroy their data. Refusing is the fail-closed answer and it costs a
+# legitimate caller nothing: a snapshot directory that already contains a board
+# of this name is one whose previous contents nobody has reasoned about.
+for pre in "$SNAP_PRE" "$SNAP_PRE-wal" "$SNAP_PRE-journal" "$SNAP_PRE-shm"; do
+  [ -e "$pre" ] || continue
+  echo "refusing to write into $DESTDIR: it already contains $(basename "$pre"), which this run did not create"
+  exit 2
+done
 SNAP="$DESTDIR/$BASE"
 
 # `-shm` is deliberately NOT copied and NOT fingerprinted, and that is not an

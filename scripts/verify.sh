@@ -984,6 +984,7 @@ sweep/sweep-keeps-a-rebuilt-branch          a merged PR at a DIFFERENT head is n
 sweep/sweep-keeps-what-it-cannot-read       a git that fails is not a clean worktree
 sweep/sweep-fails-when-it-cannot-enumerate  "nothing to sweep" and "I could not look" are different exits
 sweep/sweep-never-touches-outside-the-bound APPLY still cannot reach outside the bound
+sweep/sweep-refuses-an-unreadable-bound     a bound that cannot be entered must not become every path
 sweep/sweep-never-force-deletes-a-branch    unreachable commit survives; reported, never -D'd
 sweep/sweep-carries-no-forced-delete        the script contains no `git branch -D`
 sweep/sweep-tolerates-missing-remote-branch the merge deletes origin/<branch>; that is normal
@@ -3008,7 +3009,13 @@ run_sweep_group() {
   mkdir -p "$noperm/sub" && chmod 000 "$noperm"
   noperm_out="$("./$nd" "$noperm/sub/proj" 2>/dev/null)"; noperm_rc=$?
   chmod 755 "$noperm" 2>/dev/null
-  if [ "$noperm_rc" != 0 ] && [ "$noperm_out" != "/sub/proj" ]; then
+  # A dangling symlink is not `-d` either, so it fell into the tail and was
+  # never resolved — lexnorm()'s premise is that a component which does not
+  # exist cannot be a symlink, and this was the exception to it.
+  local dangle_rc
+  ln -sfn /private/tmp/__forge_nonexistent__ "$TMPROOT/dangle" 2>/dev/null
+  "./$nd" "$TMPROOT/dangle/proj" >/dev/null 2>&1; dangle_rc=$?
+  if [ "$noperm_rc" != 0 ] && [ "$noperm_out" != "/sub/proj" ] && [ "$dangle_rc" != 0 ]; then
     ok "dest-refuses-an-unreadable-ancestor"
   elif [ "$(id -u)" = 0 ]; then
     skip "dest-refuses-an-unreadable-ancestor" "running as root; chmod 000 does not deny"
@@ -3286,6 +3293,32 @@ GITSTUB
     bad "sweep-never-touches-outside-the-bound" \
         "APPLY reached a worktree outside <project>/.worktrees/ — the bound is the only thing making this runnable unattended"
   fi
+
+  # THE BOUND MUST FAIL CLOSED, and this is the case that says so.
+  #
+  # `-d "$BOUND"` needs only `+x` on the PARENT; `cd "$BOUND"` needs `+x` on the
+  # directory itself. When the two disagreed the command substitution produced
+  # "", and the guard became `case "$path" in "/*")` — a glob matching every
+  # absolute path. Reproduced: a sibling checkout OUTSIDE the bound was removed
+  # and its branch deleted, at exit 0, with `0 refused` in the summary. Both
+  # existing bound cases build a readable `.worktrees`, so neither could see it.
+  _sweep_fixture || { bad "sweep-refuses-an-unreadable-bound" "fixture rebuild failed"; return; }
+  local outside="$lab/outside-the-bound" ub_out ub_rc
+  git -C "$proj" worktree add -q -b outsider "$outside" >/dev/null 2>&1
+  chmod 000 "$proj/.worktrees"
+  ub_out="$(_sweep "$proj" --apply)"; ub_rc=$?
+  chmod 755 "$proj/.worktrees" 2>/dev/null
+  if [ "$ub_rc" != 0 ] && [ -d "$outside" ] \
+     && ! printf '%s' "$ub_out" | grep -q 'bound to:  /$'; then
+    ok "sweep-refuses-an-unreadable-bound"
+  elif [ "$(id -u)" = 0 ]; then
+    skip "sweep-refuses-an-unreadable-bound" "running as root; chmod 000 does not deny"
+  else
+    bad "sweep-refuses-an-unreadable-bound" \
+        "an un-enterable .worktrees must exit non-zero and touch nothing: exit $ub_rc, the outside worktree $([ -d "$outside" ] && echo survived || echo 'was REMOVED')"
+  fi
+  _sweep_fixture || { bad "sweep-never-force-deletes-a-branch" "fixture rebuild failed"; return; }
+  app="$(_sweep "$proj" --apply)"
 
   # The whole point of `-d`: the worktree is reclaimed, the branch survives,
   # and the operator is told. `-D` here would delete the commit silently.
