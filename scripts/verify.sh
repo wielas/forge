@@ -2661,14 +2661,21 @@ run_sweep_group() {
 
   # DEST was validated and NAME was appended to it unchecked, so the guard was
   # defeated by typing the other variable. NAME is one path component.
-  local nm_rc dot_rc
+  #
+  # The third probe is what makes this a check rather than a coincidence. The
+  # first two are ALSO refused by the volatile-root test on the final target, so
+  # with NAME validation deleted outright this case stayed green — F65's shape,
+  # caught by mutation-testing it. `../elsewhere` escapes DEST and lands
+  # somewhere perfectly durable: nothing but the NAME rule refuses that.
+  local nm_rc dot_rc esc_rc
   "./$nd" "$HOME/dev" --name "../../../private/tmp/x" >/dev/null 2>&1; nm_rc=$?
   "./$nd" "$HOME/dev" --name ".." >/dev/null 2>&1; dot_rc=$?
-  if [ "$nm_rc" != 0 ] && [ "$dot_rc" != 0 ]; then
+  "./$nd" "$HOME/dev" --name "../elsewhere" >/dev/null 2>&1; esc_rc=$?
+  if [ "$nm_rc" != 0 ] && [ "$dot_rc" != 0 ] && [ "$esc_rc" != 0 ]; then
     ok "dest-refuses-a-traversing-name"
   else
     bad "dest-refuses-a-traversing-name" \
-        "NAME='../../../private/tmp/x' rc=$nm_rc, NAME='..' rc=$dot_rc — NAME must not be a path"
+        "NAME='../../../private/tmp/x' rc=$nm_rc, '..' rc=$dot_rc, '../elsewhere' rc=$esc_rc — NAME is one component"
   fi
 
   # Refusing is half a fix. The operator has to be told where to put it.
@@ -2741,17 +2748,23 @@ run_sweep_group() {
 
   # APPLY was a non-empty test, so APPLY=0 — how an operator writes "don't" —
   # passed --apply to a command that removes worktrees and deletes branches.
-  local dr0 dr1 refuse_rc
+  #
+  # The refusal is read by its MESSAGE, not by a non-zero exit. Judged on rc
+  # alone this passed with the refusal deleted, because the sweep then ran and
+  # exited 2 on the nonexistent PROJECT — a second mutation-testing catch, and
+  # the same "passed for the wrong reason" shape as the case above.
+  local dr0 dr1 refuse_out refuse_rc
   dr0="$(make -n worktree-sweep PROJECT=/nonexistent APPLY=0 2>&1)"
   dr1="$(make -n worktree-sweep PROJECT=/nonexistent APPLY=1 2>&1)"
-  make worktree-sweep PROJECT=/nonexistent APPLY=0 >/dev/null 2>&1; refuse_rc=$?
+  refuse_out="$(make worktree-sweep PROJECT=/nonexistent APPLY=0 2>&1)"; refuse_rc=$?
   if ! printf '%s' "$dr0" | grep -qE 'worktree-sweep\.sh.*--apply' \
      && printf '%s' "$dr1" | grep -qE 'worktree-sweep\.sh.*--apply' \
-     && [ "$refuse_rc" != 0 ]; then
+     && [ "$refuse_rc" != 0 ] \
+     && printf '%s' "$refuse_out" | grep -q 'is not understood'; then
     ok "sweep-apply-acts-only-on-1"
   else
     bad "sweep-apply-acts-only-on-1" \
-        "APPLY=0 must neither pass --apply nor be silently reinterpreted (refusal rc=$refuse_rc)"
+        "APPLY=0 must neither pass --apply nor be silently reinterpreted (rc=$refuse_rc)"
   fi
 
   # -- worktree-sweep ------------------------------------------------------
