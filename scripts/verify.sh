@@ -277,6 +277,43 @@ run_cli_group() {
   else
     ok "retro-metrics (log table present and referenced by /retro)"
   fi
+
+  # The allowlist is a permission boundary, and a trailing `*` in a Bash pattern
+  # spans spaces — so it authorises every additional argument, not just the ones
+  # the author had in mind. Two shapes make that expensive here, both measured:
+  #
+  #   `Bash(make <target> *)`  — make takes MULTIPLE targets. `make metrics
+  #     BOARD=x install` really does run ./scripts/metrics.sh AND ./install.sh,
+  #     which symlinks skills into every harness on the machine.
+  #   `Bash(./scripts/verify.sh <group> *)` — admits `--with-codex`, which
+  #     CLAUDE.md calls "spends tokens. Not casual."
+  #
+  # So a `*` is allowed only behind a command that cannot do anything paid or
+  # mutating however it is invoked. Everything else is spelled out exactly. The
+  # list below is the whitelist of prefixes permitted to carry a wildcard; adding
+  # to it is a deliberate act that should be argued for in the PR that does it.
+  local settings='.claude/settings.json'
+  if [ ! -f "$settings" ]; then
+    bad "permissions-are-read-only" "$settings is missing — the boundary is unasserted"
+  elif ! command -v jq >/dev/null 2>&1; then
+    skip "permissions-are-read-only" "jq not on PATH"
+  else
+    local entries wild_ok offenders
+    entries="$(jq -r '.permissions.allow[]? // empty' "$settings" 2>/dev/null)"
+    if [ -z "$entries" ]; then
+      bad "permissions-are-read-only" "no allow entries parsed out of $settings — the check went blind, which is not a pass (F65)"
+    else
+      # read-only however invoked: a metrics read, three kanban reads, an MCP list
+      wild_ok='^Bash\((\./scripts/metrics\.sh|hermes kanban (show|list|assignees)|hermes kanban boards list|codex mcp list) \*\)$'
+      offenders="$(printf '%s\n' "$entries" | grep -F '*' | grep -Ev "$wild_ok" || true)"
+      if [ -n "$offenders" ]; then
+        bad "permissions-are-read-only" \
+            "wildcard entries admit paid or mutating commands: $(printf '%s' "$offenders" | tr '\n' ' ')"
+      else
+        ok "permissions-are-read-only ($(printf '%s\n' "$entries" | grep -c . ) entries, $(printf '%s\n' "$entries" | grep -cF '*') wildcards)"
+      fi
+    fi
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -729,6 +766,7 @@ cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim marke
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 300
 cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not protocol)
 cli/no-programs-in-souls          no fenced block in a SOUL exceeds 6 lines
+cli/permissions-are-read-only     no allowlist wildcard admits a paid or mutating command
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
 config/external-dirs/<profile>    points at this checkout's skills/
