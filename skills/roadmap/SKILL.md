@@ -82,6 +82,14 @@ Sizing rules:
 ROADMAP.md + docs/chunks/* + docs/chunks/graph.json committed; graph acyclic and
 its ids match the chunk files 1:1; every FR covered by ≥1 chunk; human sign-off.
 
+Before sign-off run `~/.forge/repo/scripts/roadmap-check.sh <project>`. It is
+advisory (ADR-0012). It counts the `Serves:`, `Touches:` and `Scenarios:` caps
+stated above, off the plan; it does not evaluate the line budget.
+
+Read every finding and fix the plan. Do not adjust the numbers to clear it.
+Where a finding is wrong about your plan, record why in the sign-off instead of
+editing the plan to satisfy it.
+
 ## Handoff
 Human runs `hermes/board-bootstrap.sh <project>`, which reads `graph.json`,
 creates every card (interactive chunks included, blocked rather than skipped)

@@ -295,8 +295,20 @@ branch_name() {
 # manufactures a finding on every single PR, which is a gate nobody will read.
 # ---------------------------------------------------------------------------
 # Not a convenience list: each entry is a path the METHODOLOGY obliges a chunk to
-# touch and the contract template has no slot to declare.
-TOUCHES_EXEMPT='^docs/decision-log\.md$|^docs/ROADMAP\.md$|^docs/chunks/'
+# touch and the contract template has no slot to declare. The list itself lives
+# in ONE file, because `scripts/roadmap-check.sh` applies the same exemption at
+# plan time (ADR-0012) and two copies disagree the first time one is edited.
+# shellcheck source=./touches-exempt.sh
+#
+# Guarded. Under `set -u` a missing file leaves TOUCHES_EXEMPT unbound and
+# `touches()` dies mid-run with an unbound-variable error, part-way through a
+# gate that has already emitted findings — instead of exiting 2, which is this
+# script's code for "the gate could not run at all".
+TOUCHES_EXEMPT_FILE="$(dirname "${BASH_SOURCE[0]:-$0}")/touches-exempt.sh"
+[ -f "$TOUCHES_EXEMPT_FILE" ] || {
+  echo "prejudge: missing $TOUCHES_EXEMPT_FILE — the Touches exemption has one definition and this is it" >&2
+  exit 2; }
+. "$TOUCHES_EXEMPT_FILE"
 touches() {
   [ -n "$CONTRACT" ] || { emit touches skip "no contract for ${CHUNK:-this branch} in the PR tree"; return; }
   local listed drift changed
