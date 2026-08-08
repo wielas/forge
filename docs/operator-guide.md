@@ -106,15 +106,62 @@ silently changed `approvals.mode` and `goals.max_turns`.
 are *preserved* on completion (only `scratch` is deleted), so every finished
 chunk leaves `<repo>/.worktrees/<task-id>` behind, holding its branch. You
 notice when `gh pr merge --delete-branch` fails with *"cannot delete branch …
-used by worktree"* (measured 2026-07-28, PR #1). After a merge:
+used by worktree"* (measured 2026-07-28, PR #1). Each is a full checkout plus
+the `.venv` the lane built — 50 MB a chunk.
 
 ```bash
-git worktree remove --force .worktrees/<task-id>
-git branch -D chunk/<id>-<slug>
+make worktree-sweep PROJECT=$HOME/dev/my-project           # dry run: prints, changes nothing
+make worktree-sweep PROJECT=$HOME/dev/my-project APPLY=1   # act
 ```
 
-They are cheap but not free — each is a full checkout plus a `.venv` the lane
-built. Sweep them when the board is idle.
+Dry-run is the default and `APPLY=1` is the whole difference — literally `1`,
+and nothing else. `APPLY=0`, `APPLY=false` and `APPLY=no` are **refused with an
+error**: on a command that removes worktrees and deletes branches, quietly doing
+the opposite of what you typed is worse than making you type it again. Omit
+`APPLY` entirely for a dry run.
+
+What it will and will not do, because you should not have to read the script to
+trust it:
+
+- It only reaches worktrees under `<project>/.worktrees/`. Anything else — a
+  sibling checkout, an agent worktree, the main checkout — is printed `REFUSE`
+  and left alone. `PROJECT` must be absolute.
+- It removes a worktree only if it is clean **and** GitHub reports a merged PR
+  on that head branch **whose head commit is the one checked out here**. Merge
+  state is read from the remote, not from local ancestry: a squash merge leaves
+  no local ancestry, so a local test would call every squash-merged chunk
+  unmerged and sweep nothing. The commit comparison is what stops a branch that
+  was merged once, deleted, and later recreated with new work from reading as
+  merged — a branch name is not the identity of the work on it.
+- **Every git question it asks is checked for failure.** A worktree whose
+  `git status` cannot be read is kept and named as unreadable, never assumed
+  clean; and if it cannot enumerate the worktrees at all it exits non-zero
+  rather than reporting that there was nothing to sweep.
+- It deletes branches with `git branch -d`, never `-D`. When `-d` refuses — a
+  squash merge makes the commit unreachable from `main`, so this is common —
+  the worktree is still reclaimed and the branch is reported `RETAINED` for you
+  to delete by hand once you have checked nothing is unpushed.
+
+Sweep when the board is idle. Anything it refuses is still yours to remove by
+hand — `git worktree remove --force <path>` then `git branch -D <branch>` — but
+you are then the one deciding that nothing in there was unpushed.
+
+## Where projects go
+
+`make new` requires an absolute, durable `DEST`. There is no default, and a
+destination that resolves under `/tmp`, `/private/tmp` or `$TMPDIR` is refused.
+
+```bash
+make new NAME=my-project DEST=$HOME/dev
+```
+
+This is not tidiness. `forgeboard-report` — the first real product the Forge
+built — was stamped into `/private/tmp`, which macOS purges and Spotlight does
+not index; it took a filesystem sweep to find it, and by then local `main` was
+41 commits behind origin (audit F19). Nobody chose that directory. `DEST`
+defaulted to `..`, a *relative* path, so the project landed next to whatever
+directory the operator happened to be standing in. Symlinks are resolved before
+the check, so `/tmp` and `/private/tmp` are the same refusal.
 
 ## Learning to judge — the skill that makes this work
 

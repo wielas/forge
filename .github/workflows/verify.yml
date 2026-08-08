@@ -20,4 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: make verify SUITES="cli substrate template metrics gate"
+      # `sweep` needs only git and its own gh/uvx stubs, so it runs here like
+      # the rest. It was omitted when it shipped, so nothing enforced F18/F19 on
+      # a pull request: its cases only ever ran by hand, on one machine. The
+      # suites still absent need a live Hermes install or model credentials.
+      - run: make verify SUITES="cli substrate template metrics sweep gate"
