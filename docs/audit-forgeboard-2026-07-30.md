@@ -97,8 +97,8 @@ genuine run.*
 |---|---|---|
 | F11 | `OPEN` | C1 — cap contracts by countable scenarios, split on `Serves:` > ~4 |
 | F14 | `OPEN` | C2 — freeze acceptance scenarios at planning time |
-| F18 | `OPEN` | A1 — the worktree sweep |
-| F19 | `OPEN` | A1 — `make new` refuses a temp destination |
+| F18 | `FIXED 2026-08-07` | A1. `scripts/worktree-sweep.sh` + `make worktree-sweep`; the `sweep/sweep-*` cases. Removal needs clean **and** a merged PR whose `headRefOid` is this worktree's HEAD, so a branch merged once and later rebuilt is kept. Bounded to `<project>/.worktrees/`, which is **not** where this repo's own stale worktrees live — F80 |
+| F19 | `FIXED 2026-08-07` | A1. `scripts/new-dest.sh` + the `sweep/dest-*` cases. Symlinks **and** `..` are resolved to a fixed point before judging, and the judgement is on the final `<dest>/<name>`, not on `DEST` alone. F82 records why nothing caught this before |
 | F25 | `OPEN` | C2 — a `@real-source` scenario per contract naming an external source |
 | F28 | `OPEN` | C1 — size budget at plan time, where the contract is still editable |
 | F34 | `OPEN` | D1 — the `<skill> §<n>` cross-reference check. Still reproducible today, and it has widened: `end-chunk/SKILL.md:37` points at `forge-lane` §5 for `.forge/pr-body.md`, but the PR step is §6 **and** the path became `$FORGE_LANE_RUNTIME/pr-body.md` with F68 |
@@ -106,7 +106,7 @@ genuine run.*
 | F40 | `PARTLY FIXED 2026-08-06` | second symptom closed here — the F-number allocator below. First symptom (the slice-worktree rule written into `docs/operator-guide.md`) still owed |
 | F53 | `OPEN` | C1/C2 — move `size-budget` and `real-source` to plan time; both still `warn` at review time |
 | F57 | `OPEN` | D1 — report the *widening* rather than passing on it |
-| F79 | `FIXED 2026-08-08` | closed by the merge-gate slice (D1b): `scripts/merge-gate.sh` plus verify.sh's `gate` group. The check PR #25 shipped for it was itself unexecuted and wrong four ways — see **F110** |
+| F79 | `FIXED 2026-08-08` | closed by the merge-gate slice (D1e): `scripts/merge-gate.sh` plus verify.sh's `gate` group. The check PR #25 shipped for it was itself unexecuted and wrong four ways — see **F110** |
 
 ### Blocked on ADR-0011 data — the run supplies it
 
@@ -188,7 +188,7 @@ is that every track owns a disjoint block and nobody mints outside their own.
 |---|---|
 | F1–F78 | this audit and the S1–S5 slices. **Spent.** |
 | F79 | slice D1a (ledger reconciliation). **Spent.** |
-| F80–F89 | Track A — the artifact survives |
+| F80–F89 | Track A — the artifact survives. **F80, F81, F82 spent** (A1, 2026-08-07) |
 | F90–F99 | Track B — the instrument |
 | F100–F109 | Track C — planning-time gates |
 | F110–F119 | Track D — hygiene and the spike |
@@ -3761,6 +3761,62 @@ model's word for a decidable property" took its own word for one.
    authenticated `gh`, and F67 is the standing reason a live check is explicit
    and opt-in rather than a source of flake in the suite that arbitrates
    disagreements.
+
+---
+
+## Ledger additions from the durable-destinations slice (A1)
+
+*Minted from Track A's block F80–F89 — see **F-number allocation** above. All
+three were found by building A1, not by reading it. The defects A1's own review
+found in A1 are deliberately **not** here: they were on an unmerged branch, were
+fixed before it landed, and left no trace in the system this ledger records.*
+
+### F80 — The stale worktrees on this machine are not where F18 says worktrees live, so a path-bounded sweep does not reclaim them · `OPEN` · **low**
+
+F18 describes `<project>/.worktrees/<task-id>`, which is where the *dispatcher*
+puts them. This repository's stale ones were made by hand somewhere else.
+
+Measured 2026-08-07, `git worktree list` in the main checkout: 19 worktrees — 1
+main checkout, **1** under `/Users/goonlab/dev/forge/.worktrees/`, **16** under
+`/Users/goonlab/dev/forge-slices/`, 1 at `/Users/goonlab/dev/forge-exercises-20260728`.
+`du -sh`: `forge-slices` 15M, `.worktrees` 1.2M.
+
+**The bound is deliberate and has not been widened.** A sweep that can reach an
+arbitrary sibling directory is one whose output you must read before trusting,
+which is the opposite of a command you can run unattended. The consequence is
+operator-facing and real: **`make worktree-sweep` does not clean this repo**,
+and `docs/state.md`'s gap #1 says so. Reclaiming those 16 is a separate,
+explicitly-targeted decision, not a loosening of this guard.
+
+### F81 — The repo's own audit prescribes the recipe this slice now refuses · `OPEN` · **low**
+
+`docs/audit-2026-07-27.md:220`, inside F9's **Assert** block, reads
+`make new NAME=probe-$$ DEST=/tmp && cd /tmp/probe-$$ && make setup …`.
+
+So stamping a product into `/tmp` was not an operator slip: it was a
+documented, copy-pasteable instruction inside this repository, which is a more
+complete root cause for F19 than "the default was `..`". That assert is now
+unrunnable as written — `make new` refuses it, which is the guard working on the
+document that caused the finding.
+
+It is **not edited here**. It is a historical audit record, and F41 already
+settled that a measurement is not corrected by rewriting what it said (see also
+`CLAUDE.md`: never renumber a finding). Superseding it is the orchestrator's
+call.
+
+### F82 — Nothing asserted where a stamped project goes, so F19 could not have been caught by the suite · `FIXED 2026-08-07` · **medium**
+
+Before A1, `verify.sh`'s `template` group stamped into `$TMPROOT` — under
+`$TMPDIR` — and asserted the stamp came up green. It never asserted anything
+about where a *real* `make new` would land. The one property that mattered had
+no check at any layer, which is why a filesystem sweep, and not a red suite, is
+what eventually found the missing product.
+
+The `sweep/` group is the layer that was absent: 29 cases, in CI as of this
+slice. Its `make new` cases **run the target** against a copier stub rather than
+grepping the recipe — the recipe-reading case that shipped first stayed green
+through four separate ways of walking around the guard, which is F65's lesson
+arriving one layer up.
 
 ## Ledger addition from the merge-gate slice (D1e)
 

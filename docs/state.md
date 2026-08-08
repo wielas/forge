@@ -130,11 +130,42 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 
 ## Known gaps — open, with the shape of the fix
 
-1. **Nothing sweeps merged worktrees.** `worktree` workspaces are preserved on
-   completion, so each finished chunk leaves a full checkout plus a `.venv`
-   behind, holding its branch — measured at **50 MB per chunk**, and
-   `gh pr merge --delete-branch` fails every time because the worktree still
-   holds the branch. Manual today (`docs/operator-guide.md`).
+1. ~~**Nothing sweeps merged worktrees.**~~ **Resolved 2026-08-06.**
+   `make worktree-sweep PROJECT=<abs-path> [APPLY=1]` reclaims them: dry-run by
+   default, path-bounded to `<project>/.worktrees/`, and it removes only a
+   worktree that is clean *and* whose head branch has a merged PR **on the
+   remote**. Merge state is not a local ancestry test, because a squash merge
+   leaves no local ancestry and a local test would sweep nothing. Branch
+   deletion is `git branch -d`, never `-D`; when `-d` refuses the worktree is
+   still reclaimed and the branch is reported `RETAINED`. A merged PR is not on
+   its own enough: its `headRefOid` must equal the worktree's HEAD, because "was
+   a PR with this branch NAME ever merged" is answered yes forever — including
+   for a branch that was merged, deleted, and rebuilt with new work.
+
+   The group is **29 cases** as of 2026-08-07
+   (`./scripts/verify.sh --list | grep -c '^sweep/'`), and CI runs it. Every new
+   case was mutation-tested — bug reintroduced, suite re-run, the named case
+   confirmed red, tree restored — and two of them were rewritten because of it,
+   having passed with their own defect back in place. *The harness is a scratch
+   script, not a checked-in artifact: this paragraph records what was done, and
+   is not something `make verify` can arbitrate.*
+
+   **The same slice closed F19.** `make new` now requires an absolute, durable
+   `DEST` — `/tmp`, `/private/tmp` and `$TMPDIR` are refused, with symlinks
+   **and `..`** resolved to a fixed point before judging, and the refusal names
+   a durable location instead of only saying no. The judgement is on the final
+   `<dest>/<name>`: `NAME` is one path component and goes through the same
+   guard, because validating `DEST` and then appending `NAME` to it is not
+   validating what gets stamped. The old `DEST ?= ..` default is gone; a
+   *relative* default is what put `forgeboard-report` in `/private/tmp`.
+
+   **What this does not reach.** The sweep is path-bounded on purpose, so it
+   only sees `<project>/.worktrees/`. This repo's own stale slice worktrees live
+   in `/Users/goonlab/dev/forge-slices/*` — a sibling directory, created by hand
+   rather than by the dispatcher — and the sweep reports them `REFUSE`. There
+   were **16** of them on 2026-08-07 (`git worktree list`), a number that moves
+   whenever a slice is opened or cleaned up; the count is not the point and no
+   check asserts it. They are still a manual job. See F80.
 2. ~~**`forge-lane` exceeds the skill body budget.**~~ **Resolved 2026-07-29**
    by splitting the budget rather than the skill. The seven ceremonies are
    43–89 lines against a 150 limit; `forge-lane` is 283 against a new 300. It
