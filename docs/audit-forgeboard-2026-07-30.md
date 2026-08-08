@@ -106,7 +106,7 @@ genuine run.*
 | F40 | `PARTLY FIXED 2026-08-06` | second symptom closed here — the F-number allocator below. First symptom (the slice-worktree rule written into `docs/operator-guide.md`) still owed |
 | F53 | `OPEN` | C1/C2 — move `size-budget` and `real-source` to plan time; both still `warn` at review time |
 | F57 | `OPEN` | D1 — report the *widening* rather than passing on it |
-| F79 | `PARTLY FIXED 2026-08-07` | new, below. Measured 2026-08-06 with no gate at all; the repo went public and ruleset `mainprotect` gained `required_status_checks` (`validate`, `verify`) on 2026-08-07, so a red PR is now blocked. Still open: nothing in `verify`/`preflight` asserts it, so it is the one Proven row `make verify` cannot arbitrate |
+| F79 | `FIXED 2026-08-08` | closed by the merge-gate slice (D1e): `scripts/merge-gate.sh` plus verify.sh's `gate` group. The check PR #25 shipped for it was itself unexecuted and wrong four ways — see **F110** |
 
 ### Blocked on ADR-0011 data — the run supplies it
 
@@ -3595,7 +3595,7 @@ classified reason line. Pinned by `blast/breach-names-what-moved`.
 commands three documents assert the answer to. Minted from D1a's reservation —
 see **F-number allocation** above.*
 
-### F79 — Branch protection does not exist on this repository, and three documents say it is the merge gate · `PARTLY FIXED 2026-08-07` · **high**
+### F79 — Branch protection does not exist on this repository, and three documents say it is the merge gate · `FIXED 2026-08-08` · **high**
 
 > **Follow-up, 2026-08-07 — the repository changed under this finding, and the
 > measurement below is preserved as the 2026-08-06 observation it was.**
@@ -3624,12 +3624,15 @@ see **F-number allocation** above.*
 > remaining branch after every merge across an ordered stack, and the gap this
 > finding names is *red PRs are mergeable*, which is now shut.
 >
-> **What stays open:** nothing in `make verify` or `make preflight` asserts any
-> of this, so the claim is still unexecuted prose. `CLAUDE.md` says `make verify`
-> arbitrates when two files disagree, and it cannot arbitrate this one. The
-> `preflight` check that distinguishes *protected with required checks* /
-> *protected without them* / **403, cannot be asked** is the remaining work, and
-> it is why the header reads `PARTLY FIXED` rather than `FIXED`.
+> **What stayed open, and is now closed (2026-08-08).** Nothing in `make verify`
+> or `make preflight` asserted any of this, so the claim was unexecuted prose and
+> `make verify` could not arbitrate it. PR #25 added a `preflight` check, but that
+> check was itself driven by nothing and shipped four defects — **F110**, below,
+> which is where the reproduction lives. It is now `scripts/merge-gate.sh`,
+> asserted by `verify.sh`'s `gate` group (16 cases) and called from `preflight`
+> section 10. The four outcomes it separates are *gated*, *the gate exists and
+> does not gate*, *no rule at all*, and **cannot be asked** — the last warns
+> rather than passing, per F5.
 
 **Measured, 2026-08-06, against `wielas/forge`:**
 
@@ -3814,3 +3817,100 @@ slice. Its `make new` cases **run the target** against a copier stub rather than
 grepping the recipe — the recipe-reading case that shipped first stayed green
 through four separate ways of walking around the guard, which is F65's lesson
 arriving one layer up.
+
+## Ledger addition from the merge-gate slice (D1e)
+
+*Found 2026-08-07 by an independent review of `main` after PR #25 merged, and
+reproduced end to end. Minted from Track D's reservation (F110–F119) — see
+**F-number allocation** above.*
+
+### F110 — The check that finally executed F79's claim was itself unexecuted, and shipped four defects · `FIXED 2026-08-08` · **high**
+
+F79's remaining half was "nothing in `make verify` or `make preflight` asserts
+any of this". PR #25 closed it with an inline block in `scripts/preflight.sh`,
+**driven by no case**. It went in green and it was wrong in four independent
+ways, two of which stopped the whole script.
+
+**1. It crashed under `set -u`, and the crash removed the report.**
+The block referenced `$FORGE_DIR` on its warn path; `FORGE_DIR` is not assigned
+until section 10, several hundred lines later. Reproduced:
+
+```
+$ bash -c 'set -uo pipefail; _slug=""; echo "…$FORGE_DIR"; echo NEXT'
+bash: FORGE_DIR: unbound variable          # and NEXT never printed
+```
+
+Because `preflight.sh` runs `set -uo pipefail`, this aborts **sections 4 through
+10 and the `## Summary` line itself**. The operator sees exit 1 with no summary —
+indistinguishable from a real FAIL, and the comment one line above the reference
+states the variable is unresolved there, so the message was written knowing it.
+
+**2. The documented piped invocation routed straight into that crash.**
+`ssh host 'bash -s' < preflight.sh` is supported (the script detects `PIPED` at
+line 70). The block used bare `${BASH_SOURCE[0]}` where lines 70, 644 and 772 all
+use `${BASH_SOURCE[0]:-…}`. Reproduced:
+
+```
+$ printf 'set -u\n_here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"\necho "[$_here]"\n' | bash -s
+bash: BASH_SOURCE[0]: unbound variable
+[/]
+```
+
+`_here=/`, so `git -C / remote get-url origin` fails, `_slug` is empty, and
+control lands on defect 1. This was the **third** hand-rolled copy of the
+repo-root resolution in one file, and the only one that dropped the guard.
+
+**3. It FAILED a correctly protected repository.**
+It asked `repos/{slug}/rulesets` and nothing else. GitHub has two independent
+mechanisms, and `templates/python-service/template/Makefile`'s own `protect`
+target — which the root `Makefile` tells every operator to run — issues
+`PUT /branches/main/protection`, creating **classic** protection and zero
+rulesets. Measured against the repo `docs/state.md` cites as the proof that
+branch protection works:
+
+```
+$ gh api repos/wielas/forgeboard-report/rulesets                    → []
+$ gh api repos/wielas/forgeboard-report/branches/main/protection
+  {"pr":true,"checks":["check"],"admins":true,"force":false}
+```
+
+`[]` is a non-empty string, so the "cannot read" warn was skipped; no rule types
+were collected; the check reported **`FAIL … has no active PR rule — nothing
+gates a direct push`** on a fully protected repo. `CLAUDE.md` mandates
+`make preflight` after every merge, so this would have gone red every time.
+
+**4. It reported "gated" for two configurations that do not gate.**
+The branches were `if required_status_checks … elif pull_request …`, so a hit on
+the first short-circuited before the second was ever evaluated: a ruleset
+requiring checks but **not** a PR — where a direct push to `main` bypasses every
+check — printed `PASS … main is gated: PR + required status checks`. And nothing
+read `conditions.ref_name`, so rule types were flattened across every active
+ruleset: a ruleset scoped to `release/*` gated `main`. The live ruleset carries
+`"include":["~DEFAULT_BRANCH"]`, so the condition field was present and ignored.
+The PASS branch also never inspected `parameters.required_status_checks[].context`
+while its own FAIL text, `docs/state.md` and `CLAUDE.md` all name `validate` and
+`verify` specifically — swapping them for a context that never runs still passed.
+
+**The common cause is ADR-0003, not four coding slips.** A decision entangled
+with a live API call and a live repository cannot be asserted, so it was not,
+and CI was green through all four. The fix extracts the decision into
+`scripts/merge-gate.sh` — one primitive, four exit codes, `owner/repo` in and one
+verdict line out — and `verify.sh`'s new **`gate` group runs the real script
+against a `gh` stub for sixteen cases**, including the two shapes the first
+version called gated. `preflight.sh` now asks the primitive from section 10,
+where `FORGE_DIR` is resolved and `--forge-dir` is honoured, and **warns rather
+than disappearing** when `gh` is absent — previously the check emitted no PASS,
+no FAIL and no WARN on such a host, which is the F5 violation its own comment
+invoked.
+
+**F79 is `FIXED` as of this slice** — the claim is now executed by
+`make verify SUITES=gate` and by `make preflight`, and `docs/state.md`'s caveat
+that "no check in this repo asserts this" is removed.
+
+Smaller, from the same review and fixed here: a remote this script could not
+parse was passed through verbatim, so `ssh://git@github.com/o/r` became a slug,
+every call 404'd, and the operator was told they had a **permissions** problem;
+`--forge-dir` was honoured everywhere in the file except this check; the rulesets
+list was fetched twice and unpaginated, and `enforcement` was filtered *after* a
+detail round trip per ruleset rather than off the list response that already
+carries it.
