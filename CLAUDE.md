@@ -55,7 +55,10 @@ relocates what a check reads can blind it without turning anything red.
   `verify` checks to be green. It requires **zero approving reviews**, which is
   deliberate for self-authored PRs — the gate is CI, not a second person.
   No pre-push hook is installed; the ruleset is the whole gate (audit **F79**).
-  **Nothing in `make verify` asserts any of this**, so confirm it rather than
-  trusting this paragraph: `gh api repos/wielas/forge/rulesets`.
+  `make verify SUITES=gate` asserts the *logic* of this against a stubbed `gh`,
+  and `make preflight` asks GitHub itself through `scripts/merge-gate.sh` — treat
+  a preflight FAIL here as authoritative. Neither can prove what the live ruleset
+  says today, so confirm that part rather than trusting this paragraph:
+  `gh api repos/wielas/forge/rulesets`.
 - Findings carry stable `F<n>` identifiers across the audit docs. Reuse the existing
   number when revisiting one; do not renumber.
