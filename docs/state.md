@@ -52,7 +52,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | A card parked on a non-existent profile is detectable | `make preflight` walks every board and WARNs; caught `forge-operator` on `forge-ladder`, the shape the first two tier-2 attempts produced |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
-| Branch protection is a real merge gate | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **And now on this repository too** — ruleset `mainprotect`, active 2026-08-07, requires a PR plus green `validate` and `verify`; a red PR reports `mergeStateStatus: BLOCKED`. Zero approvals required, deliberately. **Caveat: no check in this repo asserts this**, so it is the one Proven row `make verify` cannot arbitrate (F79) |
+| Branch protection is a real merge gate | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **And now on this repository too** — ruleset `mainprotect`, active 2026-08-07, requires a PR plus green `validate` and `verify`; a red PR reports `mergeStateStatus: BLOCKED`. Zero approvals required, deliberately. Asserted by `make verify SUITES=gate` (16 cases, `gh` stubbed) and reported by `make preflight` section 10, through `scripts/merge-gate.sh` (F79, F110) |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
 **The driver model moved on 2026-08-07, and that makes one Proven row
@@ -221,14 +221,22 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    `verify` checks to pass. A red PR reports `mergeStateStatus: BLOCKED`.
 
    **And the claim is executed now, which is the half that mattered.**
-   `make preflight` section 3 asks the repository directly and separates four
-   outcomes: *gated* (a PR rule plus required status checks) PASSes; *a PR rule
-   with no required checks* FAILs, because that is the state this repo was
-   actually in for several hours and it is the most dangerous of the three —
-   the gate exists and does not gate; *no PR rule at all* FAILs; and *cannot be
-   read* (403, no access) **WARNs rather than passing**, because a control that
-   could not run has not passed (F65/F66). All four branches were exercised, not
-   only the one that happens to be true today.
+   `scripts/merge-gate.sh` asks the repository directly — both mechanisms, since
+   `make protect` creates *classic* protection and no rulesets — and separates
+   four outcomes: *gated* (a PR rule **and** required status checks, naming
+   `validate` and `verify`) exits 0; *the gate exists and does not gate* exits 3,
+   which covers both a PR rule with no required checks **and** required checks
+   with no PR rule, since either alone lets a change onto `main` unchecked; *no
+   applicable rule* exits 4; and *cannot be asked* (403, no `gh`, no access)
+   exits 2 and **WARNs rather than passing**, because a control that could not
+   run has not passed (F65/F66).
+
+   `make preflight` section 10 reports that verdict, and `verify.sh`'s `gate`
+   group drives the primitive against a `gh` stub for **16 cases**, including the
+   two shapes the first version of this check called gated. An earlier draft of
+   this paragraph claimed all four branches were exercised while nothing
+   exercised any of them; that check shipped broken in four ways and CI stayed
+   green throughout (**F110**).
 
    Two smaller facts worth keeping: `required_approving_review_count` is **0** on
    purpose — every PR here is self-authored, so the gate is CI rather than a
