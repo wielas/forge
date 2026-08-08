@@ -3762,7 +3762,7 @@ model's word for a decidable property" took its own word for one.
    and opt-in rather than a source of flake in the suite that arbitrates
    disagreements.
 
-## Ledger addition from the merge-gate slice (D1b)
+## Ledger addition from the merge-gate slice (D1e)
 
 *Found 2026-08-07 by an independent review of `main` after PR #25 merged, and
 reproduced end to end. Minted from Track D's reservation (F110–F119) — see
