@@ -57,11 +57,11 @@ while [ $# -gt 0 ]; do
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) sed -n '2,30p' "$0"; exit 0;;
-    cli|config|substrate|template|lane|metrics|metadata|prejudge|sweep) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|metrics|metadata|prejudge|sweep|gate) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics metadata prejudge sweep"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics metadata prejudge sweep gate"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -3356,6 +3356,221 @@ GITSTUB
   rm -rf "$lab" "$mk"
 }
 wants sweep     && run_sweep_group
+
+# ---------------------------------------------------------------------------
+# gate/ — the merge gate, asked as a program.
+#
+# F79's first executable check was written inline in preflight.sh and driven by
+# nothing. It shipped with two crashes and two false verdicts, and CI stayed
+# green throughout, because no case could reach it: the decision was tangled up
+# with a live API call and a live repo. Extracting it into merge-gate.sh is what
+# makes it assertable (ADR-0003), and this group is the assertion.
+#
+# Every case runs the real script against a `gh` stub. None of them greps it.
+# Two of them — checks-without-a-pr-rule and other-branch-ruleset — are the
+# shapes the first version reported as GATED, so they are the regression cases
+# that must stay red if this ever collapses back to "any rule anywhere".
+# ---------------------------------------------------------------------------
+run_gate_group() {
+  group "gate"
+
+  local lab="$TMPROOT/gate"
+  mkdir -p "$lab/bin" "$lab/fix" 2>/dev/null
+
+  # The stub answers the four endpoints merge-gate.sh uses, out of files the
+  # cases write. A missing file is a FAILED call, which is how 403 and 404 are
+  # expressed; `$FIX/protection.403` distinguishes "not answered" from "no".
+  cat > "$lab/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+last=""; for a in "$@"; do last="$a"; done
+case "$last" in
+  */rulesets)
+    [ -f "$FIX/rulesets.403" ] && { echo "HTTP 403: Resource not accessible" >&2; exit 1; }
+    cat "$FIX/rulesets.json" 2>/dev/null || echo '[]' ;;
+  */rulesets/*)
+    id="${last##*/}"
+    cat "$FIX/ruleset-$id.json" 2>/dev/null || exit 1 ;;
+  */protection)
+    [ -f "$FIX/protection.403" ] && { echo "HTTP 403: Must have admin rights to Repository." >&2; exit 1; }
+    [ -f "$FIX/protection.json" ] || { echo "HTTP 404: Branch not protected" >&2; exit 1; }
+    cat "$FIX/protection.json" ;;
+  repos/*)
+    [ -f "$FIX/norepo" ] && { echo "HTTP 404" >&2; exit 1; }
+    echo '{"default_branch":"main"}' ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$lab/bin/gh" 2>/dev/null
+
+  if [ ! -x "$lab/bin/gh" ]; then
+    bad "fixture-builds" "could not construct the gh stub under $lab"
+    return
+  fi
+
+  # A fixture that cannot be built is a FAILURE, not a skip: a group that
+  # silently collapses to one skip is how a whole thesis goes unchecked (F5).
+  local script="$REPO_ROOT/scripts/merge-gate.sh"
+  if [ ! -x "$script" ]; then
+    bad "merge-gate-is-executable" "scripts/merge-gate.sh is missing or not executable"
+    return
+  fi
+
+  # $1=case name  $2=expected rc  $3=grep -E pattern the stdout verdict must match
+  # (empty to skip the pattern)  $4..=extra args to merge-gate.sh
+  _gate_run() {
+    local name="$1" want_rc="$2" pat="$3"; shift 3
+    local out rc
+    out="$(PATH="$lab/bin:$PATH" FIX="$lab/fix" "$script" owner/repo "$@" 2>/dev/null)"
+    rc=$?
+    if [ "$rc" != "$want_rc" ]; then
+      bad "$name" "expected exit $want_rc, got $rc (stdout: ${out:-<empty>})"
+      return
+    fi
+    if [ -n "$pat" ] && ! printf '%s\n' "$out" | grep -Eq "$pat"; then
+      bad "$name" "exit $rc was right but the verdict line was '${out:-<empty>}', expected /$pat/"
+      return
+    fi
+    ok "$name"
+  }
+
+  _fix_reset() { rm -f "$lab/fix"/* 2>/dev/null; }
+
+  local RS_PR_CHECKS='[{"id":1,"enforcement":"active"}]'
+  local RULE_PR_CHECKS='{"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"pull_request"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"validate"},{"context":"verify"}]}}]}'
+
+  # --- the shape `make protect` creates, and the one the first version FAILed --
+  # templates/python-service/template/Makefile issues PUT /branches/main/protection
+  # and creates ZERO rulesets. wielas/forgeboard-report — the repo docs/state.md
+  # cites as the proof branch protection works — is exactly this, and the
+  # rulesets-only check reported "nothing gates a direct push" for it.
+  _fix_reset
+  printf '[]' > "$lab/fix/rulesets.json"
+  printf '{"required_pull_request_reviews":{"required_approving_review_count":0},"required_status_checks":{"contexts":["validate","verify"]}}' \
+    > "$lab/fix/protection.json"
+  _gate_run "classic-protection-is-a-gate" 0 'GATED.*via=classic.*pr=yes' --require validate,verify
+
+  # --- rulesets, the modern mechanism ---------------------------------------
+  _fix_reset
+  printf '%s' "$RS_PR_CHECKS"  > "$lab/fix/rulesets.json"
+  printf '%s' "$RULE_PR_CHECKS" > "$lab/fix/ruleset-1.json"
+  _gate_run "rulesets-are-a-gate" 0 'GATED.*via=rulesets.*checks=validate,verify' --require validate,verify
+
+  # --- REGRESSION: required checks alone are not a gate ----------------------
+  # The first version tested required_status_checks FIRST and short-circuited,
+  # so this exact shape printed "main is gated: PR + required status checks"
+  # while a direct push to main bypassed every check.
+  _fix_reset
+  printf '%s' "$RS_PR_CHECKS" > "$lab/fix/rulesets.json"
+  printf '{"conditions":{"ref_name":{"include":["~ALL"],"exclude":[]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"validate"},{"context":"verify"}]}}]}' \
+    > "$lab/fix/ruleset-1.json"
+  _gate_run "checks-without-a-pr-rule-is-not-a-gate" 3 'PARTIAL.*pr=no' --require validate,verify
+
+  # --- a PR with nothing required is the state this repo was actually in -----
+  _fix_reset
+  printf '%s' "$RS_PR_CHECKS" > "$lab/fix/rulesets.json"
+  printf '{"conditions":{"ref_name":{"include":["~ALL"],"exclude":[]}},"rules":[{"type":"pull_request"}]}' \
+    > "$lab/fix/ruleset-1.json"
+  _gate_run "a-pr-requiring-no-checks-is-not-a-gate" 3 'PARTIAL.*checks=none'
+
+  # --- REGRESSION: a rule for another branch says nothing about main ---------
+  # Nothing in the first version read conditions.ref_name, so rules were
+  # flattened across every active ruleset and a release/* ruleset gated main.
+  _fix_reset
+  printf '%s' "$RS_PR_CHECKS" > "$lab/fix/rulesets.json"
+  printf '{"conditions":{"ref_name":{"include":["refs/heads/release/*"],"exclude":[]}},"rules":[{"type":"pull_request"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"validate"}]}}]}' \
+    > "$lab/fix/ruleset-1.json"
+  _gate_run "a-ruleset-for-another-branch-does-not-gate-main" 4 'NONE'
+
+  # --- exclude beats include ------------------------------------------------
+  _fix_reset
+  printf '%s' "$RS_PR_CHECKS" > "$lab/fix/rulesets.json"
+  printf '{"conditions":{"ref_name":{"include":["~ALL"],"exclude":["refs/heads/main"]}},"rules":[{"type":"pull_request"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"validate"}]}}]}' \
+    > "$lab/fix/ruleset-1.json"
+  _gate_run "an-excluded-branch-is-not-gated" 4 'NONE'
+
+  # --- an inactive ruleset is not a gate ------------------------------------
+  _fix_reset
+  printf '[{"id":1,"enforcement":"disabled"}]' > "$lab/fix/rulesets.json"
+  printf '%s' "$RULE_PR_CHECKS" > "$lab/fix/ruleset-1.json"
+  _gate_run "an-inactive-ruleset-is-not-a-gate" 4 'NONE'
+
+  # --- the contexts are checked BY NAME -------------------------------------
+  # The first version printed "PR + required status checks" without inspecting
+  # which, so swapping validate/verify for a context that never runs still
+  # passed — while docs/state.md and CLAUDE.md both name the two specifically.
+  _fix_reset
+  printf '%s' "$RS_PR_CHECKS" > "$lab/fix/rulesets.json"
+  printf '{"conditions":{"ref_name":{"include":["~ALL"],"exclude":[]}},"rules":[{"type":"pull_request"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"lint"}]}}]}' \
+    > "$lab/fix/ruleset-1.json"
+  _gate_run "required-contexts-are-checked-by-name" 3 'missing=validate,verify' --require validate,verify
+
+  # --- nothing anywhere ------------------------------------------------------
+  _fix_reset
+  printf '[]' > "$lab/fix/rulesets.json"
+  _gate_run "no-rule-from-either-mechanism-is-exit-4" 4 'NONE.*via=none'
+
+  # --- F5: a control that could not run has NOT passed ----------------------
+  # Both of these used to be indistinguishable from "ungated", which would have
+  # turned preflight red on every private free-plan repo — F79's own condition.
+  _fix_reset
+  : > "$lab/fix/rulesets.403"
+  _gate_run "unreadable-rulesets-is-exit-2-not-exit-4" 2 ""
+
+  _fix_reset
+  printf '[]' > "$lab/fix/rulesets.json"
+  : > "$lab/fix/protection.403"
+  _gate_run "unreadable-classic-protection-is-exit-2" 2 ""
+
+  # A repo that cannot be read at all is also 2, not 4.
+  _fix_reset
+  : > "$lab/fix/norepo"
+  _gate_run "an-unreadable-repo-is-exit-2" 2 ""
+
+  # --- a malformed slug is a naming bug, not a permissions problem -----------
+  # `ssh://git@github.com/o/r` used to be passed through verbatim; every call
+  # 404'd and the operator was told they had no access.
+  local out rc
+  out="$(PATH="$lab/bin:$PATH" FIX="$lab/fix" "$script" 'ssh://git@github.com/o/r' 2>&1 >/dev/null)"
+  rc=$?
+  if printf '%s' "$out" | grep -q 'not an owner/repo slug'; then
+    ok "a-malformed-slug-is-named-not-misreported"
+  else
+    bad "a-malformed-slug-is-named-not-misreported" \
+        "expected a slug-shape refusal, got: ${out:-<empty>}"
+  fi
+
+  # --- one implementation ----------------------------------------------------
+  # preflight must ASK the primitive, not re-derive the answer. A second copy is
+  # how the metrics/verify pair drifted for weeks (F67), and this check exists
+  # because that exact drift is the reason merge-gate.sh was extracted.
+  if grep -q 'merge-gate\.sh' scripts/preflight.sh \
+     && ! grep -q '/rulesets' scripts/preflight.sh; then
+    ok "preflight-has-no-second-implementation"
+  else
+    bad "preflight-has-no-second-implementation" \
+        "preflight.sh must route the gate question through scripts/merge-gate.sh and must not call the rulesets API itself"
+  fi
+
+  # --- the check cannot vanish when gh is absent -----------------------------
+  # The first version was nested inside `if command -v gh`, so on a host without
+  # gh it emitted no PASS, no FAIL and no WARN — it simply did not appear, which
+  # is the "could not run has NOT passed" violation its own comment invoked.
+  if grep -q 'gh is not on PATH — cannot ask whether main is gated' scripts/preflight.sh; then
+    ok "a-missing-gh-warns-rather-than-vanishing"
+  else
+    bad "a-missing-gh-warns-rather-than-vanishing" \
+        "preflight must WARN when gh is absent; a check that emits nothing has not passed (F5)"
+  fi
+
+  # --- help is anchored to content, not to line numbers ---------------------
+  if PATH="$lab/bin:$PATH" "$script" --help 2>/dev/null | grep -q 'Exit codes'; then
+    ok "help-is-anchored-to-the-header-rules"
+  else
+    bad "help-is-anchored-to-the-header-rules" \
+        "--help must print the header block; a sed line range goes blind the first time a paragraph moves"
+  fi
+}
+wants gate      && run_gate_group
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1
