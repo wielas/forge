@@ -1,9 +1,29 @@
 # Forge — current state
 
-**Updated 2026-08-06, after the audit repair slices through the lane boundary
-and completed-run metadata producer contract. The 2026-07-28 ladder and fault
-exercises remain the live baseline; later sections distinguish repaired code
-from behavior that has been re-proven on a genuine lifecycle.**
+**Updated 2026-08-08, after the first-run repair effort landed: PRs #30, #26,
+#27 and #28, in that order.** Earlier dated measurements below are kept as the
+observations they were; the current ones are here:
+
+```
+main                96b5f12
+make validate       OK
+make verify         231 passed / 0 failed / 3 skipped     (main checkout)
+make preflight      PASS 85 / WARN 3 / FAIL 0             (the mini)
+```
+
+Those 3 skips and 3 WARNs are the documented healthy baseline — do not chase
+them to zero. The PASS count rises whenever a check is added, so a *drop* is the
+signal, not the absolute number. What those four PRs added: `scripts/new-dest.sh`
+and `scripts/worktree-sweep.sh` (F18, F19) · `scripts/board-snapshot.sh`, the one
+WAL-safe board read (F47, F67) · `scripts/roadmap-check.sh` and ADR-0012, sizing
+at plan time, advisory (F11, F53, F55) · `scripts/merge-gate.sh` (F79, F110).
+`verify.sh` gained the `sweep`, `roadmap` and `gate` groups; CI runs all three.
+
+*Prior header, still true of the sections below it:* updated 2026-08-06, after
+the audit repair slices through the lane boundary and completed-run metadata
+producer contract. The 2026-07-28 ladder and fault exercises remain the live
+baseline; later sections distinguish repaired code from behavior that has been
+re-proven on a genuine lifecycle.
 
 This is the orientation doc for a session starting with no context. It says what
 is *proven*, what is merely *claimed*, and what to do next. `README.md` is the

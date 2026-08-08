@@ -185,6 +185,39 @@ defaulted to `..`, a *relative* path, so the project landed next to whatever
 directory the operator happened to be standing in. Symlinks are resolved before
 the check, so `/tmp` and `/private/tmp` are the same refusal.
 
+## Landing a stack of PRs
+
+Slices stack: #B is based on #A's branch, #C on #B's. Two things about that are
+easy to get wrong, and both cost time on 2026-08-08.
+
+**Retarget the child BEFORE you delete the parent's branch.** GitHub is
+documented to auto-retarget a PR when its base branch is deleted. When the base
+branch is deleted *separately* from the merge — `git push origin --delete`, or
+`gh pr merge --delete-branch` after its local step already failed — the child PR
+is **CLOSED** instead, and it cannot be reopened while its base ref is missing:
+
+```
+$ gh pr reopen 27
+GraphQL: Could not open the pull request. (reopenPullRequest)
+$ gh pr edit 27 --base main
+GraphQL: Cannot change the base branch of a closed pull request.
+```
+
+The recovery is to push the merged commit back under the old branch name, reopen,
+retarget, and delete again — four remote round trips to undo one. Do this instead:
+
+```bash
+gh pr merge <parent> --merge          # no --delete-branch
+gh pr edit <child> --base main        # retarget FIRST
+git push origin --delete <parent-branch>
+```
+
+**Merge forward, never rebase.** Bring `main` into the bottom of the stack and
+each branch into the next. Every conflict this produces is append-at-the-same-
+offset — a suite name, a `bash -n` entry, a CI suite list, a ledger section
+appended against an empty base — and the resolution is always to keep **both**
+sides. Resolving one by choosing a side silently drops a slice's work.
+
 ## Learning to judge — the skill that makes this work
 
 The judge rubric is your curriculum. Six dimensions, but only three catch what CI
