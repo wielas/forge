@@ -311,8 +311,18 @@ away.
 - **Serves:** F11, F12, F28, F53 · **ADRs:** 0003, 0008, new ADR-0012 · **Risk:** medium
 - **Goal:** reject an oversized or internally inconsistent plan before a board
   exists and before any model is spawned.
-- **Touches:** new validator, `Makefile`, `skills/roadmap/SKILL.md`, `verify.sh`,
-  ADR-0012
+- **Touches:** `scripts/roadmap-check.sh`, `scripts/touches-exempt.sh`,
+  `scripts/prejudge.sh`, `Makefile`, `skills/roadmap/SKILL.md`,
+  `scripts/verify.sh`, `.github/workflows/verify.yml`,
+  `docs/adr/0012-sizing-at-plan-time.md`, `docs/audit-forgeboard-2026-07-30.md`,
+  plus `scripts/fixtures/roadmap/*`
+  <br>*Corrected 2026-08-07, after the fact. "new validator" hid two scripts: the
+  F55 exemption had to be **extracted** from `prejudge.sh` so that plan time and
+  review time share one definition, which means C1 edits the review-time gate as
+  well. Nine declared paths against a cap of six — this chunk is over its own
+  budget, and `make roadmap-check` says so when pointed at this plan. Recorded
+  rather than reworded: F55/F57 landing on the slice that exists to catch F55/F57
+  is the finding, not an embarrassment to tidy away.*
 - **Scenarios:**
   - Given `graph.json` and `docs/chunks/*.md`, Then the id sets are bijective and
     the graph is acyclic.

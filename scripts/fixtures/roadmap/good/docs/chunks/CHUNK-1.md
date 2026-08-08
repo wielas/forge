@@ -1,0 +1,18 @@
+### CHUNK-1: Read a board snapshot and emit one canonical run record
+- **Goal:** Read a snapshot of a Hermes board and emit one immutable `digest.run.v1` record per completed run.
+- **Milestone:** M1  ·  **Depends on:** none
+- **Serves:** `FR-1`, `FR-2`, `FR-3`  ·  **Relevant ADRs:** `0003`, `0006`
+- **Touches:** `src/digest/snapshot.py`, `src/digest/record.py`, `tests/features/read_board.feature`, `tests/steps/test_read_board_steps.py`, `tests/test_record.py`, `tests/fixtures/board.sql`, `docs/decision-log.md`, `docs/ROADMAP.md`
+- **Contract decisions:**
+  - The board is opened from a `cp` snapshot, never `mode=ro`: a read-only open of a WAL board fails when the board is idle, not busy.
+  - One record per completed run, assembled once and immutable thereafter. Callers project it; they never recompute from the board.
+  - A run with no terminal event is unavailable, not zero.
+- **Scenarios:**
+  - Given a board snapshot with one completed run, when the reader runs, then exactly one record is emitted.
+  - Given a board snapshot with no completed runs, when the reader runs, then no record is emitted and the exit status is zero.
+  - Given a run whose terminal event is missing, when the reader runs, then the record marks that run unavailable rather than zero.
+  - Given an idle board with no WAL sidecars, when the reader opens its snapshot, then the read succeeds.
+  - Given the same snapshot read twice, when the records are compared, then the two byte sequences are identical.
+- **Out of scope:** rendering, publication, the CLI surface, and any write to the board.
+- **Done when:** `make check` green + all five scenarios pass + docs updated
+- **Lane:** forge-codex-lane  ·  **Risk:** med
