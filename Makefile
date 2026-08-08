@@ -52,6 +52,6 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	done
 	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
 	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh \
-	  scripts/lane-setup.sh scripts/lane-blast-radius.sh
+	  scripts/lane-setup.sh scripts/lane-blast-radius.sh scripts/merge-gate.sh
 	@python3 -c 'import ast; [ast.parse(open(f).read()) for f in ["scripts/prejudge-steps.py", "scripts/validate-metadata.py"]]'
 	@echo "forge validate: OK"
