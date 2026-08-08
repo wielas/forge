@@ -189,7 +189,7 @@ is that every track owns a disjoint block and nobody mints outside their own.
 | F1–F78 | this audit and the S1–S5 slices. **Spent.** |
 | F79 | slice D1a (ledger reconciliation). **Spent.** |
 | F80–F89 | Track A — the artifact survives. **F80, F81, F82 spent** (A1, 2026-08-07) |
-| F90–F99 | Track B — the instrument |
+| F90–F99 | Track B — the instrument. **F90, F91, F92, F93 spent** (B1, 2026-08-07) |
 | F100–F109 | Track C — planning-time gates |
 | F110–F119 | Track D — hygiene and the spike |
 | F120–F129 | Track E — the staged launch |
@@ -3817,6 +3817,107 @@ slice. Its `make new` cases **run the target** against a copier stub rather than
 grepping the recipe — the recipe-reading case that shipped first stayed green
 through four separate ways of walking around the guard, which is F65's lesson
 arriving one layer up.
+
+---
+
+## Ledger additions from the WAL snapshot slice (B1)
+
+*Minted from Track B's block F90–F99. As with A1, the defects B1's own review
+found in B1 are not here: they were on an unmerged branch and the system never
+carried them.*
+
+### F90 — `sqlite3` reports the same open failure on a different stream, with a different exit code, depending on invocation form · `FIXED 2026-08-07` · **medium**
+
+F47's second half is recorded as "`sqlite3` writes `Error: unable to open
+database file` to stdout". Measured on sqlite3 3.51.0, that is true of exactly
+one form:
+
+| form | stream | exit |
+|---|---|---|
+| `sqlite3 "file:db?mode=ro" "SELECT 1;"` | **stderr** | 14 |
+| `sqlite3 "file:db?mode=ro" < query.sql` | **stdout** | 1 |
+
+`metrics.sh` uses the second form — it assembles its query into a file because
+macOS bash 3.2 mishandles a heredoc nested inside `$(…)`. So the stdout leak
+that made F47 silent was a consequence of a workaround for an unrelated bash
+bug, and it is **invisible to anyone who checks the claim using the query
+form**: a reader testing F47 the obvious way concludes the defect does not
+exist. The exit code is no better a discriminator — 1 versus 14 for one
+underlying failure — so a caller keying on 14 misses the form that broke.
+
+`scripts/board-snapshot.sh` is stream-agnostic by construction: it redirects
+both streams on its probe and keys on the exit code alone, and its own stdout is
+structurally unreachable (fd 1 is pointed at stderr for the whole body, the real
+stdout held on fd 3), so only the final path can ever appear there.
+
+### F91 — Line-pinned `--help` extractors print the wrong text, and the help cases assert only the exit code · `PARTLY FIXED 2026-08-07` · **medium**
+
+Four extractors used `sed -n '<n>,<m>p' "$0"`, each pinned to a header that had
+since moved:
+
+- `metrics.sh --help` stopped **one line before `# Usage:`** — it printed the
+  F27/F47 rationale and none of the flags.
+- `metrics.sh` with no board printed nine lines of F47 prose containing **no
+  usage line at all**, then exited 2.
+- `verify.sh --help` truncated the group list mid-entry: `metadata/` and
+  `prejudge/` were never shown, though both are accepted arguments.
+- `preflight.sh --help` over-ran into `WHY EACH CHECK EXISTS:` and stopped
+  mid-section.
+
+Every one stayed green, because the help cases asserted exit 0 and nothing else.
+This is `CLAUDE.md`'s own warning arriving from inside: *a check anchored to
+content that moved degrades rather than failing loudly.*
+
+**Fixed:** `metrics.sh` (B1), `scripts/board-snapshot.sh` (B1, which shipped the
+same defect in a brand-new file and had it caught in review), and
+`scripts/worktree-sweep.sh` (A1, where `sed -n '2,33p'` cut off the `Exit:`
+contract). Each is executed by a case: `metrics/help-names-its-usage`,
+`metrics/snapshot/help-names-its-exit-contract`,
+`sweep/sweep-help-names-its-exit-contract`.
+
+**Still open: `scripts/verify.sh:59` and `scripts/preflight.sh:33`**, both still
+line-pinned and both asserted by nothing. Deliberately left: they are shared with
+the sibling slices in flight, and the remedy is one line each —
+
+```sh
+help_text() { awk 'NR==1{next} /^# ={10,}/{if (seen) exit; seen=1; next} seen {sub(/^#[ ]?/,""); print}' "$0"; }
+```
+
+### F92 — `metrics/is-read-only` hashes the database, so it cannot see a reader that writes sidecars beside a live board · `PARTLY FIXED 2026-08-07` · **medium**
+
+A snapshot mutated to open its source read-write left `kanban.db`
+**byte-identical** — `224b7b0d…` before and after — while creating a `-wal` and
+a 32 KB `-shm` next to it. `metrics/is-read-only` hashes only `kanban.db`, so it
+passes on that mutation. The new `metrics/snapshot/source-is-byte-identical`
+catches it, because it records sidecar **membership** — `absent` is a value —
+alongside bytes.
+
+**Fixed:** the new case. **Still open:** `metrics/is-read-only` itself, which
+should hash the sidecar set rather than the file.
+
+**Correction to this finding's first draft, measured 2026-08-07.** It was
+written up as *"running the mutation put a `-wal` and `-shm` beside
+`~/.hermes/kanban/boards/digest/kanban.db`, because
+`live-schema-has-fixture-columns` is the one default-suite case that touches
+live data"*. Re-measured, that does not reproduce: those sidecars exist and did
+**not** change across a full `./scripts/verify.sh metrics` run, and the live
+`hermes gateway run --replace` process holding the board open accounts for them.
+The default suite reaches a live board only through `cp`. The general argument
+survives and is the reason to keep it that way — *a default-suite case pointed
+at production is one bug away from a write* — but the incident is not evidence
+for it, and is recorded here as retracted rather than deleted.
+
+### F93 — The suite's only live-board case changes what it proves depending on which board sorts first · `OPEN` · **low**
+
+`live-schema-has-fixture-columns` picks its subject with
+`ls -1 …/boards/*/kanban.db | head -1`. On this host that is `digest` — 14
+tasks, never written by a forge lane. The case reports `ok (digest)` and reads
+as *"a live board still has the columns `metrics.sh` needs"*, while proving that
+about whichever board happens to sort first: possibly a legacy board whose
+schema is frozen at whatever Hermes version created it, and therefore the board
+*least* able to reveal drift. Creating a board named `aaa-scratch` silently
+repoints the only live check in the suite. Naming the subject in the `ok` line
+at least discloses which board was asked.
 
 ## Ledger addition from the merge-gate slice (D1e)
 
