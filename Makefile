@@ -100,6 +100,6 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh \
 	  scripts/lane-setup.sh scripts/lane-blast-radius.sh \
 	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh \
-	  scripts/roadmap-check.sh scripts/touches-exempt.sh
+	  scripts/roadmap-check.sh scripts/touches-exempt.sh scripts/merge-gate.sh
 	@python3 -c 'import ast; [ast.parse(open(f).read()) for f in ["scripts/prejudge-steps.py", "scripts/validate-metadata.py"]]'
 	@echo "forge validate: OK"
