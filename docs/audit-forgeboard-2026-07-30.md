@@ -107,6 +107,7 @@ genuine run.*
 | F53 | `OPEN` | C1/C2 — move `size-budget` and `real-source` to plan time; both still `warn` at review time |
 | F57 | `OPEN` | D1 — report the *widening* rather than passing on it |
 | F79 | `FIXED 2026-08-08` | closed by the merge-gate slice (D1e): `scripts/merge-gate.sh` plus verify.sh's `gate` group. The check PR #25 shipped for it was itself unexecuted and wrong four ways — see **F110** |
+| F110 | `FIXED 2026-08-08` | D1e. `scripts/merge-gate.sh` + verify.sh's `gate` group (16 cases, `gh` stubbed). The check written to close F79 was itself driven by nothing: two crashes under `set -u`, a FAIL on classic branch protection, and two false `gated` verdicts. ADR-0003 one layer up |
 
 ### Blocked on ADR-0011 data — the run supplies it
 
@@ -191,7 +192,7 @@ is that every track owns a disjoint block and nobody mints outside their own.
 | F80–F89 | Track A — the artifact survives. **F80, F81, F82 spent** (A1, 2026-08-07) |
 | F90–F99 | Track B — the instrument. **F90, F91, F92, F93 spent** (B1, 2026-08-07) |
 | F100–F109 | Track C — planning-time gates. **F100, F101, F102, F103 spent** (C1, 2026-08-07) |
-| F110–F119 | Track D — hygiene and the spike |
+| F110–F119 | Track D — hygiene and the spike. **F110 spent** (D1e, 2026-08-08) |
 | F120–F129 | Track E — the staged launch |
 | F130+ | the run itself, and anything found while reading it |
 
