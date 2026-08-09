@@ -28,3 +28,8 @@ after the human explicitly authorizes export to GitHub, run
 `chunk/1-enforce-methodology-references-runtime-pins` and body
 `.forge/chunk-2-pr-body.md`, then emit `.forge/chunk-2-metadata.json` with the
 resulting PR URL.
+
+2026-08-09 CHUNK-2: The preceding HANDOFF is resolved. Human approval exported
+the branch and opened stacked PR #34 against the CHUNK-1 branch; GitHub reports
+the intended seven-file diff as mergeable. Retarget to `main` after PR #33
+merges, then run the normal judge and human merge gate.
