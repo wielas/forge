@@ -434,6 +434,8 @@ run_cli_group() {
     || skill_policy=0
   grep -Fq 'config get skills.write_approval' hermes/profiles-bootstrap.sh \
     || skill_policy=0
+  grep -Fq '[ "$got" = "true" ]' hermes/profiles-bootstrap.sh \
+    || skill_policy=0
   grep -Fq '# ADR-0013:' hermes/profiles-bootstrap.sh || skill_policy=0
   [ -f "$policy_adr" ] || skill_policy=0
   if [ -f "$policy_adr" ]; then
