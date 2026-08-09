@@ -2523,12 +2523,13 @@ wants metadata  && run_metadata_group
 #     number,state,title,body,headRefName,headRefOid,baseRefName,baseRefOid,\
 #     mergedAt,url,additions,deletions,changedFiles,statusCheckRollup | jq -S .
 #   git diff --numstat <baseRefOid> <headRefOid>        > numstat.tsv
-#   git archive <headRefOid> docs/chunks tests/features | tar -x -C tree/
+  #   git archive <headRefOid> docs/chunks tests/features | tar -x -C tree/
+  #   git show <baseRefOid>:docs/chunks/<CHUNK>.md         > base-tree/docs/chunks/<CHUNK>.md
 #
 # The recorded `tree/` carries the contract and the feature file and NOT the
 # 3,500-line test suite, so `then-asserts` skips on these fixtures. That check
 # is covered exactly, and separately, by the walker fixture above — the point of
-# these two is the four checks that were covered by nothing.
+  # these two is the GitHub/tree-facing set that was covered by nothing.
 # ---------------------------------------------------------------------------
 run_prejudge_group() {
   group prejudge
