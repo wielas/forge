@@ -17,5 +17,6 @@ CHUNK-2 therefore started as a stacked branch from its tip to preserve the
 declared dependency; rebase or retarget it onto `main` after PR #33 merges.
 
 2026-08-09 CHUNK-2: `docs/ROADMAP.md`, `docs/chunks/`, and the readiness source
-are local untracked planning inputs, so the interactive ROADMAP tick was not
-written into them or swept into the implementation commits.
+are local untracked planning inputs. Closing reconciliation marked CHUNK-2 done
+in the local roadmap, but the planning bundle remains untracked and was not
+swept into the implementation commits.
