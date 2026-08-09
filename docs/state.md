@@ -5,7 +5,7 @@
 observations they were; the current ones are here:
 
 ```
-main                96b5f12
+main                fc006eb
 make validate       OK
 make verify         231 passed / 0 failed / 3 skipped     (main checkout)
 make preflight      PASS 85 / WARN 3 / FAIL 0             (the mini)
