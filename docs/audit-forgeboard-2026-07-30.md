@@ -2115,7 +2115,7 @@ because review has a free cached engine.
 Measured 2026-07-30 during slice S1. The implementing session ran in
 `/Users/goonlab/dev/forge` — the main checkout — on branch
 `slice/metrics-command`. It committed `docs/audit-forgeboard-2026-07-30.md`
-unchanged as `1f79839`, per its contract. The orchestrator then appended §M
+unchanged as `bb7f964`, per its contract. The orchestrator then appended §M
 (F37–F39) to the same file on disk, producing a 251-line uncommitted delta
 inside the implementer's working tree. The next `git add -A` would have swept an
 unrelated audit revision into a metrics commit under a metrics commit message.
@@ -2691,7 +2691,7 @@ line-anchored regex:
 \.tokens_estimate *= *\(\$u\.input_tokens \+ \$u\.output_tokens\)
 ```
 
-Commit `2055929` ("resolve F45") changed the SOUL to the formula F45 measured to
+Commit `a40f49b` ("resolve F45") changed the SOUL to the formula F45 measured to
 be the true one —
 
 ```jq
@@ -3197,9 +3197,9 @@ script. So the moment it merged, the comparison target stopped existing.
 skip  prejudge/scorer-is-the-control-arm (main has no pinned scorer block to compare)
 ```
 
-Measured on `main` at `5f3c38c`, immediately after the stack landed. The bytes
+Measured on `main` at `b1a7fdd`, immediately after the stack landed. The bytes
 themselves were never harmed — the 24 lines in the script are byte-identical to
-`6b4c419`'s SOUL, sha256 `7f9ddf38…` — but nothing was checking that any more,
+`5ba1858`'s SOUL, sha256 `7f9ddf38…` — but nothing was checking that any more,
 and nothing would have said so.
 
 **This is the F62 shape at the layer above.** F62 recorded that a slice can
@@ -3221,7 +3221,7 @@ faithfully — the defect is in the pin, not in the move.
    outer assertion that this case must never skip.
 
 **Fix (this slice):** the baseline is now `scripts/fixtures/control-arm.txt`,
-recorded from `6b4c419` and verified identical to the moved bytes. Both the
+recorded from `5ba1858` and verified identical to the moved bytes. Both the
 missing-fixture and the empty-extraction paths call `bad()`, so this case can
 no longer skip for any reason. Verified by negative test — one added space
 inside the stamping `jq`, `--model opus` → `sonnet`, a deleted fixture, and a
@@ -3238,7 +3238,7 @@ than enforcement.
 
 ### F66 — `make preflight` failed because the system was correct, and stopped checking the human gate · `FIXED` · **high**
 
-Measured on `main` at `515229c`, immediately after the stack landed:
+Measured on `main` at `8df37e7`, immediately after the stack landed:
 
 ```
 PASS 79   WARN 6   FAIL 6

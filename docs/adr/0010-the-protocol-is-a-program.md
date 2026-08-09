@@ -89,7 +89,7 @@ re-enacted each run.
 > *did*. On merge the baseline became empty, the case began reporting
 > `skip: main has no pinned scorer block to compare`, and the control sat
 > unguarded for four commits. The bytes were never harmed (sha256 `7f9ddf38…`,
-> identical to `6b4c419`), so the decision above stands unchanged and S5's
+> identical to `5ba1858`), so the decision above stands unchanged and S5's
 > experiment is still runnable. But the claim that the move made the control
 > stronger was only earned once the baseline stopped being a branch: it is now
 > the recorded fixture `scripts/fixtures/control-arm.txt`, and the case is
