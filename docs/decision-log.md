@@ -20,3 +20,11 @@ declared dependency; rebase or retarget it onto `main` after PR #33 merges.
 are local untracked planning inputs. Closing reconciliation marked CHUNK-2 done
 in the local roadmap, but the planning bundle remains untracked and was not
 swept into the implementation commits.
+
+HANDOFF: CHUNK-2 is green and locally complete on
+`chunk/2-report-in-branch`. External approval rejected the first push attempt;
+after the human explicitly authorizes export to GitHub, run
+`git push -u origin HEAD`, open the PR with base
+`chunk/1-enforce-methodology-references-runtime-pins` and body
+`.forge/chunk-2-pr-body.md`, then emit `.forge/chunk-2-metadata.json` with the
+resulting PR URL.
