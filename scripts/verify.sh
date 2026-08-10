@@ -2670,14 +2670,23 @@ run_metadata_live_cases() {
   if [ "$rc" = 2 ] \
      && printf '%s' "$out" | grep -Fq 'SINCE must be RFC3339' \
      && ! printf '%s' "$out" | grep -Fq 'no board database'; then
-    ok "live-requires-rfc3339-since (refused before board resolution)"
+    out="$(HERMES_KANBAN_HOME="$live_root" \
+        make metadata-live BOARD=missing SINCE=2026-08-09 2>&1)"; rc=$?
+    if [ "$rc" = 2 ] \
+       && printf '%s' "$out" | grep -Fq 'SINCE must be RFC3339' \
+       && ! printf '%s' "$out" | grep -Fq 'no board database'; then
+      ok "live-requires-rfc3339-since (absent and malformed values refused before board resolution)"
+    else
+      bad "live-requires-rfc3339-since" \
+          "malformed SINCE must exit 2 before looking for BOARD=missing; got exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+    fi
   else
     bad "live-requires-rfc3339-since" \
         "missing SINCE must exit 2 before looking for BOARD=missing; got exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
   fi
 
   out="$(HERMES_KANBAN_HOME="$live_root" \
-      make metadata-live BOARD="$board" SINCE="$cutoff" 2>&1)"; rc=$?
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
   if [ "$rc" = 0 ] \
      && printf '%s' "$out" | grep -Fq 'valid=3 invalid=0 unjudged=0 ignored=2' \
      && printf '%s' "$out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=1' \
@@ -2696,33 +2705,42 @@ UPDATE task_runs
  WHERE id=1;
 INSERT INTO task_runs VALUES
   (5,'t_bad_null','forge-codex-lane','done',1786234000,1786234010,'completed',NULL),
-  (6,'t_bad_cross','forge-codex-lane','done',1786234020,1786234030,'completed','{"schema":"forge.judge.v1"}'),
-  (7,'t_unreadable','forge-codex-lane','done',1786234040,1786234050,'completed','{not json');
+  (6,'t_bad_cross','forge-codex-lane','done',1786234020,1786234030,'completed','{"schema":"forge.judge.v1"}');
 UPDATE task_events
    SET task_id='t_bad_reason', payload='{"reason":"free-form model excuse","kind":"needs_input"}'
  WHERE id=1;
 SQL
 
   out="$(HERMES_KANBAN_HOME="$live_root" \
-      make metadata-live BOARD="$board" SINCE="$cutoff" 2>&1)"; rc=$?
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
   local named=1 id
-  for id in t_bad_nested t_bad_null t_bad_cross t_unreadable; do
+  for id in t_bad_nested t_bad_null t_bad_cross; do
     printf '%s' "$out" | grep -Fq "task=$id" || named=0
   done
-  if [ "$rc" = 2 ] && [ "$named" = 1 ] \
-     && printf '%s' "$out" | grep -Fq 'valid=1 invalid=4 unjudged=1 ignored=2'; then
-    ok "live-classifies-every-bad-row (four invalid, one unjudged, all named)"
-  else
-    bad "live-classifies-every-bad-row" \
-        "bad rows must be named and unjudged must dominate exit status; got exit $rc: $(printf '%s' "$out" | tail -9 | tr '\n' ' ')"
-  fi
+  local invalid_out="$out" invalid_rc="$rc"
 
-  if printf '%s' "$out" | grep -Fq 'invalid task=t_bad_reason run=1' \
-     && printf '%s' "$out" | grep -Fq 'reason="free-form model excuse"'; then
+  if [ "$invalid_rc" = 1 ] \
+     && printf '%s' "$invalid_out" | grep -Fq 'valid=1 invalid=4 unjudged=0 ignored=2' \
+     && printf '%s' "$invalid_out" | grep -Fq 'invalid task=t_bad_reason run=1' \
+     && printf '%s' "$invalid_out" | grep -Fq 'reason="free-form model excuse"'; then
     ok "live-rejects-bad-block-reason (task, run and reason printed)"
   else
     bad "live-rejects-bad-block-reason" \
-        "the invalid model-authored reason was not printed with task and run"
+        "the invalid model-authored reason must be an exit-1 contract violation with task and run"
+  fi
+
+  sqlite3 "$db" \
+    "INSERT INTO task_runs VALUES (7,'t_unreadable','forge-codex-lane','done',1786234040,1786234050,'completed','{not json');"
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  if [ "$invalid_rc" = 1 ] && [ "$named" = 1 ] \
+     && [ "$rc" = 2 ] \
+     && printf '%s' "$out" | grep -Fq 'unjudged task=t_unreadable run=7' \
+     && printf '%s' "$out" | grep -Fq 'valid=1 invalid=4 unjudged=1 ignored=2'; then
+    ok "live-classifies-every-bad-row (invalid exits 1; unjudged is named and dominates as exit 2)"
+  else
+    bad "live-classifies-every-bad-row" \
+        "bad rows must be named with distinct exit-1/exit-2 outcomes; got exits $invalid_rc/$rc: $(printf '%s' "$out" | tail -9 | tr '\n' ' ')"
   fi
 
   if printf '%s' "$out" | grep -Fq 'ignored=2' \
