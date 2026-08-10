@@ -9,7 +9,9 @@ You implement ONE chunk. Not two. Discoveries beyond this chunk become decision-
 entries or new card proposals — never scope creep.
 
 ## 1. Gather context (read, in order)
-1. `docs/chunks/CHUNK-<id>.md` (or the kanban card body — same text).
+1. `docs/chunks/CHUNK-<id>.md` (or the kanban card body — same text), the feature
+   named by its `Acceptance` field, and that feature's entry in
+   `docs/chunks/contract-freeze.json`.
 2. `AGENTS.md` · the ADRs listed in the chunk · `docs/decision-log.md` (skim for
    entries touching the same paths).
 3. `git log --oneline -15` on main, to see what recently landed.
@@ -25,6 +27,11 @@ log and adapt; contradiction → STOP, block the card with the reason
 Branch only if you are not already on the chunk branch. In a Hermes worktree the
 dispatcher created the workspace and checked out the branch **before** the worker
 started, so `git switch -c` there fails on a branch that already exists.
+
+The branch must start after the planning PR that approved its frozen acceptance.
+If acceptance genuinely needs amendment, stop and land a separate human planning
+PR that changes the contract, feature, and regenerated manifest together; only
+then start or rebase the implementation branch onto that approved hash.
 
 This skill assumes **network and a built `.venv`** — it is for an operator
 driving the repo directly. Inside a `codex exec` sandbox neither holds: the
@@ -42,9 +49,11 @@ Interactive: tick the ROADMAP checkbox in your first commit.
 Unattended: the lane runner has already claimed the card — do not touch the board.
 
 ## 4. Scenarios first
-Translate the chunk's Given/When/Then lines into
-`tests/features/chunk_<id>.feature` + step definitions in `tests/steps/`.
-Run them; they MUST fail for the right reason before any implementation.
+The planning pass already translated the chunk's Given/When/Then lines into the
+feature named by `Acceptance` and froze its exact bytes. Do not edit that feature
+or regenerate `contract-freeze.json` on the implementation branch. Add only the
+step definitions in `tests/steps/`, then run them; they MUST fail for the right
+reason before any implementation.
 Commit: `test(<id>): add failing scenarios`.
 
 ## 5. Implement scenario-by-scenario

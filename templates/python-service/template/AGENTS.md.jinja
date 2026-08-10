@@ -28,8 +28,11 @@ duplicate pushes and double-completed cards. Measured 2026-07-28.
 - `make check` green before any PR; never bypass hooks (`--no-verify` is a
   fireable offense for agents).
 - New runtime dependency ⇒ new/updated ADR in the same branch.
-- Scenarios (`tests/features/`) are the living spec — never weaken a Then-clause
-  to make it pass; escalate instead.
+- Scenarios (`tests/features/`) are planned, hashed in
+  `docs/chunks/contract-freeze.json`, and immutable on implementation branches.
+  Add step definitions without editing the feature or regenerating its receipt.
+  A genuine acceptance amendment is a separate human planning PR that lands
+  before implementation starts; never weaken a Then-clause to make it pass.
 
 ## Conventions
 - Python {{ python_version }}, pinned in `.python-version` so this machine and
