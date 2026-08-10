@@ -298,7 +298,8 @@ reachable() {
     # fired, not by detecting anything they do not.
     emit reachable skip "root count is not 1, so there is no single root to reach from — see single-root"
   elif [ -z "$un" ]; then
-    emit reachable pass "all $(gfact .total) chunk(s) reachable from $(gfact '.roots|join(" ")')"
+    emit reachable pass \
+      "diagnostic evidence only — all $(gfact .total) chunk(s) reachable from $(gfact '.roots|join(" ")'); acyclic and single-root are the detectors"
   else
     emit reachable warn "unreachable from the root: $un" \
       "these chunks can never be promoted: nothing that reaches them is ever done. Give each one a depends_on path back to the root, or delete it from the plan"

@@ -3786,7 +3786,7 @@ run_roadmap_group() {
   export FORGE_ASSIGNEES="forge-codex-lane forge-prejudge"
 
   local reachable_line
-  reachable_line="$("$rc" "$good" 2>/dev/null | awk '$2=="reachable"{getline; print}')"
+  reachable_line="$("$rc" "$good" -v 2>/dev/null | awk '$2=="reachable"{getline; print}')"
   if printf '%s' "$reachable_line" | grep -Fq 'diagnostic evidence' \
      && grep -Fq 'not an independent detector' docs/adr/0012-sizing-at-plan-time.md; then
     ok "reachable-is-diagnostic-evidence"
