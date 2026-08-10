@@ -2687,14 +2687,21 @@ run_metadata_live_cases() {
 
   out="$(HERMES_KANBAN_HOME="$live_root" \
       scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
-  if [ "$rc" = 0 ] \
-     && printf '%s' "$out" | grep -Fq 'valid=3 invalid=0 unjudged=0 ignored=2' \
-     && printf '%s' "$out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=1' \
-     && printf '%s' "$out" | grep -Fq 'profile=forge-prejudge schema=forge.judge.v1 valid=1'; then
-    ok "live-valid-counts (every contracted profile present; profile/schema counts exact)"
+  local good_out="$out" good_rc="$rc"
+  sqlite3 "$db" "UPDATE task_runs SET profile='default' WHERE id=2;"
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  sqlite3 "$db" "UPDATE task_runs SET profile='forge-prejudge' WHERE id=2;"
+  if [ "$good_rc" = 0 ] \
+     && printf '%s' "$good_out" | grep -Fq 'valid=3 invalid=0 unjudged=0 ignored=2' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=1' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-prejudge schema=forge.judge.v1 valid=1' \
+     && [ "$rc" = 1 ] \
+     && printf '%s' "$out" | grep -Fq 'missing producer=forge-prejudge'; then
+    ok "live-valid-counts (profile/schema counts exact; a missing contracted producer exits 1)"
   else
     bad "live-valid-counts" \
-        "the canonical fixture must exit 0 with exact counts; got exit $rc: $(printf '%s' "$out" | tail -6 | tr '\n' ' ')"
+        "canonical counts or missing-producer enforcement drifted; got exits $good_rc/$rc: $(printf '%s' "$out" | tail -6 | tr '\n' ' ')"
   fi
 
   # Mutate only post-cutoff rows. The historical nested envelope and bad reason

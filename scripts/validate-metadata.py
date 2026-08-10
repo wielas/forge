@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["jsonschema==4.26.0"]
 # ///
-"""Validate one completed-run metadata envelope against its producer contract."""
+"""Validate completed-run metadata against its producer contract."""
 
 from __future__ import annotations
 
@@ -382,7 +382,7 @@ def semantic_errors(schema_id: str, instance: dict[str, Any]) -> list[str]:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
-        description="Validate Forge completed-run metadata without opening a board."
+        description="Validate Forge completed-run metadata without opening a live board."
     )
     result.add_argument("metadata", nargs="?", help="JSON file, or - for stdin")
     result.add_argument("--profile", help="producer profile, e.g. forge-codex-lane")
