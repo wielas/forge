@@ -185,6 +185,38 @@ defaulted to `..`, a *relative* path, so the project landed next to whatever
 directory the operator happened to be standing in. Symlinks are resolved before
 the check, so `/tmp` and `/private/tmp` are the same refusal.
 
+## Stage the first board card
+
+Do not release a new product graph all at once. After the roadmap is clear and
+commissioning is green, create only its root card:
+
+```bash
+PROJECT=$HOME/dev/my-project
+BOARD=my-project
+make roadmap-check PROJECT="$PROJECT"
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
+```
+
+`--root-only` checks the complete graph before its first Hermes command: ids and
+dependencies must be well formed, exactly one root must exist, every chunk must
+be reachable in topological order, and every named chunk file must exist. A bad
+graph therefore creates neither a board nor a card. A good graph creates only
+the root, using the same `$BOARD-$CHUNK_ID` idempotency key as full bootstrap,
+so repeating the command is safe.
+
+Let that root complete, then run the live metadata checkpoint described by the
+roadmap. Stop on red or unjudged evidence. Only after it is green, extend the
+same board with the rest of the graph:
+
+```bash
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD")
+```
+
+Full mode reuses the existing root mapping and creates each remaining card with
+all of its parent ids in the same Hermes transaction. Its final reconciliation
+still compares every attached parent with every edge declared by the graph;
+root-only's zero-parent created set does not weaken that assertion.
+
 ## Landing a stack of PRs
 
 Slices stack: #B is based on #A's branch, #C on #B's. Two things about that are

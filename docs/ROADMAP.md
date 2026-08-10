@@ -24,6 +24,9 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **CHUNK-7:** done 2026-08-10 — prejudge compares implementation features and
   their manifest against the approved PR base, blocks self-amendment, preserves
   the separate planning-PR escape hatch, and keeps `@real-source` in judging.
+- **CHUNK-8:** done 2026-08-10 — root-only bootstrap validates the complete
+  single-root graph before mutation, creates only the idempotent root, and lets
+  full bootstrap extend it without weakening atomic parent reconciliation.
 
 ### CHUNK-1: Enforce methodology references and runtime pins
 - **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.
