@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from datetime import datetime
 import json
 import re
 import sys
@@ -26,6 +27,10 @@ CHUNK_ID = re.compile(r"^CHUNK-([0-9]+)$")
 CHUNK_BRANCH = re.compile(r"^chunk/([0-9]+)-[a-z0-9]+(?:-[a-z0-9]+)*$")
 PR_URL = re.compile(
     r"^https://github\.com/(?P<repo>[^/\s]+/[^/\s]+)/pull/(?P<number>[1-9][0-9]*)$"
+)
+RFC3339 = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
 )
 
 
@@ -142,6 +147,21 @@ def instance_from(path_arg: str) -> Any:
         raise UnreadableError(f"cannot read {path}: {exc.strerror}") from exc
 
 
+def rfc3339_epoch(value: str) -> float:
+    """Return a timezone-aware RFC3339 timestamp as Unix seconds."""
+    if not RFC3339.fullmatch(value):
+        raise ValueError("SINCE must be RFC3339, e.g. 2026-08-09T00:00:00Z")
+    try:
+        parsed = datetime.fromisoformat(value.removesuffix("Z") + ("+00:00" if value.endswith("Z") else ""))
+    except ValueError as exc:
+        raise ValueError(
+            "SINCE must be RFC3339, e.g. 2026-08-09T00:00:00Z"
+        ) from exc
+    if parsed.utcoffset() is None:
+        raise ValueError("SINCE must include an RFC3339 timezone offset")
+    return parsed.timestamp()
+
+
 def validate_instance(contract: dict[str, Any], profile: str, instance: Any) -> list[str]:
     if not isinstance(instance, dict):
         return ["metadata must be an object; completed producer runs may not store null"]
@@ -225,6 +245,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--profile", help="producer profile, e.g. forge-codex-lane")
     result.add_argument("--reason", help="validate one blocked-event reason string")
     result.add_argument(
+        "--rfc3339-epoch",
+        metavar="SINCE",
+        help="validate a scoped-sweep cutoff and print Unix seconds",
+    )
+    result.add_argument(
         "--check-schemas",
         action="store_true",
         help="validate the registry and every registered JSON Schema",
@@ -237,6 +262,18 @@ def main() -> int:
     try:
         contract = load_contract()
         check_schemas(contract)
+        if args.rfc3339_epoch is not None:
+            if args.metadata or args.profile or args.reason is not None or args.check_schemas:
+                parser().error(
+                    "--rfc3339-epoch takes no metadata, --profile, --reason or --check-schemas"
+                )
+            try:
+                epoch = rfc3339_epoch(args.rfc3339_epoch)
+            except ValueError as exc:
+                print(exc, file=sys.stderr)
+                return 2
+            print(int(epoch) if epoch.is_integer() else epoch)
+            return 0
         if args.check_schemas:
             if args.metadata or args.profile or args.reason is not None:
                 parser().error("--check-schemas takes no metadata, --profile or --reason")
