@@ -1757,6 +1757,18 @@ wants lane      && run_lane_group
 # HERMES_KANBAN_HOME, which exercises the real path-resolution code rather than
 # a test-only escape hatch.
 # ---------------------------------------------------------------------------
+db_source_fingerprint() { # $1=kanban.db; membership + bytes of SQLite's source set
+  local source="$1" file suffix
+  for suffix in "" -wal -shm -journal; do
+    file="$source$suffix"
+    if [ -e "$file" ]; then
+      printf '%s %s\n' "${file##*/}" "$(shasum -a 256 "$file" | cut -d' ' -f1)"
+    else
+      printf '%s absent\n' "${file##*/}"
+    fi
+  done
+}
+
 run_metrics_group() {
   group metrics
   local ms=scripts/metrics.sh fx=scripts/fixtures/metrics-board.sql
@@ -1891,14 +1903,15 @@ run_metrics_group() {
   # it and reads the copy; this proves the original's bytes, because "read-only"
   # is a claim in a comment and claims in comments are what this suite is for.
   local before after
-  before="$(shasum -a 256 "$db" | cut -d' ' -f1)"
+  before="$(db_source_fingerprint "$db")"
   HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture >/dev/null 2>&1
   HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture --since 2026-07-28 --markdown-row >/dev/null 2>&1
-  after="$(shasum -a 256 "$db" | cut -d' ' -f1)"
+  after="$(db_source_fingerprint "$db")"
   if [ "$before" = "$after" ]; then
-    ok "is-read-only (sha256 unchanged across three invocations)"
+    ok "is-read-only (db and all sidecars unchanged across three invocations)"
   else
-    bad "is-read-only" "the database changed while being read — mode=ro is not holding"
+    bad "is-read-only" \
+        "the database source set changed while being read. before: $(printf '%s' "$before" | tr '\n' ' ') after: $(printf '%s' "$after" | tr '\n' ' ')"
   fi
 
   # The fixture declares a schema by hand, so it can drift away from the real
@@ -2091,15 +2104,8 @@ EOF
   # Membership AND bytes, over the sidecars too: a `-shm` or `-wal` that the
   # snapshot CREATED beside the live board would be a write to production even
   # though the database itself hashed the same.
-  _snap_fp() {
-    local f
-    for f in "$1" "$1-wal" "$1-shm" "$1-journal"; do
-      if [ -e "$f" ]; then printf '%s %s\n' "${f##*/}" "$(shasum -a 256 "$f" | cut -d' ' -f1)"
-      else printf '%s absent\n' "${f##*/}"; fi
-    done
-  }
   local before after out rc
-  before="$(_snap_fp "$src")"
+  before="$(db_source_fingerprint "$src")"
 
   out="$("$bs" "$src" "$lab/snap" 2>"$lab/snap.err")"; rc=$?
   if [ "$rc" = 0 ] && [ -n "$out" ] \
@@ -2110,7 +2116,7 @@ EOF
         "a WAL board at rest could not be snapshot-read (exit $rc, path '${out}') — that is the state every /retro finds a board in: $(tr '\n' ' ' < "$lab/snap.err")"
   fi
 
-  after="$(_snap_fp "$src")"
+  after="$(db_source_fingerprint "$src")"
   if [ "$before" = "$after" ]; then
     ok "snapshot/source-is-byte-identical (db and all three sidecars, present or absent)"
   else
