@@ -54,12 +54,20 @@ REPO_ROOT="$(pwd)"
 MAIN_ROOT="$(cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)/.." 2>/dev/null && pwd)"
 MAIN_ROOT="${MAIN_ROOT:-$REPO_ROOT}"
 
+helptext() {
+  awk '
+    /^# forge verify / { printing = 1 }
+    printing && /^# =+$/ { exit }
+    printing { sub(/^# ?/, ""); print }
+  ' "$0"
+}
+
 WITH_CODEX=0; LIST_ONLY=0; SUITES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0;;
+    -h|--help) helptext; exit 0;;
     cli|config|substrate|template|lane|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
@@ -208,7 +216,7 @@ run_cli_group() {
   verify_help="$("$verify_help_fixture" --help 2>/dev/null)"
   if printf '%s' "$verify_help" | grep -Fq 'appended/' \
      && printf '%s' "$verify_help" | grep -Fq 'roadmap/' \
-     && ! grep -Eq "sed -n '[0-9]+,[0-9]+p'" scripts/verify.sh; then
+     && ! grep -Eq -- "-h\\|--help\\).*sed -n '[0-9]+,[0-9]+p'" scripts/verify.sh; then
     ok "verify-help-grows-with-the-group-header"
   else
     bad "verify-help-grows-with-the-group-header" \
@@ -226,7 +234,7 @@ run_cli_group() {
   preflight_help="$("$preflight_help_fixture" --help 2>/dev/null)"
   if printf '%s' "$preflight_help" | grep -Fq 'Usage (on the Mac mini):' \
      && printf '%s' "$preflight_help" | grep -Fq 'Exit code:' \
-     && ! grep -Eq "sed -n '[0-9]+,[0-9]+p'" scripts/preflight.sh; then
+     && ! grep -Eq -- "-h\\|--help\\).*sed -n '[0-9]+,[0-9]+p'" scripts/preflight.sh; then
     ok "preflight-help-grows-with-the-header"
   else
     bad "preflight-help-grows-with-the-header" \
