@@ -1,0 +1,16 @@
+### CHUNK-6: Emit and hash acceptance at planning time
+- **Goal:** Make `/roadmap` emit executable feature files and a hash manifest before implementation begins.
+- **Milestone:** M3 · **Depends on:** CHUNK-1
+- **Serves:** F14, F25, F53 · **Relevant ADRs:** 0003, 0012, 0014
+- **Touches:** `skills/roadmap/SKILL.md`, `scripts/acceptance-freeze.sh`, `scripts/verify.sh`, `docs/adr/0014-frozen-acceptance.md`, `tests/features/`, `docs/first-run-readiness-2026-08-09.md`
+- **Scenarios:**
+  - Given a chunk contract, When `/roadmap` finishes, Then its `Acceptance` field names an existing `tests/features/chunk_<id>.feature` whose Given/When/Then steps match the contract.
+  - Given a contract names an external source, When `/roadmap` finishes, Then its feature file contains a `@real-source` scenario.
+  - Given all planned feature files exist, When the freeze command runs, Then it writes deterministic path and SHA-256 entries to `contract-freeze.json`.
+  - Given a missing feature file, When the freeze command runs, Then it fails and names the chunk and expected path.
+- **Acceptance:** tests/features/chunk_6.feature
+- **Freeze format:** Each chunk gains `**Acceptance:** tests/features/chunk_<id>.feature`; `docs/chunks/contract-freeze.json` maps each repo-relative feature path to its SHA-256 digest.
+- **Stop rule:** If C2 accumulates two tier-2 bounces before both halves are independently green, park CHUNK-6 and CHUNK-7, keep C1 advisory, and run with F14/F25 still open rather than shipping a half-built freeze.
+- **Out of scope:** implementing step definitions, enforcing the hashes on a PR, mutation testing, or changing old project contracts.
+- **Done when:** `make validate` and `make verify` are green, the scenarios pass, ADR-0014 records the amendment mechanism, and the roadmap skill emits all artifacts from one planning pass.
+- **Lane:** claude-interactive · **Risk:** high (docker backend)
