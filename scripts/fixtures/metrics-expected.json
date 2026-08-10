@@ -76,6 +76,108 @@
     "neither": 1,
     "total": 3
   },
+  "driver_usage": {
+    "coverage": {
+      "eligible": 3,
+      "joined": 1,
+      "unjudged": 2,
+      "rate": "0.33"
+    },
+    "totals": {
+      "api_calls": 7,
+      "input_tokens": 1000,
+      "output_tokens": 200,
+      "cache_read_tokens": 800,
+      "cache_write_tokens": 50,
+      "reasoning_tokens": 70
+    },
+    "cost": {
+      "estimated_usd": 1.25,
+      "estimated_sessions": 1,
+      "actual_usd": null,
+      "actual_sessions": 0
+    },
+    "limitations": [
+      "profile state unavailable: forge-missing-driver"
+    ],
+    "unjudged": [
+      {
+        "run_id": 2,
+        "task_id": "t_c2",
+        "profile": "forge-missing-driver",
+        "worker_session_id": "session-unavailable",
+        "reason": "profile-state-unavailable"
+      },
+      {
+        "run_id": 3,
+        "task_id": "t_c3",
+        "profile": "forge-codex-lane",
+        "worker_session_id": null,
+        "reason": "missing-worker-session-id"
+      }
+    ],
+    "sessions": [
+      {
+        "run_id": 1,
+        "task_id": "t_c1",
+        "profile": "forge-codex-lane",
+        "worker_session_id": "session-exact",
+        "source": "kanban",
+        "model": "deepseek-v4-flash",
+        "provider": "openrouter",
+        "api_calls": 7,
+        "input_tokens": 1000,
+        "output_tokens": 200,
+        "cache_read_tokens": 800,
+        "cache_write_tokens": 50,
+        "reasoning_tokens": 70,
+        "estimated_cost_usd": 1.25,
+        "actual_cost_usd": null,
+        "cost_status": "estimated",
+        "cost_source": "openrouter-model-pricing",
+        "models": [
+          {
+            "model": "deepseek-v4-flash",
+            "provider": "openrouter",
+            "billing_base_url": "https://openrouter.example/api/v1",
+            "billing_mode": "api",
+            "task": "driver",
+            "api_calls": 5,
+            "input_tokens": 900,
+            "output_tokens": 150,
+            "cache_read_tokens": 700,
+            "cache_write_tokens": 40,
+            "reasoning_tokens": 60,
+            "estimated_cost_usd": 0.75,
+            "actual_cost_usd": null,
+            "cost_status": "estimated",
+            "cost_source": "openrouter-model-pricing",
+            "first_seen": 1785200011.0,
+            "last_seen": 1785200090.0
+          },
+          {
+            "model": "routing-helper",
+            "provider": "openrouter",
+            "billing_base_url": "https://openrouter.example/api/v1",
+            "billing_mode": "api",
+            "task": "routing",
+            "api_calls": 2,
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_read_tokens": 100,
+            "cache_write_tokens": 10,
+            "reasoning_tokens": 10,
+            "estimated_cost_usd": 0.5,
+            "actual_cost_usd": null,
+            "cost_status": "estimated",
+            "cost_source": "openrouter-model-pricing",
+            "first_seen": 1785200010.0,
+            "last_seen": 1785200011.0
+          }
+        ]
+      }
+    ]
+  },
   "operator": {
     "comments": 2,
     "unblocks": 2,

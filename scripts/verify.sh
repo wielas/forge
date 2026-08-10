@@ -1119,6 +1119,11 @@ lane/driver-never-reads-the-diff        the metered driver redirects the diff; i
 lane/prejudge-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
+metrics/driver-usage-joins-exact-session  session totals and every per-model row come from worker_session_id
+metrics/driver-usage-missing-id-is-unjudged  a completed chunk run without worker_session_id is not zero usage
+metrics/driver-usage-missing-profile-is-explicit  unreadable profile state preserves base metrics and names the gap
+metrics/driver-usage-estimate-keeps-actual-absent  estimated Hermes cost never manufactures zero actual cost
+metrics/markdown-row-has-operator-and-driver-cells  generated rows match the retro log's expanded header
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
 metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from bounces (ADR-0009 D9.4)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
@@ -1837,7 +1842,9 @@ run_metrics_group() {
     bad "help-exits-zero" "$ms --help did not exit 0 without a board"
   fi
 
-  local home="$TMPROOT/kanban" db="$TMPROOT/kanban/boards/metrics-fixture/kanban.db"
+  local hermes_root="$TMPROOT/hermes" home="$TMPROOT/hermes/kanban"
+  local db="$home/boards/metrics-fixture/kanban.db"
+  local profile_db="$hermes_root/profiles/forge-codex-lane/state.db"
   mkdir -p "$(dirname "$db")"
   # stdout is discarded: the fixture's `PRAGMA journal_mode=wal` echoes its
   # result, and that is fixture noise, not a case result.
@@ -1845,6 +1852,44 @@ run_metrics_group() {
     bad "fixture-numbers-exact" "fixture would not load: $(tail -2 "$TMPROOT/fixture.log" | tr '\n' ' ')"
     return
   fi
+
+  # A separate profile state fixture is essential: worker_session_id joins two
+  # independent SQLite substrates in production. Session totals deliberately
+  # differ from either model row, and actual_cost_usd is the schema's misleading
+  # zero in the per-model table while cost_status remains estimated. The output
+  # must use the sessions row for totals, preserve both breakdown rows, and turn
+  # that storage default back into an honest missing actual cost.
+  mkdir -p "$(dirname "$profile_db")"
+  sqlite3 "$profile_db" <<'METRICS_STATE_SQL'
+CREATE TABLE sessions (
+  id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT,
+  billing_provider TEXT, api_call_count INTEGER DEFAULT 0,
+  input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0, cache_write_tokens INTEGER DEFAULT 0,
+  reasoning_tokens INTEGER DEFAULT 0, estimated_cost_usd REAL,
+  actual_cost_usd REAL, cost_status TEXT, cost_source TEXT
+);
+CREATE TABLE session_model_usage (
+  session_id TEXT NOT NULL, model TEXT NOT NULL,
+  billing_provider TEXT NOT NULL DEFAULT '', billing_base_url TEXT NOT NULL DEFAULT '',
+  billing_mode TEXT NOT NULL DEFAULT '', task TEXT NOT NULL DEFAULT '',
+  api_call_count INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0, actual_cost_usd REAL NOT NULL DEFAULT 0,
+  cost_status TEXT, cost_source TEXT, first_seen REAL, last_seen REAL
+);
+INSERT INTO sessions VALUES
+  ('session-exact','kanban','deepseek-v4-flash','openrouter',7,
+   1000,200,800,50,70,1.25,NULL,'estimated','openrouter-model-pricing');
+INSERT INTO session_model_usage VALUES
+  ('session-exact','deepseek-v4-flash','openrouter','https://openrouter.example/api/v1',
+   'api','driver',5,900,150,700,40,60,0.75,0,'estimated',
+   'openrouter-model-pricing',1785200011.0,1785200090.0),
+  ('session-exact','routing-helper','openrouter','https://openrouter.example/api/v1',
+   'api','routing',2,100,50,100,10,10,0.50,0,'estimated',
+   'openrouter-model-pricing',1785200010.0,1785200011.0);
+METRICS_STATE_SQL
 
   # Changing only sidecar membership must change the same fingerprint used by
   # the end-to-end read-only assertion below. The main database remains byte
@@ -1887,11 +1932,81 @@ run_metrics_group() {
 
   # Exact, whole-document diff. Asserting a handful of fields would let a new
   # bucket appear, or an old one silently vanish, without failing anything.
-  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture --json > "$TMPROOT/metrics.json" 2>&1
+  HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+    "$ms" metrics-fixture --json > "$TMPROOT/metrics.json" 2>&1
   if diff -u "$exp" "$TMPROOT/metrics.json" > "$TMPROOT/metrics.diff" 2>&1; then
     ok "fixture-numbers-exact ($(jq -r '.verdicts.total' "$exp") verdicts, every field)"
   else
     bad "fixture-numbers-exact" "$(head -12 "$TMPROOT/metrics.diff" | tr '\n' ' ')"
+  fi
+
+  local driver_exact driver_missing driver_profile driver_cost
+  driver_exact="$(jq -c '[.driver_usage.sessions[0]
+                          | .model, .provider, .api_calls, .input_tokens,
+                            .output_tokens, .cache_read_tokens,
+                            .cache_write_tokens, .reasoning_tokens,
+                            .cost_status, (.models | length)]' \
+                    "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_exact" = '["deepseek-v4-flash","openrouter",7,1000,200,800,50,70,"estimated",2]' ]; then
+    ok "driver-usage-joins-exact-session"
+  else
+    bad "driver-usage-joins-exact-session" \
+        "expected exact session totals and both model rows, got ${driver_exact:-nothing}"
+  fi
+
+  driver_missing="$(jq -c '[.driver_usage.coverage.unjudged,
+                            ([.driver_usage.unjudged[]
+                              | select(.reason == "missing-worker-session-id")
+                              | .task_id] | first)]' \
+                      "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_missing" = '[2,"t_c3"]' ]; then
+    ok "driver-usage-missing-id-is-unjudged"
+  else
+    bad "driver-usage-missing-id-is-unjudged" \
+        "a missing worker_session_id must be unjudged, not zero usage; got ${driver_missing:-nothing}"
+  fi
+
+  driver_profile="$(jq -c '[.verdicts.total,
+                            (.driver_usage.limitations
+                              | index("profile state unavailable: forge-missing-driver")),
+                            ([.driver_usage.unjudged[]
+                              | select(.reason == "profile-state-unavailable")
+                              | .task_id] | first)]' \
+                      "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_profile" = '[6,0,"t_c2"]' ]; then
+    ok "driver-usage-missing-profile-is-explicit"
+  else
+    bad "driver-usage-missing-profile-is-explicit" \
+        "base metrics must survive and name the unavailable profile state; got ${driver_profile:-nothing}"
+  fi
+
+  driver_cost="$(jq -c '[.driver_usage.cost.estimated_usd,
+                         .driver_usage.cost.actual_usd,
+                         .driver_usage.sessions[0].actual_cost_usd,
+                         [.driver_usage.sessions[0].models[].actual_cost_usd]]' \
+                   "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_cost" = '[1.25,null,null,[null,null]]' ]; then
+    ok "driver-usage-estimate-keeps-actual-absent"
+  else
+    bad "driver-usage-estimate-keeps-actual-absent" \
+        "estimated cost must stay labelled and actual cost absent, including per-model storage defaults; got ${driver_cost:-nothing}"
+  fi
+
+  local markdown_header markdown_row header_cells row_cells row_operator row_driver
+  markdown_header="$(awk '/^\| Retro date \| Period \|/{print; exit}' docs/retro-metrics.md)"
+  markdown_row="$(HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+                    "$ms" metrics-fixture --markdown-row 2>/dev/null)"
+  header_cells="$(printf '%s\n' "$markdown_header" | awk -F '|' '{print NF-2}')"
+  row_cells="$(printf '%s\n' "$markdown_row" | awk -F '|' '{print NF-2}')"
+  row_operator="$(printf '%s\n' "$markdown_row" | awk -F '|' '{gsub(/^ +| +$/, "", $7); print $7}')"
+  row_driver="$(printf '%s\n' "$markdown_row" | awk -F '|' '{gsub(/^ +| +$/, "", $8); print $8}')"
+  if [ "$header_cells" = 9 ] && [ "$row_cells" = 9 ] \
+     && [ "$row_operator" = 4 ] \
+     && [ "$row_driver" = 'driver 0.33 (1/3) · estimated $1.2500 · actual n/a' ]; then
+    ok "markdown-row-has-operator-and-driver-cells"
+  else
+    bad "markdown-row-has-operator-and-driver-cells" \
+        "expected matching 9-cell header/row with operator and driver cells; got header=$header_cells row=$row_cells operator='${row_operator:-}' driver='${row_driver:-}'"
   fi
 
   # The lane writes chunk metadata NESTED under a key named for the schema,
@@ -1948,7 +2063,8 @@ run_metrics_group() {
   # corrupt board instead of a resting one.
   sqlite3 "$qdb" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1
   rm -f "$qdb-wal" "$qdb-shm" "$qdb-journal"
-  if HERMES_KANBAN_HOME="$qhome" "$ms" metrics-fixture --json > "$TMPROOT/quiescent.json" 2>&1 \
+  if HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$qhome" \
+     "$ms" metrics-fixture --json > "$TMPROOT/quiescent.json" 2>&1 \
      && jq -e '.verdicts.total' "$TMPROOT/quiescent.json" >/dev/null 2>&1; then
     ok "reads-a-quiescent-board (no -wal, no -shm, nothing holding it open)"
   else
@@ -1961,8 +2077,10 @@ run_metrics_group() {
   # is a claim in a comment and claims in comments are what this suite is for.
   local before after
   before="$(db_source_fingerprint "$db")"
-  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture >/dev/null 2>&1
-  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture --since 2026-07-28 --markdown-row >/dev/null 2>&1
+  HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+    "$ms" metrics-fixture >/dev/null 2>&1
+  HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+    "$ms" metrics-fixture --since 2026-07-28 --markdown-row >/dev/null 2>&1
   after="$(db_source_fingerprint "$db")"
   if [ "$before" = "$after" ]; then
     ok "is-read-only (db and all sidecars unchanged across three invocations)"
