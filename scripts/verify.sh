@@ -196,6 +196,43 @@ codex_live_pin_diagnostic() { # $1=config.toml; checked-in pins already loaded
 
 run_cli_group() {
   group cli
+  # Help is a contract header, not a line interval. Grow each header before
+  # asking for help so this case fails against a range that merely happens to
+  # fit today's prose.
+  local verify_help_fixture="$TMPROOT/verify-help.sh" verify_help
+  awk '
+    /^# Exit 0 iff/ { print "#   appended/  a newly appended suite remains visible in --help" }
+    { print }
+  ' scripts/verify.sh > "$verify_help_fixture"
+  chmod +x "$verify_help_fixture"
+  verify_help="$("$verify_help_fixture" --help 2>/dev/null)"
+  if printf '%s' "$verify_help" | grep -Fq 'appended/' \
+     && printf '%s' "$verify_help" | grep -Fq 'roadmap/' \
+     && ! grep -Eq "sed -n '[0-9]+,[0-9]+p'" scripts/verify.sh; then
+    ok "verify-help-grows-with-the-group-header"
+  else
+    bad "verify-help-grows-with-the-group-header" \
+        "verify.sh --help lost an appended group or is pinned to a numeric sed range"
+  fi
+
+  local preflight_help_fixture="$TMPROOT/preflight-help.sh" preflight_help
+  awk '
+    /^# Usage \(on the Mac mini\):/ {
+      for (i = 1; i <= 10; i++) print "# Help growth probe " i "."
+    }
+    { print }
+  ' scripts/preflight.sh > "$preflight_help_fixture"
+  chmod +x "$preflight_help_fixture"
+  preflight_help="$("$preflight_help_fixture" --help 2>/dev/null)"
+  if printf '%s' "$preflight_help" | grep -Fq 'Usage (on the Mac mini):' \
+     && printf '%s' "$preflight_help" | grep -Fq 'Exit code:' \
+     && ! grep -Eq "sed -n '[0-9]+,[0-9]+p'" scripts/preflight.sh; then
+    ok "preflight-help-grows-with-the-header"
+  else
+    bad "preflight-help-grows-with-the-header" \
+        "preflight.sh --help lost its Usage or Exit section after header growth, or is line-pinned"
+  fi
+
   # No early return when hermes is missing: each command is judged (or skipped)
   # on its own, so CI still checks every tool it does have.
   local claims="$TMPROOT/claims.tsv"; : > "$claims"
@@ -994,6 +1031,8 @@ run_template_group() {
 if [ "$LIST_ONLY" = 1 ]; then
   cat <<'EOF'
 cli/flags-exist                   every long flag named beside a tracked command exists in its --help
+cli/verify-help-grows-with-the-group-header  appended groups remain visible without numeric line pins
+cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 300
 cli/skill-section-references-resolve every named numeric skill section exists
@@ -1069,7 +1108,9 @@ metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as no
 metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from bounces (ADR-0009 D9.4)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
 metrics/is-read-only              reading a board does not change its sha256
+metrics/read-only-fingerprint-includes-sidecars  membership and bytes cover db, wal, shm and journal
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
+metrics/live-schema-selection-is-complete-and-deterministic  every board is named in stable order
 metrics/live-schema-read-survives-an-idle-board  a WAL board with no -shm is still readable, so the check above cannot flake (F67)
 metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
 metrics/help-names-its-usage      --help and the no-board error both reach the Usage block, not line-pinned prose
@@ -1171,6 +1212,7 @@ roadmap/bijection-file-with-no-id       a chunk file the graph forgot is reporte
 roadmap/bijection-dangling-depends-on   depends_on naming an id the graph does not define
 roadmap/acyclic-catches-a-cycle         a cycle is named before a board exists
 roadmap/single-root-catches-two-roots   Track E's --root-only needs exactly one root
+roadmap/reachable-is-diagnostic-evidence  pass is named as evidence, never an independent detector
 roadmap/fields-names-the-missing-one    a missing contract field fails and is named
 roadmap/serves-over-four                more than 4 requirements per chunk (F11's own number)
 roadmap/touches-over-six                more than 6 declarable paths per chunk
@@ -1731,6 +1773,39 @@ run_metrics_group() {
   if ! sqlite3 "$db" < "$fx" >/dev/null 2>"$TMPROOT/fixture.log"; then
     bad "fixture-numbers-exact" "fixture would not load: $(tail -2 "$TMPROOT/fixture.log" | tr '\n' ' ')"
     return
+  fi
+
+  # Changing only sidecar membership must change the same fingerprint used by
+  # the end-to-end read-only assertion below. The main database remains byte
+  # identical throughout this mutation.
+  local fp_lab="$TMPROOT/source-fingerprint" fp_db fp_before fp_after
+  mkdir -p "$fp_lab"
+  fp_db="$fp_lab/kanban.db"
+  printf 'unchanged database bytes\n' > "$fp_db"
+  fp_before="$(db_source_fingerprint "$fp_db" 2>/dev/null)"
+  : > "$fp_db-wal"
+  fp_after="$(db_source_fingerprint "$fp_db" 2>/dev/null)"
+  if [ -n "$fp_before" ] && [ -n "$fp_after" ] && [ "$fp_before" != "$fp_after" ]; then
+    ok "read-only-fingerprint-includes-sidecars"
+  else
+    bad "read-only-fingerprint-includes-sidecars" \
+        "adding kanban.db-wal did not change the source-set fingerprint while kanban.db stayed unchanged"
+  fi
+
+  # The live-board policy is every kanban.db below the board root, in bytewise
+  # path order. Both deliberately unreadable probes must still be named: a
+  # failed check is evidence about that board, not permission to omit it.
+  local selection_root="$TMPROOT/live-selection/boards" selection_report selection_names
+  mkdir -p "$selection_root/z-board" "$selection_root/a-board"
+  printf 'not sqlite\n' > "$selection_root/z-board/kanban.db"
+  printf 'not sqlite\n' > "$selection_root/a-board/kanban.db"
+  selection_report="$(live_schema_report "$selection_root" "$TMPROOT/live-selection/snapshots" 2>/dev/null)"
+  selection_names="$(printf '%s\n' "$selection_report" | awk -F '\t' 'NF { print $1 }')"
+  if [ "$selection_names" = "$(printf 'a-board\nz-board')" ]; then
+    ok "live-schema-selection-is-complete-and-deterministic"
+  else
+    bad "live-schema-selection-is-complete-and-deterministic" \
+        "expected both boards in deterministic order; got: ${selection_names:-no named boards}"
   fi
 
   # Exact, whole-document diff. Asserting a handful of fields would let a new
@@ -3661,6 +3736,16 @@ run_roadmap_group() {
   # was encoding the contract the checker got wrong, so a check written against
   # the fixture could not have found it. Only names a profile actually backs.
   export FORGE_ASSIGNEES="forge-codex-lane forge-prejudge"
+
+  local reachable_line
+  reachable_line="$("$rc" "$good" 2>/dev/null | awk '$2=="reachable"{getline; print}')"
+  if printf '%s' "$reachable_line" | grep -Fq 'diagnostic evidence' \
+     && grep -Fq 'not an independent detector' docs/adr/0012-sizing-at-plan-time.md; then
+    ok "reachable-is-diagnostic-evidence"
+  else
+    bad "reachable-is-diagnostic-evidence" \
+        "reachable pass must label itself diagnostic evidence and ADR-0012 must say it is not an independent detector"
+  fi
 
   # Status/evidence of one check id, from the real script's real output. The
   # `|| true` is load-bearing under `set -o pipefail`: these two read OUTPUT,
