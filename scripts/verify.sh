@@ -1194,6 +1194,11 @@ roadmap/unreadable-assignee-list-skips-never-passes  a check that could not run 
 roadmap/every-warning-carries-an-action  no finding a planner cannot execute
 roadmap/skill-delegates-to-the-checker  /roadmap names the script, via ~/.forge/repo (ADR-0003)
 roadmap/thresholds-are-the-skills-own-numbers  the caps have not drifted from skills/roadmap/SKILL.md
+roadmap/skill-emits-frozen-acceptance    one planning pass writes feature paths, executable scenarios, and the manifest
+roadmap/acceptance-matches-contract      every generated Given/When/Then step matches its chunk contract
+roadmap/real-source-is-planned           an external-source contract carries a @real-source scenario before implementation
+roadmap/freeze-is-deterministic           sorted repo-relative paths map to the feature bytes' SHA-256 digests
+roadmap/missing-feature-is-named          freeze refuses atomically and names the chunk plus expected path
 EOF
   exit 0
 fi
@@ -3994,6 +3999,141 @@ GJSON")" || { bad "null-is-the-same-as-an-absent-key" "the mutation itself faile
     fi
   else
     skip "thresholds-are-the-skills-own-numbers" "SKILL.md no longer states the scenario cap"
+  fi
+
+  # -- acceptance is a planning artifact, not implementation work (ADR-0014) --
+  #
+  # One fixture owns the whole seam: the chunk contract, the generated Gherkin,
+  # and the manifest producer. Each case mutates one edge of that seam and runs
+  # the real command. This keeps the assertions about behaviour rather than the
+  # implementation shape of acceptance-freeze.sh.
+  local freeze="$REPO_ROOT/scripts/acceptance-freeze.sh"
+  _acceptance_fixture() { # $1=fixture root
+    local af_root="$1"
+    rm -rf "$af_root"
+    mkdir -p "$af_root/docs/chunks" "$af_root/tests/features"
+    cat > "$af_root/docs/chunks/graph.json" <<'AF_GRAPH'
+[
+  {"id":"CHUNK-6","lane":"claude-interactive","depends_on":[]}
+]
+AF_GRAPH
+    cat > "$af_root/docs/chunks/CHUNK-6.md" <<'AF_CHUNK'
+### CHUNK-6: Read a real source
+- **Goal:** Prove planning emits acceptance before implementation.
+- **Milestone:** M1 · **Depends on:** none
+- **Serves:** F25 · **Relevant ADRs:** 0014
+- **Touches:** `tests/features/chunk_6.feature`
+- **Scenarios:**
+  - Given a SQLite source, When the reader runs, Then one real record is returned.
+  - Given the same plan twice, When acceptance is frozen, Then the manifest bytes are identical.
+- **Acceptance:** tests/features/chunk_6.feature
+- **Out of scope:** step definitions.
+- **Done when:** acceptance is frozen.
+- **Lane:** claude-interactive · **Risk:** high
+AF_CHUNK
+    cat > "$af_root/tests/features/chunk_6.feature" <<'AF_FEATURE'
+Feature: CHUNK-6 acceptance
+
+  @real-source
+  Scenario: Read the real source
+    Given a SQLite source
+    When the reader runs
+    Then one real record is returned
+
+  Scenario: Freeze deterministically
+    Given the same plan twice
+    When acceptance is frozen
+    Then the manifest bytes are identical
+AF_FEATURE
+  }
+
+  if grep -Fq '**Acceptance:** tests/features/chunk_<id>.feature' skills/roadmap/SKILL.md \
+     && grep -Fq '@real-source' skills/roadmap/SKILL.md \
+     && grep -Fq '~/.forge/repo/scripts/acceptance-freeze.sh' skills/roadmap/SKILL.md; then
+    ok "skill-emits-frozen-acceptance"
+  else
+    bad "skill-emits-frozen-acceptance" \
+        "roadmap must emit the Acceptance field and feature files, tag real sources, then invoke ~/.forge/repo/scripts/acceptance-freeze.sh in the same planning pass"
+  fi
+
+  if [ ! -x "$freeze" ]; then
+    bad "acceptance-matches-contract" "$freeze is missing or not executable"
+    bad "real-source-is-planned" "$freeze is missing or not executable"
+    bad "freeze-is-deterministic" "$freeze is missing or not executable"
+    bad "missing-feature-is-named" "$freeze is missing or not executable"
+  else
+    local af_good="$TMPROOT/acceptance-good" af_out af_rc
+    _acceptance_fixture "$af_good"
+    af_out="$("$freeze" "$af_good" 2>&1)"; af_rc=$?
+    if [ "$af_rc" = 0 ]; then
+      sed -i.bak 's/Then one real record is returned/Then two records are returned/' \
+        "$af_good/tests/features/chunk_6.feature"
+      rm -f "$af_good/tests/features/chunk_6.feature.bak"
+      af_out="$("$freeze" "$af_good" 2>&1)"; af_rc=$?
+      if [ "$af_rc" -ne 0 ] \
+         && printf '%s' "$af_out" | grep -Fq 'CHUNK-6' \
+         && printf '%s' "$af_out" | grep -qi 'match'; then
+        ok "acceptance-matches-contract"
+      else
+        bad "acceptance-matches-contract" \
+            "a changed Then step must fail and name CHUNK-6's contract mismatch (exit $af_rc: ${af_out:-no diagnostic})"
+      fi
+    else
+      bad "acceptance-matches-contract" \
+          "the matching contract and feature did not freeze (exit $af_rc: ${af_out:-no diagnostic})"
+    fi
+
+    local af_source="$TMPROOT/acceptance-source"
+    _acceptance_fixture "$af_source"
+    sed -i.bak '/@real-source/d' "$af_source/tests/features/chunk_6.feature"
+    rm -f "$af_source/tests/features/chunk_6.feature.bak"
+    af_out="$("$freeze" "$af_source" 2>&1)"; af_rc=$?
+    if [ "$af_rc" -ne 0 ] \
+       && printf '%s' "$af_out" | grep -Fq 'CHUNK-6' \
+       && printf '%s' "$af_out" | grep -Fq '@real-source'; then
+      ok "real-source-is-planned"
+    else
+      bad "real-source-is-planned" \
+          "an external-source contract without a tagged scenario must fail and name CHUNK-6 (exit $af_rc: ${af_out:-no diagnostic})"
+    fi
+
+    local af_deterministic="$TMPROOT/acceptance-deterministic" af_digest
+    _acceptance_fixture "$af_deterministic"
+    af_out="$("$freeze" "$af_deterministic" 2>&1)"; af_rc=$?
+    cp "$af_deterministic/docs/chunks/contract-freeze.json" \
+       "$af_deterministic/docs/chunks/contract-freeze.first.json" 2>/dev/null || true
+    "$freeze" "$af_deterministic" >/dev/null 2>&1; local af_second_rc=$?
+    af_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+      "$af_deterministic/tests/features/chunk_6.feature" 2>/dev/null)"
+    if [ "$af_rc" = 0 ] && [ "$af_second_rc" = 0 ] \
+       && cmp -s "$af_deterministic/docs/chunks/contract-freeze.first.json" \
+                 "$af_deterministic/docs/chunks/contract-freeze.json" \
+       && jq -e --arg digest "$af_digest" \
+            'keys == ["tests/features/chunk_6.feature"] and .["tests/features/chunk_6.feature"] == $digest' \
+            "$af_deterministic/docs/chunks/contract-freeze.json" >/dev/null 2>&1; then
+      ok "freeze-is-deterministic"
+    else
+      bad "freeze-is-deterministic" \
+          "two freezes must emit identical JSON mapping the repo-relative feature path to its SHA-256 digest"
+    fi
+
+    local af_missing="$TMPROOT/acceptance-missing"
+    _acceptance_fixture "$af_missing"
+    "$freeze" "$af_missing" >/dev/null 2>&1
+    cp "$af_missing/docs/chunks/contract-freeze.json" \
+       "$af_missing/docs/chunks/contract-freeze.before.json" 2>/dev/null || true
+    rm -f "$af_missing/tests/features/chunk_6.feature"
+    af_out="$("$freeze" "$af_missing" 2>&1)"; af_rc=$?
+    if [ "$af_rc" -ne 0 ] \
+       && printf '%s' "$af_out" | grep -Fq 'CHUNK-6' \
+       && printf '%s' "$af_out" | grep -Fq 'tests/features/chunk_6.feature' \
+       && cmp -s "$af_missing/docs/chunks/contract-freeze.before.json" \
+                 "$af_missing/docs/chunks/contract-freeze.json"; then
+      ok "missing-feature-is-named"
+    else
+      bad "missing-feature-is-named" \
+          "a missing feature must name CHUNK-6 and its expected path without rewriting the last good manifest (exit $af_rc: ${af_out:-no diagnostic})"
+    fi
   fi
 }
 wants roadmap   && run_roadmap_group
