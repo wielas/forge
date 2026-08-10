@@ -12,9 +12,10 @@
 #
 # Usage:
 #   ./scripts/acceptance-freeze.sh <project-dir>
+#   ./scripts/acceptance-freeze.sh --check-base <base-dir> <head-dir>
 #
 # Exit: 0 acceptance is valid and the manifest was written,
-#       1 a planned contract is incomplete or disagrees with its feature,
+#       1 a planned contract is invalid, or an implementation changed its freeze,
 #       2 the command could not inspect the plan.
 # =============================================================================
 set -uo pipefail
@@ -22,9 +23,10 @@ set -uo pipefail
 helptext() { awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; }
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
 
-PROJECT=""
+PROJECT=""; CHECK_BASE=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --check-base) CHECK_BASE="${2:?--check-base needs the approved base directory}"; shift 2;;
     -h|--help) helptext; exit 0;;
     -*) echo "acceptance-freeze: unknown argument: $1" >&2; exit 2;;
     *) [ -z "$PROJECT" ] || {
@@ -40,12 +42,16 @@ done
   echo "acceptance-freeze: no such project directory: $PROJECT" >&2
   exit 2
 }
+[ -z "$CHECK_BASE" ] || [ -d "$CHECK_BASE" ] || {
+  echo "acceptance-freeze: no such base directory: $CHECK_BASE" >&2
+  exit 2
+}
 command -v python3 >/dev/null 2>&1 || {
   echo "acceptance-freeze: python3 is not on PATH" >&2
   exit 2
 }
 
-python3 - "$PROJECT" <<'PY'
+python3 - "$PROJECT" "$CHECK_BASE" <<'PY'
 import hashlib
 import json
 import os
@@ -56,6 +62,7 @@ import tempfile
 
 
 project = Path(sys.argv[1]).resolve()
+check_base = Path(sys.argv[2]).resolve() if sys.argv[2] else None
 chunk_dir = project / "docs" / "chunks"
 graph_path = chunk_dir / "graph.json"
 manifest_path = chunk_dir / "contract-freeze.json"
@@ -64,6 +71,91 @@ manifest_path = chunk_dir / "contract-freeze.json"
 def fatal(message: str) -> None:
     print(f"acceptance-freeze: {message}", file=sys.stderr)
     raise SystemExit(2)
+
+
+def load_manifest(root: Path, role: str):
+    path = root / "docs" / "chunks" / "contract-freeze.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"{role} docs/chunks/contract-freeze.json is unreadable: {exc}"
+    if not isinstance(value, dict):
+        return None, f"{role} docs/chunks/contract-freeze.json is not a JSON object"
+
+    errors = []
+    for feature, digest in value.items():
+        feature_path = Path(feature) if isinstance(feature, str) else None
+        if (
+            feature_path is None
+            or feature_path.is_absolute()
+            or ".." in feature_path.parts
+            or feature_path.suffix != ".feature"
+        ):
+            errors.append(f"{role} manifest has invalid feature path {feature!r}")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            errors.append(f"{role} manifest has invalid SHA-256 for {feature!r}")
+    if errors:
+        return None, "; ".join(errors)
+    return value, None
+
+
+if check_base is not None:
+    base_manifest, base_error = load_manifest(check_base, "approved base")
+    if base_error:
+        fatal(base_error)
+
+    # A corrupt base is a substrate failure, not a verdict on the implementation.
+    # The planning receipt must describe the actual bytes at the approved commit.
+    for feature, expected_digest in sorted(base_manifest.items()):
+        base_feature = check_base / feature
+        try:
+            actual_digest = hashlib.sha256(base_feature.read_bytes()).hexdigest()
+        except OSError as exc:
+            fatal(f"approved base {feature} is unreadable: {exc}")
+        if actual_digest != expected_digest:
+            fatal(
+                f"approved base {feature} does not match its manifest digest "
+                f"{expected_digest}"
+            )
+
+    errors = []
+    head_manifest, head_error = load_manifest(project, "implementation head")
+    if head_error:
+        errors.append(head_error)
+        head_manifest = {}
+
+    for feature in sorted(set(base_manifest) | set(head_manifest)):
+        base_digest = base_manifest.get(feature)
+        head_digest = head_manifest.get(feature)
+        if base_digest != head_digest:
+            errors.append(
+                f"{feature}: manifest digest differs from the approved base "
+                f"({base_digest or '<missing>'} -> {head_digest or '<missing>'})"
+            )
+
+    for feature, expected_digest in sorted(base_manifest.items()):
+        head_feature = project / feature
+        try:
+            actual_digest = hashlib.sha256(head_feature.read_bytes()).hexdigest()
+        except OSError as exc:
+            errors.append(f"{feature}: implementation feature is unreadable: {exc}")
+            continue
+        if actual_digest != expected_digest:
+            errors.append(
+                f"{feature}: feature bytes differ from the approved base digest "
+                f"{expected_digest}"
+            )
+
+    if errors:
+        for error in dict.fromkeys(errors):
+            print(f"acceptance-freeze: {error}", file=sys.stderr)
+        raise SystemExit(1)
+
+    print(
+        "acceptance-freeze: implementation matches approved base "
+        f"({len(base_manifest)} contract(s))"
+    )
+    raise SystemExit(0)
 
 
 if not graph_path.is_file():

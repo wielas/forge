@@ -27,6 +27,7 @@
 #   branch-name     block   F7  — 6 hits, 4 PRs closed for it alone, one at 3/3/3
 #   then-asserts    block   F14 — both shapes are defects on their face
 #   scenario-count  block   F13 — ONLY when the PR has FEWER than the contract
+#   acceptance-freeze block F14 — implementation cannot rewrite its planning receipt
 #   touches         warn    F55 — 3 of 5 drifting paths are undeclarable process docs
 #   size-budget     warn    F53 — fires on 11 of 11; a planning defect, seen late
 #   real-source     warn    F53 — fires on 8 of 11, same argument
@@ -68,7 +69,8 @@ done
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-prejudge.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 RESULTS="$TMP/results.tsv"; : > "$RESULTS"
-PRJSON="$TMP/pr.json"; NUMSTAT="$TMP/numstat.tsv"; TREE="$TMP/tree"
+PRJSON="$TMP/pr.json"; NUMSTAT="$TMP/numstat.tsv"
+TREE="$TMP/tree"; BASE_TREE="$TMP/base"
 
 # `skip` is a real outcome and must stay distinguishable from `pass`: a check
 # that could not run has not passed. That distinction is the whole of F5 — tier
@@ -99,6 +101,7 @@ if [ -n "$FIXTURE" ]; then
   cp "$FIXTURE/numstat.tsv" "$NUMSTAT" 2>/dev/null || : > "$NUMSTAT"
   mkdir -p "$TREE"
   [ -d "$FIXTURE/tree" ] && cp -R "$FIXTURE/tree/." "$TREE/"
+  [ -d "$FIXTURE/base" ] && { mkdir -p "$BASE_TREE"; cp -R "$FIXTURE/base/." "$BASE_TREE/"; }
   # From the recording's own `url`, never a field added to it: a fixture that
   # carries data `gh pr view` does not return is no longer a recording.
   REPO="${REPO:-$(jq -r '.url | capture("github.com/(?<r>[^/]+/[^/]+)/pull").r' "$PRJSON")}"
@@ -131,12 +134,11 @@ HEAD_REF="$(q .headRefName)"; HEAD_OID="$(q .headRefOid)"
 BASE_OID="$(q .baseRefOid)"; PR_URL="$(q .url)"; PR_BODY="$(q '.body // ""')"
 
 # ---------------------------------------------------------------------------
-# The tree. Every content check below reads the PR's OWN tree, not the default
-# branch — including the contract. That is deliberate and it is the honest
-# reading: the contract as it stood on this branch is the one the implementer
-# worked against and the one a reviewer would be judging against. On the
-# forgeboard-report run it is also the difference between PR #4 and PR #5,
-# whose contract was amended between them.
+# Most content checks below read the PR's own tree: the contract as it stood on
+# this branch is the one the implementer worked against and the reviewer judges.
+# Frozen acceptance is the deliberate exception. It reads both the head and the
+# PR base, because reading the head's rewritten feature and receipt together is
+# exactly how an implementation PR could approve its own amendment (ADR-0014).
 #
 # The base commit comes from the PR's recorded `baseRefOid`, not from a local
 # merge-base against main. Four of that run's PRs were closed unmerged and their
@@ -157,9 +159,13 @@ if [ -z "$FIXTURE" ]; then
   G fetch --quiet origin "pull/$NUM/head:refs/prejudge/$NUM" --force 2>/dev/null
   G cat-file -e "$HEAD_OID" 2>/dev/null || { echo "PR head $HEAD_OID not fetchable" >&2; exit 2; }
   G cat-file -e "$BASE_OID" 2>/dev/null || G fetch --quiet origin "$BASE_OID" 2>/dev/null
+  G cat-file -e "$BASE_OID" 2>/dev/null \
+    || { echo "PR base $BASE_OID not fetchable" >&2; exit 2; }
 
-  mkdir -p "$TREE"
+  mkdir -p "$TREE" "$BASE_TREE"
   G archive "$HEAD_OID" | tar -x -C "$TREE" 2>/dev/null
+  G archive "$BASE_OID" | tar -x -C "$BASE_TREE" 2>/dev/null \
+    || { echo "cannot read PR base tree $BASE_OID" >&2; exit 2; }
   G diff --numstat "$BASE_OID" "$HEAD_OID" > "$NUMSTAT"
 fi
 # One recording, two readings: `git diff --numstat` carries the changed paths
@@ -502,8 +508,49 @@ real_source() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# 8. Frozen acceptance is compared to the approved PR BASE (F14, F25, F53).
+#
+# The head manifest is not an authority. Comparing a head feature only to the
+# head's digest lets an implementation rewrite both and approve itself. The
+# separate planning PR is the amendment mechanism: it changes feature + receipt
+# on the base first, and a later chunk branch consumes those already-approved
+# bytes. Old projects with no base manifest have not adopted ADR-0014, so this
+# check is absent rather than claiming a skip or pass over an artifact they do
+# not have.
+# ---------------------------------------------------------------------------
+frozen_acceptance() {
+  local base_manifest="$BASE_TREE/docs/chunks/contract-freeze.json"
+  [ -f "$base_manifest" ] || return
+  if [ -z "$CHUNK" ]; then
+    emit acceptance-freeze skip \
+      "planning PR: no chunk branch, so feature and manifest may be amended together for later implementations"
+    return
+  fi
+
+  local checker="$(dirname "${BASH_SOURCE[0]:-$0}")/acceptance-freeze.sh"
+  [ -x "$checker" ] || {
+    echo "prejudge: missing executable $checker — frozen acceptance could not be checked" >&2
+    exit 2
+  }
+
+  local out rc evidence
+  out="$("$checker" --check-base "$BASE_TREE" "$TREE" 2>&1)"; rc=$?
+  evidence="$(printf '%s' "$out" | tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-700)"
+  case "$rc" in
+    0)
+      emit acceptance-freeze pass "$evidence";;
+    1)
+      emit acceptance-freeze block "$evidence" \
+        "restore the feature and docs/chunks/contract-freeze.json to the PR base; if acceptance genuinely changed, open a separate human planning PR that updates the contract, feature, and regenerated manifest together, merge it, then start the implementation branch from that approved hash";;
+    *)
+      echo "prejudge: frozen acceptance check could not run: ${evidence:-no diagnostic}" >&2
+      exit 2;;
+  esac
+}
+
 ci_state; branch_name; touches; size_budget
-then_asserts; scenario_count; real_source
+then_asserts; scenario_count; real_source; frozen_acceptance
 
 # ---------------------------------------------------------------------------
 # `forge.gate.v1` — a real metadata schema, flat, with the schema key inside it
