@@ -21,6 +21,9 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **CHUNK-6:** done 2026-08-10 — roadmap emits contract-matched Gherkin,
   requires real-source coverage, and freezes every acceptance file by SHA-256
   before implementation begins.
+- **CHUNK-7:** done 2026-08-10 — prejudge compares implementation features and
+  their manifest against the approved PR base, blocks self-amendment, preserves
+  the separate planning-PR escape hatch, and keeps `@real-source` in judging.
 
 ### CHUNK-1: Enforce methodology references and runtime pins
 - **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.
