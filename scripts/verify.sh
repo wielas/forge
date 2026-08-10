@@ -41,6 +41,8 @@
 #   roadmap/    the sizing rules at PLAN time: one checked-in passing roadmap,
 #               one mutation per rule family, and the audited run's own CHUNK-5
 #               driven through the real check              (F11, F53, ADR-0012)
+#   gate/       repository merge protection and required-check diagnostics,
+#               driven through recorded API response shapes                    (F79)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -214,13 +216,18 @@ run_cli_group() {
   ' scripts/verify.sh > "$verify_help_fixture"
   chmod +x "$verify_help_fixture"
   verify_help="$("$verify_help_fixture" --help 2>/dev/null)"
+  local help_groups_complete=1 help_suite
+  while IFS= read -r help_suite; do
+    [ -n "$help_suite" ] || continue
+    printf '%s' "$verify_help" | grep -Fq "  $help_suite/" || help_groups_complete=0
+  done < <(sed -n 's/^[[:space:]]*\([^)]*\)) SUITES=.*/\1/p' scripts/verify.sh | tr '|' '\n')
   if printf '%s' "$verify_help" | grep -Fq 'appended/' \
-     && printf '%s' "$verify_help" | grep -Fq 'roadmap/' \
+     && [ "$help_groups_complete" = 1 ] \
      && ! grep -Eq -- "-h\\|--help\\).*sed -n '[0-9]+,[0-9]+p'" scripts/verify.sh; then
     ok "verify-help-grows-with-the-group-header"
   else
     bad "verify-help-grows-with-the-group-header" \
-        "verify.sh --help lost an appended group or is pinned to a numeric sed range"
+        "verify.sh --help lost an accepted/appended group or is pinned to a numeric sed range"
   fi
 
   local preflight_help_fixture="$TMPROOT/preflight-help.sh" preflight_help
@@ -1115,7 +1122,7 @@ metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
 metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from bounces (ADR-0009 D9.4)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
-metrics/is-read-only              reading a board does not change its sha256
+metrics/is-read-only              reading changes neither database nor sidecar membership/bytes
 metrics/read-only-fingerprint-includes-sidecars  membership and bytes cover db, wal, shm and journal
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
 metrics/live-schema-selection-is-complete-and-deterministic  every board is named in stable order
@@ -1854,12 +1861,18 @@ run_metrics_group() {
   # path order. Both deliberately unreadable probes must still be named: a
   # failed check is evidence about that board, not permission to omit it.
   local selection_root="$TMPROOT/live-selection/boards" selection_report selection_names
+  local selection_blocker="$TMPROOT/live-selection/not-a-directory" selection_workspace_rc
   mkdir -p "$selection_root/z-board" "$selection_root/a-board"
   printf 'not sqlite\n' > "$selection_root/z-board/kanban.db"
   printf 'not sqlite\n' > "$selection_root/a-board/kanban.db"
   selection_report="$(live_schema_report "$selection_root" "$TMPROOT/live-selection/snapshots" 2>/dev/null)"
   selection_names="$(printf '%s\n' "$selection_report" | awk -F '\t' 'NF { print $1 }')"
-  if [ "$selection_names" = "$(printf 'a-board\nz-board')" ]; then
+  printf 'block snapshot creation\n' > "$selection_blocker"
+  live_schema_report "$selection_root" "$selection_blocker/child" >/dev/null 2>&1
+  selection_workspace_rc=$?
+  if [ "$selection_names" = "$(printf 'a-board\nz-board')" ] \
+     && [ "$(printf '%s\n' "$selection_report" | awk -F '\t' '$2=="unreadable"{n++} END{print n+0}')" = 2 ] \
+     && [ "$selection_workspace_rc" != 0 ]; then
     ok "live-schema-selection-is-complete-and-deterministic"
   else
     bad "live-schema-selection-is-complete-and-deterministic" \
@@ -1978,11 +1991,15 @@ run_metrics_group() {
   # share a message. The primitive proves the snapshot opens (`SELECT 1` needs
   # no table and no column) before it returns a path, so every column failure
   # below is unambiguously about the column.
-  local boards_root live_report board status detail
+  local boards_root live_report live_report_rc board status detail
   boards_root="${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"
   rm -rf "$TMPROOT/live-schema"
   live_report="$(live_schema_report "$boards_root" "$TMPROOT/live-schema")"
-  if [ -z "$live_report" ]; then
+  live_report_rc=$?
+  if [ "$live_report_rc" != 0 ]; then
+    bad "live-schema-has-fixture-columns" \
+        "could not create the private snapshot workspace; no live board was checked (exit $live_report_rc)"
+  elif [ -z "$live_report" ]; then
     skip "live-schema-has-fixture-columns" "no live board to compare against"
   else
     while IFS=$'\t' read -r board status detail; do

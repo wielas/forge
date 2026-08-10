@@ -35,7 +35,7 @@
 #   bijection     warn   graph ids and docs/chunks/*.md are 1:1
 #   acyclic       warn   depends_on has no cycle
 #   single-root   warn   exactly one chunk with no parents (Track E --root-only)
-#   reachable     warn   every chunk reachable from that root
+#   reachable     warn   diagnostic evidence naming what that root can reach
 #   fields        warn   the roadmap template's fields are all present, by name
 #   serves        warn   <= 4 requirements per chunk (F11)
 #   touches       warn   <= 6 DECLARABLE paths per chunk (F55 exemption applies)
