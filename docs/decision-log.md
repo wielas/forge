@@ -81,6 +81,16 @@ known home-directory lab, live-profile and UV-cache restrictions and was not a
 valid repository verdict. The approved host-level rerun completed with 261
 passed, 0 failed and 3 skipped; `make validate` also reports OK.
 
+HANDOFF: CHUNK-5 is green and locally complete on
+`chunk/5-join-exact-driver-usage`, rebased onto the exact exported CHUNK-4 tip
+`3d6f7e3` / PR #36. External approval rejected the push because this request
+did not explicitly authorize disclosure to the configured remote. After the
+human explicitly authorizes GitHub export, run `git push -u origin HEAD`, open
+a PR against `chunk/4-scoped-live-metadata-sweep` with
+`.forge/chunk-5-pr-body.md`, then write and validate
+`.forge/chunk-5-metadata.json` with the resulting PR URL. Do not merge; retarget
+only after PR #36 and the lower stack land.
+
 2026-08-10 CHUNK-4: CHUNK-4 initially started from CHUNK-1's tip, its declared
 dependency. During the run, the tracked CHUNK-3 handoff recorded the human's
 explicit serial-stack decision, so the four unpublished CHUNK-4 commits were
