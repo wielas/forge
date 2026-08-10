@@ -27,9 +27,9 @@
 #   lane/       preconditions the unattended lane needs and cannot create for
 #               itself. Every case was a real failure seen on 2026-07-28 while
 #               driving `codex exec` by hand against a live chunk (rung 2).
-#   metrics/    the flywheel's three numbers, computed from a checked-in SQL
-#               fixture and diffed against a checked-in expectation. A schema
-#               drift must fail a check rather than a quarter                (F27)
+#   metrics/    the flywheel's review and observability signals, computed from
+#               checked-in board/profile fixtures and diffed against one exact
+#               expectation. Schema drift must fail a check, not a quarter (F27)
 #   metadata/   completed-run envelopes against their versioned JSON Schemas,
 #               from fixtures only; no live board is opened              (F1, F2, F44)
 #   sweep/      durability of what `make new` stamps, and reclamation of the
@@ -2002,7 +2002,7 @@ METRICS_STATE_SQL
   row_driver="$(printf '%s\n' "$markdown_row" | awk -F '|' '{gsub(/^ +| +$/, "", $8); print $8}')"
   if [ "$header_cells" = 9 ] && [ "$row_cells" = 9 ] \
      && [ "$row_operator" = 4 ] \
-     && [ "$row_driver" = 'driver 0.33 (1/3) · estimated $1.2500 · actual n/a' ]; then
+     && [ "$row_driver" = 'driver 0.33 (1/3) · estimated $1.25 · actual n/a' ]; then
     ok "markdown-row-has-operator-and-driver-cells"
   else
     bad "markdown-row-has-operator-and-driver-cells" \
@@ -2072,18 +2072,19 @@ METRICS_STATE_SQL
         "a board at rest could not be read — the state every /retro finds it in: $(head -2 "$TMPROOT/quiescent.json" | tr '\n' ' ')"
   fi
 
-  # A live board is production data for the whole flywheel. The script snapshots
-  # it and reads the copy; this proves the original's bytes, because "read-only"
-  # is a claim in a comment and claims in comments are what this suite is for.
+  # A live board and profile state are production data for the whole flywheel.
+  # The script snapshots both and reads the copies; this proves the originals'
+  # bytes, because "read-only" is a claim in a comment and claims in comments
+  # are what this suite is for.
   local before after
-  before="$(db_source_fingerprint "$db")"
+  before="$(db_source_fingerprint "$db"; db_source_fingerprint "$profile_db")"
   HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
     "$ms" metrics-fixture >/dev/null 2>&1
   HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
     "$ms" metrics-fixture --since 2026-07-28 --markdown-row >/dev/null 2>&1
-  after="$(db_source_fingerprint "$db")"
+  after="$(db_source_fingerprint "$db"; db_source_fingerprint "$profile_db")"
   if [ "$before" = "$after" ]; then
-    ok "is-read-only (db and all sidecars unchanged across three invocations)"
+    ok "is-read-only (board/profile dbs and all sidecars unchanged across two invocations)"
   else
     bad "is-read-only" \
         "the database source set changed while being read. before: $(printf '%s' "$before" | tr '\n' ' ') after: $(printf '%s' "$after" | tr '\n' ' ')"

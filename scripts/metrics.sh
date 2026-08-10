@@ -128,6 +128,197 @@ SINCE_E=0; UNTIL_E=99999999999
 [ -n "$SINCE" ] && SINCE_E="$(epoch_of "$SINCE")"
 [ -n "$UNTIL" ] && UNTIL_E="$(epoch_of "$UNTIL" '+1 day')"   # --until is inclusive
 
+# Join the board's trusted worker_session_id to the state database belonging to
+# that exact run profile. Profile state is a second live SQLite substrate, so it
+# gets the same WAL-safe snapshot treatment as the board. A missing/unreadable
+# state database degrades only this section: the board metrics remain useful and
+# the affected run is explicitly unjudged instead of acquiring zero usage.
+driver_usage_json() { # $1=base JSON carrying private _driver_runs
+  local base_json="$1"
+  local sessions_file="$SNAPDIR/driver-sessions.ndjson"
+  local unjudged_file="$SNAPDIR/driver-unjudged.ndjson"
+  local limitations_file="$SNAPDIR/driver-limitations.ndjson"
+  local runs_file="$SNAPDIR/driver-runs.b64"
+  local profile_root="$HERMES_ROOT/profiles"
+  local encoded run_json profile session_id
+  local state_dir state_source state_snap session_json state_error
+  local joined unjudged eligible rate
+
+  : > "$sessions_file"
+  : > "$unjudged_file"
+  : > "$limitations_file"
+  printf '%s' "$base_json" | jq -rc '._driver_runs[] | @base64' > "$runs_file"
+
+  while IFS= read -r encoded; do
+    [ -n "$encoded" ] || continue
+    run_json="$(jq -cn --arg encoded "$encoded" '$encoded | @base64d | fromjson')"
+    profile="$(printf '%s' "$run_json" | jq -r '.profile')"
+    session_id="$(printf '%s' "$run_json" | jq -r '.worker_session_id // empty')"
+
+    if [ -z "$session_id" ]; then
+      printf '%s' "$run_json" | jq -c \
+        '. + {reason:"missing-worker-session-id"}' >> "$unjudged_file"
+      continue
+    fi
+    case "$session_id" in
+      *[!A-Za-z0-9._:~-]*)
+        printf '%s' "$run_json" | jq -c \
+          '. + {reason:"invalid-worker-session-id"}' >> "$unjudged_file"
+        continue;;
+    esac
+    case "$profile" in
+      ""|.|..|*[!A-Za-z0-9._-]*)
+        printf '%s' "$run_json" | jq -c \
+          '. + {reason:"invalid-profile"}' >> "$unjudged_file"
+        continue;;
+    esac
+
+    state_dir="$SNAPDIR/profile-states/$profile"
+    state_source="$profile_root/$profile/state.db"
+    mkdir -p "$state_dir"
+
+    if [ -f "$state_dir/unavailable" ]; then
+      printf '%s' "$run_json" | jq -c \
+        '. + {reason:"profile-state-unavailable"}' >> "$unjudged_file"
+      continue
+    fi
+    if [ -f "$state_dir/snapshot-path" ]; then
+      state_snap="$(sed -n '1p' "$state_dir/snapshot-path")"
+    else
+      state_snap=""
+      if [ -f "$state_source" ]; then
+        state_snap="$("$HERE/board-snapshot.sh" "$state_source" "$state_dir/snapshot" \
+                        2>"$state_dir/snapshot.err")" || state_snap=""
+      fi
+      if [ -z "$state_snap" ]; then
+        printf '%s\n' "profile state unavailable: $profile" > "$state_dir/unavailable"
+        jq -cn --arg message "profile state unavailable: $profile" '$message' \
+          >> "$limitations_file"
+        printf '%s' "$run_json" | jq -c \
+          '. + {reason:"profile-state-unavailable"}' >> "$unjudged_file"
+        continue
+      fi
+      printf '%s\n' "$state_snap" > "$state_dir/snapshot-path"
+    fi
+
+    # session_id is restricted above to a non-SQL metacharacter alphabet. The
+    # run/task/profile context is added with jq rather than interpolated here.
+    # Per-model actual cost has a NOT NULL DEFAULT 0 in Hermes 0.19, so it is
+    # only exposed when cost_status says it is actual. Otherwise null preserves
+    # the distinction between "not supplied" and a measured zero-dollar call.
+    state_error="$state_dir/query.err"
+    if ! session_json="$(sqlite3 "$state_snap" 2>"$state_error" "
+      SELECT json_object(
+        'source', s.source,
+        'model', s.model,
+        'provider', s.billing_provider,
+        'api_calls', s.api_call_count,
+        'input_tokens', s.input_tokens,
+        'output_tokens', s.output_tokens,
+        'cache_read_tokens', s.cache_read_tokens,
+        'cache_write_tokens', s.cache_write_tokens,
+        'reasoning_tokens', s.reasoning_tokens,
+        'estimated_cost_usd', s.estimated_cost_usd,
+        'actual_cost_usd', CASE
+          WHEN lower(COALESCE(s.cost_status,'')) LIKE 'actual%'
+            THEN s.actual_cost_usd ELSE NULL END,
+        'cost_status', s.cost_status,
+        'cost_source', s.cost_source,
+        'models', json(COALESCE((
+          SELECT json_group_array(json(model_json)) FROM (
+            SELECT json_object(
+              'model', u.model,
+              'provider', u.billing_provider,
+              'billing_base_url', u.billing_base_url,
+              'billing_mode', u.billing_mode,
+              'task', u.task,
+              'api_calls', u.api_call_count,
+              'input_tokens', u.input_tokens,
+              'output_tokens', u.output_tokens,
+              'cache_read_tokens', u.cache_read_tokens,
+              'cache_write_tokens', u.cache_write_tokens,
+              'reasoning_tokens', u.reasoning_tokens,
+              'estimated_cost_usd', u.estimated_cost_usd,
+              'actual_cost_usd', CASE
+                WHEN lower(COALESCE(u.cost_status,'')) LIKE 'actual%'
+                  THEN u.actual_cost_usd ELSE NULL END,
+              'cost_status', u.cost_status,
+              'cost_source', u.cost_source,
+              'first_seen', u.first_seen,
+              'last_seen', u.last_seen
+            ) AS model_json
+              FROM session_model_usage u
+             WHERE u.session_id = s.id
+             ORDER BY u.model, u.billing_provider, u.billing_base_url,
+                      u.billing_mode, u.task
+          )
+        ), json_array()))
+      )
+        FROM sessions s
+       WHERE s.id = '$session_id'
+       LIMIT 1;")"; then
+      printf '%s\n' "profile state unreadable: $profile" > "$state_dir/unavailable"
+      jq -cn --arg message "profile state unreadable: $profile" '$message' \
+        >> "$limitations_file"
+      printf '%s' "$run_json" | jq -c \
+        '. + {reason:"profile-state-unavailable"}' >> "$unjudged_file"
+      continue
+    fi
+
+    if [ -z "$session_json" ]; then
+      printf '%s' "$run_json" | jq -c '. + {reason:"session-not-found"}' \
+        >> "$unjudged_file"
+      continue
+    fi
+    printf '%s' "$session_json" | jq -c --argjson run "$run_json" \
+      '{run_id:$run.run_id, task_id:$run.task_id, profile:$run.profile,
+        worker_session_id:$run.worker_session_id} + .' >> "$sessions_file"
+  done < "$runs_file"
+
+  joined="$(jq -s 'length' "$sessions_file")"
+  unjudged="$(jq -s 'length' "$unjudged_file")"
+  eligible=$((joined + unjudged))
+  if [ "$eligible" -eq 0 ]; then rate=""
+  else rate="$(awk -v joined="$joined" -v eligible="$eligible" \
+                    'BEGIN { printf "%.2f", joined / eligible }')"; fi
+
+  jq -n \
+    --slurpfile sessions "$sessions_file" \
+    --slurpfile unjudged "$unjudged_file" \
+    --slurpfile limitations "$limitations_file" \
+    --arg rate "$rate" '
+      ($sessions | length) as $joined
+      | ($unjudged | length) as $unjudged_count
+      | ($joined + $unjudged_count) as $eligible
+      | {
+          coverage: {
+            eligible: $eligible,
+            joined: $joined,
+            unjudged: $unjudged_count,
+            rate: (if $eligible == 0 then null else $rate end)
+          },
+          totals: {
+            api_calls: ([$sessions[].api_calls] | add // 0),
+            input_tokens: ([$sessions[].input_tokens] | add // 0),
+            output_tokens: ([$sessions[].output_tokens] | add // 0),
+            cache_read_tokens: ([$sessions[].cache_read_tokens] | add // 0),
+            cache_write_tokens: ([$sessions[].cache_write_tokens] | add // 0),
+            reasoning_tokens: ([$sessions[].reasoning_tokens] | add // 0)
+          },
+          cost: {
+            estimated_usd: ([$sessions[].estimated_cost_usd | select(. != null)]
+                            | if length == 0 then null else add end),
+            estimated_sessions: ([$sessions[].estimated_cost_usd | select(. != null)] | length),
+            actual_usd: ([$sessions[].actual_cost_usd | select(. != null)]
+                         | if length == 0 then null else add end),
+            actual_sessions: ([$sessions[].actual_cost_usd | select(. != null)] | length)
+          },
+          limitations: ($limitations | unique),
+          unjudged: ($unjudged | sort_by(.run_id)),
+          sessions: ($sessions | sort_by(.run_id))
+        }'
+}
+
 # The query is assembled into a file rather than a variable: macOS ships bash
 # 3.2, whose parser mishandles a here-document nested inside `$(...)` and dies
 # with "unexpected EOF" on a script that is in fact balanced.
@@ -261,6 +452,20 @@ ops AS (
              AND created_at >= :since AND created_at < :until) AS comments,
          (SELECT COUNT(*) FROM task_events WHERE kind = 'unblocked'
              AND created_at >= :since AND created_at < :until) AS unblocks
+),
+-- Candidate chunk runs for the second-substrate join. Keep this private list in
+-- the base JSON until shell code snapshots the exact profile state databases.
+-- Only completed, profiled runs are eligible: operator rows have no driver, and
+-- unfinished workers have no completed telemetry to judge.
+du AS (
+  SELECT r.id AS run_id, r.task_id, r.profile,
+         CASE WHEN json_type(r.metadata,'$.worker_session_id') = 'text'
+                    AND trim(json_extract(r.metadata,'$.worker_session_id')) <> ''
+              THEN json_extract(r.metadata,'$.worker_session_id') ELSE NULL END
+           AS worker_session_id
+    FROM task_runs r JOIN cc ON cc.id = r.task_id
+   WHERE r.outcome = 'completed' AND r.profile IS NOT NULL
+     AND r.started_at >= :since AND r.started_at < :until
 )
 SELECT json_object(
   'board', NULL, 'since', NULL, 'until', NULL,
@@ -298,6 +503,10 @@ SELECT json_object(
                         AND started_at >= :since AND started_at < :until),
   'envelope', (SELECT json_object('flat', SUM(shape='flat'), 'nested', SUM(shape='nested'),
                  'neither', SUM(shape='neither'), 'total', COUNT(*)) FROM env),
+  '_driver_runs', (SELECT COALESCE(json_group_array(json_object(
+                    'run_id', run_id, 'task_id', task_id, 'profile', profile,
+                    'worker_session_id', worker_session_id)), json_array())
+                   FROM (SELECT * FROM du ORDER BY run_id)),
   'operator', (SELECT json_object('comments', comments, 'unblocks', unblocks,
                  'touches', comments + unblocks,
                  'method', 'comments by an author that never ran as a profile on this board, '
@@ -324,6 +533,14 @@ JSON="$(printf '%s' "$JSON" | jq \
         class, count,
         documented: ([.reasons[] | test($reason_pattern)] | all)
       })')"
+DRIVER_JSON="$(driver_usage_json "$JSON")" || {
+  echo "driver usage assembly failed for board $BOARD" >&2
+  exit 2
+}
+JSON="$(printf '%s' "$JSON" | jq --argjson driver "$DRIVER_JSON" '
+  . as $base
+  | del(._driver_runs, .operator)
+  + {driver_usage: $driver, operator: $base.operator}')"
 
 render() { printf '%s' "$1" | jq -r "$2"; }
 
@@ -348,6 +565,16 @@ markdown-row)
     # point of the change that produced it (ADR-0009).
     def gate: (if .gate.runs == 0 then "gate n/a — 0 gate runs in period"
                else "gate \(.gate.block_rate) (\(.gate.blocked)/\(.gate.runs))" end);
+    def driver:
+      if .driver_usage.coverage.eligible == 0 then "driver n/a — 0 eligible runs"
+      else "driver \(.driver_usage.coverage.rate) (\(.driver_usage.coverage.joined)/\(.driver_usage.coverage.eligible))"
+        + " · estimated "
+        + (if .driver_usage.cost.estimated_usd == null then "n/a"
+           else "$\(.driver_usage.cost.estimated_usd)" end)
+        + " · actual "
+        + (if .driver_usage.cost.actual_usd == null then "n/a"
+           else "$\(.driver_usage.cost.actual_usd)" end)
+      end;
     "| " + ([ (now | strflocaltime("%Y-%m-%d")),
               "\(.board), \(period)",
               "\(gate) · \(br(1)) · \(br(2))",
@@ -355,6 +582,8 @@ markdown-row)
                else "\(.mean_d13_all) (\(.verdicts.total) verdicts)" end),
               (if (.reason_class | length) == 0 then "empty (0 blocked cards)"
                else ([.reason_class[] | "`\(.class)` ×\(.count)"] | join(", ")) end),
+              (.operator.touches | tostring),
+              driver,
               "—", "—" ] | join(" | ")) + " |"';;
 
 text)
@@ -394,6 +623,19 @@ text)
     "  flat, $.schema == \"forge.chunk.v1\"      \(.envelope.flat // 0)   <- the documented shape",
     "  nested under $.\"forge.chunk.v1\"         \(.envelope.nested // 0)",
     "  neither                                  \(.envelope.neither // 0)",
+    "",
+    "driver usage — exact completed chunk sessions \(.driver_usage.coverage.joined)/\(.driver_usage.coverage.eligible) (\(.driver_usage.coverage.rate // "n/a")); \(.driver_usage.coverage.unjudged) unjudged",
+    "  calls \(.driver_usage.totals.api_calls) · input \(.driver_usage.totals.input_tokens) · output \(.driver_usage.totals.output_tokens) · cache read \(.driver_usage.totals.cache_read_tokens) · cache write \(.driver_usage.totals.cache_write_tokens) · reasoning \(.driver_usage.totals.reasoning_tokens)",
+    "  estimated cost " + (if .driver_usage.cost.estimated_usd == null then "n/a"
+                            else "$\(.driver_usage.cost.estimated_usd) across \(.driver_usage.cost.estimated_sessions) joined session(s)" end),
+    "  actual cost    " + (if .driver_usage.cost.actual_usd == null then "n/a — not reported"
+                            else "$\(.driver_usage.cost.actual_usd) across \(.driver_usage.cost.actual_sessions) joined session(s)" end),
+    (if (.driver_usage.limitations | length) == 0 then empty
+     else ([.driver_usage.limitations[] | "  limitation: \(.)"] | join("\n")) end),
+    (if (.driver_usage.sessions | length) == 0 then empty
+     else ([.driver_usage.sessions[]
+            | "  run \(.run_id) \(.profile)/\(.worker_session_id): \(.model) via \(.provider // "unknown") · \(.cost_status // "cost status missing") · \(.models | length) model row(s)"]
+           | join("\n")) end),
     "",
     "operator touches — \(.operator.touches) = \(.operator.comments) comments + \(.operator.unblocks) unblocks",
     "  method: \(.operator.method)"';;
