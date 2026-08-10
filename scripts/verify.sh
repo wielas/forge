@@ -1769,6 +1769,44 @@ db_source_fingerprint() { # $1=kanban.db; membership + bytes of SQLite's source 
   done
 }
 
+live_schema_report() { # $1=boards root $2=snapshot root; TSV board/status/detail
+  local boards_root="$1" snapshot_root="$2"
+  local live board snapdir snapdb err missing spec t c ordinal=0
+  mkdir -p "$snapshot_root" 2>/dev/null || return 2
+
+  while IFS= read -r live; do
+    [ -n "$live" ] || continue
+    ordinal=$((ordinal+1))
+    board="$(basename "$(dirname "$live")")"
+    snapdir="$snapshot_root/$ordinal"
+    err="$snapshot_root/$ordinal.err"
+    rm -rf "$snapdir" "$err"
+    if ! snapdb="$(scripts/board-snapshot.sh "$live" "$snapdir" 2>"$err")" \
+       || [ -z "$snapdb" ]; then
+      printf '%s\tunreadable\t%s\n' "$board" \
+        "$(tr '\t\n' '  ' < "$err" | sed 's/[[:space:]]*$//')"
+      continue
+    fi
+
+    missing=""
+    for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
+                "task_events:kind,payload,created_at" "task_comments:author,created_at" \
+                "task_links:parent_id,child_id"; do
+      t="${spec%%:*}"
+      for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
+        sqlite3 "$snapdb" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
+          || missing="$missing $t.$c"
+      done
+    done
+    if [ -z "$missing" ]; then
+      printf '%s\tpass\t\n' "$board"
+    else
+      printf '%s\tmissing\t%s\n' "$board" "$missing"
+    fi
+  done < <(find "$boards_root" -mindepth 2 -maxdepth 2 -type f -name kanban.db \
+             -print 2>/dev/null | LC_ALL=C sort)
+}
+
 run_metrics_group() {
   group metrics
   local ms=scripts/metrics.sh fx=scripts/fixtures/metrics-board.sql
@@ -1940,32 +1978,28 @@ run_metrics_group() {
   # share a message. The primitive proves the snapshot opens (`SELECT 1` needs
   # no table and no column) before it returns a path, so every column failure
   # below is unambiguously about the column.
-  local live
-  live="$(ls -1 "${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"/*/kanban.db 2>/dev/null | head -1)"
-  if [ -z "$live" ]; then
+  local boards_root live_report board status detail
+  boards_root="${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"
+  rm -rf "$TMPROOT/live-schema"
+  live_report="$(live_schema_report "$boards_root" "$TMPROOT/live-schema")"
+  if [ -z "$live_report" ]; then
     skip "live-schema-has-fixture-columns" "no live board to compare against"
   else
-    local snapdb board
-    board="$(basename "$(dirname "$live")")"
-    rm -rf "$TMPROOT/live-schema"
-    if ! snapdb="$(scripts/board-snapshot.sh "$live" "$TMPROOT/live-schema" 2>"$TMPROOT/live-schema.err")" \
-       || [ -z "$snapdb" ]; then
-      bad "live-schema-has-fixture-columns" \
-          "could not read a snapshot of board '$board' — the board was unreadable, which is not a schema change; the fixture is unverified this run, not disproven: $(tr '\n' ' ' < "$TMPROOT/live-schema.err")"
-    else
-      local missing="" t c
-      for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
-                  "task_events:kind,payload,created_at" "task_comments:author,created_at" \
-                  "task_links:parent_id,child_id"; do
-        t="${spec%%:*}"
-        for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
-          sqlite3 "$snapdb" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
-            || missing="$missing $t.$c"
-        done
-      done
-      [ -z "$missing" ] && ok "live-schema-has-fixture-columns ($board)" \
-        || bad "live-schema-has-fixture-columns" "a live board no longer has:$missing — the fixture is testing a schema that no longer exists"
-    fi
+    while IFS=$'\t' read -r board status detail; do
+      case "$status" in
+        pass)
+          ok "live-schema-has-fixture-columns ($board)";;
+        unreadable)
+          bad "live-schema-has-fixture-columns ($board)" \
+              "could not read a snapshot of board '$board' — the board was unreadable, which is not a schema change; the fixture is unverified this run, not disproven: $detail";;
+        missing)
+          bad "live-schema-has-fixture-columns ($board)" \
+              "live board '$board' no longer has:$detail — the fixture is testing a schema that no longer exists";;
+        *)
+          bad "live-schema-has-fixture-columns ($board)" \
+              "live schema inspection returned unknown status '${status:-empty}'";;
+      esac
+    done <<< "$live_report"
   fi
 
   # F67 as a regression, offline and on a board this suite builds itself. The
