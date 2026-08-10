@@ -4,9 +4,10 @@
 helped, so the loop could only accumulate: it had no way to tell an improvement
 from a regression, and every proposal was equally defensible.
 
-Three numbers, recorded once per retro period, plus a fourth added 2026-08-04
-when tier 1 grew a deterministic first stage. They are deliberately few. A
-number nobody reads is worse than no number, because it looks like rigour.
+The log keeps the original three review signals, the deterministic gate signal,
+and two observability cells: operator touches and exact driver-usage coverage.
+They are deliberately few. A number nobody reads is worse than no number,
+because it looks like rigour.
 
 ## Who computes these
 
@@ -52,9 +53,10 @@ program absorbing defects that used to cost a human. A period where the
 in it, and that is worth knowing before anyone concludes the other six earn
 their place.
 
-**No dollar figure belongs here.** The blocked path avoids OAuth work, which is
-free at the margin, and the metered driver has no cost telemetry at all (F48).
-The saving is spawns and latency; say that, and do not convert it to money.
+**No dollar figure belongs in the gate rate.** The blocked path avoids OAuth
+work, which is free at the margin. Metered Hermes driver usage is reported from
+its own exact session rows in number 4 below; do not infer a saving by applying
+that price to work the gate prevented from spawning.
 
 ### 1. Bounce rate
 
@@ -139,11 +141,53 @@ on purpose — the shape names the layer to fix. A period dominated by `stale-sp
 is a roadmap problem; by `env`, a substrate problem. A large `other` bucket means
 the vocabulary is wrong and should be extended.
 
-## Cost, and why it is not a fourth number yet
+### 4. Driver-usage coverage and exact session telemetry
+
+**Definition:** completed profiled runs on chunk cards whose top-level
+`task_runs.metadata.worker_session_id` joins the `sessions.id` row in the state
+database for that exact `task_runs.profile`. The log cell reports
+`joined / eligible`, the sum of reported estimates, and actual cost only when
+Hermes reports one. Missing identifiers, missing session rows, and unavailable
+profile databases are **unjudged**, never zero usage.
+
+**Source:** the board and `$HERMES_HOME/profiles/<profile>/state.db`, each read
+through `scripts/board-snapshot.sh`. `sessions` is authoritative for per-session
+model, provider, API calls, input/output/cache/reasoning tokens and cost status.
+Every matching `session_model_usage` row is preserved in JSON as the per-model
+breakdown. This exact id-and-profile join is the F48 substrate contract; titles,
+timestamps and model names are not attribution keys.
+
+**Cost honesty:** Hermes 0.19 currently reports `cost_status=estimated` and an
+`estimated_cost_usd` while `sessions.actual_cost_usd` is null. Its per-model
+table stores missing actual cost as a schema-default zero. Metrics emits that
+value as null unless the same row's status says the cost is actual. The
+generated cell therefore says `estimated $… · actual n/a`; it never turns the
+storage default into a zero-dollar measurement. Coverage must be read beside
+the amount: a partial estimate is not a board total.
+
+**Reads as:** whether the metered Hermes driver is observable enough for usage
+comparisons. A low coverage rate is first a telemetry finding. Model/provider
+mix and token/cache totals live in JSON and text output for investigation; the
+retro row intentionally carries only coverage and cost provenance.
+
+### 5. Operator touches
+
+**Definition:** comments by an author that never ran as a profile on the board,
+plus every `unblocked` event in the period. The generated row carries the raw
+count in its own cell.
+
+**This remains a floor.** Hermes unblock events have no actor, and interactive
+review sessions, PR closures, locally assembled prompts, and CLI calls that do
+not write board exhaust remain invisible. The script does not divide by
+completed cards and call them merged chunks: the board has no trustworthy merge
+marker. The dedicated cell closes F31's presentation gap without overstating
+what the existing source can see.
+
+## Judge telemetry remains contextual
 
 `forge.judge.v1` carries `tokens_estimate` and a full `cost` block since
-2026-08-01 (audit F30). Neither is a retro metric, and the reason is worth
-stating so nobody promotes one by default.
+2026-08-01 (audit F30). Neither replaces the driver-usage number above, and the
+reason is worth stating so nobody combines incomparable paths.
 
 **`tokens_estimate` = `input + cache_creation + output`** — tokens new to the
 model on that call. It deliberately **excludes `cache_read`**: cached re-reads
@@ -156,13 +200,10 @@ billed to `cache_creation_input_tokens`, and a 131 KB prompt contributes ~9 to
 `input_tokens`. Verdicts either side of that date are not comparable. No row
 below has ever carried a token figure, so no published series is affected.
 
-**`cost.total_cost_usd` is recorded and is not the headline.** On the OAuth path
-it is a notional price nobody pays. The metered path is the
-`deepseek-v4-flash` Hermes profiles, and that side has **no telemetry and no
-column to hold any** (F48). A cost number here would measure the free half of a
-two-engine system and read as rigour.
-
-The fourth number lands when F48 does, not before.
+**`cost.total_cost_usd` is recorded and is not spend.** On the OAuth path it is
+a notional list-price signal nobody pays. The metered Hermes driver is measured
+separately from its profile state; the two sources remain separate because they
+describe different engines and different billing modes.
 
 ## How this is used
 
@@ -187,19 +228,23 @@ The fourth number lands when F48 does, not before.
 
 One row per retro. Newest last.
 
-| Retro date | Period | Bounce rate | Mean score d1–3 | `reason_class` distribution | Changes proposed | Did last period's changes move their number? |
-|---|---|---|---|---|---|---|
-| 2026-07-28 | hello-chunk (first run) | 0.00 (0/1) | 3.00 (1 verdict) | empty (0 blocked cards) | — (baseline row) | n/a — no prior period |
-| 2026-07-28 | ladder run, rung 3 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card misrouted, self-blocked) | 8 findings, 5 fixed — see `docs/ladder-2026-07-28.md` | n/a — no changes were proposed last period |
-| 2026-07-28 | ladder run, rung 4 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card on a ghost assignee) | 1 finding, detection added; the underlying gap left OPEN | **no** — the tier-2 SOUL fix did not produce the specified card shape |
-| 2026-07-28 | controlled bounce, PR #6 (`forge-ladder`) | 1.00 (1/1) | 2.33 (1 verdict) | empty (0 blocked cards) | worktree route, hard driver boundary, clean-worktree proof | yes for routing/role; clean proof awaits the next lane |
-| 2026-07-28 | dependency D1 → D2 (`forge-dependency-clone-20260728`) | 0.00 (0/2) | 3.00 (2 verdicts) | `failing-prereq` ×1 | atomic parent creation, merged-PR gate, no implicit stacks | no — 3/3 scope score missed D1 files in D2 PR |
-| 2026-07-28 | CI-red recovery, PR #10 (`forge-dependency-clone-20260728`) | n/a — observed bounce used noncanonical metadata | 3.00 (1 green verdict; red sentinel absent) | empty (0 blocked cards) | repo-independent `gh`; canonical CI-red verdict | yes — worktree repair and clean proof both held live |
+| Retro date | Period | Bounce rate | Mean score d1–3 | `reason_class` distribution | Operator touches | Driver usage | Changes proposed | Did last period's changes move their number? |
+|---|---|---|---|---|---|---|---|---|
+| 2026-07-28 | hello-chunk (first run) | 0.00 (0/1) | 3.00 (1 verdict) | empty (0 blocked cards) | n/a — not recorded | n/a — not recorded | — (baseline row) | n/a — no prior period |
+| 2026-07-28 | ladder run, rung 3 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card misrouted, self-blocked) | n/a — not recorded | n/a — not recorded | 8 findings, 5 fixed — see `docs/ladder-2026-07-28.md` | n/a — no changes were proposed last period |
+| 2026-07-28 | ladder run, rung 4 (`forge-ladder`) | 0.00 (0/1) | 3.00 (1 verdict) | `other` ×1 (tier-2 card on a ghost assignee) | n/a — not recorded | n/a — not recorded | 1 finding, detection added; the underlying gap left OPEN | **no** — the tier-2 SOUL fix did not produce the specified card shape |
+| 2026-07-28 | controlled bounce, PR #6 (`forge-ladder`) | 1.00 (1/1) | 2.33 (1 verdict) | empty (0 blocked cards) | n/a — not recorded | n/a — not recorded | worktree route, hard driver boundary, clean-worktree proof | yes for routing/role; clean proof awaits the next lane |
+| 2026-07-28 | dependency D1 → D2 (`forge-dependency-clone-20260728`) | 0.00 (0/2) | 3.00 (2 verdicts) | `failing-prereq` ×1 | n/a — not recorded | n/a — not recorded | atomic parent creation, merged-PR gate, no implicit stacks | no — 3/3 scope score missed D1 files in D2 PR |
+| 2026-07-28 | CI-red recovery, PR #10 (`forge-dependency-clone-20260728`) | n/a — observed bounce used noncanonical metadata | 3.00 (1 green verdict; red sentinel absent) | empty (0 blocked cards) | n/a — not recorded | n/a — not recorded | repo-independent `gh`; canonical CI-red verdict | yes — worktree repair and clean proof both held live |
 
 *Rows below this line are generated by `scripts/metrics.sh --markdown-row`. Only
 the last two columns are written by a human.*
 
-| 2026-07-30 | forge-ladder, 2026-07-29..2026-07-30 | t1 0.00 (0/7) · t2 0.71 (12/17) | 2.19 (24 verdicts) | `(unclassified)` ×20, `failing-prereq` ×8, `review-required` ×1 | `make metrics` (F27): the three numbers become a program | **cannot tell** — no CI-red bounce occurred, so last period's canonical CI-red verdict was never exercised |
+| 2026-07-30 | forge-ladder, 2026-07-29..2026-07-30 | t1 0.00 (0/7) · t2 0.71 (12/17) | 2.19 (24 verdicts) | `(unclassified)` ×20, `failing-prereq` ×8, `review-required` ×1 | 9 | driver 0.88 (15/17) · estimated $1.518740104 · actual n/a | `make metrics` (F27): the three numbers become a program | **cannot tell** — no CI-red bounce occurred, so last period's canonical CI-red verdict was never exercised |
+
+The two observability cells in the 2026-07-30 generated row were replayed from
+the live board and profile-state snapshots on 2026-08-10. They are executable
+backfill, not memory; the earlier hand-authored rows remain `n/a`.
 
 **Baseline (2026-07-28).** `CHUNK-HELLO-1` on board `forge-hello`: card
 `t_1b7be3bb` completed on its first run, prejudge `t_1570a10e` returned
