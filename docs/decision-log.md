@@ -91,6 +91,13 @@ a PR against `chunk/4-scoped-live-metadata-sweep` with
 `.forge/chunk-5-metadata.json` with the resulting PR URL. Do not merge; retarget
 only after PR #36 and the lower stack land.
 
+2026-08-10 CHUNK-5: The preceding HANDOFF is resolved. The human explicitly
+authorized GitHub export; branch `chunk/5-join-exact-driver-usage` was pushed
+and stacked PR #37 opened against CHUNK-4's exact remote branch / PR #36.
+GitHub reports the intended base and head, the PR is open and mergeable, and
+`.forge/chunk-5-metadata.json` validates against the `forge-codex-lane`
+completion contract. Do not merge before the lower stack lands.
+
 2026-08-10 CHUNK-4: CHUNK-4 initially started from CHUNK-1's tip, its declared
 dependency. During the run, the tracked CHUNK-3 handoff recorded the human's
 explicit serial-stack decision, so the four unpublished CHUNK-4 commits were
