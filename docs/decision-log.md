@@ -85,3 +85,9 @@ GitHub export, push the branch, open a PR against
 `chunk/3-deterministic-diagnostics` with `.forge/chunk-4-pr-body.md`, then write
 and validate `.forge/chunk-4-metadata.json` with the resulting PR URL. Do not
 merge; retarget only after the lower stack lands.
+
+2026-08-10 CHUNK-4: The preceding HANDOFF is resolved. The human explicitly
+authorized GitHub export; the branch was pushed and stacked PR #36 opened
+against `chunk/3-deterministic-diagnostics`, whose exact remote head remains
+CHUNK-4's merge-base. The PR is intentionally unmerged and must stay stacked
+until PR #35 and the lower chain land.
