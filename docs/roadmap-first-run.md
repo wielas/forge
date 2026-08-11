@@ -1,18 +1,14 @@
 # Roadmap — the first genuine product run
 
 **Status: superseded as a planning proposal on 2026-08-11 by CHUNK-10's current
-launch contract below.** The original proposal is retained from §0 onward as a
-historical decision record; its future-tense tracks and numbered draft mapping
-are not operator instructions. Current implementation status comes from
-`docs/ROADMAP.md`, executable evidence from `make verify`, and live-proof status
-from `docs/state.md`.
+launch contract below.** The original §0 onward is a historical decision record,
+not operator instructions; `docs/state.md` owns live-proof status.
 
 ## Current launch contract (CHUNK-10)
 
 ### Landed tracks
 
-“Landed” here means implemented and green on the readiness convergence stack;
-the open stack must still integrate to `main` in parent-first order.
+“Landed” means green on the open readiness stack, which still integrates parent-first.
 
 | Track | Current implementation |
 |---|---|
@@ -25,10 +21,10 @@ the open stack must still integrate to `main` in parent-first order.
 
 ### Remaining proof
 
-- Integrate the readiness stack into `main`; after the profile-bearing changes
-  merge, run `./hermes/profiles-bootstrap.sh` and re-run preflight.
-- Correct a genuine product roadmap until its advisory checker is CLEAR, then
-  commission it. These are gates over a candidate product, not more Forge code.
+- Integrate the stack into `main`; republish profiles after the relevant merge
+  and re-run preflight.
+- Correct a genuine product roadmap until the advisory checker is CLEAR, then
+  commission it.
 - Run the staged root → metadata checkpoint → full graph sequence. F1, F2, F3's
   producer half, F25, F26, F44, and ADR-0012's future blocking decision remain
   contingent on that live evidence.
@@ -38,34 +34,26 @@ the open stack must still integrate to `main` in parent-first order.
 
 ### Operational run sequence
 
-Set an absolute durable product path and a new, empty board. From the Forge
-checkout, the next command is the first line below:
+From the Forge checkout, set a durable product path and new empty board:
 
 ```bash
 PROJECT=/absolute/path/to/product
 BOARD=product-slug
-
 make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
 make commission PROJECT="$PROJECT" BOARD="$BOARD"   # paid; must be green
 (cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
-
 # After the root PR is merged:
 make metadata-live BOARD="$BOARD" SINCE=<RUN_START_RFC3339>
 make metrics BOARD="$BOARD"
 # Stop on invalid or unjudged metadata.
-
 (cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD")
-# After the graph completes:
 make metadata-live BOARD="$BOARD" SINCE=<RUN_START_RFC3339>
 make metrics BOARD="$BOARD"
 # Then run /retro and reconcile the live-proof findings.
 ```
 
-Commissioning must not be mistaken for the lifecycle: it proves the launch
-inputs without creating cards. Root-only bootstrap adds the one staged variable;
-the first metadata sweep decides whether the rest of the graph may be released.
-
----
+Commissioning proves inputs without creating cards; the first metadata sweep
+decides whether root-only may expand to the rest of the graph.
 
 Everything below is the preserved planning analysis that led to this contract.
 Where its future tense conflicts with the current contract above, the current

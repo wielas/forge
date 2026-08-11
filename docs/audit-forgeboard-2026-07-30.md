@@ -315,10 +315,6 @@ prejudge passes, and 20 hours wall clock. It is also the largest module
 
 ### F1 — The product cannot read the board that produced it · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **critical**
 
-**Readiness status (CHUNK-4).** The producer registry, flat schemas, lane gate,
-and opt-in live sweep are executable. Closure still requires one genuine run in
-which the emitted card validates and the product consumes it.
-
 `forgeboard-report` exits **4** (invalid-core) on `forge-ladder`:
 
 ```
@@ -396,10 +392,6 @@ snapshot-based rather than folded into the default suite.
 
 ### F2 — Not one field of `forge.chunk.v1` is canonical · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **high**
 
-**Readiness status (CHUNK-4).** Canonical fields and producer ownership are
-fixture-proven; the first genuine run supplies the remaining live producer
-proof.
-
 Measured against `rubrics/kanban-metadata-schema.md`, every one of the six
 envelopes is a different, smaller, ad-hoc subset.
 
@@ -434,9 +426,6 @@ cards." That claim was false: they were *present*, not both complete. The
 still required before it may claim the chunk producer fixed in reality.
 
 ### F3 — The official bounce-rate metric reads 0.00 on a run with 12 bounces · `PARTLY FIXED — CHUNK-4 PRODUCT RUN PROOF REQUIRED` · **high**
-
-**Readiness status (CHUNK-4).** The metric split and producer checks exist. The
-run must populate the post-cutoff envelopes before the producer half can close.
 
 `docs/retro-metrics.md` defines bounce rate as *tier-1* verdicts where
 `.verdict == "bounce"`. Tier-1 bounced **0 of 17** times this run, so the
@@ -808,11 +797,6 @@ structural reason scenario theater (F14) keeps recurring.
 
 ### F14 — Scenario theater is the single most-cited defect, every chunk · `FIXED BY CHUNK-6/CHUNK-7` · **high**
 
-**Readiness closure.** CHUNK-6 emits contract-matched Gherkin and freezes its
-bytes; CHUNK-7 blocks an implementation branch that changes either the feature
-or its manifest. Their roadmap/acceptance and prejudge/freeze cases execute the
-boundary the audit asked for.
-
 Tier-2 cited it in essentially every bounce. Representative, all confirmed in
 the verdicts:
 
@@ -1111,10 +1095,6 @@ and the uncovered ones are the boundaries where F1 actually lives.
 
 ### F25 — Nothing ever ran the product against reality, and the plan deferred that to the chunk that never finished · `STAGED BY CHUNK-9 — PRODUCT RUN REQUIRED` · **critical**
 
-**Readiness status (CHUNK-9).** Paid commissioning now proves every prerequisite
-and records its output without mutating the product or board. It deliberately
-does not claim the genuine lifecycle proof this finding requires.
-
 This is the efficacy summary, and the reason F1 survived every gate.
 
 `tests/fixtures/hermes_019.py` and `tests/fixtures/normalize.py` are synthetic.
@@ -1215,10 +1195,6 @@ those it also makes the answers *correct*, which the models' answers were not.
 ---
 
 ### F26 — `forge.block.v1` has never existed; one third of the flywheel is unpopulatable by construction · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **high**
-
-**Readiness status (CHUNK-4).** The block-reason registry and live metadata
-sweep execute the replacement contract; a post-cutoff real block remains the
-required proof.
 
 `rubrics/kanban-metadata-schema.md` defines `forge.block.v1` with a
 `reason_class` enum, and `docs/retro-metrics.md` makes its distribution one of
@@ -1633,10 +1609,6 @@ telemetry to put in one.
 
 ### F31 — The board records zero operator activity, so "unattended" cannot be measured or falsified · `FIXED BY CHUNK-5` · **high**
 
-**Readiness closure.** CHUNK-5 joins operator touches and exact driver usage into
-the generated retro row. The live `forge-ladder` replay reproduced nine visible
-touches rather than manufacturing zero.
-
 The Forge's entire value proposition is unattended work. Its three metrics are
 bounce rate, mean score, and `reason_class`. **None of them can see a human.**
 
@@ -1764,10 +1736,6 @@ fix it?* — at the level of individual findings rather than quarterly vibes.
 ## K. Duplication in the methodology layer
 
 ### F34 — The chunk protocol is maintained twice, and the cross-reference has already drifted · `FIXED BY CHUNK-1` · **medium**
-
-**Readiness closure.** CHUNK-1 made every `<skill> §<n>` reference executable
-and mutation-proved that a renamed target reports both source and missing
-heading.
 
 Two documents encode the same protocol:
 
@@ -1897,10 +1865,6 @@ did not survive contact.
 ---
 
 ### F36 — The stale Codex pin is in a load-bearing skill body, not just `state.md` · `FIXED BY CHUNK-1` · **medium** *(extends F22)*
-
-**Readiness closure.** CHUNK-1 checks the two checked-in statements offline and
-prints both live and checked-in pairs on a host mismatch. The 2026-08-09 live
-readback was `gpt-5.6-sol` / `xhigh`.
 
 F22 recorded that `docs/state.md` documents the pin as `gpt-5.6-sol xhigh` while
 `~/.codex/config.toml` reads `gpt-5.6-terra` / `high`. The same stale claim is
@@ -2181,11 +2145,6 @@ because review has a free cached engine.
 
 ### F40 — The orchestrator and the implementer shared one working tree, with no isolation · `FIXED — RECONCILED BY CHUNK-10` · **medium**
 
-**Readiness closure.** Implementation chunks now run on isolated chunk branches
-and linked worktrees, while the ledger's allocation table gives concurrent
-tracks distinct finding blocks. CHUNK-10 records those two mechanisms against
-the original two symptoms.
-
 Measured 2026-07-30 during slice S1. The implementing session ran in
 `/Users/goonlab/dev/forge` — the main checkout — on branch
 `slice/metrics-command`. It committed `docs/audit-forgeboard-2026-07-30.md`
@@ -2442,10 +2401,6 @@ F43's own write-up, which recorded a third of the redness.
 
 ### F44 — More than half of all tier-1 runs left no readable verdict · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **high**
 
-**Readiness status (CHUNK-4).** The registry, schema validators and live sweep
-distinguish valid, invalid and unjudged rows. A genuine post-cutoff tier-1 run is
-still required before this can be marked fixed.
-
 Found while validating the F27 slice, by running the query the slice made
 possible. The board's own producers, board lifetime:
 
@@ -2668,10 +2623,6 @@ inference dressed as a measurement.
 ---
 
 ### F48 — The metered half of the system has no cost telemetry, and no slot to put it in · `FIXED BY CHUNK-5` · **critical**
-
-**Readiness closure.** CHUNK-5 joins each worker's exact `worker_session_id` to
-Hermes profile usage rows and keeps missing actual cost absent. The read-only
-`forge-ladder` replay reported $1.518740104 estimated driver cost.
 
 The finding F45's decision surfaced, and the largest remaining blind spot.
 
@@ -2896,10 +2847,6 @@ contributes nothing at this layer and never will. Six checks, not eight.
 
 ### F53 — The two highest-severity checks fire on everything, so neither can filter · `DECIDED BY ADR-0012 — PRODUCT RUN PROOF REQUIRED` · **high**
 
-**Readiness status.** ADR-0012 moves the decision to plan time and keeps it
-advisory through the first product run. The Forge readiness graph is CLEAR; the
-product plan must also be corrected until CLEAR before blocking is reconsidered.
-
 | check | fires on |
 |---|---|
 | `size-budget` (F28) | **11 of 11** |
@@ -3035,10 +2982,6 @@ what tier 2 actually did. The severity map is unchanged by these findings; what
 changes is what may honestly be claimed for it.*
 
 ### F57 — `touches` reads the contract from the PR's own tree, so a branch that amends its own `Touches` list clears the check by construction · `FIXED BY CHUNK-2` · **medium**
-
-**Readiness closure.** CHUNK-2 compares the approved base contract with the head
-contract and reports additions, removals and in-branch widening while retaining
-the shared process-document exemption.
 
 The gate reports `touches: pass` on **PR #5**. Tier 2 bounced PR #5 for
 `scope_discipline`, citing:
@@ -3949,9 +3892,6 @@ stdout held on fd 3), so only the final path can ever appear there.
 
 ### F91 — Line-pinned `--help` extractors print the wrong text, and the help cases assert only the exit code · `FIXED BY CHUNK-3` · **medium**
 
-**Readiness closure.** CHUNK-3 anchors both remaining help extractors to header
-content and mutates header length so a numeric range cannot pass.
-
 Four extractors used `sed -n '<n>,<m>p' "$0"`, each pinned to a header that had
 since moved:
 
@@ -3985,9 +3925,6 @@ help_text() { awk 'NR==1{next} /^# ={10,}/{if (seen) exit; seen=1; next} seen {s
 
 ### F92 — `metrics/is-read-only` hashes the database, so it cannot see a reader that writes sidecars beside a live board · `FIXED BY CHUNK-3` · **medium**
 
-**Readiness closure.** CHUNK-3 fingerprints membership and bytes for the
-database, WAL, SHM and journal before and after every live-board diagnostic.
-
 A snapshot mutated to open its source read-write left `kanban.db`
 **byte-identical** — `224b7b0d…` before and after — while creating a `-wal` and
 a 32 KB `-shm` next to it. `metrics/is-read-only` hashes only `kanban.db`, so it
@@ -4011,9 +3948,6 @@ at production is one bug away from a write* — but the incident is not evidence
 for it, and is recorded here as retracted rather than deleted.
 
 ### F93 — The suite's only live-board case changes what it proves depending on which board sorts first · `FIXED BY CHUNK-3` · **low**
-
-**Readiness closure.** CHUNK-3 inspects every live board in stable named order;
-adding an earlier-sorting board expands the subjects instead of replacing one.
 
 `live-schema-has-fixture-columns` picks its subject with
 `ls -1 …/boards/*/kanban.db | head -1`. On this host that is `digest` — 14
@@ -4056,10 +3990,6 @@ looked exactly like the finding being searched for.
 
 ### F101 — `reachable` has no recall independent of `acyclic` and `single-root` · `RESOLVED BY CHUNK-3 / ADR-0012` · **low**
 
-**Readiness resolution.** CHUNK-3 and ADR-0012 retain `reachable` only to name
-stranded nodes after another graph check fires; a pass is supporting evidence,
-not an independent detector.
-
 In a finite DAG every node has a path back to some source, so *exactly one root*
 plus *no cycle* implies every chunk is reachable. The check cannot fail where it
 is defined, and where it could fail it is not defined — on a multi-root graph it
@@ -4071,10 +4001,6 @@ detectors does not count three where there are two. Compare F56's `no-assertion`
 walker: zero recall across 11 PRs, kept only because it was named.
 
 ### F102 — Step 2 of ADR-0012's own flip procedure has no input in this repository · `RESOLVED BY CHUNK-9` · **medium**
-
-**Readiness closure.** CHUNK-9 commissioned this complete ten-chunk Forge
-roadmap through the real checker. The recorded result is CLEAR; advisory status
-still remains unchanged through the product run.
 
 The procedure is: ship warning → **run it against the real product roadmap** →
 fix the plan until it passes → flip to blocking. Step 2 cannot be executed.
@@ -4094,10 +4020,6 @@ output. This is why C1 stays advisory through the first run (see ADR-0012, and
 the roadmap's §2/§3).
 
 ### F103 — The plan-time and review-time arguments for the `Touches` exemption are different, and only the review-time one is written down · `RESOLVED BY ADR-0012 — RECONCILED BY CHUNK-10` · **low**
-
-**Readiness resolution.** ADR-0012 D12.4 now states the missing plan-time
-incentive argument. The original finding below remains the historical reason
-that addition was needed.
 
 F55 justifies the exemption by measurement: three of five drifting paths are
 process docs, so counting them manufactures a finding on every PR. **That

@@ -73,23 +73,17 @@ The implementation stack now contains the complete pre-run sequence:
 | Root-only staging and paid commissioning | CHUNK-8/CHUNK-9 green; commissioning evidence recorded |
 | Audit, roadmap, state, and operator reconciliation | CHUNK-10 green on its implementation branch |
 
-What remains is integration plus live product evidence, not another readiness
-mechanism. Merge the stack parent-first, republish profiles after the relevant
-merge, and re-run preflight. Then point the Forge checkout at an absolute,
-durable product path. The next command is:
+What remains is integration plus live product evidence. Merge parent-first,
+republish profiles, re-run preflight, and point Forge at a durable product path:
 
 ```bash
 PROJECT=/absolute/path/to/product
 make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
 ```
 
-After `CLEAR`: run paid commissioning; bootstrap only the root; stop unless the
-post-root metadata checkpoint is valid; bootstrap the rest; repeat metadata and
-metrics after completion; run `/retro`; then update the live-proof findings.
-F1, F2, F3's producer half, F25, F26, and F44 remain open to that run. ADR-0011
-still requires ten post-gate reviews, so its scorer decision is unchanged.
-
----
+After `CLEAR`: commission; bootstrap the root; stop unless metadata is valid;
+then bootstrap the rest, recheck, and run `/retro`. F1, F2, F3's producer half,
+F25, F26, and F44 await that run. ADR-0011 still awaits ten reviews.
 
 ## Read in this order
 
