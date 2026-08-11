@@ -1988,8 +1988,8 @@ run_commission_group() {
     return
   fi
 
-  local root="$TMPROOT/commission" product="$TMPROOT/commission/product"
-  local state="$TMPROOT/commission/state" real_make report rc before after out
+  local root="$LABROOT/commission" product="$LABROOT/commission/product"
+  local state="$LABROOT/commission/state" real_make report rc before after out
   real_make="$(command -v make)"
   rm -rf "$root"
   mkdir -p "$product" "$root/bin" "$state" "$root/hermes"

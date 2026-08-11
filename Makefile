@@ -1,5 +1,5 @@
 # forge repo-level commands
-.PHONY: install new validate verify preflight metrics metadata-live prejudge worktree-sweep roadmap-check
+.PHONY: install new validate verify preflight metrics metadata-live prejudge worktree-sweep roadmap-check commission
 
 verify:                        ## execute this repo's own claims (see scripts/verify.sh)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
@@ -38,6 +38,10 @@ roadmap-check:                 ## make roadmap-check PROJECT=<abs-path> — the 
 
 preflight:                     ## revalidate the mini before unattended work (read-only)
 	./scripts/preflight.sh $(if $(OUT),--out $(OUT),)
+
+commission:                    ## make commission PROJECT=<abs-path> BOARD=<slug> — paid, non-mutating launch evidence
+	@test -n "$(PROJECT)" && test -n "$(BOARD)" || { echo "usage: make commission PROJECT=<abs-path> BOARD=<slug>"; exit 1; }
+	./scripts/commission.sh "$(PROJECT)" "$(BOARD)"
 
 install:                       ## symlink skills into all harnesses
 	./install.sh
@@ -104,6 +108,6 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/lane-setup.sh scripts/lane-blast-radius.sh \
 	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh \
 	  scripts/roadmap-check.sh scripts/touches-exempt.sh scripts/merge-gate.sh \
-	  scripts/metadata-live.sh
+	  scripts/metadata-live.sh scripts/commission.sh
 	@python3 -c 'import ast; [ast.parse(open(f).read()) for f in ["scripts/prejudge-steps.py", "scripts/validate-metadata.py"]]'
 	@echo "forge validate: OK"
