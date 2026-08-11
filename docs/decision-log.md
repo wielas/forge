@@ -98,6 +98,14 @@ GitHub reports the intended base and head, the PR is open and mergeable, and
 `.forge/chunk-5-metadata.json` validates against the `forge-codex-lane`
 completion contract. Do not merge before the lower stack lands.
 
+2026-08-11 CHUNK-5: Independent review found that completed runs 37 and 60 on
+the 2026-07-29..2026-07-30 `forge-ladder` replay share
+`forge-codex-lane/20260730_091931_9a5faf`. The original replay charged that
+session twice. Coverage remains 15/17 joined runs, but those joins represent 14
+unique sessions and the corrected estimated cost is `$1.452335808` with actual
+cost absent. Metrics now preserves both run mappings and aggregates each unique
+profile/session tuple once.
+
 2026-08-10 CHUNK-4: CHUNK-4 initially started from CHUNK-1's tip, its declared
 dependency. During the run, the tracked CHUNK-3 handoff recorded the human's
 explicit serial-stack decision, so the four unpublished CHUNK-4 commits were

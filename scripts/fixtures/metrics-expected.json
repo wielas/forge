@@ -71,17 +71,17 @@
   ],
   "forge_block_v1": 0,
   "envelope": {
-    "flat": 1,
+    "flat": 2,
     "nested": 1,
     "neither": 1,
-    "total": 3
+    "total": 4
   },
   "driver_usage": {
     "coverage": {
-      "eligible": 3,
-      "joined": 1,
+      "eligible": 4,
+      "joined": 2,
       "unjudged": 2,
-      "rate": "0.33"
+      "rate": "0.50"
     },
     "totals": {
       "api_calls": 7,
@@ -102,24 +102,36 @@
     ],
     "unjudged": [
       {
-        "run_id": 2,
+        "run_id": 3,
         "task_id": "t_c2",
         "profile": "forge-missing-driver",
         "worker_session_id": "session-unavailable",
         "reason": "profile-state-unavailable"
       },
       {
-        "run_id": 3,
+        "run_id": 4,
         "task_id": "t_c3",
         "profile": "forge-codex-lane",
         "worker_session_id": null,
         "reason": "missing-worker-session-id"
       }
     ],
+    "shared_attribution": [
+      {
+        "profile": "forge-codex-lane",
+        "worker_session_id": "session-exact",
+        "run_ids": [
+          1,
+          2
+        ],
+        "task_ids": [
+          "t_c1",
+          "t_c1"
+        ]
+      }
+    ],
     "sessions": [
       {
-        "run_id": 1,
-        "task_id": "t_c1",
         "profile": "forge-codex-lane",
         "worker_session_id": "session-exact",
         "source": "kanban",
@@ -173,6 +185,16 @@
             "cost_source": "openrouter-model-pricing",
             "first_seen": 1785200010.0,
             "last_seen": 1785200011.0
+          }
+        ],
+        "runs": [
+          {
+            "run_id": 1,
+            "task_id": "t_c1"
+          },
+          {
+            "run_id": 2,
+            "task_id": "t_c1"
           }
         ]
       }
