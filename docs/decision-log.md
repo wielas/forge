@@ -53,6 +53,58 @@ The required host-access rerun completed with 246 passed, 0 failed, 3 skipped.
 CHUNK-2—the readiness planning bundle remains outside implementation commits.
 Now that CHUNK-3 is stacked on CHUNK-2, its entries extend the tracked
 append-only decision log without an add/add conflict.
+2026-08-10 CHUNK-5: The repository still has no `tests/features` BDD runner or
+`make check` target. The five Given/When/Then cases are executable in the
+`metrics/` group of `scripts/verify.sh`; the chunk contract's `make validate`
+and `make verify` remain the definition of done.
+
+2026-08-10 CHUNK-5: CHUNK-5 started from the completed local CHUNK-4 tip to
+preserve the current serial stack. The readiness source, roadmap and chunk
+cards remain local untracked planning inputs and are not included in the
+implementation commits.
+
+2026-08-10 CHUNK-5: Hermes 0.19 stores missing actual cost differently across
+the joined substrates: `sessions.actual_cost_usd` is null, while
+`session_model_usage.actual_cost_usd` is `NOT NULL DEFAULT 0`. Metrics preserves
+that zero only when the same row's `cost_status` says actual; estimated rows
+render actual cost as missing.
+
+2026-08-10 CHUNK-5: A read-only replay of `forge-ladder` for
+2026-07-29..2026-07-30 joined 15/17 completed chunk sessions, reported
+$1.518740104 estimated driver cost with actual cost absent, and reproduced 9
+visible operator touches. The retro log records this as executable backfill,
+not recollection.
+
+2026-08-10 CHUNK-5: The sandboxed full verification attempt reproduced the
+known home-directory lab, live-profile and UV-cache restrictions and was not a
+valid repository verdict. The approved host-level rerun completed with 261
+passed, 0 failed and 3 skipped; `make validate` also reports OK.
+
+HANDOFF: CHUNK-5 is green and locally complete on
+`chunk/5-join-exact-driver-usage`, rebased onto the exact exported CHUNK-4 tip
+`3d6f7e3` / PR #36. External approval rejected the push because this request
+did not explicitly authorize disclosure to the configured remote. After the
+human explicitly authorizes GitHub export, run `git push -u origin HEAD`, open
+a PR against `chunk/4-scoped-live-metadata-sweep` with
+`.forge/chunk-5-pr-body.md`, then write and validate
+`.forge/chunk-5-metadata.json` with the resulting PR URL. Do not merge; retarget
+only after PR #36 and the lower stack land.
+
+2026-08-10 CHUNK-5: The preceding HANDOFF is resolved. The human explicitly
+authorized GitHub export; branch `chunk/5-join-exact-driver-usage` was pushed
+and stacked PR #37 opened against CHUNK-4's exact remote branch / PR #36.
+GitHub reports the intended base and head, the PR is open and mergeable, and
+`.forge/chunk-5-metadata.json` validates against the `forge-codex-lane`
+completion contract. Do not merge before the lower stack lands.
+
+2026-08-11 CHUNK-5: Independent review found that completed runs 37 and 60 on
+the 2026-07-29..2026-07-30 `forge-ladder` replay share
+`forge-codex-lane/20260730_091931_9a5faf`. The original replay charged that
+session twice. Coverage remains 15/17 joined runs, but those joins represent 14
+unique sessions and the corrected estimated cost is `$1.452335808` with actual
+cost absent. Metrics now preserves both run mappings and aggregates each unique
+profile/session tuple once.
+
 2026-08-10 CHUNK-4: CHUNK-4 initially started from CHUNK-1's tip, its declared
 dependency. During the run, the tracked CHUNK-3 handoff recorded the human's
 explicit serial-stack decision, so the four unpublished CHUNK-4 commits were
