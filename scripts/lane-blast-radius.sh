@@ -133,8 +133,12 @@ digest_text() {
   printf '%s\n' "${line%% *}"
 }
 
-node_mode()     { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
-followed_mode() { stat -L -f '%Lp' "$1" 2>/dev/null || stat -L -c '%a' "$1" 2>/dev/null; }
+# GNU `stat -f` is a valid but different command: it prints filesystem status.
+# Trying the BSD spelling first therefore succeeds on Linux and puts changing
+# free-block counts into the hook manifest, making every clean audit a breach.
+# GNU `-c` is rejected by BSD stat, so this order distinguishes the dialects.
+node_mode()     { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+followed_mode() { stat -L -c '%a' "$1" 2>/dev/null || stat -L -f '%Lp' "$1" 2>/dev/null; }
 
 # One manifest line per node: hashed relative path (so odd path bytes cannot
 # break the line format), node type, mode, symlink/content digest, and finally
