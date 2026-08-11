@@ -70,3 +70,12 @@ approved and head Scenarios block, Real sources mapping, and Acceptance path in
 addition to manifest and feature bytes. Mutations cover both a weakened Then
 and a redirected Acceptance field while ordinary Touches drift remains outside
 this blocking surface.
+
+2026-08-11 CHUNK-8: Independent review drove `CHUNK 1` through three Hermes
+mutations before structural failure and found that a human-completed
+interactive root was rejected by full bootstrap. Canonical chunk-id validation
+now runs before the first Hermes command in both root-only and full modes, with
+space, slash, traversal, and malformed-dependency mutations. Terminal
+interactive roots retain their done state and human assignee. An opt-in run
+against the installed Hermes CLI in an isolated temporary home proved the real
+one-root-to-two-card extension and its actual `task_links` edge (7/0/0).

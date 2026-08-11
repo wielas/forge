@@ -40,15 +40,20 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 GRAPH=docs/chunks/graph.json
 ROOT_ID=""
 
-validate_root_only_graph() { # $1=graph; sets ROOT_ID
+validate_graph() { # $1=graph; sets ROOT_ID
   local graph="$1" roots root_count missing ids seen total progress id deps dep ready
 
   if ! jq -e '
       type == "array" and length > 0
       and all(.[];
-        ((.id | type) == "string") and ((.id | length) > 0)
+        ((.id | type) == "string")
+        and (.id | test("^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"))
         and ((.depends_on // []) | type == "array")
-        and all((.depends_on // [])[]; (type == "string") and (length > 0)))
+        and all((.depends_on // [])[];
+          (type == "string")
+          and test("^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"))
+        and (((.depends_on // []) | unique | length)
+             == ((.depends_on // []) | length)))
       and ((map(.id) | unique | length) == length)
     ' "$graph" >/dev/null 2>&1; then
     echo "FATAL: $graph has invalid or duplicate ids/dependencies" >&2
@@ -109,14 +114,14 @@ validate_root_only_graph() { # $1=graph; sets ROOT_ID
   rm -f "$ids" "$seen"
 }
 
-# Root-only is a staged-launch safety boundary: validate the whole graph before
-# even initializing a board. A bad graph must leave no board/card side effects.
-if [ "$MODE" = "--root-only" ]; then
+# Graph validation is a board-mutation boundary in both staged and full modes.
+# A malformed plan must fail before even initializing a board.
+if [ "$MODE" != "--hello" ]; then
   [ -f "$GRAPH" ] || {
     echo "no $GRAPH found — run /roadmap first (it emits the chunk specs AND the graph)" >&2
     exit 1
   }
-  validate_root_only_graph "$GRAPH" || exit 1
+  validate_graph "$GRAPH" || exit 1
 fi
 
 # Pin the board for every hermes call in this script AND for anything it spawns.
@@ -174,7 +179,7 @@ create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=bra
 # pick it up, because a skipped chunk is invisible to the graph — and its
 # dependents would then have no unmet prerequisite and auto-promote to ready.
 create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [parent args...]
-  local cid state
+  local cid state status
   cid=$(hermes kanban --board "$BOARD" create "$1" \
     --body "$(cat "$2")" \
     --assignee forge-operator-handoff \
@@ -183,20 +188,46 @@ create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [parent a
     "${@:4}" \
     --json | jq -r '.id')
   state=$(hermes kanban --board "$BOARD" show "$cid" --json)
-  if printf '%s' "$state" | jq -e '.task.status == "running"' >/dev/null; then
-    hermes kanban --board "$BOARD" block --kind needs_input "$cid" \
-      "interactive chunk: human implementation required" >/dev/null
-    hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
-    state=$(hermes kanban --board "$BOARD" show "$cid" --json)
-  fi
-  printf '%s' "$state" | jq -e '
-    .task.status == "blocked"
-    and .task.assignee == null
-    and any(.events[]; .kind == "blocked")
+  printf '%s' "$state" | jq -e --arg id "$cid" --arg title "$1" '
+    .task.id == $id and .task.title == $title
   ' >/dev/null || {
-    echo "FATAL: interactive card $cid is not sticky-blocked and unassigned" >&2
+    echo "FATAL: interactive idempotency key mapped to the wrong card identity" >&2
     exit 1
   }
+  status=$(printf '%s' "$state" | jq -r '.task.status // empty')
+  case "$status" in
+    running)
+      hermes kanban --board "$BOARD" block --kind needs_input "$cid" \
+        "interactive chunk: human implementation required" >/dev/null
+      hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
+      state=$(hermes kanban --board "$BOARD" show "$cid" --json)
+      printf '%s' "$state" | jq -e '
+        .task.status == "blocked"
+        and .task.assignee == null
+        and any(.events[]; .kind == "blocked")
+      ' >/dev/null || {
+        echo "FATAL: interactive card $cid is not sticky-blocked and unassigned" >&2
+        exit 1
+      }
+      ;;
+    blocked)
+      printf '%s' "$state" | jq -e '
+        .task.assignee == null and any(.events[]; .kind == "blocked")
+      ' >/dev/null || {
+        echo "FATAL: existing interactive card $cid lost its sticky block" >&2
+        exit 1
+      }
+      ;;
+    done)
+      # Full bootstrap follows the documented human checkpoint. Reuse the
+      # terminal root as the same dependency card; never re-block completed
+      # work or erase its human assignee. Parent identity is read back below.
+      ;;
+    *)
+      echo "FATAL: existing interactive card $cid has unsafe status '${status:-missing}'" >&2
+      exit 1
+      ;;
+  esac
   printf '%s\n' "$cid"
 }
 
