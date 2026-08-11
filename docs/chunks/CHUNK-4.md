@@ -1,0 +1,17 @@
+### CHUNK-4: Add a scoped live metadata sweep
+- **Goal:** Validate completed producer rows and model-authored block reasons from a WAL-safe board snapshot with honest valid, invalid, and unjudged counts.
+- **Milestone:** M2 · **Depends on:** CHUNK-1
+- **Serves:** F1, F2, F26, F44 · **Relevant ADRs:** 0003, 0009
+- **Touches:** `scripts/metadata-live.sh`, `scripts/validate-metadata.py`, `scripts/verify.sh`, `Makefile`, `rubrics/kanban-metadata-schema.md`, `docs/operator-guide.md`
+- **Scenarios:**
+  - Given no RFC3339 `SINCE` value, When `make metadata-live` runs, Then it refuses before reading a board.
+  - Given post-cutoff completed rows from every contracted profile, When the sweep runs, Then valid envelopes are counted by profile and schema.
+  - Given a board contains nested metadata, null metadata, and a cross-profile envelope, When the sweep runs, Then every bad row is named and classified as invalid or unjudged.
+  - Given a model-authored block reason outside `blocked_reason_pattern`, When the sweep runs, Then it fails and prints the task, run, and reason.
+  - Given rows predate `SINCE`, When the sweep runs, Then they are ignored and reported separately from valid rows.
+- **Real sources:** `Hermes board snapshot` → scenario 2
+- **Acceptance:** tests/features/chunk_4.feature
+- **Output contract:** `scripts/metadata-live.sh` prints `valid`, `invalid`, `unjudged`, and `ignored` counts; it exits 0 only when post-cutoff expected producers are present and every judged item is valid, 1 on a contract violation, and 2 when the sweep cannot read or scope its source. `make metadata-live` is a human-facing wrapper whose failed recipe has GNU Make's generic nonzero status; automation requiring 1-versus-2 classification calls the script.
+- **Out of scope:** adding a live board to default `make verify`, normalizing historical envelopes, or treating unreadable rows as valid.
+- **Done when:** `make validate` and `make verify` are green, fixtures cover every classification, the command reads through `board-snapshot.sh`, and operator docs are updated.
+- **Lane:** forge-codex-lane · **Risk:** medium

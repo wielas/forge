@@ -53,3 +53,19 @@ The required host-access rerun completed with 246 passed, 0 failed, 3 skipped.
 CHUNK-2—the readiness planning bundle remains outside implementation commits.
 Now that CHUNK-3 is stacked on CHUNK-2, its entries extend the tracked
 append-only decision log without an add/add conflict.
+
+2026-08-11 CHUNK-6: Independent review found that the first acceptance freeze
+required only one global `@real-source` tag and inferred sources from a finite
+word list. CHUNK-4 proved the resulting scenario theater by tagging its
+before-any-board-read refusal. Contracts now declare arbitrary source labels
+with exact one-based scenario mappings; the checker rejects missing, extra, or
+misplaced tags and hashes the same bytes it validated. This first Forge plan is
+recorded as a retrofit, and the local stack is reordered so CHUNK-6 follows
+CHUNK-3 and precedes CHUNK-4/5 before merge.
+
+2026-08-11 CHUNK-1: Complete hosted-CI review exposed a Linux-only blast-radius
+false positive: GNU `stat -f` reports filesystem statistics rather than a
+file-mode format, so clean hook state appeared to change between snapshots.
+`scripts/lane-blast-radius.sh` now tries GNU `stat -c` before the BSD fallback,
+and the lane verifier preserves failed-command output and evidence for future
+diagnosis. The CHUNK-1 `Touches` contract is widened to record this repair.

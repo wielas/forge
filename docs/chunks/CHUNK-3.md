@@ -1,0 +1,16 @@
+### CHUNK-3: Make diagnostics deterministic and sidecar-aware
+- **Goal:** Remove the remaining false-confidence paths in help extraction, SQLite read-only checks, live-board selection, and graph diagnostics.
+- **Milestone:** M5 · **Depends on:** CHUNK-1
+- **Serves:** F91, F92, F93, F101 · **Relevant ADRs:** 0003, 0012
+- **Touches:** `scripts/verify.sh`, `scripts/preflight.sh`, `scripts/roadmap-check.sh`, `docs/hermes-field-notes.md`, `docs/adr/0012-sizing-at-plan-time.md`
+- **Scenarios:**
+  - Given a new verify suite is appended, When `verify.sh --help` runs, Then the complete group list is printed without line-number pins.
+  - Given preflight's header grows, When `preflight.sh --help` runs, Then its Usage and Exit sections remain complete.
+  - Given an end-to-end metrics read creates a WAL sidecar, When the read-only case compares the source set, Then it fails even if `kanban.db` bytes are unchanged.
+  - Given multiple live boards exist, When the live-schema check runs, Then every selected board is named and checked deterministically rather than choosing `ls | head -1`.
+  - Given a finite acyclic graph has one root, When `reachable` reports pass, Then ADR-0012 identifies it as diagnostic evidence and not an independent detector.
+- **Real sources:** `SQLite WAL source set` → scenario 3; `live Hermes boards` → scenario 4
+- **Acceptance:** tests/features/chunk_3.feature
+- **Out of scope:** opening live boards read-write, adding live access to CI, or removing the single-root requirement.
+- **Done when:** `make validate` and `make verify` are green, the scenarios pass under mutations, and the field notes describe the live-board policy.
+- **Lane:** forge-codex-lane · **Risk:** low

@@ -1,0 +1,16 @@
+### CHUNK-1: Enforce methodology references and runtime pins
+- **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.
+- **Milestone:** M1 · **Depends on:** none
+- **Serves:** F34, F36 · **Relevant ADRs:** 0002, 0003, 0005
+- **Touches:** `scripts/verify.sh`, `scripts/lane-blast-radius.sh`, `skills/end-chunk/SKILL.md`, `hermes/profiles-bootstrap.sh`, `docs/open-questions.md`, `docs/adr/0013-lane-skill-management.md`
+- **Scenarios:**
+  - Given every `<skill> §<n>` reference in a Forge skill, When the CLI suite runs, Then each target heading resolves in the named skill.
+  - Given a referenced section is renamed, When the CLI suite runs, Then it fails and names the source reference and missing heading.
+  - Given the two checked-in Codex pin statements agree, When the offline CLI suite runs, Then it passes without reading a home-directory config.
+  - Given the live Codex pin differs from the checked-in model-and-effort pair, When the config suite runs, Then it fails and prints both values.
+  - Given Hermes cannot disable only `skill_manage`, When the profile policy is read, Then the ADR retains the `skills` toolset behind enforced `skills.write_approval=true` and names the residual staged-write capability.
+- **Real sources:** `live Codex config` → scenario 4; `Hermes skill capability` → scenario 5
+- **Acceptance:** tests/features/chunk_1.feature
+- **Out of scope:** changing the Codex invocation, changing the model pin, disabling the whole `skills` toolset, or changing a SOUL.
+- **Done when:** `make validate` and `make verify` are green, the scenarios pass, docs are updated, and `profiles-bootstrap.sh` is run after merge because its generated config text changed.
+- **Lane:** forge-codex-lane · **Risk:** low
