@@ -237,7 +237,10 @@ same board with the rest of the graph:
 Full mode reuses the existing root mapping and creates each remaining card with
 all of its parent ids in the same Hermes transaction. Its final reconciliation
 still compares every attached parent with every edge declared by the graph;
-root-only's zero-parent created set does not weaken that assertion.
+root-only's zero-parent created set does not weaken that assertion. If the root
+is `claude-interactive`, full mode also accepts its documented `done` checkpoint
+without re-blocking it or erasing the human assignee; any nonterminal state
+other than the original sticky block fails closed.
 
 ## Landing a stack of PRs
 

@@ -53,7 +53,6 @@ The required host-access rerun completed with 246 passed, 0 failed, 3 skipped.
 CHUNK-2—the readiness planning bundle remains outside implementation commits.
 Now that CHUNK-3 is stacked on CHUNK-2, its entries extend the tracked
 append-only decision log without an add/add conflict.
-
 2026-08-10 CHUNK-5: The repository still has no `tests/features` BDD runner or
 `make check` target. The five Given/When/Then cases are executable in the
 `metrics/` group of `scripts/verify.sh`; the chunk contract's `make validate`
@@ -145,3 +144,29 @@ to `main` only after both prerequisite heads are integrated, and delete no base
 branch until its child PR has been retargeted. The synthetic base is never
 merged independently; it exists only to give the authorized stack one complete
 review base.
+
+2026-08-11 CHUNK-6: Independent review found that the first acceptance freeze
+required only one global `@real-source` tag and inferred sources from a finite
+word list. CHUNK-4 proved the resulting scenario theater by tagging its
+before-any-board-read refusal. Contracts now declare arbitrary source labels
+with exact one-based scenario mappings; the checker rejects missing, extra, or
+misplaced tags and hashes the same bytes it validated. This first Forge plan is
+recorded as a retrofit, and the local stack is reordered so CHUNK-6 follows
+CHUNK-3 and precedes CHUNK-4/5 before merge.
+
+2026-08-11 CHUNK-7: Independent review reproduced a contract-only
+self-amendment: weakening a chunk's `Then` while leaving its feature and hash
+unchanged passed `--check-base`. The implementation gate now compares the
+approved and head Scenarios block, Real sources mapping, and Acceptance path in
+addition to manifest and feature bytes. Mutations cover both a weakened Then
+and a redirected Acceptance field while ordinary Touches drift remains outside
+this blocking surface.
+
+2026-08-11 CHUNK-8: Independent review drove `CHUNK 1` through three Hermes
+mutations before structural failure and found that a human-completed
+interactive root was rejected by full bootstrap. Canonical chunk-id validation
+now runs before the first Hermes command in both root-only and full modes, with
+space, slash, traversal, and malformed-dependency mutations. Terminal
+interactive roots retain their done state and human assignee. An opt-in run
+against the installed Hermes CLI in an isolated temporary home proved the real
+one-root-to-two-card extension and its actual `task_links` edge (7/0/0).

@@ -8,6 +8,7 @@
   - Given the old first-run roadmap mixes shipped and future work, When it is reconciled, Then landed tracks, remaining commands, and the operational run sequence are unambiguous.
   - Given F80's out-of-bound worktrees, When the operator guide describes cleanup, Then it preserves the bounded unattended sweep and requires explicit review outside that bound.
   - Given F81 and F103 have prior dispositions, When docs are updated, Then the record is preserved and a superseding decision is linked rather than silently rewriting history.
+- **Real sources:** none
 - **Acceptance:** tests/features/chunk_10.feature
 - **Out of scope:** marking live-proof findings fixed before the run, deciding ADR-0011 without ten samples, deleting worktrees, or rewriting historical measurements.
 - **Done when:** `make validate`, `make verify`, and `make preflight` match their recorded baselines, the roadmap checker is CLEAR, and all four documents point to the same next command.

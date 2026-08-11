@@ -140,8 +140,9 @@ BASE_OID="$(q .baseRefOid)"; PR_URL="$(q .url)"; PR_BODY="$(q '.body // ""')"
 # Most content checks below read the PR's own tree: the contract as it stood on
 # this branch is the one the implementer worked against and the reviewer judges.
 # Frozen acceptance is the deliberate exception. It reads both the head and the
-# PR base, because reading the head's rewritten feature and receipt together is
-# exactly how an implementation PR could approve its own amendment (ADR-0014).
+# PR base, because reading the head's rewritten contract, feature, and receipt
+# together is exactly how an implementation PR could approve its own amendment
+# (ADR-0014).
 #
 # The base commit comes from the PR's recorded `baseRefOid`, not from a local
 # merge-base against main. Four of that run's PRs were closed unmerged and their
@@ -542,25 +543,32 @@ scenario_count() {
 # that would have caught F1 — the product cannot read the board that produced it
 # — was scheduled last and cut. Nothing ever ran the product against reality.
 #
-# The convention: a scenario tagged `@real-source` in one of the chunk's feature
-# files, which pytest-bdd carries through as a marker, so it can be selected and
-# skipped-if-absent without a second mechanism.
+# New plans declare free-text sources and exact scenario indexes. Older recorded
+# PRs have no such declaration and are unjudgeable here rather than being
+# guessed from a finite vocabulary.
 # ---------------------------------------------------------------------------
-EXTERNAL_SOURCES='Hermes|GitHub|gh CLI|GitHub CLI|kanban|sqlite|SQLite|subprocess|network|HTTP'
 real_source() {
   [ -n "$CONTRACT" ] || { emit real-source skip "no contract for ${CHUNK:-this branch} in the PR tree"; return; }
-  local named feats f tagged=0
-  named="$(grep -oE "$EXTERNAL_SOURCES" "$CONTRACT" | sort -u | tr '\n' ',' | sed 's/,$//')"
-  [ -n "$named" ] || { emit real-source pass "$CHUNK.md names no external source"; return; }
-  feats="$(grep -m1 -- '- \*\*Touches:\*\*' "$CONTRACT" | grep -oE '`[^`]+\.feature`' | tr -d '`')"
-  for f in $feats; do
-    [ -f "$TREE/$f" ] && grep -qE '^[[:space:]]*@[a-z-]*real-source' "$TREE/$f" && tagged=1
-  done
+  local declaration feature tagged=0
+  declaration="$(sed -n 's/^- \*\*Real sources:\*\* //p' "$CONTRACT" | head -1)"
+  [ -n "$declaration" ] || {
+    emit real-source skip "$CHUNK.md predates the explicit Real sources mapping; do not infer source coverage from prose"
+    return
+  }
+  [ "$declaration" != none ] || {
+    emit real-source pass "$CHUNK.md explicitly declares no real sources"
+    return
+  }
+  feature="$(sed -n 's#^- \*\*Acceptance:\*\* `\{0,1\}\([^` ]*\.feature\)`\{0,1\}$#\1#p' \
+              "$CONTRACT" | head -1)"
+  [ -n "$feature" ] && [ -f "$TREE/$feature" ] \
+    && grep -qE '^[[:space:]]*@([^[:space:]]+[[:space:]]+)*@?real-source([[:space:]]|$)' \
+         "$TREE/$feature" && tagged=1
   if [ "$tagged" = 1 ]; then
-    emit real-source pass "names $named and has a @real-source scenario"
+    emit real-source pass "declares $declaration and $feature carries the mapped @real-source scenario(s)"
   else
-    emit real-source warn "$CHUNK.md names $named but no feature file carries a @real-source scenario — every external source was tested against synthetic fixtures only (F25)" \
-      "tag one scenario in $(printf '%s' "$feats" | tr '\n' ' ' | sed 's/ $//') with @real-source and make it exercise the real $named rather than a fixture; if that cannot be done in this chunk, say so in the PR body and name the chunk that will"
+    emit real-source warn "$CHUNK.md declares $declaration but $feature carries no @real-source scenario" \
+      "restore the mapped @real-source tag in $feature; if the mapping is wrong, amend contract, feature, and manifest together in a separate planning PR"
   fi
 }
 
@@ -568,19 +576,19 @@ real_source() {
 # 8. Frozen acceptance is compared to the approved PR BASE (F14, F25, F53).
 #
 # The head manifest is not an authority. Comparing a head feature only to the
-# head's digest lets an implementation rewrite both and approve itself. The
-# separate planning PR is the amendment mechanism: it changes feature + receipt
-# on the base first, and a later chunk branch consumes those already-approved
-# bytes. Old projects with no base manifest have not adopted ADR-0014, so this
-# check is absent rather than claiming a skip or pass over an artifact they do
-# not have.
+# head's digest lets an implementation rewrite its contract, feature, and
+# receipt together and approve itself. The separate planning PR is the
+# amendment mechanism: it changes all three on the base first, and a later
+# chunk branch consumes those already-approved semantics and bytes. Old
+# projects with no base manifest have not adopted ADR-0014, so this check is
+# absent rather than claiming a skip or pass over an artifact they do not have.
 # ---------------------------------------------------------------------------
 frozen_acceptance() {
   local base_manifest="$BASE_TREE/docs/chunks/contract-freeze.json"
   [ -f "$base_manifest" ] || return
   if [ -z "$CHUNK" ]; then
     emit acceptance-freeze skip \
-      "planning PR: no chunk branch, so feature and manifest may be amended together for later implementations"
+      "planning PR: no chunk branch, so contract, feature, and manifest may be amended together for later implementations"
     return
   fi
 
@@ -598,7 +606,7 @@ frozen_acceptance() {
       emit acceptance-freeze pass "$evidence";;
     1)
       emit acceptance-freeze block "$evidence" \
-        "restore the feature and docs/chunks/contract-freeze.json to the PR base; if acceptance genuinely changed, open a separate human planning PR that updates the contract, feature, and regenerated manifest together, merge it, then start the implementation branch from that approved hash";;
+        "restore the contract acceptance fields, feature, and docs/chunks/contract-freeze.json to the PR base; if acceptance genuinely changed, open a separate human planning PR that updates the contract, feature, and regenerated manifest together, merge it, then start the implementation branch from that approved hash";;
     *)
       echo "prejudge: frozen acceptance check could not run: ${evidence:-no diagnostic}" >&2
       exit 2;;

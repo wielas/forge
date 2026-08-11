@@ -8,6 +8,7 @@
   - Given the head contract removes a path, When prejudge runs, Then the removal is not reported as widening.
   - Given the contract is unchanged and the implementation stays inside it, When prejudge runs, Then both `touches` and `touches-widened` pass.
   - Given a process-doc exemption is added to `Touches`, When prejudge compares the contracts, Then the shared exemption policy is applied and no second exemption list is introduced.
+- **Real sources:** none
 - **Acceptance:** tests/features/chunk_2.feature
 - **Out of scope:** making `Touches` blocking, reading only the base contract for scope, or changing the six-path planning cap.
 - **Done when:** `make validate` and `make verify` are green, recorded-PR fixtures exercise the scenarios, and the ADR documents the advisory meaning.
