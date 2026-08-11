@@ -1,0 +1,15 @@
+### CHUNK-2: Report in-branch Touches widening
+- **Goal:** Make the advisory `touches` result reveal when a PR expands its own contract instead of certifying the expanded contract as unchanged.
+- **Milestone:** M5 · **Depends on:** CHUNK-1
+- **Serves:** F57 · **Relevant ADRs:** 0003, 0009, 0012
+- **Touches:** `scripts/prejudge.sh`, `scripts/verify.sh`, `scripts/fixtures/prejudge-prs/`, `docs/adr/0009-tier-1-gate.md`
+- **Scenarios:**
+  - Given the head contract adds a path absent from the base contract, When prejudge runs, Then `touches-widened` warns with that path even when the implementation diff is inside the head list.
+  - Given the head contract removes a path, When prejudge runs, Then the removal is not reported as widening.
+  - Given the contract is unchanged and the implementation stays inside it, When prejudge runs, Then both `touches` and `touches-widened` pass.
+  - Given a process-doc exemption is added to `Touches`, When prejudge compares the contracts, Then the shared exemption policy is applied and no second exemption list is introduced.
+- **Real sources:** none
+- **Acceptance:** tests/features/chunk_2.feature
+- **Out of scope:** making `Touches` blocking, reading only the base contract for scope, or changing the six-path planning cap.
+- **Done when:** `make validate` and `make verify` are green, recorded-PR fixtures exercise the scenarios, and the ADR documents the advisory meaning.
+- **Lane:** forge-codex-lane · **Risk:** medium

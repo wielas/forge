@@ -1,0 +1,15 @@
+### CHUNK-10: Reconcile the launch ledger and operator contract
+- **Goal:** Make the audit, first-run roadmap, current state, and operator guide agree with the code and measured pre-launch evidence.
+- **Milestone:** M5 · **Depends on:** CHUNK-2, CHUNK-3, CHUNK-9
+- **Serves:** F40, F81, F101, F103 · **Relevant ADRs:** 0002, 0003, 0012
+- **Touches:** `docs/audit-forgeboard-2026-07-30.md`, `docs/roadmap-first-run.md`, `docs/state.md`, `docs/operator-guide.md`
+- **Scenarios:**
+  - Given every finding touched by this roadmap, When the ledger is reconciled, Then each status header agrees with executable evidence and names the closing chunk or remaining proof.
+  - Given the old first-run roadmap mixes shipped and future work, When it is reconciled, Then landed tracks, remaining commands, and the operational run sequence are unambiguous.
+  - Given F80's out-of-bound worktrees, When the operator guide describes cleanup, Then it preserves the bounded unattended sweep and requires explicit review outside that bound.
+  - Given F81 and F103 have prior dispositions, When docs are updated, Then the record is preserved and a superseding decision is linked rather than silently rewriting history.
+- **Real sources:** none
+- **Acceptance:** tests/features/chunk_10.feature
+- **Out of scope:** marking live-proof findings fixed before the run, deciding ADR-0011 without ten samples, deleting worktrees, or rewriting historical measurements.
+- **Done when:** `make validate`, `make verify`, and `make preflight` match their recorded baselines, the roadmap checker is CLEAR, and all four documents point to the same next command.
+- **Lane:** forge-codex-lane · **Risk:** low
