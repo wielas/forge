@@ -519,7 +519,9 @@ run_config_group() {
           "known mismatch did not print live and checked-in pairs (got: ${codex_diag:-no diagnostic})"
     fi
     codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
-    if codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
+    if [ ! -f "$codex_config" ]; then
+      skip "codex-pin-live" "$codex_config is absent; no live operator pin to judge"
+    elif codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
       ok "codex-pin-live ($CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT)"
     else
       bad "codex-pin-live" "$codex_diag"
