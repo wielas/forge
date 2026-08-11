@@ -47,6 +47,8 @@
 #               driven through the real check              (F11, F53, ADR-0012)
 #   gate/       repository merge protection and required-check diagnostics,
 #               driven through recorded API response shapes                    (F79)
+#   docs/       the reconciled launch ledger and operator contract: dispositions,
+#               bounded cleanup, preserved history, and one next command
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -75,11 +77,11 @@ while [ $# -gt 0 ]; do
     --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate|docs) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate docs"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -1301,6 +1303,15 @@ roadmap/acceptance-matches-contract      every generated Given/When/Then step ma
 roadmap/real-source-is-planned           arbitrary declared sources map exactly to their @real-source scenarios
 roadmap/freeze-is-deterministic           sorted repo-relative paths map to the feature bytes' SHA-256 digests
 roadmap/missing-feature-is-named          freeze refuses atomically and names the chunk plus expected path
+docs/launch-ledger-reconciles-touched-findings every readiness finding names its closing chunk or remaining live proof
+docs/launch-roadmap-separates-state-and-sequence landed tracks, remaining proof and the run sequence cannot be confused
+docs/launch-slices-own-worktrees-and-manager-owned-ledger human slices never share main or become the sole audit-ledger writer
+docs/launch-slice-contract-mutation-is-caught weakening slice isolation or ownership turns the docs gate red
+docs/launch-cleanup-stays-bounded              automated cleanup stays under .worktrees and outside paths require explicit review
+docs/launch-prior-dispositions-are-superseded  F81 and F103 keep their original record and link a superseding decision
+docs/launch-f102-cites-real-product-roadmap    F102 closes on measured product-plan evidence, not the Forge fixture
+docs/launch-f102-evidence-mutation-is-caught   changing the product identity makes the evidence contract red
+docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 EOF
   exit 0
 fi
@@ -5620,6 +5631,186 @@ STUB
   fi
 }
 wants gate      && run_gate_group
+
+# ---------------------------------------------------------------------------
+# docs/ — CHUNK-10's launch ledger is an operator contract, not four essays.
+# These assertions deliberately use stable headings and disposition tokens;
+# historical measurements beneath the audit headers remain untouched.
+# ---------------------------------------------------------------------------
+run_docs_group() {
+  group docs
+  local audit=docs/audit-forgeboard-2026-07-30.md
+  local roadmap=docs/roadmap-first-run.md
+  local state=docs/state.md
+  local guide=docs/operator-guide.md
+  local id expected header bad_headers=0
+
+  _docs_slice_contract_ok() { # $1=guide $2=audit
+    local checked_guide="$1" checked_audit="$2" slice f40
+    slice="$(awk '
+      /^\*\*Isolate every human-driven slice/ { printing=1 }
+      printing && /^\*\*Reclaim merged chunk worktrees/ { exit }
+      printing { print }
+    ' "$checked_guide" | tr '\n' ' ' | tr -s ' ')"
+    f40="$(awk '
+      /^### F40([^0-9]|$)/ { printing=1 }
+      printing && /^## Priority order/ { exit }
+      printing { print }
+    ' "$checked_audit" | tr '\n' ' ' | tr -s ' ')"
+    grep -Fq 'Reserve the main checkout for the manager/orchestrator' <<<"$slice" \
+      && grep -Fq 'git worktree add ../forge-slices/<slice-id> -b slice/<slice-id> main' <<<"$slice" \
+      && grep -Fq "The audit ledger is the manager's file" <<<"$slice" \
+      && grep -Fq 'may read it and commit it once' <<<"$slice" \
+      && grep -Fq 'must never be the only writer' <<<"$slice" \
+      && grep -Fq 'exact worktree path, branch, HEAD, clean/dirty' <<<"$slice" \
+      && grep -Fq 'unpushed commits' <<<"$slice" \
+      && grep -Fq '**Reconciled by CHUNK-10.**' <<<"$f40" \
+      && grep -Fq 'docs suite mutates those ownership and creation clauses' <<<"$f40"
+  }
+
+  _docs_f102_contract_ok() { # $1=audit $2=state
+    local checked_audit="$1" checked_state="$2" f102
+    f102="$(awk '
+      /^### F102([^0-9]|$)/ { printing=1 }
+      printing && /^### F103([^0-9]|$)/ { exit }
+      printing { print }
+    ' "$checked_audit" | tr '\n' ' ' | tr -s ' ')"
+    grep -Fq '**Resolution evidence (CHUNK-9 independent review, 2026-08-11).**' <<<"$f102" \
+      && grep -Fq '`wielas/forgeboard-report`' <<<"$f102" \
+      && grep -Fq '6 pass / 3 warn / 0 skip' <<<"$f102" \
+      && grep -Fq 'does not authorize the future advisory-to-blocking flip' <<<"$f102" \
+      && grep -Fq '`wielas/forgeboard-report`' "$checked_state" \
+      && grep -Fq '813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80' "$checked_state"
+  }
+
+  while IFS='|' read -r id expected; do
+    [ -n "$id" ] || continue
+    header="$(grep -E "^### F${id}([^0-9]|$)" "$audit" | head -1)"
+    if [ -z "$header" ] || ! printf '%s' "$header" | grep -Fq "$expected"; then
+      bad_headers=$((bad_headers+1))
+    fi
+  done <<'DISPOSITIONS'
+1|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+2|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+3|PARTLY FIXED — CHUNK-4 PRODUCT RUN PROOF REQUIRED
+14|FIXED BY CHUNK-6/CHUNK-7
+25|STAGED BY CHUNK-9 — PRODUCT RUN REQUIRED
+26|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+31|FIXED BY CHUNK-5
+34|FIXED BY CHUNK-1
+36|FIXED BY CHUNK-1
+40|FIXED — RECONCILED BY CHUNK-10
+44|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+48|FIXED BY CHUNK-5
+53|DECIDED BY ADR-0012 — PRODUCT RUN PROOF REQUIRED
+57|FIXED BY CHUNK-2
+81|SUPERSEDED BY CHUNK-10
+91|FIXED BY CHUNK-3
+92|FIXED BY CHUNK-3
+93|FIXED BY CHUNK-3
+101|RESOLVED BY CHUNK-3 / ADR-0012
+102|RESOLVED BY CHUNK-9
+103|RESOLVED BY ADR-0012 — RECONCILED BY CHUNK-10
+DISPOSITIONS
+  if [ "$bad_headers" = 0 ]; then
+    ok "launch-ledger-reconciles-touched-findings"
+  else
+    bad "launch-ledger-reconciles-touched-findings" \
+        "$bad_headers readiness finding header(s) lack their closing chunk or remaining proof"
+  fi
+
+  if grep -Fq '**Status: superseded as a planning proposal' "$roadmap" \
+     && grep -Fq '### Landed tracks' "$roadmap" \
+     && grep -Fq '### Remaining proof' "$roadmap" \
+     && grep -Fq '### Operational run sequence' "$roadmap"; then
+    ok "launch-roadmap-separates-state-and-sequence"
+  else
+    bad "launch-roadmap-separates-state-and-sequence" \
+        "roadmap must label the proposal superseded and separate landed tracks, remaining proof, and run sequence"
+  fi
+
+  if _docs_slice_contract_ok "$guide" "$audit"; then
+    ok "launch-slices-own-worktrees-and-manager-owned-ledger"
+  else
+    bad "launch-slices-own-worktrees-and-manager-owned-ledger" \
+        "F40 requires an isolated sibling worktree, manager-owned main/ledger, and an explicit handoff"
+  fi
+
+  local mutated="$TMPROOT/docs-contract-mutations"
+  mkdir -p "$mutated"
+  sed 's#git worktree add ../forge-slices/<slice-id> -b slice/<slice-id> main#git switch -c slice/<slice-id> main#' \
+    "$guide" > "$mutated/operator-guide.md"
+  sed "s#The audit ledger is the manager's file#The audit ledger is the slice's file#" \
+    "$guide" > "$mutated/operator-guide-owner.md"
+  if _docs_slice_contract_ok "$mutated/operator-guide.md" "$audit" \
+     || _docs_slice_contract_ok "$mutated/operator-guide-owner.md" "$audit"; then
+    bad "launch-slice-contract-mutation-is-caught" \
+        "a guide without isolated creation or manager ledger ownership still satisfied F40"
+  else
+    ok "launch-slice-contract-mutation-is-caught"
+  fi
+
+  local cleanup
+  cleanup="$(sed -n '/^\*\*Reclaim merged chunk worktrees/,/^\*\*Reading a live board/p' "$guide")"
+  if printf '%s' "$cleanup" | grep -Fq 'only reaches worktrees under `<project>/.worktrees/`' \
+     && printf '%s' "$cleanup" | grep -Fq '**Explicit review outside the bound.**' \
+     && printf '%s' "$cleanup" | grep -Fq 'Never widen the unattended sweep'; then
+    ok "launch-cleanup-stays-bounded"
+  else
+    bad "launch-cleanup-stays-bounded" \
+        "operator cleanup must retain the .worktrees boundary and require explicit review outside it"
+  fi
+
+  local f81 f103
+  f81="$(awk '
+    /^### F81([^0-9]|$)/ { printing=1 }
+    printing && /^### F82([^0-9]|$)/ { exit }
+    printing { print }
+  ' "$audit")"
+  f103="$(awk '
+    /^### F103([^0-9]|$)/ { printing=1 }
+    printing && /^## Ledger addition from the merge-gate slice/ { exit }
+    printing { print }
+  ' "$audit")"
+  if printf '%s' "$f81" | grep -Fq 'It is **not edited here**' \
+     && printf '%s' "$f81" | grep -Fq '**Superseding decision (CHUNK-10).' \
+     && printf '%s' "$f103" | grep -Fq 'Recorded because a future reader' \
+     && printf '%s' "$f103" | grep -Fq '**Superseding record (CHUNK-10).' \
+     && printf '%s' "$f103" | grep -Fq 'ADR-0012 D12.4'; then
+    ok "launch-prior-dispositions-are-superseded"
+  else
+    bad "launch-prior-dispositions-are-superseded" \
+        "F81/F103 must retain their original text and append linked CHUNK-10 superseding records"
+  fi
+
+  if _docs_f102_contract_ok "$audit" "$state"; then
+    ok "launch-f102-cites-real-product-roadmap"
+  else
+    bad "launch-f102-cites-real-product-roadmap" \
+        "F102 must name the measured product, advisory result, report digest, and still-pending blocking decision"
+  fi
+
+  sed 's#wielas/forgeboard-report#wielas/fixture#g' \
+    "$audit" > "$mutated/audit.md"
+  if _docs_f102_contract_ok "$mutated/audit.md" "$state"; then
+    bad "launch-f102-evidence-mutation-is-caught" \
+        "changing the real product identity still satisfied F102"
+  else
+    ok "launch-f102-evidence-mutation-is-caught"
+  fi
+
+  local shared='make roadmap-check PROJECT="$PROJECT"' file missing=0
+  for file in "$audit" "$roadmap" "$state" "$guide"; do
+    grep -Fq "$shared" "$file" || missing=$((missing+1))
+  done
+  if [ "$missing" = 0 ]; then
+    ok "launch-docs-share-next-command"
+  else
+    bad "launch-docs-share-next-command" \
+        "$missing of the four launch documents do not name '$shared' as the next command"
+  fi
+}
+wants docs      && run_docs_group
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1

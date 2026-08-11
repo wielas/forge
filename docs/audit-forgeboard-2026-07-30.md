@@ -27,7 +27,36 @@ against the file rather than the one it was opened with:
 
 ---
 
-## Disposition — what is done, what waits, what was dropped
+## Readiness reconciliation — 2026-08-11 (CHUNK-10)
+
+This supersedes the 2026-08-06 disposition without rewriting its measurements; “product run proof” means the mechanism shipped but still owes live evidence.
+
+| Finding | Current disposition | Executable evidence or remaining proof |
+|---|---|---|
+| F1, F2, F26, F44 | CHUNK-4 contracted; product run proof required | `make metadata-live` validates a WAL-safe post-cutoff snapshot; the genuine run must produce and consume every required envelope |
+| F3 | Partly fixed; CHUNK-4 product run proof required | metrics split and producer checks exist; the genuine run must populate them |
+| F14 | Fixed by CHUNK-6/CHUNK-7 | roadmap emits exact scenarios and the implementation gate blocks feature/manifest self-amendment |
+| F25 | Staged by CHUNK-9; product run required | commissioning is green and recorded, but commissioning is not the lifecycle |
+| F31, F48 | Fixed by CHUNK-5 | exact `worker_session_id` joins expose operator touches, per-model use, and honest estimated/actual cost status |
+| F34, F36 | Fixed by CHUNK-1 | section references and checked-in/live pins are executable claims |
+| F40 | Fixed; reconciled by CHUNK-10 | the operator guide reserves main for the manager, gives every human slice a sibling worktree, and keeps the ledger manager-owned through handoff |
+| F53 | Decided by ADR-0012; product run proof required | sizing stays advisory through the run; the product plan must be corrected until the checker is CLEAR before any flip decision |
+| F57 | Fixed by CHUNK-2 | prejudge compares base and head `Touches` and reports in-branch widening |
+| F81 | Superseded by CHUNK-10 | the unsafe historical `/tmp` prescription remains visible; the operator contract points to a durable destination |
+| F91, F92, F93 | Fixed by CHUNK-3 | help is content-anchored, sidecars are fingerprinted, and every live board is named in stable order |
+| F101 | Resolved by CHUNK-3 / ADR-0012 | `reachable` is retained only as diagnostic evidence after `acyclic` or `single-root` fires |
+| F102 | Resolved by CHUNK-9 | commissioning ran the real six-chunk `wielas/forgeboard-report` roadmap: 6 pass / 3 warn / 0 skip; a future blocking flip still requires a corrected CLEAR product plan |
+| F103 | Resolved by ADR-0012; reconciled by CHUNK-10 | D12.4 records the distinct plan-time incentive argument while preserving F103's original observation |
+
+F80 remains open and deliberately outside unattended cleanup: sibling and
+operator-created worktrees require explicit human review. With the readiness
+implementation landed, the next product command in this audit is:
+
+```bash
+make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
+```
+
+## Historical disposition — 2026-08-06 planning baseline (superseded)
 
 *Reconciled 2026-08-06 (slice D1a). Before this pass the `### F<n>` headers had
 drifted from their own bodies. F7's header read `OPEN` over a body that records
@@ -48,7 +77,8 @@ than promoted — F35 (the gate shipped, the scorer it wanted deleted did not) a
 F3 (the metric split shipped, the producer gate is fixture-proven only). Both
 now read `PARTLY FIXED`.
 
-Exactly one bucket per finding. `docs/roadmap-first-run.md` §4 — the first-run
+Exactly one bucket per finding *at this 2026-08-06 baseline*.
+`docs/roadmap-first-run.md` §4 — the first-run
 roadmap, which is what the "Track" column below refers to; it is on
 `slice/run-roadmap` at the time of writing — carries a first pass of this table.
 Where the two disagree, this one is the one that was checked against the tree,
@@ -280,7 +310,7 @@ prejudge passes, and 20 hours wall clock. It is also the largest module
 
 ## A. The integration hole (the finding that matters)
 
-### F1 — The product cannot read the board that produced it · `CONTRACTED — AWAITING LIVE PROOF` · **critical**
+### F1 — The product cannot read the board that produced it · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **critical**
 
 `forgeboard-report` exits **4** (invalid-core) on `forge-ladder`:
 
@@ -357,7 +387,7 @@ genuine lifecycle: a real card carrying canonical flat `forge.chunk.v1`, and a
 consumer that reads it. F67 records why that sweep must be explicit and
 snapshot-based rather than folded into the default suite.
 
-### F2 — Not one field of `forge.chunk.v1` is canonical · `CONTRACTED — AWAITING LIVE PROOF` · **high**
+### F2 — Not one field of `forge.chunk.v1` is canonical · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **high**
 
 Measured against `rubrics/kanban-metadata-schema.md`, every one of the six
 envelopes is a different, smaller, ad-hoc subset.
@@ -392,7 +422,7 @@ cards." That claim was false: they were *present*, not both complete. The
 2026-08-06 contract slice corrects the state document; a genuine lifecycle is
 still required before it may claim the chunk producer fixed in reality.
 
-### F3 — The official bounce-rate metric reads 0.00 on a run with 12 bounces · `PARTLY FIXED 2026-08-04` · **high**
+### F3 — The official bounce-rate metric reads 0.00 on a run with 12 bounces · `PARTLY FIXED — CHUNK-4 PRODUCT RUN PROOF REQUIRED` · **high**
 
 `docs/retro-metrics.md` defines bounce rate as *tier-1* verdicts where
 `.verdict == "bounce"`. Tier-1 bounced **0 of 17** times this run, so the
@@ -762,7 +792,7 @@ contract/architecture conflicts become likely, and every judge pass re-reads it.
 lines and its meaning is 371 lines of Python the same agent wrote. This is the
 structural reason scenario theater (F14) keeps recurring.
 
-### F14 — Scenario theater is the single most-cited defect, every chunk · `OPEN` · **high**
+### F14 — Scenario theater is the single most-cited defect, every chunk · `FIXED BY CHUNK-6/CHUNK-7` · **high**
 
 Tier-2 cited it in essentially every bounce. Representative, all confirmed in
 the verdicts:
@@ -1060,7 +1090,7 @@ The ranking is an almost perfect inverse of integration risk. Combined with F14
 the covered lines are mostly pure functions exercised against synthetic fixtures,
 and the uncovered ones are the boundaries where F1 actually lives.
 
-### F25 — Nothing ever ran the product against reality, and the plan deferred that to the chunk that never finished · `OPEN` · **critical**
+### F25 — Nothing ever ran the product against reality, and the plan deferred that to the chunk that never finished · `STAGED BY CHUNK-9 — PRODUCT RUN REQUIRED` · **critical**
 
 This is the efficacy summary, and the reason F1 survived every gate.
 
@@ -1161,7 +1191,7 @@ those it also makes the answers *correct*, which the models' answers were not.
 
 ---
 
-### F26 — `forge.block.v1` has never existed; one third of the flywheel is unpopulatable by construction · `CONTRACTED — AWAITING LIVE PROOF` · **high**
+### F26 — `forge.block.v1` has never existed; one third of the flywheel is unpopulatable by construction · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **high**
 
 `rubrics/kanban-metadata-schema.md` defines `forge.block.v1` with a
 `reason_class` enum, and `docs/retro-metrics.md` makes its distribution one of
@@ -1574,7 +1604,7 @@ telemetry to put in one.
 
 ---
 
-### F31 — The board records zero operator activity, so "unattended" cannot be measured or falsified · `OPEN` · **high**
+### F31 — The board records zero operator activity, so "unattended" cannot be measured or falsified · `FIXED BY CHUNK-5` · **high**
 
 The Forge's entire value proposition is unattended work. Its three metrics are
 bounce rate, mean score, and `reason_class`. **None of them can see a human.**
@@ -1702,7 +1732,7 @@ fix it?* — at the level of individual findings rather than quarterly vibes.
 
 ## K. Duplication in the methodology layer
 
-### F34 — The chunk protocol is maintained twice, and the cross-reference has already drifted · `OPEN` · **medium**
+### F34 — The chunk protocol is maintained twice, and the cross-reference has already drifted · `FIXED BY CHUNK-1` · **medium**
 
 Two documents encode the same protocol:
 
@@ -1831,7 +1861,7 @@ did not survive contact.
 
 ---
 
-### F36 — The stale Codex pin is in a load-bearing skill body, not just `state.md` · `OPEN` · **medium** *(extends F22)*
+### F36 — The stale Codex pin is in a load-bearing skill body, not just `state.md` · `FIXED BY CHUNK-1` · **medium** *(extends F22)*
 
 F22 recorded that `docs/state.md` documents the pin as `gpt-5.6-sol xhigh` while
 `~/.codex/config.toml` reads `gpt-5.6-terra` / `high`. The same stale claim is
@@ -2110,7 +2140,7 @@ because review has a free cached engine.
 
 ---
 
-### F40 — The orchestrator and the implementer shared one working tree, with no isolation · `PARTLY FIXED 2026-08-06` · **medium**
+### F40 — The orchestrator and the implementer shared one working tree, with no isolation · `FIXED — RECONCILED BY CHUNK-10` · **medium**
 
 Measured 2026-07-30 during slice S1. The implementing session ran in
 `/Users/goonlab/dev/forge` — the main checkout — on branch
@@ -2169,6 +2199,14 @@ with F18's sweep in the same guide.
 this ledger, so nothing executes the block boundaries. Stating that plainly is
 ADR-0003's own rule applied here: the honest claim is a convention two
 orchestrators can follow, not an enforcement.
+
+**Reconciled by CHUNK-10.** The operator guide now reserves the main checkout
+for the manager/orchestrator, gives every human-driven slice an explicit
+`git worktree add ../forge-slices/<slice-id> -b slice/<slice-id> main` creation
+step, keeps this ledger manager-owned while allowing a slice to read and commit
+its baseline once, and requires a path/branch/HEAD/status/unpushed handoff before
+deliberate cleanup. The docs suite mutates those ownership and creation clauses;
+either weakening makes the contract red.
 
 ---
 
@@ -2366,7 +2404,7 @@ in any worktree) and F50 (one, on `main`, since the commit that resolved F45).
 F43's own thesis — that a red suite hides the next failure — was demonstrated by
 F43's own write-up, which recorded a third of the redness.
 
-### F44 — More than half of all tier-1 runs left no readable verdict · `CONTRACTED — AWAITING LIVE PROOF` · **high**
+### F44 — More than half of all tier-1 runs left no readable verdict · `CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED` · **high**
 
 Found while validating the F27 slice, by running the query the slice made
 possible. The board's own producers, board lifetime:
@@ -2589,7 +2627,7 @@ inference dressed as a measurement.
 
 ---
 
-### F48 — The metered half of the system has no cost telemetry, and no slot to put it in · `OPEN` · **critical**
+### F48 — The metered half of the system has no cost telemetry, and no slot to put it in · `FIXED BY CHUNK-5` · **critical**
 
 The finding F45's decision surfaced, and the largest remaining blind spot.
 
@@ -2812,7 +2850,7 @@ The two findings disagree and F35 is the one that is wrong.
 program has higher recall" must not carry `parents-merged` along as evidence. It
 contributes nothing at this layer and never will. Six checks, not eight.
 
-### F53 — The two highest-severity checks fire on everything, so neither can filter · `OPEN` · **high**
+### F53 — The two highest-severity checks fire on everything, so neither can filter · `DECIDED BY ADR-0012 — PRODUCT RUN PROOF REQUIRED` · **high**
 
 | check | fires on |
 |---|---|
@@ -2948,7 +2986,7 @@ with the blocking severity map live, and by reconciling what it clears against
 what tier 2 actually did. The severity map is unchanged by these findings; what
 changes is what may honestly be claimed for it.*
 
-### F57 — `touches` reads the contract from the PR's own tree, so a branch that amends its own `Touches` list clears the check by construction · `OPEN` · **medium**
+### F57 — `touches` reads the contract from the PR's own tree, so a branch that amends its own `Touches` list clears the check by construction · `FIXED BY CHUNK-2` · **medium**
 
 The gate reports `touches: pass` on **PR #5**. Tier 2 bounced PR #5 for
 `scope_discipline`, citing:
@@ -3789,7 +3827,7 @@ operator-facing and real: **`make worktree-sweep` does not clean this repo**,
 and `docs/state.md`'s gap #1 says so. Reclaiming those 16 is a separate,
 explicitly-targeted decision, not a loosening of this guard.
 
-### F81 — The repo's own audit prescribes the recipe this slice now refuses · `OPEN` · **low**
+### F81 — The repo's own audit prescribes the recipe this slice now refuses · `SUPERSEDED BY CHUNK-10` · **low**
 
 `docs/audit-2026-07-27.md:220`, inside F9's **Assert** block, reads
 `make new NAME=probe-$$ DEST=/tmp && cd /tmp/probe-$$ && make setup …`.
@@ -3804,6 +3842,12 @@ It is **not edited here**. It is a historical audit record, and F41 already
 settled that a measurement is not corrected by rewriting what it said (see also
 `CLAUDE.md`: never renumber a finding). Superseding it is the orchestrator's
 call.
+
+**Superseding decision (CHUNK-10).** Preserve that historical assert as the
+measured cause, but do not execute it. The current operator contract is
+[`operator-guide.md` → “Where projects go”](operator-guide.md#where-projects-go):
+`make new` requires an absolute durable destination and refuses `/tmp`,
+`/private/tmp`, and `$TMPDIR` after resolution.
 
 ### F82 — Nothing asserted where a stamped project goes, so F19 could not have been caught by the suite · `FIXED 2026-08-07` · **medium**
 
@@ -3851,7 +3895,7 @@ both streams on its probe and keys on the exit code alone, and its own stdout is
 structurally unreachable (fd 1 is pointed at stderr for the whole body, the real
 stdout held on fd 3), so only the final path can ever appear there.
 
-### F91 — Line-pinned `--help` extractors print the wrong text, and the help cases assert only the exit code · `PARTLY FIXED 2026-08-07` · **medium**
+### F91 — Line-pinned `--help` extractors print the wrong text, and the help cases assert only the exit code · `FIXED BY CHUNK-3` · **medium**
 
 Four extractors used `sed -n '<n>,<m>p' "$0"`, each pinned to a header that had
 since moved:
@@ -3884,7 +3928,7 @@ the sibling slices in flight, and the remedy is one line each —
 help_text() { awk 'NR==1{next} /^# ={10,}/{if (seen) exit; seen=1; next} seen {sub(/^#[ ]?/,""); print}' "$0"; }
 ```
 
-### F92 — `metrics/is-read-only` hashes the database, so it cannot see a reader that writes sidecars beside a live board · `PARTLY FIXED 2026-08-07` · **medium**
+### F92 — `metrics/is-read-only` hashes the database, so it cannot see a reader that writes sidecars beside a live board · `FIXED BY CHUNK-3` · **medium**
 
 A snapshot mutated to open its source read-write left `kanban.db`
 **byte-identical** — `224b7b0d…` before and after — while creating a `-wal` and
@@ -3908,7 +3952,7 @@ survives and is the reason to keep it that way — *a default-suite case pointed
 at production is one bug away from a write* — but the incident is not evidence
 for it, and is recorded here as retracted rather than deleted.
 
-### F93 — The suite's only live-board case changes what it proves depending on which board sorts first · `OPEN` · **low**
+### F93 — The suite's only live-board case changes what it proves depending on which board sorts first · `FIXED BY CHUNK-3` · **low**
 
 `live-schema-has-fixture-columns` picks its subject with
 `ls -1 …/boards/*/kanban.db | head -1`. On this host that is `digest` — 14
@@ -3949,7 +3993,7 @@ assertion about status wearing a content assertion's name. This is F56's
 underscore and A1's self-pinning defect in a third costume — the wrong output
 looked exactly like the finding being searched for.
 
-### F101 — `reachable` has no recall independent of `acyclic` and `single-root` · `OPEN` · **low**
+### F101 — `reachable` has no recall independent of `acyclic` and `single-root` · `RESOLVED BY CHUNK-3 / ADR-0012` · **low**
 
 In a finite DAG every node has a path back to some source, so *exactly one root*
 plus *no cycle* implies every chunk is reachable. The check cannot fail where it
@@ -3961,7 +4005,7 @@ of the other two has already fired. Recorded so that a later reader counting
 detectors does not count three where there are two. Compare F56's `no-assertion`
 walker: zero recall across 11 PRs, kept only because it was named.
 
-### F102 — Step 2 of ADR-0012's own flip procedure has no input in this repository · `OPEN` · **medium**
+### F102 — Step 2 of ADR-0012's own flip procedure has no input in this repository · `RESOLVED BY CHUNK-9` · **medium**
 
 The procedure is: ship warning → **run it against the real product roadmap** →
 fix the plan until it passes → flip to blocking. Step 2 cannot be executed.
@@ -3980,7 +4024,17 @@ the next `/roadmap` in any project commit its `docs/chunks/` and record the
 output. This is why C1 stays advisory through the first run (see ADR-0012, and
 the roadmap's §2/§3).
 
-### F103 — The plan-time and review-time arguments for the `Touches` exemption are different, and only the review-time one is written down · `OPEN` · **low**
+**Resolution evidence (CHUNK-9 independent review, 2026-08-11).** A full
+`make commission` used the clean durable checkout of the actual first-run
+product `wielas/forgeboard-report`. Its committed six-chunk graph reached the
+real `roadmap-check.sh` and returned **6 pass / 3 warn / 0 skip**; the three
+advisories were preserved in the atomic PASS report whose SHA-256 is
+`813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`.
+This supplies the missing real input and resolves F102's stated defect. It does
+not authorize the future advisory-to-blocking flip: the next launch plan must
+still be corrected until it is CLEAR.
+
+### F103 — The plan-time and review-time arguments for the `Touches` exemption are different, and only the review-time one is written down · `RESOLVED BY ADR-0012 — RECONCILED BY CHUNK-10` · **low**
 
 F55 justifies the exemption by measurement: three of five drifting paths are
 process docs, so counting them manufactures a finding on every PR. **That
@@ -4000,6 +4054,12 @@ alone will find it unmotivated and delete it.
 contract**, so "no contract in the run listed a process doc" is not something
 this repo can still establish. What is established is that the one that survives
 does not, and that the incentive argument does not depend on the count.*
+
+**Superseding record (CHUNK-10).**
+[ADR-0012 D12.4](adr/0012-sizing-at-plan-time.md#decision) now records the
+plan-time incentive argument separately from F55's review-time measurement.
+This closes the missing rationale without deleting or revising the observation
+above.
 
 ## Ledger addition from the merge-gate slice (D1e)
 

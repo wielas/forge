@@ -1,9 +1,62 @@
 # Roadmap — the first genuine product run
 
-**Status: proposal, uncommitted.** Reviewed against `docs/state.md`,
-`docs/audit-forgeboard-2026-07-30.md` (F1–F78), `docs/open-questions.md`,
-`skills/roadmap`, `hermes/board-bootstrap.sh`, `skills/forge-lane` §4 and a live
-`make verify` (133/0/3) on 2026-08-06.
+**Status: superseded as a planning proposal on 2026-08-11 by CHUNK-10's current
+launch contract below.** The original §0 onward is a historical decision record,
+not operator instructions; `docs/state.md` owns live-proof status.
+
+## Current launch contract (CHUNK-10)
+
+### Landed tracks
+
+“Landed” means green on the open readiness stack, which still integrates parent-first.
+
+| Track | Current implementation |
+|---|---|
+| Control plane | CHUNK-1 executes skill references, checked-in/live pins, and the retained skills write-approval boundary |
+| Deterministic diagnostics | CHUNK-2 compares base/head `Touches`; CHUNK-3 anchors help, fingerprints all SQLite sidecars, and inspects every board in stable order |
+| Live metadata and telemetry | CHUNK-4 supplies the explicit post-cutoff live sweep; CHUNK-5 joins exact driver usage and operator touches |
+| Frozen planning contract | CHUNK-6 emits and hashes Gherkin; CHUNK-7 blocks in-branch feature or manifest rewrites |
+| Staged launch | CHUNK-8 validates and creates only one root; CHUNK-9 records paid, non-mutating commissioning evidence |
+| Reconciliation | CHUNK-10 aligns the audit ledger, this roadmap, current state, and operator guide |
+
+### Remaining proof
+
+- Integrate the stack into `main`; republish profiles after the relevant merge
+  and re-run preflight.
+- Correct a genuine product roadmap until the advisory checker is CLEAR, then
+  commission it.
+- Run the staged root → metadata checkpoint → full graph sequence. F1, F2, F3's
+  producer half, F25, F26, F44, and ADR-0012's future blocking decision remain
+  contingent on that live evidence.
+- Keep ADR-0011's scorer experiment unchanged until ten post-gate reviews exist.
+  Timeout/reclaim, circuit-breaker recovery, and provider-policy questions stay
+  separate from this run.
+
+### Operational run sequence
+
+From the Forge checkout, set a durable product path and new empty board:
+
+```bash
+PROJECT=/absolute/path/to/product
+BOARD=product-slug
+make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
+make commission PROJECT="$PROJECT" BOARD="$BOARD"   # paid; must be green
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
+# After the root PR is merged:
+make metadata-live BOARD="$BOARD" SINCE=<RUN_START_RFC3339>
+make metrics BOARD="$BOARD"
+# Stop on invalid or unjudged metadata.
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD")
+make metadata-live BOARD="$BOARD" SINCE=<RUN_START_RFC3339>
+make metrics BOARD="$BOARD"
+# Then run /retro and reconcile the live-proof findings.
+```
+
+Commissioning proves inputs without creating cards; the first metadata sweep
+decides whether root-only may expand to the rest of the graph.
+
+Everything below preserves the planning analysis; the current contract wins
+where their tenses conflict.
 
 ---
 

@@ -1,7 +1,30 @@
 # Operator guide — the 20% you'll use 80% of the time
 
 Organised by what you want to do, not by which tool owns it. Everything here was
-verified on 2026-07-27; re-check after a `hermes update`.
+reconciled against the readiness stack on 2026-08-11; re-check after a
+`hermes update`.
+
+## Launch a genuine product run
+
+Once a product has a durable absolute path, a protected remote, a committed
+frozen roadmap, and a new empty board slug, run this sequence from the Forge
+checkout. The next command is deliberately advisory: repeat it and fix the plan
+until it prints `CLEAR`.
+
+```bash
+PROJECT=/absolute/path/to/product
+BOARD=product-slug
+
+make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
+make commission PROJECT="$PROJECT" BOARD="$BOARD"   # paid; must be green
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
+```
+
+After the root PR merges, run the post-`RUN_START` metadata and metrics checks
+described below. Stop on invalid or unjudged metadata. Only a green checkpoint
+authorises full bootstrap; after the graph completes, repeat both checks, run
+`/retro`, and reconcile the live-proof findings. Commissioning is readiness
+evidence, not a substitute for the lifecycle.
 
 ## The daily loop
 
@@ -102,6 +125,23 @@ hermes kanban assignees          # who the board can actually route to
 you modified. **Re-run `make preflight` after every update** — v0.18.2 → v0.19.0
 silently changed `approvals.mode` and `goals.max_turns`.
 
+**Isolate every human-driven slice; the manager owns the ledger.** Reserve the
+main checkout for the manager/orchestrator. Before an implementer starts a
+slice, create its branch in a separate sibling worktree:
+
+```bash
+git worktree add ../forge-slices/<slice-id> -b slice/<slice-id> main
+```
+
+The audit ledger is the manager's file. A slice may read it and commit it once
+as a source document when its signed contract requires that baseline, but it
+must never be the only writer or receive manager edits while it is running.
+New findings and number allocation stay with the manager in the main checkout.
+At handoff, the slice reports its exact worktree path, branch, HEAD, clean/dirty
+status, and any unpushed commits. The manager integrates that branch before
+deliberately reviewing and removing the named worktree; a handoff is never
+permission to sweep sibling worktrees.
+
 **Reclaim merged chunk worktrees — nothing else will.** `worktree` workspaces
 are *preserved* on completion (only `scratch` is deleted), so every finished
 chunk leaves `<repo>/.worktrees/<task-id>` behind, holding its branch. You
@@ -142,9 +182,15 @@ trust it:
   the worktree is still reclaimed and the branch is reported `RETAINED` for you
   to delete by hand once you have checked nothing is unpushed.
 
-Sweep when the board is idle. Anything it refuses is still yours to remove by
-hand — `git worktree remove --force <path>` then `git branch -D <branch>` — but
-you are then the one deciding that nothing in there was unpushed.
+Sweep when the board is idle.
+
+**Explicit review outside the bound.** Anything the sweep refuses stays in
+place until a human targets that exact worktree and checks its path, branch,
+`git status`, unpushed commits, and remote PR/merge state. **Never widen the unattended sweep.**
+It must not reach a sibling checkout merely to make F80 disappear. Only after
+that review may the operator deliberately run `git worktree remove --force
+<path>` and `git branch -D <branch>` for the named checkout; those destructive
+commands are not part of the unattended procedure.
 
 **Reading a live board is never a direct read.** `make metrics` and the suite's
 live-board checks both go through `scripts/board-snapshot.sh`, which copies the

@@ -236,3 +236,44 @@ documentation scenarios, but the frozen contract authorized only the four
 documents. Before CHUNK-10 implementation is integrated, its Touches surface is
 widened on the approved base to include that executable verifier. Scenarios,
 real-source declarations, acceptance path, and feature bytes do not change.
+
+2026-08-11 CHUNK-10: The frozen planning bundle and all three prerequisite
+heads are present on the CHUNK-9 convergence stack but not yet on `origin/main`.
+CHUNK-10 therefore branches from the exact CHUNK-9 tip `52b4be0` instead of
+dropping its approved feature, freeze manifest, or prerequisites. Retarget only
+after the lower stacks integrate.
+
+2026-08-11 CHUNK-10: The repository still has no BDD step runner or `make check`
+target. The four documentation scenarios are executable as the new `docs/`
+group in `scripts/verify.sh`; this is a small declared-path widening required by
+ADR-0003, while the frozen feature and manifest remain byte-identical.
+
+2026-08-11 CHUNK-10: Final host proof completed with `make validate` OK,
+`make verify` at 285 passed / 0 failed / 3 skipped, `make preflight` at PASS 85 /
+WARN 3 / FAIL 0, and the ten-chunk roadmap CLEAR at 9 pass / 0 warn / 0 skip
+when supplied the live `forge-codex-lane` assignee. Preflight measured Claude
+Code 2.1.227, one patch newer than the readiness source; `docs/state.md` records
+the live version while the dated 2026-08-09 measurement remains unchanged.
+
+HANDOFF: CHUNK-10 is green on `chunk/10-reconcile-launch-ledger-and-operator-contract`; GitHub export was rejected absent explicit authorization.
+After authorization: push, open the stacked PR against `chunk/9-commission-product-run-with-existing-gates` with `.forge/chunk-10-pr-body.md`, then write/validate metadata with its PR URL.
+Do not merge; retarget only after the lower readiness stacks integrate.
+
+2026-08-11 CHUNK-10 audit correction: F40 was promoted to fixed while the
+operator guide still omitted the exact slice-worktree creation command, the
+main-checkout reservation, ledger ownership, and the handoff boundary. Those
+rules are now explicit and mutation-tested. F102's original CHUNK-9 attribution
+was also unsupported by the earlier standalone paid verifier; the audited full
+commission against `wielas/forgeboard-report` now supplies the real six-chunk
+roadmap input (6 pass / 3 warn / 0 skip) without pretending those advisories are
+CLEAR or authorizing the future blocking flip.
+
+2026-08-11 CHUNK-10: The preceding HANDOFF is resolved. Human authorization exported the branch and opened stacked PR #42 against CHUNK-9's exact remote branch.
+GitHub reports the intended seven-file diff as open and mergeable; `.forge/chunk-10-metadata.json` validates against the lane completion contract.
+Do not merge; retarget only after the lower readiness stacks integrate.
+
+2026-08-11 CHUNK-10 final audit proof: The earlier 285/0/3 entry predates the
+independent repairs and remains historical. The reviewed stack completed
+`make validate` OK, default `make verify` at 297/0/4, clean-tree preflight at
+PASS 85 / WARN 3 / FAIL 0, the ten-chunk roadmap at CLEAR 9/0/0 with both
+declared assignees supplied, and the opt-in installed-Hermes bootstrap at 7/0/0.

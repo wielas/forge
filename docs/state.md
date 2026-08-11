@@ -1,9 +1,9 @@
 # Forge — current state
 
-**Updated 2026-08-11 during the independent first-run readiness review.** The last
-fully integrated `main` baseline remains the repair effort landed as PRs #30,
-#26, #27 and #28, in that order. Earlier dated measurements below are kept as
-the observations they were; that baseline is here:
+**Updated 2026-08-11 by CHUNK-10 during the independent first-run readiness
+review.** The readiness work is implemented on the open convergence stack;
+`origin/main` does not yet contain that stack. Earlier dated measurements below
+remain the observations they were. The measured pre-readiness baseline was:
 
 ```
 main                fc006eb
@@ -47,7 +47,19 @@ ordinary `commission` cases use command stubs and spend nothing in CI; they now
 also reject origin/GitHub identity mismatch and injected report-publication
 failure.
 
-*Prior header, still true of the sections below it:* updated 2026-08-06, after
+CHUNK-10 final reviewed-stack proof on 2026-08-11: `make validate` **OK**;
+default `make verify` completed **297 passed / 0 failed / 4 skipped**; clean-tree
+`make preflight` completed **PASS 85 / WARN 3 / FAIL 0**; the complete ten-chunk
+roadmap was **CLEAR — 9 pass / 0 warn / 0 skip** with both declared assignees
+supplied; and the isolated real-Hermes bootstrap proof was **7 passed / 0 failed
+/ 0 skipped**. The four default-suite skips are the two non-spawnable operator
+sentinels, the paid Codex probe, and the opt-in real-Hermes bootstrap. The three
+preflight warnings remain the documented healthy set: no global lefthook, the
+empty API-key placeholder, and the historical `forge-ladder` board selected by
+default.
+
+*Prior header, still true of the historical sections below it:* updated
+2026-08-06, after
 the audit repair slices through the lane boundary and completed-run metadata
 producer contract. The 2026-07-28 ladder and fault exercises remain the live
 baseline; later sections distinguish repaired code from behavior that has been
@@ -60,6 +72,31 @@ architecture; this is the status.
 If this file and any other file disagree, run `make verify` — it arbitrates.
 
 ---
+
+## Launch readiness — current
+
+The implementation stack now contains the complete pre-run sequence:
+
+| Capability | Status |
+|---|---|
+| Control-plane references and pins | CHUNK-1 green; live readback recorded |
+| `Touches` widening and deterministic diagnostics | CHUNK-2/CHUNK-3 green |
+| Live metadata sweep and exact driver/operator telemetry | CHUNK-4/CHUNK-5 green; genuine product rows still owed |
+| Emitted and frozen acceptance | CHUNK-6/CHUNK-7 green |
+| Root-only staging and paid commissioning | CHUNK-8/CHUNK-9 green; commissioning evidence recorded |
+| Audit, roadmap, state, and operator reconciliation | CHUNK-10 green on its implementation branch |
+
+What remains is integration plus live product evidence. Merge parent-first,
+republish profiles, re-run preflight, and point Forge at a durable product path:
+
+```bash
+PROJECT=/absolute/path/to/product
+make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
+```
+
+After `CLEAR`: commission; bootstrap the root; stop unless metadata is valid;
+then bootstrap the rest, recheck, and run `/retro`. F1, F2, F3's producer half,
+F25, F26, and F44 await that run. ADR-0011 still awaits ten reviews.
 
 ## Read in this order
 
@@ -295,7 +332,10 @@ load. Prefer running the smallest real thing over reasoning about the large one.
 
 ---
 
-## Where the work resumes (as of 2026-08-06)
+## Historical tier-1 backlog context (as of 2026-08-06)
+
+This section records the tier-1 arc before the readiness stack. It no longer
+names the launch's next action; the current launch contract above does.
 
 The tier-1 arc is **parked, not stalled**, and the thing it waits on is real
 reviews rather than effort. Read `docs/open-questions.md` — "Does the Opus
@@ -366,25 +406,12 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 ```
-Hermes 0.19.0 · codex-cli 0.145.0 · Claude Code 2.1.220 · gh 2.96.0
+Hermes 0.19.0 · codex-cli 0.146.0 · Claude Code 2.1.227 · gh 2.97.0
 lefthook 2.1.10 · uv 0.11.32 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
           forge-digest (deepseek-v4-flash-0731) · codex pinned gpt-5.6-sol xhigh
 ```
 
-`make verify` on this linked worktree: 126 passed / 3 failed / 7 skipped. The
-three failures are the expected live SOUL-sync checks: deploying the new SOULs
-before this contract reaches `main` would leave workers referring to a contract
-that is not installed yet. Four live profile-path checks also skip outside the
-main checkout. After merge, run `./hermes/profiles-bootstrap.sh`; the expected
-main-equivalent count is 133 passed / 0 failed / 3 skipped.
-
-`make preflight` on the mini before this slice: PASS 82 / WARN 3 / FAIL 0. It
-now reports one FAIL until this branch merges, and that is the check working
-rather than a defect: §7 reaches the validator through
-`~/.forge/repo/scripts/validate-metadata.py`, `~/.forge/repo` points at the main
-checkout, and `main` does not carry that script yet. It clears on merge. Before
-this slice the same missing dependency was silent — `uv` was declared optional
-and the metadata suite skipped without it, so a host that could not run a lane
-to completion still reported a green verify and a green preflight.
+The older 126 / 3 / 7 verify and PASS 82 preflight are historical; the current
+baseline is CHUNK-10's proof above.

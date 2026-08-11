@@ -6,6 +6,10 @@ acceptance, commission the staged launch, then reconcile documentation.
 
 ## Progress
 
+- **CHUNK-10:** done 2026-08-11 — audit, first-run roadmap, current state, and
+  operator guide share evidence-backed dispositions, manager-owned slice
+  isolation, bounded cleanup, the staged run sequence, and one next product
+  command; semantic mutations enforce the F40 and F102 reconciliations.
 - **CHUNK-1:** done 2026-08-09 — implementation and live `gpt-5.6-sol` / `xhigh`
   conformance proof complete; profile bootstrap remains the documented
   post-merge operation.
