@@ -1,5 +1,6 @@
 Feature: CHUNK-5 exact driver usage
 
+  @real-source
   Scenario: Join the exact session row
     Given a chunk run has a trusted `worker_session_id`
     When metrics joins its profile state

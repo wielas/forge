@@ -1,5 +1,6 @@
 Feature: CHUNK-7 frozen acceptance enforcement
 
+  @real-source
   Scenario: Block a changed feature hash
     Given a feature file hash differs from the planning manifest
     When prejudge runs on an implementation PR
@@ -20,7 +21,6 @@ Feature: CHUNK-7 frozen acceptance enforcement
     When a human planning PR updates the feature and manifest on main
     Then a later implementation branch can start from the new hash.
 
-  @real-source
   Scenario: Preserve real-source scoring
     Given a frozen contract names an external source
     When judge reviews it

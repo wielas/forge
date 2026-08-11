@@ -166,10 +166,11 @@ for a result nothing stores would be a shape with no reader.
   opening a board and creating real cards. Everything here runs before any of
   that exists, and one of the checks bootstrap structurally cannot make:
   a chunk **file the graph forgot** is never created and never missed.
-- **`reachable` has no recall independent of the other two.** In a finite DAG
-  every node has a path back to a source, so with exactly one root and no cycle
-  it cannot fail. It is retained for its evidence — it names the stranded chunks
-  when `acyclic` or `single-root` has already fired — and its skip on a
+- **`reachable` is diagnostic evidence, not an independent detector.** In a
+  finite DAG every node has a path back to a source, so with exactly one root
+  and no cycle it cannot fail. It is retained because it names the stranded
+  chunks when `acyclic` or `single-root` has already fired; a pass is supporting
+  evidence for those two checks, not a third detection result. Its skip on a
   multi-root graph is honest about having cleared nothing.
 - **Warn-first means the first real roadmap it reads will be ugly.** The audited
   run's own CHUNK-5 reports 12 requirements against a cap of 4 and 8 scenarios

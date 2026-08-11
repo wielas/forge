@@ -16,6 +16,7 @@ Feature: CHUNK-9 product commissioning
     When commissioning records it
     Then the report preserves WARN rather than relabelling it PASS.
 
+  @real-source
   Scenario: Require an enforceable merge gate
     Given the repository is private without an enforceable merge gate
     When commissioning checks protection
