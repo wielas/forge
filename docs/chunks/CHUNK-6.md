@@ -5,9 +5,10 @@
 - **Touches:** `skills/roadmap/SKILL.md`, `scripts/acceptance-freeze.sh`, `scripts/verify.sh`, `docs/adr/0014-frozen-acceptance.md`, `tests/features/`, `docs/first-run-readiness-2026-08-09.md`
 - **Scenarios:**
   - Given a chunk contract, When `/roadmap` finishes, Then its `Acceptance` field names an existing `tests/features/chunk_<id>.feature` whose Given/When/Then steps match the contract.
-  - Given a contract names an external source, When `/roadmap` finishes, Then its feature file contains a `@real-source` scenario.
+  - Given a contract declares each external source and its scenario index, When `/roadmap` finishes, Then every declared source maps to a matching `@real-source` scenario.
   - Given all planned feature files exist, When the freeze command runs, Then it writes deterministic path and SHA-256 entries to `contract-freeze.json`.
   - Given a missing feature file, When the freeze command runs, Then it fails and names the chunk and expected path.
+- **Real sources:** none
 - **Acceptance:** tests/features/chunk_6.feature
 - **Freeze format:** Each chunk gains `**Acceptance:** tests/features/chunk_<id>.feature`; `docs/chunks/contract-freeze.json` maps each repo-relative feature path to its SHA-256 digest.
 - **Stop rule:** If C2 accumulates two tier-2 bounces before both halves are independently green, park CHUNK-6 and CHUNK-7, keep C1 advisory, and run with F14/F25 still open rather than shipping a half-built freeze.

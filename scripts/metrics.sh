@@ -136,6 +136,7 @@ SINCE_E=0; UNTIL_E=99999999999
 driver_usage_json() { # $1=base JSON carrying private _driver_runs
   local base_json="$1"
   local sessions_file="$SNAPDIR/driver-sessions.ndjson"
+  local joins_file="$SNAPDIR/driver-joins.ndjson"
   local unjudged_file="$SNAPDIR/driver-unjudged.ndjson"
   local limitations_file="$SNAPDIR/driver-limitations.ndjson"
   local runs_file="$SNAPDIR/driver-runs.b64"
@@ -145,6 +146,7 @@ driver_usage_json() { # $1=base JSON carrying private _driver_runs
   local joined unjudged eligible rate
 
   : > "$sessions_file"
+  : > "$joins_file"
   : > "$unjudged_file"
   : > "$limitations_file"
   printf '%s' "$base_json" | jq -rc '._driver_runs[] | @base64' > "$runs_file"
@@ -199,6 +201,19 @@ driver_usage_json() { # $1=base JSON carrying private _driver_runs
         continue
       fi
       printf '%s\n' "$state_snap" > "$state_dir/snapshot-path"
+    fi
+
+    # Coverage is a property of runs, while usage is a property of sessions.
+    # Hermes may legitimately attach more than one completed run to the same
+    # profile/session tuple (the live forge-ladder replay does). Once that
+    # unique tuple has joined, preserve the additional run mapping without
+    # querying or charging its session telemetry again.
+    if jq -se --arg profile "$profile" --arg session "$session_id" \
+         'any(.[]; .profile == $profile and .worker_session_id == $session)' \
+         "$sessions_file" >/dev/null 2>&1; then
+      printf '%s' "$run_json" | jq -c \
+        '{run_id, task_id, profile, worker_session_id}' >> "$joins_file"
+      continue
     fi
 
     # session_id is restricted above to a non-SQL metacharacter alphabet. The
@@ -270,12 +285,14 @@ driver_usage_json() { # $1=base JSON carrying private _driver_runs
         >> "$unjudged_file"
       continue
     fi
+    printf '%s' "$run_json" | jq -c \
+      '{run_id, task_id, profile, worker_session_id}' >> "$joins_file"
     printf '%s' "$session_json" | jq -c --argjson run "$run_json" \
-      '{run_id:$run.run_id, task_id:$run.task_id, profile:$run.profile,
-        worker_session_id:$run.worker_session_id} + .' >> "$sessions_file"
+      '{profile:$run.profile, worker_session_id:$run.worker_session_id} + .' \
+      >> "$sessions_file"
   done < "$runs_file"
 
-  joined="$(jq -s 'length' "$sessions_file")"
+  joined="$(jq -s 'length' "$joins_file")"
   unjudged="$(jq -s 'length' "$unjudged_file")"
   eligible=$((joined + unjudged))
   if [ "$eligible" -eq 0 ]; then rate=""
@@ -284,12 +301,20 @@ driver_usage_json() { # $1=base JSON carrying private _driver_runs
 
   jq -n \
     --slurpfile sessions "$sessions_file" \
+    --slurpfile joins "$joins_file" \
     --slurpfile unjudged "$unjudged_file" \
     --slurpfile limitations "$limitations_file" \
     --arg rate "$rate" '
-      ($sessions | length) as $joined
+      ($joins | length) as $joined
       | ($unjudged | length) as $unjudged_count
       | ($joined + $unjudged_count) as $eligible
+      | ($sessions | map(
+          . as $session
+          | . + {runs: ($joins | map(
+              select(.profile == $session.profile
+                     and .worker_session_id == $session.worker_session_id)
+              | {run_id, task_id}) | sort_by(.run_id))}
+        )) as $unique_sessions
       | {
           coverage: {
             eligible: $eligible,
@@ -298,24 +323,28 @@ driver_usage_json() { # $1=base JSON carrying private _driver_runs
             rate: (if $eligible == 0 then null else $rate end)
           },
           totals: {
-            api_calls: ([$sessions[].api_calls] | add // 0),
-            input_tokens: ([$sessions[].input_tokens] | add // 0),
-            output_tokens: ([$sessions[].output_tokens] | add // 0),
-            cache_read_tokens: ([$sessions[].cache_read_tokens] | add // 0),
-            cache_write_tokens: ([$sessions[].cache_write_tokens] | add // 0),
-            reasoning_tokens: ([$sessions[].reasoning_tokens] | add // 0)
+            api_calls: ([$unique_sessions[].api_calls] | add // 0),
+            input_tokens: ([$unique_sessions[].input_tokens] | add // 0),
+            output_tokens: ([$unique_sessions[].output_tokens] | add // 0),
+            cache_read_tokens: ([$unique_sessions[].cache_read_tokens] | add // 0),
+            cache_write_tokens: ([$unique_sessions[].cache_write_tokens] | add // 0),
+            reasoning_tokens: ([$unique_sessions[].reasoning_tokens] | add // 0)
           },
           cost: {
-            estimated_usd: ([$sessions[].estimated_cost_usd | select(. != null)]
+            estimated_usd: ([$unique_sessions[].estimated_cost_usd | select(. != null)]
                             | if length == 0 then null else add end),
-            estimated_sessions: ([$sessions[].estimated_cost_usd | select(. != null)] | length),
-            actual_usd: ([$sessions[].actual_cost_usd | select(. != null)]
+            estimated_sessions: ([$unique_sessions[].estimated_cost_usd | select(. != null)] | length),
+            actual_usd: ([$unique_sessions[].actual_cost_usd | select(. != null)]
                          | if length == 0 then null else add end),
-            actual_sessions: ([$sessions[].actual_cost_usd | select(. != null)] | length)
+            actual_sessions: ([$unique_sessions[].actual_cost_usd | select(. != null)] | length)
           },
           limitations: ($limitations | unique),
           unjudged: ($unjudged | sort_by(.run_id)),
-          sessions: ($sessions | sort_by(.run_id))
+          shared_attribution: ([$unique_sessions[]
+            | select(.runs | length > 1)
+            | {profile, worker_session_id,
+               run_ids: [.runs[].run_id], task_ids: [.runs[].task_id]}]),
+          sessions: ($unique_sessions | sort_by(.profile, .worker_session_id))
         }'
 }
 
@@ -624,7 +653,7 @@ text)
     "  nested under $.\"forge.chunk.v1\"         \(.envelope.nested // 0)",
     "  neither                                  \(.envelope.neither // 0)",
     "",
-    "driver usage — exact completed chunk sessions \(.driver_usage.coverage.joined)/\(.driver_usage.coverage.eligible) (\(.driver_usage.coverage.rate // "n/a")); \(.driver_usage.coverage.unjudged) unjudged",
+    "driver usage — completed chunk runs joined \(.driver_usage.coverage.joined)/\(.driver_usage.coverage.eligible) (\(.driver_usage.coverage.rate // "n/a")); \(.driver_usage.coverage.unjudged) unjudged; \(.driver_usage.sessions | length) unique session(s)",
     "  calls \(.driver_usage.totals.api_calls) · input \(.driver_usage.totals.input_tokens) · output \(.driver_usage.totals.output_tokens) · cache read \(.driver_usage.totals.cache_read_tokens) · cache write \(.driver_usage.totals.cache_write_tokens) · reasoning \(.driver_usage.totals.reasoning_tokens)",
     "  estimated cost " + (if .driver_usage.cost.estimated_usd == null then "n/a"
                             else "$\(.driver_usage.cost.estimated_usd) across \(.driver_usage.cost.estimated_sessions) joined session(s)" end),
@@ -634,7 +663,9 @@ text)
      else ([.driver_usage.limitations[] | "  limitation: \(.)"] | join("\n")) end),
     (if (.driver_usage.sessions | length) == 0 then empty
      else ([.driver_usage.sessions[]
-            | "  run \(.run_id) \(.profile)/\(.worker_session_id): \(.model) via \(.provider // "unknown") · \(.cost_status // "cost status missing") · \(.models | length) model row(s)"]
+            | "  session \(.profile)/\(.worker_session_id), runs "
+              + ([.runs[].run_id | tostring] | join(","))
+              + ": \(.model) via \(.provider // "unknown") · \(.cost_status // "cost status missing") · \(.models | length) model row(s)"]
            | join("\n")) end),
     "",
     "operator touches — \(.operator.touches) = \(.operator.comments) comments + \(.operator.unblocks) unblocks",

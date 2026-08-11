@@ -53,7 +53,6 @@ The required host-access rerun completed with 246 passed, 0 failed, 3 skipped.
 CHUNK-2—the readiness planning bundle remains outside implementation commits.
 Now that CHUNK-3 is stacked on CHUNK-2, its entries extend the tracked
 append-only decision log without an add/add conflict.
-
 2026-08-10 CHUNK-5: The repository still has no `tests/features` BDD runner or
 `make check` target. The five Given/When/Then cases are executable in the
 `metrics/` group of `scripts/verify.sh`; the chunk contract's `make validate`
@@ -98,6 +97,14 @@ GitHub reports the intended base and head, the PR is open and mergeable, and
 `.forge/chunk-5-metadata.json` validates against the `forge-codex-lane`
 completion contract. Do not merge before the lower stack lands.
 
+2026-08-11 CHUNK-5: Independent review found that completed runs 37 and 60 on
+the 2026-07-29..2026-07-30 `forge-ladder` replay share
+`forge-codex-lane/20260730_091931_9a5faf`. The original replay charged that
+session twice. Coverage remains 15/17 joined runs, but those joins represent 14
+unique sessions and the corrected estimated cost is `$1.452335808` with actual
+cost absent. Metrics now preserves both run mappings and aggregates each unique
+profile/session tuple once.
+
 2026-08-10 CHUNK-4: CHUNK-4 initially started from CHUNK-1's tip, its declared
 dependency. During the run, the tracked CHUNK-3 handoff recorded the human's
 explicit serial-stack decision, so the four unpublished CHUNK-4 commits were
@@ -135,6 +142,38 @@ authorized GitHub export; the branch was pushed and stacked PR #36 opened
 against `chunk/3-deterministic-diagnostics`, whose exact remote head remains
 CHUNK-4's merge-base. The PR is intentionally unmerged and must stay stacked
 until PR #35 and the lower chain land.
+2026-08-11 CHUNK-4: Independent review rejected the operator guide's use of the
+Make wrapper as though it preserved `metadata-live.sh`'s exact 0/1/2 machine
+contract. GNU Make cannot preserve a recipe's 1-versus-2 distinction. The guide
+now directs automation to the script, labels Make as a human-facing generic
+success/failure wrapper, and the metadata suite asserts that distinction. The
+planning artifact must carry the same clarification before integration.
+
+2026-08-11 CHUNK-6: Independent review found that the first acceptance freeze
+required only one global `@real-source` tag and inferred sources from a finite
+word list. CHUNK-4 proved the resulting scenario theater by tagging its
+before-any-board-read refusal. Contracts now declare arbitrary source labels
+with exact one-based scenario mappings; the checker rejects missing, extra, or
+misplaced tags and hashes the same bytes it validated. This first Forge plan is
+recorded as a retrofit, and the local stack is reordered so CHUNK-6 follows
+CHUNK-3 and precedes CHUNK-4/5 before merge.
+
+2026-08-11 CHUNK-7: Independent review reproduced a contract-only
+self-amendment: weakening a chunk's `Then` while leaving its feature and hash
+unchanged passed `--check-base`. The implementation gate now compares the
+approved and head Scenarios block, Real sources mapping, and Acceptance path in
+addition to manifest and feature bytes. Mutations cover both a weakened Then
+and a redirected Acceptance field while ordinary Touches drift remains outside
+this blocking surface.
+
+2026-08-11 CHUNK-8: Independent review drove `CHUNK 1` through three Hermes
+mutations before structural failure and found that a human-completed
+interactive root was rejected by full bootstrap. Canonical chunk-id validation
+now runs before the first Hermes command in both root-only and full modes, with
+space, slash, traversal, and malformed-dependency mutations. Terminal
+interactive roots retain their done state and human assignee. An opt-in run
+against the installed Hermes CLI in an isolated temporary home proved the real
+one-root-to-two-card extension and its actual `task_links` edge (7/0/0).
 
 2026-08-11 CHUNK-9: The human explicitly authorized a convergence stack for the
 two open prerequisite lines. `integration/chunk-9-prerequisites` starts at the
@@ -165,6 +204,32 @@ chunk's frozen done condition names `make validate` and `make verify`, so those
 are the end-ceremony proof. The intentional host run used `WITH_CODEX=1` and
 completed at 281 passed, 0 failed, 2 skipped; its live probe id was
 `verify-codex-1786433343-27716`. No requirements or architecture decision moved.
+
+2026-08-11 CHUNK-9 audit correction: The earlier paid verification was not an
+end-to-end commissioning run. Independent review also found that ambient
+`gh repo view` could identify a repository different from the product's
+`origin`, and that report writes were unchecked. Commissioning now parses and
+validates GitHub HTTPS/SSH origin forms, queries that explicit slug, requires
+the returned identity to match exactly, and publishes a uniquely named report
+atomically with every write checked. Regressions cover a mismatched GitHub
+identity and failed final publication.
+
+2026-08-11 CHUNK-9 live correction: A control run against `wielas/forge`
+correctly failed closed because its real required contexts are `validate` and
+`verify`, not the product contract's `check`. The definitive `make commission`
+run then used the real protected first-run product `wielas/forgeboard-report`:
+all nine report sections exited zero; protection was `GATED via=classic
+pr=yes checks=check`; paid verification was 289/0/3 with live run
+`verify-codex-1786440235-35663`; clean tree and absent-board fingerprints were
+unchanged; and the atomic report ended PASS with SHA-256
+`813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`.
+
+2026-08-11 CHUNK-10 planning amendment: Independent review found that the
+reconciliation branch already changes `scripts/verify.sh` to enforce its four
+documentation scenarios, but the frozen contract authorized only the four
+documents. Before CHUNK-10 implementation is integrated, its Touches surface is
+widened on the approved base to include that executable verifier. Scenarios,
+real-source declarations, acceptance path, and feature bytes do not change.
 
 2026-08-11 CHUNK-10: The frozen planning bundle and all three prerequisite
 heads are present on the CHUNK-9 convergence stack but not yet on `origin/main`.

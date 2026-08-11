@@ -9,8 +9,9 @@
   - Given a board contains nested metadata, null metadata, and a cross-profile envelope, When the sweep runs, Then every bad row is named and classified as invalid or unjudged.
   - Given a model-authored block reason outside `blocked_reason_pattern`, When the sweep runs, Then it fails and prints the task, run, and reason.
   - Given rows predate `SINCE`, When the sweep runs, Then they are ignored and reported separately from valid rows.
+- **Real sources:** `Hermes board snapshot` → scenario 2
 - **Acceptance:** tests/features/chunk_4.feature
-- **Output contract:** Print `valid`, `invalid`, `unjudged`, and `ignored` counts; exit 0 only when post-cutoff expected producers are present and every judged item is valid, exit 1 on a contract violation, and exit 2 when the sweep cannot read or scope its source.
+- **Output contract:** `scripts/metadata-live.sh` prints `valid`, `invalid`, `unjudged`, and `ignored` counts; it exits 0 only when post-cutoff expected producers are present and every judged item is valid, 1 on a contract violation, and 2 when the sweep cannot read or scope its source. `make metadata-live` is a human-facing wrapper whose failed recipe has GNU Make's generic nonzero status; automation requiring 1-versus-2 classification calls the script.
 - **Out of scope:** adding a live board to default `make verify`, normalizing historical envelopes, or treating unreadable rows as valid.
 - **Done when:** `make validate` and `make verify` are green, fixtures cover every classification, the command reads through `board-snapshot.sh`, and operator docs are updated.
 - **Lane:** forge-codex-lane · **Risk:** medium

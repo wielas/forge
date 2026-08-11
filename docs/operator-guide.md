@@ -197,13 +197,20 @@ there is never a half-written board left for a later reader to trust. **A number
 you did not get is the point**: reporting a board that could not be read as a
 board with no runs is the failure this replaced.
 
-**Prove metadata after a real run with an explicit cutoff.** This is opt-in and
-does not run under default `make verify`, because a repository gate must not
-depend on a live production board:
+**Prove metadata after a real run with an explicit cutoff.** Live-board access
+is opt-in; default `make verify` executes only the checked-in metadata fixture.
+Automation that needs the sweep's exact status classification must call its
+machine interface directly:
 
 ```bash
-make metadata-live BOARD=<slug> SINCE=2026-08-09T12:34:56Z
+./scripts/metadata-live.sh <slug> --since 2026-08-09T12:34:56Z
 ```
+
+That interface exits 0 for a satisfied contract, 1 for a readable contract
+violation, and 2 when its source or cutoff cannot be read. `make metadata-live
+BOARD=<slug> SINCE=<timestamp>` remains a human-facing convenience wrapper, but
+GNU Make maps any failed recipe to its own generic nonzero status; do not use
+the Make process status when automation must distinguish 1 from 2.
 
 Copy the exact RFC3339 start instant from the run log. A missing value, a bare
 date, or a timestamp without a timezone is refused before the command resolves
@@ -251,10 +258,14 @@ make commission PROJECT="$PROJECT" BOARD="$BOARD"
 It runs `make verify WITH_CODEX=1`, `make preflight`, the product roadmap check,
 the durable-path and clean-tree guards, remote resolution, and the existing
 merge-gate check. Every result and its exact output lands in
-`$PROJECT/.forge/commission-<UTC>.md`; roadmap `WARN` text remains a warning.
-The report itself is the only permitted project change, and commissioning
-fingerprints the board files before and after without opening them or calling
-Hermes.
+`$PROJECT/.forge/commission-<UTC>.<unique>.md`; roadmap `WARN` text remains a
+warning. The GitHub repository is parsed from the product's exact `origin` URL,
+passed explicitly to `gh repo view`, compared with GitHub's returned identity,
+and then passed unchanged to the merge gate. Ambient `gh` context cannot
+silently select a different repository. The report is published atomically;
+failure to create, write, or publish it makes commissioning fail. That ignored
+report is the only permitted project change, and commissioning fingerprints
+the board files before and after without opening them or calling Hermes.
 
 Once the inputs pass the initial structural checks, expect the paid Codex probe
 to run even when another prerequisite fails: the command completes the evidence
@@ -292,7 +303,10 @@ same board with the rest of the graph:
 Full mode reuses the existing root mapping and creates each remaining card with
 all of its parent ids in the same Hermes transaction. Its final reconciliation
 still compares every attached parent with every edge declared by the graph;
-root-only's zero-parent created set does not weaken that assertion.
+root-only's zero-parent created set does not weaken that assertion. If the root
+is `claude-interactive`, full mode also accepts its documented `done` checkpoint
+without re-blocking it or erasing the human assignee; any nonterminal state
+other than the original sticky block fails closed.
 
 ## Landing a stack of PRs
 

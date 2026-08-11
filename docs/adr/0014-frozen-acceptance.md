@@ -33,9 +33,13 @@ The feature contains one `Scenario` for every contract bullet, in the same
 order, with matching Given/When/Then step text. Planning emits no step
 definitions; implementations add those without changing the frozen feature.
 
-A contract naming an external source must include a scenario that actually
-exercises it and tags that scenario `@real-source`. If the planner cannot write
-that scenario yet, the chunk is incomplete rather than ready for bootstrap.
+A contract declares every external source explicitly as
+`` **Real sources:** `<label>` → scenario <n> `` (or `none`). Each mapped
+scenario must actually exercise that source and carries `@real-source`; no
+unmapped scenario may carry the tag. The label is free text rather than a
+hard-coded vocabulary, so a novel source cannot silently evade the obligation.
+If the planner cannot write the mapped scenario yet, the chunk is incomplete
+rather than ready for bootstrap.
 
 ### D14.2 — The freeze is a byte-level planning artifact
 
@@ -62,13 +66,20 @@ CHUNK-6 creates the artifact and records this amendment rule. CHUNK-7 enforces
 the base-branch hash during implementation and wires the rule into prejudge,
 start-chunk, judge, and the stamped project instructions.
 
+This repository's first adoption is explicitly a retrofit: CHUNK-2 through
+CHUNK-5 already had implementation branches when CHUNK-6 emitted their initial
+contracts and features. Their histories therefore are not evidence that the
+receipt existed before implementation. Before merge, the stack is reordered so
+the reviewed CHUNK-6 planning artifact is the base consumed by CHUNK-4 and
+CHUNK-5; subsequent projects must satisfy the normal pre-token chronology.
+
 ## Consequences
 
 - Acceptance exists before the first implementation token is spent.
 - Feature scenarios are reviewable in the planning PR and selectable by normal
   BDD tooling; step definitions remain implementation work.
 - `@real-source` becomes a planning obligation rather than a late advisory
-  receipt.
+  receipt, and its explicit source-to-scenario mapping is reviewable.
 - Formatting-only feature edits change the digest. That is intentional: the
   manifest identifies exact approved bytes, not an attempted semantic normal
   form.

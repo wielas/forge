@@ -1,9 +1,9 @@
 # Forge — current state
 
-**Updated 2026-08-11 by CHUNK-10.** The readiness work is implemented on the
-open convergence stack; `origin/main` does not yet contain that stack. Earlier
-dated measurements below remain the observations they were. The measured
-pre-readiness baseline was:
+**Updated 2026-08-11 by CHUNK-10 during the independent first-run readiness
+review.** The readiness work is implemented on the open convergence stack;
+`origin/main` does not yet contain that stack. Earlier dated measurements below
+remain the observations they were. The measured pre-readiness baseline was:
 
 ```
 main                fc006eb
@@ -19,22 +19,33 @@ and `scripts/worktree-sweep.sh` (F18, F19) · `scripts/board-snapshot.sh`, the o
 WAL-safe board read (F47, F67) · `scripts/roadmap-check.sh` and ADR-0012, sizing
 at plan time, advisory (F11, F53, F55) · `scripts/merge-gate.sh` (F79, F110).
 `verify.sh` gained the `sweep`, `roadmap`, `gate` and staged `bootstrap` groups;
-CI runs all four. The bootstrap group executes the real board script against a
-stateful Hermes stub: four cases prove root-only creation, pre-mutation refusal,
-idempotent full extension and mode-scoped parent reconciliation.
+CI runs the complete default suite rather than a second allowlist. Six ordinary
+bootstrap cases execute the board script against a stateful Hermes stub,
+including malformed ids and a completed interactive root. That is fixture
+proof, not a claim about the installed substrate.
 
-CHUNK-8 host proof on 2026-08-10: `make validate` **OK**; `make verify`
-**251 passed / 0 failed / 3 skipped**, including all four `bootstrap` cases.
+CHUNK-8 real-source host proof on 2026-08-11:
+`./scripts/verify.sh bootstrap --with-hermes` completed **7 passed / 0 failed /
+0 skipped**. Its opt-in seventh case used the installed Hermes CLI with an
+isolated temporary `HERMES_HOME`: root-only created one task, full bootstrap
+reused the same idempotency mapping and produced two tasks with one real
+`task_links` edge. `make validate` was also **OK**.
 
-CHUNK-9 host proof on 2026-08-11: `make validate` **OK**; the one intentional
-`make verify WITH_CODEX=1` run completed **281 passed / 0 failed / 2 skipped**.
-Its live paid case was `substrate/codex-worktree-commit`, run
-`verify-codex-1786433343-27716`; the five `commission` cases themselves use
-command stubs and spend nothing in ordinary verification or CI. Those cases
-prove the timestamped report contains every prerequisite, preserves roadmap
-`WARN`, propagates a named failure, refuses a repository with no enforceable
-gate regardless of visibility, and changes neither tracked product state nor
-any board database bytes.
+CHUNK-9 real-source host proof on 2026-08-11: the full `make commission` command
+ran against the clean durable checkout of `wielas/forgeboard-report`. Origin
+resolution returned that exact slug, its real classic protection reported
+`GATED ... checks=check`, roadmap output retained 3 advisory warnings, preflight
+reported 85 PASS / 3 WARN / 0 FAIL, and the paid verification completed **289
+passed / 0 failed / 3 skipped**. Its live case was
+`substrate/codex-worktree-commit`, run `verify-codex-1786440235-35663`. Both git
+clean checks passed, the selected board was absent before and after, and the
+atomically published report ended `overall: PASS` (SHA-256
+`813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`). An
+earlier control against `wielas/forge` failed closed because that repository
+requires `validate` and `verify`, not the product contract's `check`. Seven
+ordinary `commission` cases use command stubs and spend nothing in CI; they now
+also reject origin/GitHub identity mismatch and injected report-publication
+failure.
 
 CHUNK-10 host proof on 2026-08-11: `make validate` **OK**; default `make verify`
 completed **285 passed / 0 failed / 3 skipped**; `make preflight` completed

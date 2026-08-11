@@ -18,6 +18,9 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **CHUNK-3:** done 2026-08-10 — help extraction is content-anchored,
   read-only metrics fingerprint every SQLite sidecar, all live boards are
   checked in stable named order, and reachability is diagnostic evidence.
+- **CHUNK-4:** done 2026-08-10 — the WAL-safe live metadata sweep preserves
+  valid, invalid, unjudged, and ignored classifications behind an explicit
+  cutoff; this acceptance freeze is a retrofit over its already-written branch.
 - **CHUNK-5:** done 2026-08-10 — exact profile/session joins expose driver
   totals and every model row, missing usage stays unjudged, and generated retro
   rows carry operator touches plus driver coverage with honest cost status.
@@ -31,8 +34,9 @@ acceptance, commission the staged launch, then reconcile documentation.
   single-root graph before mutation, creates only the idempotent root, and lets
   full bootstrap extend it without weakening atomic parent reconciliation.
 - **CHUNK-9:** done 2026-08-11 — paid commissioning records every existing
-  launch gate, preserves advisory output, refuses unenforceable repositories,
-  and proves the ignored evidence report is its only product-side effect.
+  launch gate, binds GitHub identity to the exact origin, publishes evidence
+  atomically, preserves advisory output, and has passed against the protected
+  first-run product without changing tracked product or board state.
 
 ### CHUNK-1: Enforce methodology references and runtime pins
 - **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.
@@ -45,6 +49,7 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given the two checked-in Codex pin statements agree, When the offline CLI suite runs, Then it passes without reading a home-directory config.
   - Given the live Codex pin differs from the checked-in model-and-effort pair, When the config suite runs, Then it fails and prints both values.
   - Given Hermes cannot disable only `skill_manage`, When the profile policy is read, Then the ADR retains the `skills` toolset behind enforced `skills.write_approval=true` and names the residual staged-write capability.
+- **Real sources:** `live Codex config` → scenario 4; `Hermes skill capability` → scenario 5
 - **Acceptance:** tests/features/chunk_1.feature
 - **Out of scope:** changing the Codex invocation, changing the model pin, disabling the whole `skills` toolset, or changing a SOUL.
 - **Done when:** `make validate` and `make verify` are green, the scenarios pass, docs are updated, and `profiles-bootstrap.sh` is run after merge because its generated config text changed.
@@ -60,6 +65,7 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given the head contract removes a path, When prejudge runs, Then the removal is not reported as widening.
   - Given the contract is unchanged and the implementation stays inside it, When prejudge runs, Then both `touches` and `touches-widened` pass.
   - Given a process-doc exemption is added to `Touches`, When prejudge compares the contracts, Then the shared exemption policy is applied and no second exemption list is introduced.
+- **Real sources:** none
 - **Acceptance:** tests/features/chunk_2.feature
 - **Out of scope:** making `Touches` blocking, reading only the base contract for scope, or changing the six-path planning cap.
 - **Done when:** `make validate` and `make verify` are green, recorded-PR fixtures exercise the scenarios, and the ADR documents the advisory meaning.
@@ -76,6 +82,7 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given an end-to-end metrics read creates a WAL sidecar, When the read-only case compares the source set, Then it fails even if `kanban.db` bytes are unchanged.
   - Given multiple live boards exist, When the live-schema check runs, Then every selected board is named and checked deterministically rather than choosing `ls | head -1`.
   - Given a finite acyclic graph has one root, When `reachable` reports pass, Then ADR-0012 identifies it as diagnostic evidence and not an independent detector.
+- **Real sources:** `SQLite WAL source set` → scenario 3; `live Hermes boards` → scenario 4
 - **Acceptance:** tests/features/chunk_3.feature
 - **Out of scope:** opening live boards read-write, adding live access to CI, or removing the single-root requirement.
 - **Done when:** `make validate` and `make verify` are green, the scenarios pass under mutations, and the field notes describe the live-board policy.
@@ -92,8 +99,9 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given a board contains nested metadata, null metadata, and a cross-profile envelope, When the sweep runs, Then every bad row is named and classified as invalid or unjudged.
   - Given a model-authored block reason outside `blocked_reason_pattern`, When the sweep runs, Then it fails and prints the task, run, and reason.
   - Given rows predate `SINCE`, When the sweep runs, Then they are ignored and reported separately from valid rows.
+- **Real sources:** `Hermes board snapshot` → scenario 2
 - **Acceptance:** tests/features/chunk_4.feature
-- **Output contract:** Print `valid`, `invalid`, `unjudged`, and `ignored` counts; exit 0 only when post-cutoff expected producers are present and every judged item is valid, exit 1 on a contract violation, and exit 2 when the sweep cannot read or scope its source.
+- **Output contract:** `scripts/metadata-live.sh` prints `valid`, `invalid`, `unjudged`, and `ignored` counts; it exits 0 only when post-cutoff expected producers are present and every judged item is valid, 1 on a contract violation, and 2 when the sweep cannot read or scope its source. `make metadata-live` is a human-facing wrapper whose failed recipe has GNU Make's generic nonzero status; automation requiring 1-versus-2 classification calls the script.
 - **Out of scope:** adding a live board to default `make verify`, normalizing historical envelopes, or treating unreadable rows as valid.
 - **Done when:** `make validate` and `make verify` are green, fixtures cover every classification, the command reads through `board-snapshot.sh`, and operator docs are updated.
 - **Lane:** forge-codex-lane · **Risk:** medium
@@ -109,6 +117,7 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given a profile state database is unavailable, When metrics runs, Then base metrics remain readable and the driver-usage limitation is explicit.
   - Given Hermes reports estimated cost with no actual cost, When metrics renders output, Then the estimate is labelled estimated and actual cost remains absent.
   - Given `--markdown-row`, When metrics renders the retro row, Then operator touches and driver-usage coverage have dedicated cells generated by the script.
+- **Real sources:** `Hermes profile state` → scenario 1; `Hermes cost telemetry` → scenario 4
 - **Acceptance:** tests/features/chunk_5.feature
 - **Measured seam:** Join `task_runs.metadata.worker_session_id` and `task_runs.profile` to `$HERMES_HOME/profiles/<profile>/state.db`; snapshot both SQLite sources, use `sessions` for per-session totals, and preserve every `session_model_usage` row as the per-model breakdown.
 - **Out of scope:** stamping model-authored cost into `forge.chunk.v1`, changing `forge.judge.v1`, or editing the pinned scorer.
@@ -122,9 +131,10 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **Touches:** `skills/roadmap/SKILL.md`, `scripts/acceptance-freeze.sh`, `scripts/verify.sh`, `docs/adr/0014-frozen-acceptance.md`, `tests/features/`, `docs/first-run-readiness-2026-08-09.md`
 - **Scenarios:**
   - Given a chunk contract, When `/roadmap` finishes, Then its `Acceptance` field names an existing `tests/features/chunk_<id>.feature` whose Given/When/Then steps match the contract.
-  - Given a contract names an external source, When `/roadmap` finishes, Then its feature file contains a `@real-source` scenario.
+  - Given a contract declares each external source and its scenario index, When `/roadmap` finishes, Then every declared source maps to a matching `@real-source` scenario.
   - Given all planned feature files exist, When the freeze command runs, Then it writes deterministic path and SHA-256 entries to `contract-freeze.json`.
   - Given a missing feature file, When the freeze command runs, Then it fails and names the chunk and expected path.
+- **Real sources:** none
 - **Acceptance:** tests/features/chunk_6.feature
 - **Freeze format:** Each chunk gains `**Acceptance:** tests/features/chunk_<id>.feature`; `docs/chunks/contract-freeze.json` maps each repo-relative feature path to its SHA-256 digest.
 - **Stop rule:** If C2 accumulates two tier-2 bounces before both halves are independently green, park CHUNK-6 and CHUNK-7, keep C1 advisory, and run with F14/F25 still open rather than shipping a half-built freeze.
@@ -143,6 +153,7 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given an implementation PR changes a feature and its manifest entry together, When prejudge compares both against main, Then the self-amendment still blocks.
   - Given acceptance genuinely needs amendment, When a human planning PR updates the feature and manifest on main, Then a later implementation branch can start from the new hash.
   - Given a frozen contract names an external source, When judge reviews it, Then the `@real-source` scenario remains part of the scored acceptance surface.
+- **Real sources:** `approved base and implementation trees` → scenario 1
 - **Acceptance:** tests/features/chunk_7.feature
 - **Stop rule:** If C2 accumulates two tier-2 bounces before both halves are independently green, park CHUNK-6 and CHUNK-7, keep C1 advisory, and run with F14/F25 still open rather than shipping a half-built freeze.
 - **Out of scope:** letting an implementation PR update its own manifest, semantic grading by hash, or blocking ordinary step-definition work.
@@ -159,6 +170,7 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given a graph has multiple roots, When root-only bootstrap runs, Then it fails before any card is created.
   - Given root-only already created the root, When full bootstrap runs, Then the same idempotency key maps the root and every remaining parent is attached atomically.
   - Given root-only mode, When parent-count reconciliation runs, Then it checks the created set without weakening full mode's declared-edge assertion.
+- **Real sources:** `Hermes board` → scenario 1
 - **Acceptance:** tests/features/chunk_8.feature
 - **Out of scope:** changing dispatcher scheduling, creating stacked branches, bypassing `roadmap-check`, or bootstrapping the product before the metadata checkpoint is green.
 - **Done when:** `make validate` and `make verify` are green, the real script passes stubbed Hermes scenarios, CI runs the group, and staged-launch docs are updated.
@@ -175,6 +187,7 @@ acceptance, commission the staged launch, then reconcile documentation.
   - Given roadmap-check emits advisory warnings, When commissioning records it, Then the report preserves WARN rather than relabelling it PASS.
   - Given the repository is private without an enforceable merge gate, When commissioning checks protection, Then it refuses regardless of repository visibility labels.
   - Given commissioning succeeds, When the operator inspects the project, Then tracked files and the board are unchanged and evidence lives under ignored `.forge/` state.
+- **Real sources:** `Codex paid probe` → scenario 1; `GitHub merge protection` → scenario 4
 - **Acceptance:** tests/features/chunk_9.feature
 - **Command contract:** Run from the Forge checkout with `PROJECT=<absolute product path>` and `BOARD=<slug>`; record `make verify WITH_CODEX=1`, `make preflight`, the product's roadmap check, durable-path and clean-tree checks, remote resolution, and `merge-gate.sh` into `$PROJECT/.forge/commission-<UTC>.md` without calling Hermes board mutation commands.
 - **Out of scope:** creating a repository, changing visibility, creating cards, running the product graph, or inventing new pass criteria inside the wrapper.
@@ -185,12 +198,13 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **Goal:** Make the audit, first-run roadmap, current state, and operator guide agree with the code and measured pre-launch evidence.
 - **Milestone:** M5 · **Depends on:** CHUNK-2, CHUNK-3, CHUNK-9
 - **Serves:** F40, F81, F101, F103 · **Relevant ADRs:** 0002, 0003, 0012
-- **Touches:** `docs/audit-forgeboard-2026-07-30.md`, `docs/roadmap-first-run.md`, `docs/state.md`, `docs/operator-guide.md`
+- **Touches:** `docs/audit-forgeboard-2026-07-30.md`, `docs/roadmap-first-run.md`, `docs/state.md`, `docs/operator-guide.md`, `scripts/verify.sh`
 - **Scenarios:**
   - Given every finding touched by this roadmap, When the ledger is reconciled, Then each status header agrees with executable evidence and names the closing chunk or remaining proof.
   - Given the old first-run roadmap mixes shipped and future work, When it is reconciled, Then landed tracks, remaining commands, and the operational run sequence are unambiguous.
   - Given F80's out-of-bound worktrees, When the operator guide describes cleanup, Then it preserves the bounded unattended sweep and requires explicit review outside that bound.
   - Given F81 and F103 have prior dispositions, When docs are updated, Then the record is preserved and a superseding decision is linked rather than silently rewriting history.
+- **Real sources:** none
 - **Acceptance:** tests/features/chunk_10.feature
 - **Out of scope:** marking live-proof findings fixed before the run, deciding ADR-0011 without ten samples, deleting worktrees, or rewriting historical measurements.
 - **Done when:** `make validate`, `make verify`, and `make preflight` match their recorded baselines, the roadmap checker is CLEAR, and all four documents point to the same next command.
