@@ -125,6 +125,23 @@ hermes kanban assignees          # who the board can actually route to
 you modified. **Re-run `make preflight` after every update** — v0.18.2 → v0.19.0
 silently changed `approvals.mode` and `goals.max_turns`.
 
+**Isolate every human-driven slice; the manager owns the ledger.** Reserve the
+main checkout for the manager/orchestrator. Before an implementer starts a
+slice, create its branch in a separate sibling worktree:
+
+```bash
+git worktree add ../forge-slices/<slice-id> -b slice/<slice-id> main
+```
+
+The audit ledger is the manager's file. A slice may read it and commit it once
+as a source document when its signed contract requires that baseline, but it
+must never be the only writer or receive manager edits while it is running.
+New findings and number allocation stay with the manager in the main checkout.
+At handoff, the slice reports its exact worktree path, branch, HEAD, clean/dirty
+status, and any unpushed commits. The manager integrates that branch before
+deliberately reviewing and removing the named worktree; a handoff is never
+permission to sweep sibling worktrees.
+
 **Reclaim merged chunk worktrees — nothing else will.** `worktree` workspaces
 are *preserved* on completion (only `scratch` is deleted), so every finished
 chunk leaves `<repo>/.worktrees/<task-id>` behind, holding its branch. You

@@ -253,6 +253,15 @@ HANDOFF: CHUNK-10 is green on `chunk/10-reconcile-launch-ledger-and-operator-con
 After authorization: push, open the stacked PR against `chunk/9-commission-product-run-with-existing-gates` with `.forge/chunk-10-pr-body.md`, then write/validate metadata with its PR URL.
 Do not merge; retarget only after the lower readiness stacks integrate.
 
+2026-08-11 CHUNK-10 audit correction: F40 was promoted to fixed while the
+operator guide still omitted the exact slice-worktree creation command, the
+main-checkout reservation, ledger ownership, and the handoff boundary. Those
+rules are now explicit and mutation-tested. F102's original CHUNK-9 attribution
+was also unsupported by the earlier standalone paid verifier; the audited full
+commission against `wielas/forgeboard-report` now supplies the real six-chunk
+roadmap input (6 pass / 3 warn / 0 skip) without pretending those advisories are
+CLEAR or authorizing the future blocking flip.
+
 2026-08-11 CHUNK-10: The preceding HANDOFF is resolved. Human authorization exported the branch and opened stacked PR #42 against CHUNK-9's exact remote branch.
 GitHub reports the intended seven-file diff as open and mergeable; `.forge/chunk-10-metadata.json` validates against the lane completion contract.
 Do not merge; retarget only after the lower readiness stacks integrate.

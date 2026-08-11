@@ -39,13 +39,13 @@ This supersedes the 2026-08-06 disposition without rewriting its measurements; �
 | F25 | Staged by CHUNK-9; product run required | commissioning is green and recorded, but commissioning is not the lifecycle |
 | F31, F48 | Fixed by CHUNK-5 | exact `worker_session_id` joins expose operator touches, per-model use, and honest estimated/actual cost status |
 | F34, F36 | Fixed by CHUNK-1 | section references and checked-in/live pins are executable claims |
-| F40 | Fixed; reconciled by CHUNK-10 | allocator ownership is explicit and every implementation chunk uses an isolated branch/worktree |
+| F40 | Fixed; reconciled by CHUNK-10 | the operator guide reserves main for the manager, gives every human slice a sibling worktree, and keeps the ledger manager-owned through handoff |
 | F53 | Decided by ADR-0012; product run proof required | sizing stays advisory through the run; the product plan must be corrected until the checker is CLEAR before any flip decision |
 | F57 | Fixed by CHUNK-2 | prejudge compares base and head `Touches` and reports in-branch widening |
 | F81 | Superseded by CHUNK-10 | the unsafe historical `/tmp` prescription remains visible; the operator contract points to a durable destination |
 | F91, F92, F93 | Fixed by CHUNK-3 | help is content-anchored, sidecars are fingerprinted, and every live board is named in stable order |
 | F101 | Resolved by CHUNK-3 / ADR-0012 | `reachable` is retained only as diagnostic evidence after `acyclic` or `single-root` fires |
-| F102 | Resolved by CHUNK-9 | commissioning ran the complete real Forge readiness roadmap and recorded its CLEAR result |
+| F102 | Resolved by CHUNK-9 | commissioning ran the real six-chunk `wielas/forgeboard-report` roadmap: 6 pass / 3 warn / 0 skip; a future blocking flip still requires a corrected CLEAR product plan |
 | F103 | Resolved by ADR-0012; reconciled by CHUNK-10 | D12.4 records the distinct plan-time incentive argument while preserving F103's original observation |
 
 F80 remains open and deliberately outside unattended cleanup: sibling and
@@ -2200,6 +2200,14 @@ this ledger, so nothing executes the block boundaries. Stating that plainly is
 ADR-0003's own rule applied here: the honest claim is a convention two
 orchestrators can follow, not an enforcement.
 
+**Reconciled by CHUNK-10.** The operator guide now reserves the main checkout
+for the manager/orchestrator, gives every human-driven slice an explicit
+`git worktree add ../forge-slices/<slice-id> -b slice/<slice-id> main` creation
+step, keeps this ledger manager-owned while allowing a slice to read and commit
+its baseline once, and requires a path/branch/HEAD/status/unpushed handoff before
+deliberate cleanup. The docs suite mutates those ownership and creation clauses;
+either weakening makes the contract red.
+
 ---
 
 ## Priority order for the follow-up passes
@@ -4015,6 +4023,16 @@ genuine `/roadmap` emission has been read by this script. Cheapest close — hav
 the next `/roadmap` in any project commit its `docs/chunks/` and record the
 output. This is why C1 stays advisory through the first run (see ADR-0012, and
 the roadmap's §2/§3).
+
+**Resolution evidence (CHUNK-9 independent review, 2026-08-11).** A full
+`make commission` used the clean durable checkout of the actual first-run
+product `wielas/forgeboard-report`. Its committed six-chunk graph reached the
+real `roadmap-check.sh` and returned **6 pass / 3 warn / 0 skip**; the three
+advisories were preserved in the atomic PASS report whose SHA-256 is
+`813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`.
+This supplies the missing real input and resolves F102's stated defect. It does
+not authorize the future advisory-to-blocking flip: the next launch plan must
+still be corrected until it is CLEAR.
 
 ### F103 — The plan-time and review-time arguments for the `Touches` exemption are different, and only the review-time one is written down · `RESOLVED BY ADR-0012 — RECONCILED BY CHUNK-10` · **low**
 

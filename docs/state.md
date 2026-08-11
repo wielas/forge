@@ -56,6 +56,10 @@ and the paid Codex probe. The three preflight warnings remain the documented
 healthy set: no global lefthook, the empty API-key placeholder, and the
 historical `forge-ladder` board selected by default.
 
+The CHUNK-10 counts above predate the independent audit repairs and are retained
+only as the branch's original proof. The final reviewed-stack counts below
+supersede them.
+
 *Prior header, still true of the historical sections below it:* updated
 2026-08-06, after
 the audit repair slices through the lane boundary and completed-run metadata
