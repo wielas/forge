@@ -157,6 +157,12 @@ with exact one-based scenario mappings; the checker rejects missing, extra, or
 misplaced tags and hashes the same bytes it validated. This first Forge plan is
 recorded as a retrofit, and the local stack is reordered so CHUNK-6 follows
 CHUNK-3 and precedes CHUNK-4/5 before merge.
+2026-08-11 CHUNK-1: Complete hosted-CI review exposed a Linux-only blast-radius
+false positive: GNU `stat -f` reports filesystem statistics rather than a
+file-mode format, so clean hook state appeared to change between snapshots.
+`scripts/lane-blast-radius.sh` now tries GNU `stat -c` before the BSD fallback,
+and the lane verifier preserves failed-command output and evidence for future
+diagnosis. The CHUNK-1 `Touches` contract is widened to record this repair.
 
 2026-08-11 CHUNK-7: Independent review reproduced a contract-only
 self-amendment: weakening a chunk's `Then` while leaving its feature and hash
