@@ -99,10 +99,71 @@ def load_manifest(root: Path, role: str):
     return value, None
 
 
+def load_graph_ids(root: Path, role: str):
+    path = root / "docs" / "chunks" / "graph.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"{role} docs/chunks/graph.json is unreadable: {exc}"
+    if not isinstance(value, list) or not value:
+        return None, f"{role} docs/chunks/graph.json is not a non-empty array"
+    ids = []
+    for index, entry in enumerate(value):
+        chunk_id = entry.get("id") if isinstance(entry, dict) else None
+        if not isinstance(chunk_id, str) or not re.fullmatch(
+            r"CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*", chunk_id
+        ):
+            return None, f"{role} graph entry {index} has invalid id {chunk_id!r}"
+        ids.append(chunk_id)
+    if len(ids) != len(set(ids)):
+        return None, f"{role} graph contains duplicate chunk ids"
+    return ids, None
+
+
+def contract_acceptance_surface(root: Path, chunk_id: str, role: str):
+    path = root / "docs" / "chunks" / f"{chunk_id}.md"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (OSError, UnicodeError) as exc:
+        return None, f"{role} {path.relative_to(root)} is unreadable: {exc}"
+
+    starts = [
+        index for index, line in enumerate(lines)
+        if re.match(r"^-\s+\*\*Scenarios:\*\*", line)
+    ]
+    real_sources = [
+        line.rstrip("\r\n") for line in lines
+        if re.match(r"^-\s+\*\*Real sources:\*\*", line)
+    ]
+    acceptance = [
+        line.rstrip("\r\n") for line in lines
+        if re.match(r"^-\s+\*\*Acceptance:\*\*", line)
+    ]
+    if len(starts) != 1 or len(real_sources) != 1 or len(acceptance) != 1:
+        return None, (
+            f"{role} {path.relative_to(root)} must contain exactly one Scenarios, "
+            "Real sources, and Acceptance field"
+        )
+    start = starts[0]
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if re.match(r"^-\s+\*\*", lines[index]):
+            end = index
+            break
+    return {
+        "scenarios": "".join(lines[start:end]),
+        "real_sources": real_sources[0],
+        "acceptance": acceptance[0],
+    }, None
+
+
 if check_base is not None:
     base_manifest, base_error = load_manifest(check_base, "approved base")
     if base_error:
         fatal(base_error)
+    base_ids, base_graph_error = load_graph_ids(check_base, "approved base")
+    if base_graph_error:
+        fatal(base_graph_error)
 
     # A corrupt base is a substrate failure, not a verdict on the implementation.
     # The planning receipt must describe the actual bytes at the approved commit.
@@ -144,6 +205,27 @@ if check_base is not None:
             errors.append(
                 f"{feature}: feature bytes differ from the approved base digest "
                 f"{expected_digest}"
+            )
+
+    # The contract prose is one of ADR-0014's three acceptance artifacts. Keep
+    # ordinary fields such as Touches amendable/advisory, but freeze the exact
+    # Scenarios block, explicit source mapping, and Acceptance path.
+    for chunk_id in sorted(base_ids):
+        base_surface, base_surface_error = contract_acceptance_surface(
+            check_base, chunk_id, "approved base"
+        )
+        if base_surface_error:
+            fatal(base_surface_error)
+        head_surface, head_surface_error = contract_acceptance_surface(
+            project, chunk_id, "implementation head"
+        )
+        if head_surface_error:
+            errors.append(head_surface_error)
+            continue
+        if base_surface != head_surface:
+            errors.append(
+                f"docs/chunks/{chunk_id}.md: contract acceptance surface differs "
+                "from the approved base (Scenarios, Real sources, or Acceptance)"
             )
 
     if errors:
@@ -230,16 +312,11 @@ def contract_scenarios(chunk_id: str, contract: str):
     return parsed, None
 
 
-def feature_scenarios(chunk_id: str, feature_path: Path):
+def feature_scenarios(chunk_id: str, feature_text: str):
     scenarios = []
     pending_tags = set()
     current = None
-    try:
-        lines = feature_path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError) as exc:
-        return None, f"{chunk_id}: cannot read {feature_path}: {exc}"
-
-    for line in lines:
+    for line in feature_text.splitlines():
         stripped = line.strip()
         if stripped.startswith("@"):
             pending_tags.update(tag.removeprefix("@") for tag in stripped.split())
@@ -267,13 +344,46 @@ def feature_scenarios(chunk_id: str, feature_path: Path):
                 "Given, When, and Then in that order"
             )
         parsed.append(tuple(text for _, text in steps))
-    return (parsed, any("real-source" == tag for s in scenarios for tag in s["tags"])), None
+    tagged = {
+        index for index, scenario in enumerate(scenarios, start=1)
+        if "real-source" in scenario["tags"]
+    }
+    return (parsed, tagged), None
 
 
-external_source = re.compile(
-    r"\b(?:Hermes|GitHub(?: CLI)?|gh CLI|kanban|SQLite?|subprocess|network|HTTP)\b",
-    re.IGNORECASE,
-)
+def contract_real_sources(chunk_id: str, contract: str):
+    match = re.search(
+        r"(?m)^-\s+\*\*Real sources:\*\*\s+(.+?)\s*$", contract
+    )
+    if match is None:
+        return None, f"{chunk_id}: missing Real sources declaration"
+    declaration = match.group(1).strip()
+    if declaration.lower() == "none":
+        return [], None
+
+    sources = []
+    seen = set()
+    for item in declaration.split(";"):
+        item = item.strip()
+        parsed = re.fullmatch(
+            r"`([^`]+)`\s*(?:→|->)\s*scenario\s+([1-9][0-9]*)",
+            item,
+            re.IGNORECASE,
+        )
+        if parsed is None:
+            return None, (
+                f"{chunk_id}: invalid Real sources entry {item!r}; expected "
+                "`source label` → scenario N"
+            )
+        label = parsed.group(1).strip()
+        key = label.casefold()
+        if not label or key in seen:
+            return None, f"{chunk_id}: duplicate or empty real source {label!r}"
+        seen.add(key)
+        sources.append((label, int(parsed.group(2))))
+    return sources, None
+
+
 errors = []
 features = {}
 
@@ -300,32 +410,53 @@ for chunk_id in sorted(ids):
         continue
 
     feature_path = project / expected
-    if not feature_path.is_file():
+    try:
+        feature_bytes = feature_path.read_bytes()
+        feature_text = feature_bytes.decode("utf-8")
+    except FileNotFoundError:
         errors.append(f"{chunk_id}: missing feature; expected {expected}")
+        continue
+    except (OSError, UnicodeError) as exc:
+        errors.append(f"{chunk_id}: cannot read {expected}: {exc}")
         continue
 
     planned, contract_error = contract_scenarios(chunk_id, contract)
     if contract_error:
         errors.append(contract_error)
         continue
-    generated, feature_error = feature_scenarios(chunk_id, feature_path)
+    real_sources, source_error = contract_real_sources(chunk_id, contract)
+    if source_error:
+        errors.append(source_error)
+        continue
+    generated, feature_error = feature_scenarios(chunk_id, feature_text)
     if feature_error:
         errors.append(feature_error)
         continue
-    actual_steps, has_real_source = generated
+    actual_steps, tagged_indexes = generated
     if planned != actual_steps:
         errors.append(
             f"{chunk_id}: feature steps do not match the contract's Given/When/Then scenarios"
         )
         continue
-    if external_source.search(contract) and not has_real_source:
+    out_of_range = [
+        f"{label} → scenario {index}"
+        for label, index in real_sources if index > len(planned)
+    ]
+    if out_of_range:
         errors.append(
-            f"{chunk_id}: contract names an external source but {expected} has no "
-            "@real-source Scenario"
+            f"{chunk_id}: Real sources maps beyond its {len(planned)} scenario(s): "
+            + ", ".join(out_of_range)
+        )
+        continue
+    declared_indexes = {index for _, index in real_sources}
+    if declared_indexes != tagged_indexes:
+        errors.append(
+            f"{chunk_id}: @real-source scenarios {sorted(tagged_indexes)} do not "
+            f"match declared source scenarios {sorted(declared_indexes)}"
         )
         continue
 
-    features[expected] = hashlib.sha256(feature_path.read_bytes()).hexdigest()
+    features[expected] = hashlib.sha256(feature_bytes).hexdigest()
 
 if errors:
     for error in errors:

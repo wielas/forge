@@ -1,11 +1,11 @@
 Feature: CHUNK-4 live metadata sweep
 
-  @real-source
   Scenario: Require a cutoff before reading a board
     Given no RFC3339 `SINCE` value
     When `make metadata-live` runs
     Then it refuses before reading a board.
 
+  @real-source
   Scenario: Count expected producers
     Given post-cutoff completed rows from every contracted profile
     When the sweep runs

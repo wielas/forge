@@ -10,6 +10,7 @@ Feature: CHUNK-3 deterministic diagnostics
     When `preflight.sh --help` runs
     Then its Usage and Exit sections remain complete.
 
+  @real-source
   Scenario: Detect a WAL sidecar
     Given an end-to-end metrics read creates a WAL sidecar
     When the read-only case compares the source set

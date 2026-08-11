@@ -34,6 +34,7 @@ Sizing rules:
    - **Serves:** FR-x, NFR-y  ·  **Relevant ADRs:** 0003, 0007
    - **Touches:** paths/likely/to/change
    - **Scenarios:** Given/When/Then one-liners (these BECOME the .feature file)
+   - **Real sources:** none | `<source label>` → scenario <n>[; ...]
    - **Acceptance:** tests/features/chunk_<id>.feature
    - **Out of scope:** what the implementer must NOT do
    - **Done when:** make check green + scenarios pass + docs updated
@@ -59,11 +60,15 @@ Sizing rules:
    step text must match the contract. Scenario titles are descriptive labels,
    not a second contract.
 
-   If the contract names a real external system or source (for example Hermes,
-   GitHub, SQLite, a subprocess, or a network service), at least one scenario
-   that exercises it carries `@real-source`. If none of the planned scenarios
-   can exercise that source, the contract is incomplete: fix or split it now,
-   before implementation.
+   Declare every real external system or source explicitly in `Real sources`
+   and map it to the one-based scenario that exercises it, for example
+   `` `Hermes board` → scenario 2; `GitHub protection API` → scenario 4 ``.
+   Use `none` only when no external source is part of the contract. Every mapped
+   scenario carries `@real-source`, and no unmapped scenario does. Source labels
+   are deliberately free text: the validator checks the explicit mapping, not
+   a finite vocabulary that silently misses a new kind of source. If no planned
+   scenario can exercise a declared source, the contract is incomplete: fix or
+   split it now, before implementation.
 
    Then write **`docs/chunks/graph.json`**, the machine-readable dependency
    graph. This is the contract with `hermes/board-bootstrap.sh`, which creates
@@ -107,7 +112,8 @@ Sizing rules:
 ROADMAP.md + docs/chunks/* + docs/chunks/graph.json + tests/features/chunk_*.feature
 committed; `contract-freeze.json` hashes every Acceptance path; graph acyclic
 and its ids match the chunk files 1:1; every FR covered by ≥1 chunk; human
-sign-off.
+sign-off. Every contract has an explicit `Real sources` declaration whose
+scenario mappings exactly match its `@real-source` tags.
 
 Before sign-off run `~/.forge/repo/scripts/roadmap-check.sh <project>`. It is
 advisory (ADR-0012). It counts the `Serves:`, `Touches:` and `Scenarios:` caps

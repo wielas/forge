@@ -6,9 +6,9 @@ on:
 
 jobs:
   # `make validate` is the cheap structural check (frontmatter, bash -n).
-  # `make verify` executes the repo's claims. The suites that need a live
-  # Hermes install or model credentials degrade to `skip` rather than failing,
-  # so CI runs what it can and the operator runs the rest on the mini.
+  # `make verify` executes the repo's complete free verification surface. A
+  # genuinely absent live dependency is a named skip; the paid Codex probe is
+  # opt-in behind --with-codex and therefore never runs here.
   validate:
     runs-on: ubuntu-latest
     steps:
@@ -20,8 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      # `sweep` needs only git and its own gh/uvx stubs, so it runs here like
-      # the rest. It was omitted when it shipped, so nothing enforced F18/F19 on
-      # a pull request: its cases only ever ran by hand, on one machine. The
-      # suites still absent need a live Hermes install or model credentials.
-      - run: make verify SUITES="cli substrate template bootstrap metrics sweep roadmap gate"
+      # Do not maintain a second suite allowlist here. New deterministic groups
+      # become required CI evidence by being part of make verify's default.
+      - run: make verify

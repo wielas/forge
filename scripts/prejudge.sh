@@ -29,6 +29,7 @@
 #   scenario-count  block   F13 — ONLY when the PR has FEWER than the contract
 #   acceptance-freeze block F14 — implementation cannot rewrite its planning receipt
 #   touches         warn    F55 — 3 of 5 drifting paths are undeclarable process docs
+#   touches-widened warn    F57 — the head cannot silently expand its own contract
 #   size-budget     warn    F53 — fires on 11 of 11; a planning defect, seen late
 #   real-source     warn    F53 — fires on 8 of 11, same argument
 #
@@ -93,7 +94,9 @@ emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >> "$RESULTS"; }
 # blocks now, so `--fixture <dir>` replays a RECORDED PR: `pr.json` as `gh pr
 # view --json` returned it, `numstat.tsv` as `git diff --numstat base..head`
 # printed it, and `tree/` holding the files the checks read. No gh, no git, no
-# network. `make verify`'s prejudge/ group runs the whole gate that way.
+# network. `tree/` is the recorded head tree and `base-tree/` carries the base
+# contract used for comparisons that a head-only recording cannot make. `make
+# verify`'s prejudge/ group runs the whole gate that way.
 # ---------------------------------------------------------------------------
 if [ -n "$FIXTURE" ]; then
   [ -f "$FIXTURE/pr.json" ] || { echo "no $FIXTURE/pr.json" >&2; exit 2; }
@@ -137,8 +140,9 @@ BASE_OID="$(q .baseRefOid)"; PR_URL="$(q .url)"; PR_BODY="$(q '.body // ""')"
 # Most content checks below read the PR's own tree: the contract as it stood on
 # this branch is the one the implementer worked against and the reviewer judges.
 # Frozen acceptance is the deliberate exception. It reads both the head and the
-# PR base, because reading the head's rewritten feature and receipt together is
-# exactly how an implementation PR could approve its own amendment (ADR-0014).
+# PR base, because reading the head's rewritten contract, feature, and receipt
+# together is exactly how an implementation PR could approve its own amendment
+# (ADR-0014).
 #
 # The base commit comes from the PR's recorded `baseRefOid`, not from a local
 # merge-base against main. Four of that run's PRs were closed unmerged and their
@@ -183,6 +187,21 @@ case "$HEAD_REF" in
 esac
 CONTRACT=""
 [ -n "$CHUNK" ] && [ -f "$TREE/docs/chunks/$CHUNK.md" ] && CONTRACT="$TREE/docs/chunks/$CHUNK.md"
+BASE_CONTRACT=""
+if [ -n "$CHUNK" ]; then
+  if [ -n "$FIXTURE" ]; then
+    [ -f "$FIXTURE/base-tree/docs/chunks/$CHUNK.md" ] \
+      && BASE_CONTRACT="$FIXTURE/base-tree/docs/chunks/$CHUNK.md"
+  else
+    base_contract_file="$TMP/base-tree/docs/chunks/$CHUNK.md"
+    mkdir -p "$(dirname "$base_contract_file")"
+    if G show "$BASE_OID:docs/chunks/$CHUNK.md" > "$base_contract_file" 2>/dev/null; then
+      BASE_CONTRACT="$base_contract_file"
+    else
+      rm -f "$base_contract_file"
+    fi
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 1. CI state (F5) — and its FOURTH state.
@@ -315,11 +334,14 @@ TOUCHES_EXEMPT_FILE="$(dirname "${BASH_SOURCE[0]:-$0}")/touches-exempt.sh"
   echo "prejudge: missing $TOUCHES_EXEMPT_FILE — the Touches exemption has one definition and this is it" >&2
   exit 2; }
 . "$TOUCHES_EXEMPT_FILE"
+contract_touches() {
+  grep -m1 -- '- \*\*Touches:\*\*' "$1" \
+    | grep -oE '`[^`]+`' | tr -d '`' | sort -u
+}
 touches() {
   [ -n "$CONTRACT" ] || { emit touches skip "no contract for ${CHUNK:-this branch} in the PR tree"; return; }
   local listed drift changed
-  listed="$(grep -m1 -- '- \*\*Touches:\*\*' "$CONTRACT" \
-            | grep -oE '`[^`]+`' | tr -d '`' | sort -u)"
+  listed="$(contract_touches "$CONTRACT")"
   [ -n "$listed" ] || { emit touches skip "contract $CHUNK.md has no parseable Touches list"; return; }
   changed="$(changed_paths | grep -vE "$TOUCHES_EXEMPT")"
   drift="$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "$listed"))"
@@ -329,6 +351,41 @@ touches() {
   else
     emit touches warn "$n path(s) outside Touches: $(printf '%s' "$drift" | tr '\n' ' ' | sed 's/ $//')" \
       "for each path, either add it to Touches in $CHUNK.md in this PR with one line saying why, or revert it — advisory, so it does not gate the merge"
+  fi
+}
+
+# A head-only contract can certify its own expansion: add a path to `Touches`,
+# implement that path, and the ordinary set difference truthfully reports that
+# the implementation is inside the (new) declaration. Keep that head reading —
+# it is the contract the implementer used — and report the contract change as a
+# separate advisory signal by comparing base and head declarations.
+touches_widened() {
+  [ -n "$CONTRACT" ] \
+    || { emit touches-widened skip "no head contract for ${CHUNK:-this branch}; no Touches comparison is possible"; return; }
+  [ -n "$BASE_CONTRACT" ] \
+    || { emit touches-widened skip "no base contract for $CHUNK at $BASE_OID; no Touches comparison is possible"; return; }
+
+  local head_listed base_listed widened n
+  head_listed="$(contract_touches "$CONTRACT")"
+  base_listed="$(contract_touches "$BASE_CONTRACT")"
+  [ -n "$head_listed" ] \
+    || { emit touches-widened skip "head contract $CHUNK.md has no parseable Touches list"; return; }
+  [ -n "$base_listed" ] \
+    || { emit touches-widened skip "base contract $CHUNK.md has no parseable Touches list"; return; }
+
+  # The same exemption policy as `touches`: process documents mandated by the
+  # methodology are not implementation surface, whether they appear in a diff
+  # or are newly declared in a contract. Filtering both lists also makes a path
+  # removal naturally non-widening: only head-minus-base can warn.
+  head_listed="$(printf '%s\n' "$head_listed" | grep -vE "$TOUCHES_EXEMPT")"
+  base_listed="$(printf '%s\n' "$base_listed" | grep -vE "$TOUCHES_EXEMPT")"
+  widened="$(comm -23 <(printf '%s\n' "$head_listed") <(printf '%s\n' "$base_listed"))"
+  n="$(printf '%s' "$widened" | grep -c . || true)"
+  if [ "$n" = 0 ]; then
+    emit touches-widened pass "head Touches adds no declarable path absent from the base contract"
+  else
+    emit touches-widened warn "$n path(s) added to Touches on this branch: $(printf '%s' "$widened" | tr '\n' ' ' | sed 's/ $//')" \
+      "review each head-only path as a contract amendment; either revert it or record why the implementation branch had to widen its advisory scope"
   fi
 }
 
@@ -486,25 +543,32 @@ scenario_count() {
 # that would have caught F1 — the product cannot read the board that produced it
 # — was scheduled last and cut. Nothing ever ran the product against reality.
 #
-# The convention: a scenario tagged `@real-source` in one of the chunk's feature
-# files, which pytest-bdd carries through as a marker, so it can be selected and
-# skipped-if-absent without a second mechanism.
+# New plans declare free-text sources and exact scenario indexes. Older recorded
+# PRs have no such declaration and are unjudgeable here rather than being
+# guessed from a finite vocabulary.
 # ---------------------------------------------------------------------------
-EXTERNAL_SOURCES='Hermes|GitHub|gh CLI|GitHub CLI|kanban|sqlite|SQLite|subprocess|network|HTTP'
 real_source() {
   [ -n "$CONTRACT" ] || { emit real-source skip "no contract for ${CHUNK:-this branch} in the PR tree"; return; }
-  local named feats f tagged=0
-  named="$(grep -oE "$EXTERNAL_SOURCES" "$CONTRACT" | sort -u | tr '\n' ',' | sed 's/,$//')"
-  [ -n "$named" ] || { emit real-source pass "$CHUNK.md names no external source"; return; }
-  feats="$(grep -m1 -- '- \*\*Touches:\*\*' "$CONTRACT" | grep -oE '`[^`]+\.feature`' | tr -d '`')"
-  for f in $feats; do
-    [ -f "$TREE/$f" ] && grep -qE '^[[:space:]]*@[a-z-]*real-source' "$TREE/$f" && tagged=1
-  done
+  local declaration feature tagged=0
+  declaration="$(sed -n 's/^- \*\*Real sources:\*\* //p' "$CONTRACT" | head -1)"
+  [ -n "$declaration" ] || {
+    emit real-source skip "$CHUNK.md predates the explicit Real sources mapping; do not infer source coverage from prose"
+    return
+  }
+  [ "$declaration" != none ] || {
+    emit real-source pass "$CHUNK.md explicitly declares no real sources"
+    return
+  }
+  feature="$(sed -n 's#^- \*\*Acceptance:\*\* `\{0,1\}\([^` ]*\.feature\)`\{0,1\}$#\1#p' \
+              "$CONTRACT" | head -1)"
+  [ -n "$feature" ] && [ -f "$TREE/$feature" ] \
+    && grep -qE '^[[:space:]]*@([^[:space:]]+[[:space:]]+)*@?real-source([[:space:]]|$)' \
+         "$TREE/$feature" && tagged=1
   if [ "$tagged" = 1 ]; then
-    emit real-source pass "names $named and has a @real-source scenario"
+    emit real-source pass "declares $declaration and $feature carries the mapped @real-source scenario(s)"
   else
-    emit real-source warn "$CHUNK.md names $named but no feature file carries a @real-source scenario — every external source was tested against synthetic fixtures only (F25)" \
-      "tag one scenario in $(printf '%s' "$feats" | tr '\n' ' ' | sed 's/ $//') with @real-source and make it exercise the real $named rather than a fixture; if that cannot be done in this chunk, say so in the PR body and name the chunk that will"
+    emit real-source warn "$CHUNK.md declares $declaration but $feature carries no @real-source scenario" \
+      "restore the mapped @real-source tag in $feature; if the mapping is wrong, amend contract, feature, and manifest together in a separate planning PR"
   fi
 }
 
@@ -512,19 +576,19 @@ real_source() {
 # 8. Frozen acceptance is compared to the approved PR BASE (F14, F25, F53).
 #
 # The head manifest is not an authority. Comparing a head feature only to the
-# head's digest lets an implementation rewrite both and approve itself. The
-# separate planning PR is the amendment mechanism: it changes feature + receipt
-# on the base first, and a later chunk branch consumes those already-approved
-# bytes. Old projects with no base manifest have not adopted ADR-0014, so this
-# check is absent rather than claiming a skip or pass over an artifact they do
-# not have.
+# head's digest lets an implementation rewrite its contract, feature, and
+# receipt together and approve itself. The separate planning PR is the
+# amendment mechanism: it changes all three on the base first, and a later
+# chunk branch consumes those already-approved semantics and bytes. Old
+# projects with no base manifest have not adopted ADR-0014, so this check is
+# absent rather than claiming a skip or pass over an artifact they do not have.
 # ---------------------------------------------------------------------------
 frozen_acceptance() {
   local base_manifest="$BASE_TREE/docs/chunks/contract-freeze.json"
   [ -f "$base_manifest" ] || return
   if [ -z "$CHUNK" ]; then
     emit acceptance-freeze skip \
-      "planning PR: no chunk branch, so feature and manifest may be amended together for later implementations"
+      "planning PR: no chunk branch, so contract, feature, and manifest may be amended together for later implementations"
     return
   fi
 
@@ -542,14 +606,14 @@ frozen_acceptance() {
       emit acceptance-freeze pass "$evidence";;
     1)
       emit acceptance-freeze block "$evidence" \
-        "restore the feature and docs/chunks/contract-freeze.json to the PR base; if acceptance genuinely changed, open a separate human planning PR that updates the contract, feature, and regenerated manifest together, merge it, then start the implementation branch from that approved hash";;
+        "restore the contract acceptance fields, feature, and docs/chunks/contract-freeze.json to the PR base; if acceptance genuinely changed, open a separate human planning PR that updates the contract, feature, and regenerated manifest together, merge it, then start the implementation branch from that approved hash";;
     *)
       echo "prejudge: frozen acceptance check could not run: ${evidence:-no diagnostic}" >&2
       exit 2;;
   esac
 }
 
-ci_state; branch_name; touches; size_budget
+ci_state; branch_name; touches; touches_widened; size_budget
 then_asserts; scenario_count; real_source; frozen_acceptance
 
 # ---------------------------------------------------------------------------

@@ -6,10 +6,11 @@
       "ci-state": "pass",
       "branch-name": "block",
       "touches": "warn",
+      "touches-widened": "pass",
       "size-budget": "warn",
       "then-asserts": "skip",
       "scenario-count": "block",
-      "real-source": "pass"
+      "real-source": "skip"
     }
   },
   "pr-9": {
@@ -19,10 +20,11 @@
       "ci-state": "pass",
       "branch-name": "pass",
       "touches": "warn",
+      "touches-widened": "pass",
       "size-budget": "warn",
       "then-asserts": "skip",
       "scenario-count": "warn",
-      "real-source": "pass"
+      "real-source": "skip"
     }
   }
 }
