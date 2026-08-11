@@ -168,6 +168,15 @@ perfectly healthy gateway for a whole afternoon.
 
 ## How things really connect
 
+**Live schema inspection checks every board, by name.** There is no meaningful
+"first" board: the persisted default can change, and filesystem enumeration is
+not a selection policy. `make verify` enumerates every immediate
+`boards/<slug>/kanban.db` in bytewise path order, snapshots each through
+`scripts/board-snapshot.sh`, and reports a separate named result for each slug.
+An unreadable board is a failure for that named board, never a reason to fall
+through to another one. The sweep remains an operator-host diagnostic; CI does
+not gain live-board access.
+
 **Profiles** are separate `HERMES_HOME` directories created with `hermes profile
 create <name> --description "<role>"`; the description feeds orchestrator routing.
 There is no `profiles:` block in `config.yaml`.
