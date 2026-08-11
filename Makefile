@@ -1,5 +1,5 @@
 # forge repo-level commands
-.PHONY: install new validate verify preflight metrics prejudge worktree-sweep roadmap-check
+.PHONY: install new validate verify preflight metrics metadata-live prejudge worktree-sweep roadmap-check
 
 verify:                        ## execute this repo's own claims (see scripts/verify.sh)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
@@ -7,6 +7,9 @@ verify:                        ## execute this repo's own claims (see scripts/ve
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
 	@test -n "$(BOARD)" || { echo "usage: make metrics BOARD=<slug> [SINCE=YYYY-MM-DD] [UNTIL=YYYY-MM-DD]"; exit 1; }
 	./scripts/metrics.sh $(BOARD) $(if $(SINCE),--since $(SINCE),) $(if $(UNTIL),--until $(UNTIL),)
+
+metadata-live:                 ## make metadata-live BOARD=<slug> SINCE=<RFC3339> — opt-in completed-run contract sweep
+	./scripts/metadata-live.sh "$(BOARD)" --since "$(SINCE)"
 
 # THIS BLOCKS (ADR-0009). Four checks block, three warn, and the severity map
 # came from backtesting all 11 PRs of the run that produced the audit rather
@@ -100,6 +103,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh \
 	  scripts/lane-setup.sh scripts/lane-blast-radius.sh \
 	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh \
-	  scripts/roadmap-check.sh scripts/touches-exempt.sh scripts/merge-gate.sh
+	  scripts/roadmap-check.sh scripts/touches-exempt.sh scripts/merge-gate.sh \
+	  scripts/metadata-live.sh
 	@python3 -c 'import ast; [ast.parse(open(f).read()) for f in ["scripts/prejudge-steps.py", "scripts/validate-metadata.py"]]'
 	@echo "forge validate: OK"
