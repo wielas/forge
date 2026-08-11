@@ -35,7 +35,7 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.
 - **Milestone:** M1 · **Depends on:** none
 - **Serves:** F34, F36 · **Relevant ADRs:** 0002, 0003, 0005
-- **Touches:** `scripts/verify.sh`, `skills/end-chunk/SKILL.md`, `hermes/profiles-bootstrap.sh`, `docs/open-questions.md`, `docs/adr/0013-lane-skill-management.md`
+- **Touches:** `scripts/verify.sh`, `scripts/lane-blast-radius.sh`, `skills/end-chunk/SKILL.md`, `hermes/profiles-bootstrap.sh`, `docs/open-questions.md`, `docs/adr/0013-lane-skill-management.md`
 - **Scenarios:**
   - Given every `<skill> §<n>` reference in a Forge skill, When the CLI suite runs, Then each target heading resolves in the named skill.
   - Given a referenced section is renamed, When the CLI suite runs, Then it fails and names the source reference and missing heading.
