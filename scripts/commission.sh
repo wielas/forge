@@ -85,9 +85,9 @@ PY
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-commission.XXXXXX")" \
   || { echo "commission: could not create scratch directory" >&2; exit 2; }
-REPORT_TMP="$(mktemp "$EVIDENCE_DIR/commission-$STAMP.XXXXXX.tmp")" \
+REPORT_TMP="$(mktemp "$EVIDENCE_DIR/commission-$STAMP.XXXXXX")" \
   || { echo "commission: could not create evidence report" >&2; rm -rf "$WORK"; exit 2; }
-REPORT="${REPORT_TMP%.tmp}.md"
+REPORT="$REPORT_TMP.md"
 cleanup() {
   rm -rf "$WORK"
   [ ! -e "$REPORT_TMP" ] || rm -f "$REPORT_TMP"
