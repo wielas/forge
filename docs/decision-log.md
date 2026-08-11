@@ -145,3 +145,23 @@ to `main` only after both prerequisite heads are integrated, and delete no base
 branch until its child PR has been retargeted. The synthetic base is never
 merged independently; it exists only to give the authorized stack one complete
 review base.
+
+2026-08-11 CHUNK-9: Commissioning is an evidence aggregator over existing
+controls, not a new launch policy. After safe inputs and the ignored evidence
+path are established, it runs every prerequisite even if an earlier one fails,
+so the report is complete and the single paid Codex probe still spends. Any
+nonzero result makes the aggregate fail; roadmap output is stored verbatim and
+is never renamed PASS.
+
+2026-08-11 CHUNK-9: Board invariance is measured without opening SQLite. The
+commissioner fingerprints the selected database plus `-wal`, `-shm`, and
+`-journal` sidecars before and after, calls no Hermes command, and separately
+requires both clean git states. Remote visibility is deliberately not queried:
+the existing `merge-gate.sh` must prove a PR rule and the product template's
+required `check` context.
+
+2026-08-11 CHUNK-9: This repository still has no `make check` target. The
+chunk's frozen done condition names `make validate` and `make verify`, so those
+are the end-ceremony proof. The intentional host run used `WITH_CODEX=1` and
+completed at 281 passed, 0 failed, 2 skipped; its live probe id was
+`verify-codex-1786433343-27716`. No requirements or architecture decision moved.

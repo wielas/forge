@@ -27,6 +27,9 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **CHUNK-8:** done 2026-08-10 — root-only bootstrap validates the complete
   single-root graph before mutation, creates only the idempotent root, and lets
   full bootstrap extend it without weakening atomic parent reconciliation.
+- **CHUNK-9:** done 2026-08-11 — paid commissioning records every existing
+  launch gate, preserves advisory output, refuses unenforceable repositories,
+  and proves the ignored evidence report is its only product-side effect.
 
 ### CHUNK-1: Enforce methodology references and runtime pins
 - **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.

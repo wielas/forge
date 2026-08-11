@@ -26,6 +26,16 @@ idempotent full extension and mode-scoped parent reconciliation.
 CHUNK-8 host proof on 2026-08-10: `make validate` **OK**; `make verify`
 **251 passed / 0 failed / 3 skipped**, including all four `bootstrap` cases.
 
+CHUNK-9 host proof on 2026-08-11: `make validate` **OK**; the one intentional
+`make verify WITH_CODEX=1` run completed **281 passed / 0 failed / 2 skipped**.
+Its live paid case was `substrate/codex-worktree-commit`, run
+`verify-codex-1786433343-27716`; the five `commission` cases themselves use
+command stubs and spend nothing in ordinary verification or CI. Those cases
+prove the timestamped report contains every prerequisite, preserves roadmap
+`WARN`, propagates a named failure, refuses a repository with no enforceable
+gate regardless of visibility, and changes neither tracked product state nor
+any board database bytes.
+
 *Prior header, still true of the sections below it:* updated 2026-08-06, after
 the audit repair slices through the lane boundary and completed-run metadata
 producer contract. The 2026-07-28 ladder and fault exercises remain the live
