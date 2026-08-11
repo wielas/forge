@@ -1105,6 +1105,10 @@ prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces
 prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x)==render(x) are both reported
 prejudge/steps-walker-has-no-false-positives     six legitimate Then-step shapes are not reported
 prejudge/recorded-prs-exact       two recorded PRs reproduce a checked-in severity map, offline
+prejudge/touches-widening-is-visible head-only Touches additions warn even when the implementation is in scope
+prejudge/touches-removal-is-not-widening paths removed from Touches do not warn as widening
+prejudge/touches-unchanged-passes unchanged contracts with in-scope implementation pass both Touches checks
+prejudge/touches-widening-shares-exemptions process docs are exempt through the single shared policy definition
 prejudge/blocks-with-exit-1       a blocking check exits 1; a clear-with-warnings PR exits 0
 prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
 prejudge/scenario-count-is-asymmetric  fewer scenarios than the contract blocks, more only warns
@@ -2532,11 +2536,12 @@ wants metadata  && run_metadata_group
 #     mergedAt,url,additions,deletions,changedFiles,statusCheckRollup | jq -S .
 #   git diff --numstat <baseRefOid> <headRefOid>        > numstat.tsv
 #   git archive <headRefOid> docs/chunks tests/features | tar -x -C tree/
+#   git show <baseRefOid>:docs/chunks/<CHUNK>.md         > base-tree/docs/chunks/<CHUNK>.md
 #
 # The recorded `tree/` carries the contract and the feature file and NOT the
 # 3,500-line test suite, so `then-asserts` skips on these fixtures. That check
 # is covered exactly, and separately, by the walker fixture above — the point of
-# these two is the four checks that were covered by nothing.
+# these two is the GitHub/tree-facing set that was covered by nothing.
 # ---------------------------------------------------------------------------
 run_prejudge_group() {
   group prejudge
@@ -2601,8 +2606,80 @@ run_prejudge_group() {
   # list and the result. Asserting the evidence strings too would fail on every
   # reworded sentence and teach the next person to regenerate the file without
   # reading it, which is how a checked-in expectation stops being evidence.
-  [ -z "$drift" ] && ok "recorded-prs-exact (2 PRs, 7 checks each, offline)" \
+  [ -z "$drift" ] && ok "recorded-prs-exact (2 PRs, 8 checks each, offline)" \
     || bad "recorded-prs-exact" "the severity map moved on:$drift — $(jq -c . "$TMPROOT/${drift## }.json" 2>/dev/null | cut -c1-200)"
+
+  # The head contract is still the source for the ordinary `touches` check.
+  # Comparing it with the recorded base contract adds a second, independent
+  # signal: a branch cannot silently widen its own declaration and then have
+  # the implementation certified against only that widened declaration.
+  local unchanged="$TMPROOT/touches-unchanged"
+  local widened="$TMPROOT/touches-widened"
+  local removed="$TMPROOT/touches-removed"
+  local exempted="$TMPROOT/touches-exempted"
+  local contract_rel=tree/docs/chunks/CHUNK-5.md
+  local base_contract_rel=base-tree/docs/chunks/CHUNK-5.md
+  local errors_path=src/forgeboard_report/errors.py
+
+  rm -rf "$unchanged"; cp -R "$prs/pr-9" "$unchanged"
+  # ANSI-C quoting supplies literal tabs on both BSD and GNU grep. A doubled
+  # backslash was tolerated as a tab locally but matched nothing on Ubuntu.
+  grep -v $'^21\t0\tsrc/forgeboard_report/errors.py$' "$prs/pr-9/numstat.tsv" \
+    > "$unchanged/numstat.tsv"
+  "$gate" --fixture "$unchanged" --json > "$TMPROOT/touches-unchanged.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches") | .status' "$TMPROOT/touches-unchanged.json")" = pass ] \
+     && [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-unchanged.json")" = pass ]; then
+    ok "touches-unchanged-passes"
+  else
+    bad "touches-unchanged-passes" \
+        "an unchanged contract with an in-scope diff must pass touches and touches-widened"
+  fi
+
+  rm -rf "$widened"; cp -R "$prs/pr-9" "$widened"
+  sed "s#\`src/forgeboard_report/domain.py\`, #\`src/forgeboard_report/domain.py\`, \`$errors_path\`, #" \
+    "$widened/$contract_rel" > "$widened/contract.tmp"
+  mv "$widened/contract.tmp" "$widened/$contract_rel"
+  "$gate" --fixture "$widened" --json > "$TMPROOT/touches-widened.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches") | .status' "$TMPROOT/touches-widened.json")" = pass ] \
+     && [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-widened.json")" = warn ] \
+     && jq -e --arg path "$errors_path" \
+          '.checks[] | select(.id=="touches-widened") | .evidence | contains($path)' \
+          "$TMPROOT/touches-widened.json" >/dev/null; then
+    ok "touches-widening-is-visible ($errors_path)"
+  else
+    bad "touches-widening-is-visible" \
+        "a head-only Touches addition must warn with its path while ordinary touches passes"
+  fi
+
+  rm -rf "$removed"; cp -R "$unchanged" "$removed"
+  sed "s#\`src/forgeboard_report/domain.py\`, #\`src/forgeboard_report/domain.py\`, \`$errors_path\`, #" \
+    "$removed/$base_contract_rel" > "$removed/contract.tmp"
+  mv "$removed/contract.tmp" "$removed/$base_contract_rel"
+  "$gate" --fixture "$removed" --json > "$TMPROOT/touches-removed.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-removed.json")" = pass ] \
+     && ! jq -e --arg path "$errors_path" \
+          '.checks[] | select(.id=="touches-widened") | .evidence | contains($path)' \
+          "$TMPROOT/touches-removed.json" >/dev/null; then
+    ok "touches-removal-is-not-widening"
+  else
+    bad "touches-removal-is-not-widening" \
+        "a path present only in the base Touches list must not be reported as widening"
+  fi
+
+  rm -rf "$exempted"; cp -R "$unchanged" "$exempted"
+  sed 's#`tests/test_render.py`#`tests/test_render.py`, `docs/decision-log.md`#' \
+    "$exempted/$contract_rel" > "$exempted/contract.tmp"
+  mv "$exempted/contract.tmp" "$exempted/$contract_rel"
+  printf '1\t0\tdocs/decision-log.md\n' >> "$exempted/numstat.tsv"
+  "$gate" --fixture "$exempted" --json > "$TMPROOT/touches-exempted.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches") | .status' "$TMPROOT/touches-exempted.json")" = pass ] \
+     && [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-exempted.json")" = pass ] \
+     && [ "$(grep -Rhc '^TOUCHES_EXEMPT=' scripts/*.sh | awk '{n+=$1} END {print n+0}')" = 1 ]; then
+    ok "touches-widening-shares-exemptions"
+  else
+    bad "touches-widening-shares-exemptions" \
+        "docs/decision-log.md must be exempt from both comparisons through the one TOUCHES_EXEMPT definition"
+  fi
 
   # The gate blocks. This is the property the whole slice turns on, and it is
   # asserted on the exit code rather than on the printed word, because that is
