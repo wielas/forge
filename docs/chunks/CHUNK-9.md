@@ -9,6 +9,7 @@
   - Given roadmap-check emits advisory warnings, When commissioning records it, Then the report preserves WARN rather than relabelling it PASS.
   - Given the repository is private without an enforceable merge gate, When commissioning checks protection, Then it refuses regardless of repository visibility labels.
   - Given commissioning succeeds, When the operator inspects the project, Then tracked files and the board are unchanged and evidence lives under ignored `.forge/` state.
+- **Real sources:** `Codex paid probe` → scenario 1; `GitHub merge protection` → scenario 4
 - **Acceptance:** tests/features/chunk_9.feature
 - **Command contract:** Run from the Forge checkout with `PROJECT=<absolute product path>` and `BOARD=<slug>`; record `make verify WITH_CODEX=1`, `make preflight`, the product's roadmap check, durable-path and clean-tree checks, remote resolution, and `merge-gate.sh` into `$PROJECT/.forge/commission-<UTC>.md` without calling Hermes board mutation commands.
 - **Out of scope:** creating a repository, changing visibility, creating cards, running the product graph, or inventing new pass criteria inside the wrapper.

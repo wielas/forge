@@ -15,6 +15,7 @@ Feature: CHUNK-1 control-plane references and pins
     When the offline CLI suite runs
     Then it passes without reading a home-directory config.
 
+  @real-source
   Scenario: Report live pin drift
     Given the live Codex pin differs from the checked-in model-and-effort pair
     When the config suite runs

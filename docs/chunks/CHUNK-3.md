@@ -9,6 +9,7 @@
   - Given an end-to-end metrics read creates a WAL sidecar, When the read-only case compares the source set, Then it fails even if `kanban.db` bytes are unchanged.
   - Given multiple live boards exist, When the live-schema check runs, Then every selected board is named and checked deterministically rather than choosing `ls | head -1`.
   - Given a finite acyclic graph has one root, When `reachable` reports pass, Then ADR-0012 identifies it as diagnostic evidence and not an independent detector.
+- **Real sources:** `SQLite WAL source set` → scenario 3; `live Hermes boards` → scenario 4
 - **Acceptance:** tests/features/chunk_3.feature
 - **Out of scope:** opening live boards read-write, adding live access to CI, or removing the single-root requirement.
 - **Done when:** `make validate` and `make verify` are green, the scenarios pass under mutations, and the field notes describe the live-board policy.

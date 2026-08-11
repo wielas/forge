@@ -1,6 +1,6 @@
 # Forge — current state
 
-**Updated 2026-08-10 during the first-run readiness implementation.** The last
+**Updated 2026-08-11 during the independent first-run readiness review.** The last
 fully integrated `main` baseline remains the repair effort landed as PRs #30,
 #26, #27 and #28, in that order. Earlier dated measurements below are kept as
 the observations they were; that baseline is here:
@@ -19,12 +19,17 @@ and `scripts/worktree-sweep.sh` (F18, F19) · `scripts/board-snapshot.sh`, the o
 WAL-safe board read (F47, F67) · `scripts/roadmap-check.sh` and ADR-0012, sizing
 at plan time, advisory (F11, F53, F55) · `scripts/merge-gate.sh` (F79, F110).
 `verify.sh` gained the `sweep`, `roadmap`, `gate` and staged `bootstrap` groups;
-CI runs all four. The bootstrap group executes the real board script against a
-stateful Hermes stub: four cases prove root-only creation, pre-mutation refusal,
-idempotent full extension and mode-scoped parent reconciliation.
+CI runs the complete default suite rather than a second allowlist. Six ordinary
+bootstrap cases execute the board script against a stateful Hermes stub,
+including malformed ids and a completed interactive root. That is fixture
+proof, not a claim about the installed substrate.
 
-CHUNK-8 host proof on 2026-08-10: `make validate` **OK**; `make verify`
-**251 passed / 0 failed / 3 skipped**, including all four `bootstrap` cases.
+CHUNK-8 real-source host proof on 2026-08-11:
+`./scripts/verify.sh bootstrap --with-hermes` completed **7 passed / 0 failed /
+0 skipped**. Its opt-in seventh case used the installed Hermes CLI with an
+isolated temporary `HERMES_HOME`: root-only created one task, full bootstrap
+reused the same idempotency mapping and produced two tasks with one real
+`task_links` edge. `make validate` was also **OK**.
 
 CHUNK-9 host proof on 2026-08-11: `make validate` **OK**; the one intentional
 `make verify WITH_CODEX=1` run completed **281 passed / 0 failed / 2 skipped**.

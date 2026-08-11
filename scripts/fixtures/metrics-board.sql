@@ -89,6 +89,10 @@ INSERT INTO task_links (parent_id, child_id) VALUES
 INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, metadata) VALUES
   ('t_c1','forge-codex-lane','done',1785200010,1785200100,'completed',
    '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1","worker_session_id":"session-exact"}'),
+  -- One metered session may drive more than one completed run. Coverage keeps
+  -- both run mappings; tokens and cost must still charge session-exact once.
+  ('t_c1','forge-codex-lane','done',1785200011,1785200101,'completed',
+   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1","worker_session_id":"session-exact"}'),
   ('t_c2','forge-missing-driver','done',1785200110,1785200200,'completed',
    '{"forge.chunk.v1":{"chunk_id":"CHUNK-2","pr":"https://example/pull/2"},"tests_run":9,"worker_session_id":"session-unavailable"}'),
   ('t_c3','forge-codex-lane','done',1785200210,1785200300,'completed',

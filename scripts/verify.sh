@@ -16,6 +16,7 @@
 #   ./scripts/verify.sh                 # every group, with free substrate probes
 #   ./scripts/verify.sh cli config      # only these groups
 #   ./scripts/verify.sh --with-codex    # also run the sandbox probes (spend tokens)
+#   ./scripts/verify.sh bootstrap --with-hermes  # run isolated real-Hermes bootstrap proof
 #   ./scripts/verify.sh --list          # list cases without running them
 #
 # Groups:
@@ -67,10 +68,11 @@ helptext() {
   ' "$0"
 }
 
-WITH_CODEX=0; LIST_ONLY=0; SUITES=""
+WITH_CODEX=0; WITH_HERMES=0; LIST_ONLY=0; SUITES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-codex) WITH_CODEX=1; shift;;
+    --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
     cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
@@ -574,7 +576,9 @@ run_config_group() {
           "known mismatch did not print live and checked-in pairs (got: ${codex_diag:-no diagnostic})"
     fi
     codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
-    if codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
+    if [ ! -f "$codex_config" ]; then
+      skip "codex-pin-live" "$codex_config is absent; no live operator pin to judge"
+    elif codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
       ok "codex-pin-live ($CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT)"
     else
       bad "codex-pin-live" "$codex_diag"
@@ -1122,16 +1126,20 @@ lane/driver-never-reads-the-diff        the metered driver redirects the diff; i
 lane/prejudge-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
 bootstrap/root-only-creates-one-card    a valid graph creates only its unique root
 bootstrap/multiple-roots-mutate-nothing invalid staged graphs refuse before the first Hermes command
+bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed dependency ids invoke no Hermes command
 bootstrap/full-extends-root-idempotently full bootstrap reuses the root key and atomically attaches every remaining parent
+bootstrap/completed-interactive-root-is-reused full bootstrap extends the human-completed root without re-blocking it
 bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
 commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
 commission/propagates-prerequisite-failure a named nonzero prerequisite makes commissioning fail
 commission/preserves-roadmap-warn       advisory WARN remains WARN in the report
 commission/requires-enforceable-gate    repository visibility never substitutes for merge protection
 commission/leaves-project-and-board-unchanged only ignored evidence is written and no Hermes mutation runs
+bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes rather than the command stub
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/driver-usage-joins-exact-session  session totals and every per-model row come from worker_session_id
+metrics/driver-usage-shared-session-counts-once multiple runs retain mappings without charging one session twice
 metrics/driver-usage-missing-id-is-unjudged  a completed chunk run without worker_session_id is not zero usage
 metrics/driver-usage-missing-profile-is-explicit  unreadable profile state preserves base metrics and names the gap
 metrics/driver-usage-estimate-keeps-actual-absent  estimated Hermes cost never manufactures zero actual cost
@@ -1172,6 +1180,7 @@ metadata/validator-runtime-is-locked     the shebang the lane runs pins transiti
 metadata/unreadable-path-is-not-invalid-metadata  an unreadable path exits 2; only a real envelope earns exit 1
 metadata/blocked-reason-contract         literal producers and the metrics consumer use the registry vocabulary
 metadata/live-requires-rfc3339-since     an absent or malformed cutoff refuses before any board read
+metadata/live-operator-interface          automation is directed to the script that preserves exit 0/1/2
 metadata/live-valid-counts               valid envelopes are counted by profile and schema
 metadata/live-classifies-every-bad-row   nested, null, cross-profile and unreadable rows are named
 metadata/live-rejects-bad-block-reason   a model-authored reason outside the registry names task, run and reason
@@ -1190,6 +1199,8 @@ prejudge/blocks-with-exit-1       a blocking check exits 1; a clear-with-warning
 prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
 prejudge/scenario-count-is-asymmetric  fewer scenarios than the contract blocks, more only warns
 prejudge/frozen-feature-blocks-change  a feature whose bytes differ from the approved base is named and blocked
+prejudge/frozen-contract-blocks-change  implementation cannot weaken the approved Scenarios prose
+prejudge/frozen-contract-blocks-acceptance-redirect  implementation cannot redirect the approved feature path
 prejudge/frozen-feature-allows-step-definitions  ordinary implementation steps do not change frozen acceptance
 prejudge/frozen-feature-blocks-self-amendment  changing the feature and its manifest together cannot approve itself
 prejudge/frozen-feature-accepts-planning-amendment  a later branch consumes the hash already approved on its base
@@ -1285,7 +1296,7 @@ roadmap/skill-delegates-to-the-checker  /roadmap names the script, via ~/.forge/
 roadmap/thresholds-are-the-skills-own-numbers  the caps have not drifted from skills/roadmap/SKILL.md
 roadmap/skill-emits-frozen-acceptance    one planning pass writes feature paths, executable scenarios, and the manifest
 roadmap/acceptance-matches-contract      every generated Given/When/Then step matches its chunk contract
-roadmap/real-source-is-planned           an external-source contract carries a @real-source scenario before implementation
+roadmap/real-source-is-planned           arbitrary declared sources map exactly to their @real-source scenarios
 roadmap/freeze-is-deterministic           sorted repo-relative paths map to the feature bytes' SHA-256 digests
 roadmap/missing-feature-is-named          freeze refuses atomically and names the chunk plus expected path
 EOF
@@ -1293,7 +1304,7 @@ EOF
 fi
 
 echo "forge verify — $(date '+%Y-%m-%d %H:%M:%S %Z')"
-echo "groups:$SUITES$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')"
+echo "groups:$SUITES$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')$([ "$WITH_HERMES" = 1 ] && echo ' (+real Hermes)')"
 
 wants cli       && run_cli_group
 wants config    && run_config_group
@@ -1793,7 +1804,7 @@ run_bootstrap_group() {
   group bootstrap
   local bootstrap="$REPO_ROOT/hermes/board-bootstrap.sh"
 
-  _bootstrap_fixture() { # $1=root $2=normal|multi-root
+  _bootstrap_fixture() { # $1=root $2=graph shape
     local root="$1" shape="$2" id
     rm -rf "$root"
     mkdir -p "$root/bin" "$root/docs/chunks" "$root/state"
@@ -1817,6 +1828,31 @@ BOOTSTRAP_GRAPH
   {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-1"]}
 ]
 BOOTSTRAP_GRAPH
+        ;;
+      interactive)
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"claude-interactive","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-2"]}
+]
+BOOTSTRAP_GRAPH
+        ;;
+      bad-space)
+        printf '%s\n' '[{"id":"CHUNK 1","lane":"forge-codex-lane","depends_on":[]}]' \
+          > "$root/docs/chunks/graph.json"
+        ;;
+      bad-slash)
+        printf '%s\n' '[{"id":"CHUNK/1","lane":"forge-codex-lane","depends_on":[]}]' \
+          > "$root/docs/chunks/graph.json"
+        ;;
+      bad-traversal)
+        printf '%s\n' '[{"id":"CHUNK-../1","lane":"forge-codex-lane","depends_on":[]}]' \
+          > "$root/docs/chunks/graph.json"
+        ;;
+      bad-dependency)
+        printf '%s\n' '[{"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":["CHUNK 0"]}]' \
+          > "$root/docs/chunks/graph.json"
         ;;
       *) return 1;;
     esac
@@ -1862,12 +1898,14 @@ case "${1:-}" in
       create)
         title="${1:-}"
         shift
-        key=""; parents=""
+        key=""; parents=""; assignee=""; initial="todo"
         while [ $# -gt 0 ]; do
           case "$1" in
             --idempotency-key) key="$2"; shift 2;;
             --parent) parents="${parents}${2}"$'\n'; shift 2;;
-            --assignee|--body|--workspace|--branch|--max-retries|--skill) shift 2;;
+            --assignee) assignee="$2"; shift 2;;
+            --initial-status) initial="$2"; shift 2;;
+            --body|--workspace|--branch|--max-retries|--skill) shift 2;;
             --json) shift;;
             *) shift;;
           esac
@@ -1879,6 +1917,9 @@ case "${1:-}" in
           cid="card-$(( $(wc -l < "$state/keys.tsv" | tr -d ' ') + 1 ))"
           printf '%s\t%s\n' "$key" "$cid" >> "$state/keys.tsv"
           printf '%s' "$parents" > "$state/$cid.parents"
+          printf '%s' "$initial" > "$state/$cid.status"
+          printf '%s' "$assignee" > "$state/$cid.assignee"
+          printf '%s' "$title" > "$state/$cid.title"
           printf '%s\t%s\t%s\t%s\n' "$key" "$cid" \
             "$(printf '%s' "$parents" | paste -sd, -)" "$title" >> "$state/creates.tsv"
         fi
@@ -1893,8 +1934,33 @@ case "${1:-}" in
           parents="$(jq -R -s 'split("\n") | map(select(length > 0))' \
             "$state/$cid.parents")"
         fi
-        jq -n --argjson parents "$parents" \
-          '{task:{status:"todo",assignee:"forge-codex-lane"},events:[],parents:$parents}'
+        status="$(cat "$state/$cid.status")"
+        assignee="$(cat "$state/$cid.assignee")"
+        if [ -f "$state/$cid.blocked" ]; then
+          events='[{"kind":"blocked"}]'
+        else
+          events='[]'
+        fi
+        jq -n --argjson parents "$parents" --argjson events "$events" \
+          --arg status "$status" --arg assignee "$assignee" \
+          --arg id "$cid" --arg title "$(cat "$state/$cid.title")" \
+          '{task:{id:$id,title:$title,status:$status,
+                  assignee:(if $assignee == "" then null else $assignee end)},
+            events:$events,parents:$parents}'
+        exit 0
+        ;;
+      block)
+        cid=""
+        for arg in "$@"; do case "$arg" in card-*) cid="$arg";; esac; done
+        [ -n "$cid" ] || exit 65
+        printf blocked > "$state/$cid.status"
+        : > "$state/$cid.blocked"
+        exit 0
+        ;;
+      assign)
+        cid="${1:?}"
+        [ "${2:-}" = none ] || exit 65
+        : > "$state/$cid.assignee"
         exit 0
         ;;
     esac
@@ -1937,6 +2003,22 @@ HERMES_STUB
         "a multi-root graph must exit 1 before invoking Hermes; exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
   fi
 
+  local malformed="$TMPROOT/bootstrap-malformed" shape malformed_ok=1
+  for shape in bad-space bad-slash bad-traversal bad-dependency; do
+    _bootstrap_fixture "$malformed" "$shape"
+    out="$(_bootstrap_run "$malformed" --root-only 2>&1)"; rc=$?
+    if [ "$rc" != 1 ] || [ -e "$malformed/state/commands.log" ]; then
+      malformed_ok=0
+      break
+    fi
+  done
+  if [ "$malformed_ok" = 1 ]; then
+    ok "malformed-ids-mutate-nothing (space, slash, traversal, dependency)"
+  else
+    bad "malformed-ids-mutate-nothing" \
+        "$shape reached Hermes or returned $rc instead of structural exit 1: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
   local extend="$TMPROOT/bootstrap-extend" root_id child2_id child3_id staged_count final_count
   _bootstrap_fixture "$extend" normal
   out="$(_bootstrap_run "$extend" --root-only 2>&1)"; rc=$?
@@ -1957,6 +2039,28 @@ HERMES_STUB
         "root-only then full must retain one root mapping and create both parented children; exits $rc/$full_rc, counts ${staged_count:-0}/${final_count:-0}: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
   fi
 
+  local interactive="$TMPROOT/bootstrap-interactive" interactive_blocks
+  _bootstrap_fixture "$interactive" interactive
+  out="$(_bootstrap_run "$interactive" --root-only 2>&1)"; rc=$?
+  root_id="$(awk -F '\t' '$1=="stage-CHUNK-1"{print $2}' \
+              "$interactive/state/keys.tsv" 2>/dev/null)"
+  if [ -n "$root_id" ]; then
+    printf done > "$interactive/state/$root_id.status"
+    printf human-operator > "$interactive/state/$root_id.assignee"
+  fi
+  interactive_blocks="$(grep -c ' block ' "$interactive/state/commands.log" 2>/dev/null || true)"
+  out="$(_bootstrap_run "$interactive" full 2>&1)"; full_rc=$?
+  final_count="$(wc -l < "$interactive/state/keys.tsv" 2>/dev/null | tr -d ' ')"
+  if [ "$rc" = 0 ] && [ "$full_rc" = 0 ] && [ "$final_count" = 3 ] \
+     && [ "$(cat "$interactive/state/$root_id.status" 2>/dev/null)" = done ] \
+     && [ "$(cat "$interactive/state/$root_id.assignee" 2>/dev/null)" = human-operator ] \
+     && [ "$(grep -c ' block ' "$interactive/state/commands.log" 2>/dev/null || true)" = "$interactive_blocks" ]; then
+    ok "completed-interactive-root-is-reused (done state and human assignee preserved)"
+  else
+    bad "completed-interactive-root-is-reused" \
+        "full bootstrap must reuse a completed interactive root without re-blocking it; exits $rc/$full_rc, cards ${final_count:-0}: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
+  fi
+
   local scoped="$TMPROOT/bootstrap-scoped" root_rc full_bad_rc
   _bootstrap_fixture "$scoped" normal
   _bootstrap_run "$scoped" --root-only 1 >/dev/null 2>&1; root_rc=$?
@@ -1966,6 +2070,48 @@ HERMES_STUB
   else
     bad "reconciliation-is-mode-scoped" \
         "empty root readback must pass root-only, while missing full-mode parent readback must fail; exits $root_rc/$full_bad_rc"
+  fi
+
+  if [ "$WITH_HERMES" != 1 ]; then
+    skip "real-hermes-root-and-extension" "needs --with-hermes (isolated host integration)"
+  elif ! command -v hermes >/dev/null 2>&1; then
+    skip "real-hermes-root-and-extension" "hermes not on PATH"
+  else
+    local real="$TMPROOT/bootstrap-real" real_project="$TMPROOT/bootstrap-real/project"
+    local real_home="$TMPROOT/bootstrap-real/hermes-home" real_db real_root_id
+    mkdir -p "$real_project/docs/chunks" "$real_home"
+    git -C "$real_project" init -q
+    cat > "$real_project/docs/chunks/graph.json" <<'REAL_BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"default","depends_on":[]},
+  {"id":"CHUNK-2","lane":"default","depends_on":["CHUNK-1"]}
+]
+REAL_BOOTSTRAP_GRAPH
+    printf '### CHUNK-1: real root\n' > "$real_project/docs/chunks/CHUNK-1.md"
+    printf '### CHUNK-2: real child\n' > "$real_project/docs/chunks/CHUNK-2.md"
+    out="$(cd "$real_project" && HERMES_HOME="$real_home" \
+      FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real --root-only 2>&1)"; rc=$?
+    real_db="$real_home/kanban/boards/stage-real/kanban.db"
+    staged_count="$(sqlite3 "$real_db" 'SELECT COUNT(*) FROM tasks;' 2>/dev/null || true)"
+    real_root_id="$(sqlite3 "$real_db" \
+      "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-1';" 2>/dev/null)"
+    out="$(cd "$real_project" && HERMES_HOME="$real_home" \
+      FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real 2>&1)"; full_rc=$?
+    final_count="$(sqlite3 "$real_db" 'SELECT COUNT(*) FROM tasks;' 2>/dev/null || true)"
+    root_id="$(sqlite3 "$real_db" \
+      "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-1';" 2>/dev/null)"
+    child2_id="$(sqlite3 "$real_db" \
+      "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-2';" 2>/dev/null)"
+    if [ "$rc" = 0 ] && [ "$full_rc" = 0 ] \
+       && [ "$staged_count" = 1 ] && [ "$final_count" = 2 ] \
+       && [ -n "$real_root_id" ] && [ "$root_id" = "$real_root_id" ] \
+       && [ "$(sqlite3 "$real_db" \
+              "SELECT COUNT(*) FROM task_links WHERE parent_id='$root_id' AND child_id='$child2_id';" 2>/dev/null)" = 1 ]; then
+      ok "real-hermes-root-and-extension (isolated board: 1 root -> 2 cards, 1 edge)"
+    else
+      bad "real-hermes-root-and-extension" \
+          "actual Hermes did not preserve the staged root and atomic edge; exits $rc/$full_rc, cards ${staged_count:-?}/${final_count:-?}: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
+    fi
   fi
 }
 wants bootstrap && run_bootstrap_group
@@ -2300,7 +2446,7 @@ METRICS_STATE_SQL
     bad "fixture-numbers-exact" "$(head -12 "$TMPROOT/metrics.diff" | tr '\n' ' ')"
   fi
 
-  local driver_exact driver_missing driver_profile driver_cost
+  local driver_exact driver_shared driver_missing driver_profile driver_cost
   driver_exact="$(jq -c '[.driver_usage.sessions[0]
                           | .model, .provider, .api_calls, .input_tokens,
                             .output_tokens, .cache_read_tokens,
@@ -2312,6 +2458,21 @@ METRICS_STATE_SQL
   else
     bad "driver-usage-joins-exact-session" \
         "expected exact session totals and both model rows, got ${driver_exact:-nothing}"
+  fi
+
+  driver_shared="$(jq -c '[.driver_usage.coverage.eligible,
+                            .driver_usage.coverage.joined,
+                            (.driver_usage.sessions | length),
+                            .driver_usage.sessions[0].runs,
+                            .driver_usage.totals.api_calls,
+                            .driver_usage.cost.estimated_usd,
+                            .driver_usage.shared_attribution[0].run_ids]' \
+                      "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_shared" = '[4,2,1,[{"run_id":1,"task_id":"t_c1"},{"run_id":2,"task_id":"t_c1"}],7,1.25,[1,2]]' ]; then
+    ok "driver-usage-shared-session-counts-once (2 runs, 1 session, 1 charge)"
+  else
+    bad "driver-usage-shared-session-counts-once" \
+        "shared profile/session mappings must preserve both runs and charge telemetry once; got ${driver_shared:-nothing}"
   fi
 
   driver_missing="$(jq -c '[.driver_usage.coverage.unjudged,
@@ -2362,7 +2523,7 @@ METRICS_STATE_SQL
   row_driver="$(printf '%s\n' "$markdown_row" | awk -F '|' '{gsub(/^ +| +$/, "", $8); print $8}')"
   if [ "$header_cells" = 9 ] && [ "$row_cells" = 9 ] \
      && [ "$row_operator" = 4 ] \
-     && [ "$row_driver" = 'driver 0.33 (1/3) · estimated $1.25 · actual n/a' ]; then
+     && [ "$row_driver" = 'driver 0.50 (2/4) · estimated $1.25 · actual n/a' ]; then
     ok "markdown-row-has-operator-and-driver-cells"
   else
     bad "markdown-row-has-operator-and-driver-cells" \
@@ -2377,11 +2538,11 @@ METRICS_STATE_SQL
   local e
   e="$(jq -c '[.envelope.flat,.envelope.nested,.envelope.neither,.envelope.total,.chunk_cards]' \
         "$TMPROOT/metrics.json" 2>/dev/null)"
-  if [ "$e" = "[1,1,1,3,3]" ]; then
-    ok "detects-noncanonical-envelope (1 flat, 1 nested, 1 neither, none normalized away)"
+  if [ "$e" = "[2,1,1,4,3]" ]; then
+    ok "detects-noncanonical-envelope (2 flat runs, 1 nested, 1 neither, none normalized away)"
   else
     bad "detects-noncanonical-envelope" \
-        "expected [flat,nested,neither,total,chunk_cards]=[1,1,1,3,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
+        "expected [flat,nested,neither,total,chunk_cards]=[2,1,1,4,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
   fi
 
   # ADR-0009 D9.4. A gate block and a bounce are different events and must stay
@@ -3138,6 +3299,16 @@ run_metadata_live_cases() {
   local db="$live_root/boards/$board/kanban.db"
   local cutoff=2026-08-09T00:00:00Z out rc
 
+  if grep -Fq './scripts/metadata-live.sh <slug> --since' docs/operator-guide.md \
+     && grep -Fq 'exits 0 for a satisfied contract, 1 for a readable contract' \
+          docs/operator-guide.md \
+     && grep -Fq 'do not use' docs/operator-guide.md; then
+    ok "live-operator-interface (direct script preserves 0/1/2; Make is human-facing)"
+  else
+    bad "live-operator-interface" \
+        "operator automation must call metadata-live.sh directly and reserve the Make wrapper for generic human-facing success/failure"
+  fi
+
   mkdir -p "$(dirname "$db")"
   if ! sqlite3 "$db" < "$fixture" >/dev/null 2>&1; then
     bad "live-fixture" "could not create the WAL-mode metadata board"
@@ -3429,7 +3600,7 @@ run_prejudge_group() {
   "$gate" --fixture "$prs/pr-8" >/dev/null 2>&1; local rc8=$?
   "$gate" --fixture "$prs/pr-9" >/dev/null 2>&1; local rc9=$?
   if [ "$rc8" = 1 ] && [ "$rc9" = 0 ]; then
-    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with 2 warnings)"
+    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with warnings)"
   else
     bad "blocks-with-exit-1" \
         "expected pr-8 to exit 1 and pr-9 to exit 0, got $rc8 and $rc9 — a gate that cannot fail a command gates nothing"
@@ -3493,6 +3664,7 @@ FROZEN_GRAPH
 - **Touches:** `tests/features/chunk_7.feature`, `tests/steps/chunk_7_steps.py`
 - **Scenarios:**
   - Given a SQLite source, When the reader runs, Then one real record is returned.
+- **Real sources:** `SQLite source` → scenario 1
 - **Acceptance:** tests/features/chunk_7.feature
 - **Out of scope:** planning amendments.
 - **Done when:** the base hash still matches.
@@ -3533,6 +3705,55 @@ FROZEN_FEATURE
     fi
   else
     bad "frozen-feature-blocks-change" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_contract="$TMPROOT/frozen-contract"
+  if _frozen_pr_fixture "$frozen_contract"; then
+    sed -i.bak 's/Then one real record is returned\./Then a warning may be returned./' \
+      "$frozen_contract/tree/docs/chunks/CHUNK-7.md"
+    rm -f "$frozen_contract/tree/docs/chunks/CHUNK-7.md.bak"
+    printf '1\t1\tdocs/chunks/CHUNK-7.md\n' > "$frozen_contract/numstat.tsv"
+    "$gate" --fixture "$frozen_contract" --json \
+      > "$TMPROOT/frozen-contract.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-contract.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ] \
+       && jq -e '.checks[] | select(.id=="acceptance-freeze")
+            | .evidence | contains("docs/chunks/CHUNK-7.md")' \
+          "$TMPROOT/frozen-contract.json" >/dev/null 2>&1; then
+      ok "frozen-contract-blocks-change"
+    else
+      bad "frozen-contract-blocks-change" \
+          "a contract-only Then weakening must block and name docs/chunks/CHUNK-7.md (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-contract-blocks-change" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_redirect="$TMPROOT/frozen-contract-redirect"
+  if _frozen_pr_fixture "$frozen_redirect"; then
+    sed -i.bak 's#tests/features/chunk_7.feature#tests/features/weaker.feature#' \
+      "$frozen_redirect/tree/docs/chunks/CHUNK-7.md"
+    rm -f "$frozen_redirect/tree/docs/chunks/CHUNK-7.md.bak"
+    printf '1\t1\tdocs/chunks/CHUNK-7.md\n' > "$frozen_redirect/numstat.tsv"
+    "$gate" --fixture "$frozen_redirect" --json \
+      > "$TMPROOT/frozen-contract-redirect.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-contract-redirect.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ] \
+       && jq -e '.checks[] | select(.id=="acceptance-freeze")
+            | .evidence | contains("docs/chunks/CHUNK-7.md")' \
+          "$TMPROOT/frozen-contract-redirect.json" >/dev/null 2>&1; then
+      ok "frozen-contract-blocks-acceptance-redirect"
+    else
+      bad "frozen-contract-blocks-acceptance-redirect" \
+          "redirecting only the contract Acceptance path must block (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-contract-blocks-acceptance-redirect" \
+        "could not create the frozen-acceptance fixture"
   fi
 
   local frozen_steps="$TMPROOT/frozen-steps"
@@ -5006,7 +5227,9 @@ AF_GRAPH
 - **Touches:** `tests/features/chunk_6.feature`
 - **Scenarios:**
   - Given a SQLite source, When the reader runs, Then one real record is returned.
+  - Given an opaque telemetry lake, When the reader runs, Then one opaque record is returned.
   - Given the same plan twice, When acceptance is frozen, Then the manifest bytes are identical.
+- **Real sources:** `SQLite source` → scenario 1; `opaque telemetry lake` → scenario 2
 - **Acceptance:** tests/features/chunk_6.feature
 - **Out of scope:** step definitions.
 - **Done when:** acceptance is frozen.
@@ -5021,6 +5244,12 @@ Feature: CHUNK-6 acceptance
     When the reader runs
     Then one real record is returned
 
+  @real-source
+  Scenario: Read an arbitrary source label
+    Given an opaque telemetry lake
+    When the reader runs
+    Then one opaque record is returned
+
   Scenario: Freeze deterministically
     Given the same plan twice
     When acceptance is frozen
@@ -5029,6 +5258,7 @@ AF_FEATURE
   }
 
   if grep -Fq '**Acceptance:** tests/features/chunk_<id>.feature' skills/roadmap/SKILL.md \
+     && grep -Fq '**Real sources:**' skills/roadmap/SKILL.md \
      && grep -Fq '@real-source' skills/roadmap/SKILL.md \
      && grep -Fq '~/.forge/repo/scripts/acceptance-freeze.sh' skills/roadmap/SKILL.md; then
     ok "skill-emits-frozen-acceptance"
@@ -5064,18 +5294,27 @@ AF_FEATURE
           "the matching contract and feature did not freeze (exit $af_rc: ${af_out:-no diagnostic})"
     fi
 
-    local af_source="$TMPROOT/acceptance-source"
+    local af_source="$TMPROOT/acceptance-source" af_moved="$TMPROOT/acceptance-source-moved"
     _acceptance_fixture "$af_source"
     sed -i.bak '/@real-source/d' "$af_source/tests/features/chunk_6.feature"
     rm -f "$af_source/tests/features/chunk_6.feature.bak"
     af_out="$("$freeze" "$af_source" 2>&1)"; af_rc=$?
+    _acceptance_fixture "$af_moved"
+    sed -i.bak '/@real-source/d' "$af_moved/tests/features/chunk_6.feature"
+    sed -i.bak '/Scenario: Freeze deterministically/i\
+  @real-source' "$af_moved/tests/features/chunk_6.feature"
+    rm -f "$af_moved/tests/features/chunk_6.feature.bak"
+    local af_moved_out af_moved_rc
+    af_moved_out="$("$freeze" "$af_moved" 2>&1)"; af_moved_rc=$?
     if [ "$af_rc" -ne 0 ] \
        && printf '%s' "$af_out" | grep -Fq 'CHUNK-6' \
-       && printf '%s' "$af_out" | grep -Fq '@real-source'; then
-      ok "real-source-is-planned"
+       && printf '%s' "$af_out" | grep -Fq '@real-source' \
+       && [ "$af_moved_rc" -ne 0 ] \
+       && printf '%s' "$af_moved_out" | grep -Fq 'declared source scenarios'; then
+      ok "real-source-is-planned (two arbitrary labels; missing or misplaced tags fail)"
     else
       bad "real-source-is-planned" \
-          "an external-source contract without a tagged scenario must fail and name CHUNK-6 (exit $af_rc: ${af_out:-no diagnostic})"
+          "declared source mappings must reject missing and unrelated tags (exits $af_rc/$af_moved_rc: ${af_out:-no diagnostic}; ${af_moved_out:-no moved diagnostic})"
     fi
 
     local af_deterministic="$TMPROOT/acceptance-deterministic" af_digest
