@@ -47,18 +47,16 @@ ordinary `commission` cases use command stubs and spend nothing in CI; they now
 also reject origin/GitHub identity mismatch and injected report-publication
 failure.
 
-CHUNK-10 host proof on 2026-08-11: `make validate` **OK**; default `make verify`
-completed **285 passed / 0 failed / 3 skipped**; `make preflight` completed
-**PASS 85 / WARN 3 / FAIL 0**; and the complete ten-chunk roadmap was
-**CLEAR — 9 pass / 0 warn / 0 skip** with the live `forge-codex-lane` assignee
-supplied. The three verify skips are the two non-spawnable operator sentinels
-and the paid Codex probe. The three preflight warnings remain the documented
-healthy set: no global lefthook, the empty API-key placeholder, and the
-historical `forge-ladder` board selected by default.
-
-The CHUNK-10 counts above predate the independent audit repairs and are retained
-only as the branch's original proof. The final reviewed-stack counts below
-supersede them.
+CHUNK-10 final reviewed-stack proof on 2026-08-11: `make validate` **OK**;
+default `make verify` completed **297 passed / 0 failed / 4 skipped**; clean-tree
+`make preflight` completed **PASS 85 / WARN 3 / FAIL 0**; the complete ten-chunk
+roadmap was **CLEAR — 9 pass / 0 warn / 0 skip** with both declared assignees
+supplied; and the isolated real-Hermes bootstrap proof was **7 passed / 0 failed
+/ 0 skipped**. The four default-suite skips are the two non-spawnable operator
+sentinels, the paid Codex probe, and the opt-in real-Hermes bootstrap. The three
+preflight warnings remain the documented healthy set: no global lefthook, the
+empty API-key placeholder, and the historical `forge-ladder` board selected by
+default.
 
 *Prior header, still true of the historical sections below it:* updated
 2026-08-06, after

@@ -265,3 +265,9 @@ CLEAR or authorizing the future blocking flip.
 2026-08-11 CHUNK-10: The preceding HANDOFF is resolved. Human authorization exported the branch and opened stacked PR #42 against CHUNK-9's exact remote branch.
 GitHub reports the intended seven-file diff as open and mergeable; `.forge/chunk-10-metadata.json` validates against the lane completion contract.
 Do not merge; retarget only after the lower readiness stacks integrate.
+
+2026-08-11 CHUNK-10 final audit proof: The earlier 285/0/3 entry predates the
+independent repairs and remains historical. The reviewed stack completed
+`make validate` OK, default `make verify` at 297/0/4, clean-tree preflight at
+PASS 85 / WARN 3 / FAIL 0, the ten-chunk roadmap at CLEAR 9/0/0 with both
+declared assignees supplied, and the opt-in installed-Hermes bootstrap at 7/0/0.
