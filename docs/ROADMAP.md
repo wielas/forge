@@ -6,6 +6,9 @@ acceptance, commission the staged launch, then reconcile documentation.
 
 ## Progress
 
+- **CHUNK-10:** in progress 2026-08-11 — reconciling the audit ledger, first-run
+  roadmap, current state, and operator guide against the completed readiness
+  stack and measured pre-launch evidence.
 - **CHUNK-1:** done 2026-08-09 — implementation and live `gpt-5.6-sol` / `xhigh`
   conformance proof complete; profile bootstrap remains the documented
   post-merge operation.

@@ -46,6 +46,8 @@
 #               driven through the real check              (F11, F53, ADR-0012)
 #   gate/       repository merge protection and required-check diagnostics,
 #               driven through recorded API response shapes                    (F79)
+#   docs/       the reconciled launch ledger and operator contract: dispositions,
+#               bounded cleanup, preserved history, and one next command
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -73,11 +75,11 @@ while [ $# -gt 0 ]; do
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate|docs) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate docs"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -1288,6 +1290,11 @@ roadmap/acceptance-matches-contract      every generated Given/When/Then step ma
 roadmap/real-source-is-planned           an external-source contract carries a @real-source scenario before implementation
 roadmap/freeze-is-deterministic           sorted repo-relative paths map to the feature bytes' SHA-256 digests
 roadmap/missing-feature-is-named          freeze refuses atomically and names the chunk plus expected path
+docs/launch-ledger-reconciles-touched-findings every readiness finding names its closing chunk or remaining live proof
+docs/launch-roadmap-separates-state-and-sequence landed tracks, remaining proof and the run sequence cannot be confused
+docs/launch-cleanup-stays-bounded              automated cleanup stays under .worktrees and outside paths require explicit review
+docs/launch-prior-dispositions-are-superseded  F81 and F103 keep their original record and link a superseding decision
+docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 EOF
   exit 0
 fi
@@ -5333,6 +5340,103 @@ STUB
   fi
 }
 wants gate      && run_gate_group
+
+# ---------------------------------------------------------------------------
+# docs/ — CHUNK-10's launch ledger is an operator contract, not four essays.
+# These assertions deliberately use stable headings and disposition tokens;
+# historical measurements beneath the audit headers remain untouched.
+# ---------------------------------------------------------------------------
+run_docs_group() {
+  group docs
+  local audit=docs/audit-forgeboard-2026-07-30.md
+  local roadmap=docs/roadmap-first-run.md
+  local state=docs/state.md
+  local guide=docs/operator-guide.md
+  local id expected header bad_headers=0
+
+  while IFS='|' read -r id expected; do
+    [ -n "$id" ] || continue
+    header="$(grep -E "^### F${id}([^0-9]|$)" "$audit" | head -1)"
+    if [ -z "$header" ] || ! printf '%s' "$header" | grep -Fq "$expected"; then
+      bad_headers=$((bad_headers+1))
+    fi
+  done <<'DISPOSITIONS'
+1|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+2|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+3|PARTLY FIXED — CHUNK-4 PRODUCT RUN PROOF REQUIRED
+14|FIXED BY CHUNK-6/CHUNK-7
+25|STAGED BY CHUNK-9 — PRODUCT RUN REQUIRED
+26|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+31|FIXED BY CHUNK-5
+34|FIXED BY CHUNK-1
+36|FIXED BY CHUNK-1
+40|FIXED — RECONCILED BY CHUNK-10
+44|CHUNK-4 CONTRACTED — PRODUCT RUN PROOF REQUIRED
+48|FIXED BY CHUNK-5
+53|DECIDED BY ADR-0012 — PRODUCT RUN PROOF REQUIRED
+57|FIXED BY CHUNK-2
+81|SUPERSEDED BY CHUNK-10
+91|FIXED BY CHUNK-3
+92|FIXED BY CHUNK-3
+93|FIXED BY CHUNK-3
+101|RESOLVED BY CHUNK-3 / ADR-0012
+102|RESOLVED BY CHUNK-9
+103|RESOLVED BY ADR-0012 — RECONCILED BY CHUNK-10
+DISPOSITIONS
+  if [ "$bad_headers" = 0 ]; then
+    ok "launch-ledger-reconciles-touched-findings"
+  else
+    bad "launch-ledger-reconciles-touched-findings" \
+        "$bad_headers readiness finding header(s) lack their closing chunk or remaining proof"
+  fi
+
+  if grep -Fq '**Status: superseded as a planning proposal' "$roadmap" \
+     && grep -Fq '### Landed tracks' "$roadmap" \
+     && grep -Fq '### Remaining proof' "$roadmap" \
+     && grep -Fq '### Operational run sequence' "$roadmap"; then
+    ok "launch-roadmap-separates-state-and-sequence"
+  else
+    bad "launch-roadmap-separates-state-and-sequence" \
+        "roadmap must label the proposal superseded and separate landed tracks, remaining proof, and run sequence"
+  fi
+
+  local cleanup
+  cleanup="$(sed -n '/^\*\*Reclaim merged chunk worktrees/,/^\*\*Reading a live board/p' "$guide")"
+  if printf '%s' "$cleanup" | grep -Fq 'only reaches worktrees under `<project>/.worktrees/`' \
+     && printf '%s' "$cleanup" | grep -Fq '**Explicit review outside the bound.**' \
+     && printf '%s' "$cleanup" | grep -Fq 'Never widen the unattended sweep'; then
+    ok "launch-cleanup-stays-bounded"
+  else
+    bad "launch-cleanup-stays-bounded" \
+        "operator cleanup must retain the .worktrees boundary and require explicit review outside it"
+  fi
+
+  local f81 f103
+  f81="$(sed -n '/^### F81\([^0-9]\|$\)/,/^### F82\([^0-9]\|$\)/p' "$audit")"
+  f103="$(sed -n '/^### F103\([^0-9]\|$\)/,/^## Ledger addition from the merge-gate slice/p' "$audit")"
+  if printf '%s' "$f81" | grep -Fq 'It is **not edited here**' \
+     && printf '%s' "$f81" | grep -Fq '**Superseding decision (CHUNK-10).' \
+     && printf '%s' "$f103" | grep -Fq 'Recorded because a future reader' \
+     && printf '%s' "$f103" | grep -Fq '**Superseding record (CHUNK-10).' \
+     && printf '%s' "$f103" | grep -Fq 'ADR-0012 D12.4'; then
+    ok "launch-prior-dispositions-are-superseded"
+  else
+    bad "launch-prior-dispositions-are-superseded" \
+        "F81/F103 must retain their original text and append linked CHUNK-10 superseding records"
+  fi
+
+  local shared='make roadmap-check PROJECT="$PROJECT"' file missing=0
+  for file in "$audit" "$roadmap" "$state" "$guide"; do
+    grep -Fq "$shared" "$file" || missing=$((missing+1))
+  done
+  if [ "$missing" = 0 ]; then
+    ok "launch-docs-share-next-command"
+  else
+    bad "launch-docs-share-next-command" \
+        "$missing of the four launch documents do not name '$shared' as the next command"
+  fi
+}
+wants docs      && run_docs_group
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1

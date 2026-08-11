@@ -165,3 +165,14 @@ chunk's frozen done condition names `make validate` and `make verify`, so those
 are the end-ceremony proof. The intentional host run used `WITH_CODEX=1` and
 completed at 281 passed, 0 failed, 2 skipped; its live probe id was
 `verify-codex-1786433343-27716`. No requirements or architecture decision moved.
+
+2026-08-11 CHUNK-10: The frozen planning bundle and all three prerequisite
+heads are present on the CHUNK-9 convergence stack but not yet on `origin/main`.
+CHUNK-10 therefore branches from the exact CHUNK-9 tip `52b4be0` instead of
+dropping its approved feature, freeze manifest, or prerequisites. Retarget only
+after the lower stacks integrate.
+
+2026-08-11 CHUNK-10: The repository still has no BDD step runner or `make check`
+target. The four documentation scenarios are executable as the new `docs/`
+group in `scripts/verify.sh`; this is a small declared-path widening required by
+ADR-0003, while the frozen feature and manifest remain byte-identical.
