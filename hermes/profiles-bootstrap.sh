@@ -120,8 +120,9 @@ write_config() {  # $1=name $2=model $3=comma-separated toolsets $4=dest
     echo "toolsets:"
     printf '  - %s\n' ${tools//,/ }
     echo "skills:"
-    echo "  # L5's consent gate (ADR-0005): a skill edit stages for review"
-    echo "  # instead of taking effect unattended."
+    echo "  # ADR-0013: Hermes cannot disable skill_manage separately from"
+    echo "  # the skills toolset. Profiles retaining it may stage a skill edit,"
+    echo "  # but write approval prevents it taking effect unattended."
     echo "  write_approval: true"
     echo "  # Forge methodology skills stay in git and are read from the"
     echo "  # checkout. The curator never touches external-dir skills, so"

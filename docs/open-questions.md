@@ -139,19 +139,3 @@ is correct, and the run cost 4 minutes.
 Caveat worth keeping: this was a six-line function. The protocol held; whether
 the *judgement* holds on a chunk with real ambiguity is a different question,
 and `docs/retro-metrics.md` is where it gets answered.
-
-**Should the lane keep `skill_manage`?** The `skills` toolset is needed to load
-`forge-lane`, but it also grants `skill_manage` — write access. The two
-assumptions this question rested on were both **measured false on 2026-07-27**
-(see `hermes-field-notes.md`): external-dir skills are *not* guarded against a
-lane, and a staged write does *not* hang the worker. What is true is that
-`skills.write_approval: true` converts the write into a staged, non-applied diff,
-which is a real gate — so the remaining question is narrower than it was:
-
-Is staging sufficient, or should a lane not hold the tool at all? Staging means
-an unattended worker can still *propose* an edit to any forge skill and continue
-without noticing it did not land; dropping the tool means it cannot try.
-*Settled by:* a decision, not a measurement — either `hermes tools disable
-skill_manage` per lane profile, or an ADR stating plainly what a lane profile may
-write and why the SOUL is not the mechanism. Both are one line of work; the
-measurement no longer blocks it.

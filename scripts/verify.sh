@@ -131,6 +131,69 @@ logical_lines() { # $1=file
   | tr '|' '\n'
 }
 
+check_skill_section_references() { # $1=repo root; diagnostics on stdout
+  local root="$1" refs source line reference target section target_file shown bad_refs=0
+  refs="$(grep -rnEo '`[a-z][a-z0-9-]*`[[:space:]]+§[0-9]+' \
+             "$root/skills" --include='SKILL.md' 2>/dev/null || true)"
+  if [ -z "$refs" ]; then
+    echo "found no '<skill> §<n>' references under skills/ — the check went blind"
+    return 1
+  fi
+
+  while IFS=: read -r source line reference; do
+    [ -n "$source" ] || continue
+    target="$(printf '%s' "$reference" \
+      | sed -E 's/^`([a-z][a-z0-9-]*)`[[:space:]]+§[0-9]+$/\1/')"
+    section="$(printf '%s' "$reference" | sed -E 's/.*§([0-9]+)$/\1/')"
+    target_file="$root/skills/$target/SKILL.md"
+    shown="${source#"$root"/}:$line reference '$target §$section'"
+    if [ ! -f "$target_file" ]; then
+      echo "$shown names missing skill skills/$target/SKILL.md"
+      bad_refs=1
+    elif ! grep -Eq "^#{1,6}[[:space:]]+$section([.[:space:]]|$)" "$target_file"; then
+      echo "$shown has missing heading '§$section' in skills/$target/SKILL.md"
+      bad_refs=1
+    fi
+  done <<< "$refs"
+
+  return "$bad_refs"
+}
+
+CHECKED_LANE_MODEL=""; CHECKED_LANE_EFFORT=""
+CHECKED_STATE_MODEL=""; CHECKED_STATE_EFFORT=""
+load_checked_in_codex_pins() {
+  local lane_pair state_pair
+  lane_pair="$(sed -n '/^- Model: the pin lives in `~\/.codex\/config.toml`/,/completion metadata\./p' \
+                    skills/forge-lane/SKILL.md \
+    | tr '\n' ' ' \
+    | sed -n 's/.*(`\([^`]*\)`, reasoning[[:space:]]*`\([^`]*\)`).*/\1 \2/p')"
+  state_pair="$(sed -n \
+    's/.*codex pinned \([^[:space:]]*\)[[:space:]]\([^[:space:]]*\).*/\1 \2/p' \
+    docs/state.md | head -1)"
+  read -r CHECKED_LANE_MODEL CHECKED_LANE_EFFORT <<< "$lane_pair"
+  read -r CHECKED_STATE_MODEL CHECKED_STATE_EFFORT <<< "$state_pair"
+  [ -n "$CHECKED_LANE_MODEL" ] && [ -n "$CHECKED_LANE_EFFORT" ] \
+    && [ -n "$CHECKED_STATE_MODEL" ] && [ -n "$CHECKED_STATE_EFFORT" ]
+}
+
+codex_live_pin_diagnostic() { # $1=config.toml; checked-in pins already loaded
+  local config="$1" live_model live_effort
+  if [ ! -r "$config" ]; then
+    echo "live Codex pin is '<unreadable at $config>'; checked-in pin is '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT'"
+    return 1
+  fi
+  live_model="$(sed -n 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+                       "$config" | head -1)"
+  live_effort="$(sed -n 's/^[[:space:]]*model_reasoning_effort[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+                        "$config" | head -1)"
+  if [ "$live_model" = "$CHECKED_LANE_MODEL" ] \
+     && [ "$live_effort" = "$CHECKED_LANE_EFFORT" ]; then
+    return 0
+  fi
+  echo "live Codex pin is '${live_model:-<unset>}/${live_effort:-<unset>}'; checked-in pin is '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT'"
+  return 1
+}
+
 run_cli_group() {
   group cli
   # No early return when hermes is missing: each command is judged (or skipped)
@@ -237,6 +300,31 @@ run_cli_group() {
   done
   [ "$body_over" = 0 ] && ok "skill-body-budget (ceremonies <= $cer_limit, lane <= $lane_limit)"
 
+  # A cross-reference is an executable dependency between two prompts. Resolve
+  # each named numeric section against the target skill, then mutate the PR
+  # section once so the failure path proves it reports the source and target.
+  local section_out section_fixture section_mutation
+  if section_out="$(check_skill_section_references "$REPO_ROOT")"; then
+    ok "skill-section-references-resolve"
+  else
+    bad "skill-section-references-resolve" "$(printf '%s' "$section_out" | tr '\n' ' ')"
+  fi
+  section_fixture="$TMPROOT/skill-section-rename"
+  mkdir -p "$section_fixture"
+  cp -R skills "$section_fixture/skills"
+  sed 's/^## 6\. PR$/## 8. PR/' "$section_fixture/skills/forge-lane/SKILL.md" \
+    > "$section_fixture/forge-lane.mutated"
+  mv "$section_fixture/forge-lane.mutated" "$section_fixture/skills/forge-lane/SKILL.md"
+  section_mutation="$(check_skill_section_references "$section_fixture" 2>&1)"; local section_rc=$?
+  if [ "$section_rc" -ne 0 ] \
+     && printf '%s' "$section_mutation" | grep -Fq "skills/end-chunk/SKILL.md" \
+     && printf '%s' "$section_mutation" | grep -Fq "missing heading '§6'"; then
+    ok "skill-section-reference-rename-is-named"
+  else
+    bad "skill-section-reference-rename-is-named" \
+        "renaming forge-lane §6 was not reported with its end-chunk source and missing heading (got: ${section_mutation:-no diagnostic})"
+  fi
+
   # The same discipline for the other kind of prompt, which never had a number.
   # A SOUL is a profile's system prompt: read in full on every single run, by
   # the only metered agent in that run. `forge-prejudge` reached 404 lines
@@ -320,6 +408,51 @@ run_cli_group() {
     fi
   fi
 
+  # The Codex pin has two checked-in statements: the lane contract and the
+  # environment record. This half deliberately never reads $HOME, so CI can
+  # catch drift without an operator config. config/codex-pin-live is the live
+  # half and prints both pairs when they differ.
+  if ! load_checked_in_codex_pins; then
+    bad "codex-pin-documented" \
+        "could not parse the model-and-effort pair from forge-lane and docs/state.md"
+  elif [ "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT" \
+       = "$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT" ]; then
+    ok "codex-pin-documented ($CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT; offline)"
+  else
+    bad "codex-pin-documented" \
+        "forge-lane pins '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT'; docs/state.md pins '$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT'"
+  fi
+
+  # ADR-0013 keeps the built-in skills toolset because the lane needs it to
+  # load forge-lane. Hermes 0.19 cannot disable only skill_manage, so the
+  # generated config's write-approval readback is the enforceable boundary and
+  # the ADR must name what staged access remains.
+  local skill_policy=1 policy_adr=docs/adr/0013-lane-skill-management.md
+  grep -Eq '^  "forge-codex-lane\|.*\|[^" ]*(,[^" ]*)*skills(,[^" ]*)*"$' \
+    hermes/profiles-bootstrap.sh || skill_policy=0
+  grep -Fq 'echo "  write_approval: true"' hermes/profiles-bootstrap.sh \
+    || skill_policy=0
+  grep -Fq 'config get skills.write_approval' hermes/profiles-bootstrap.sh \
+    || skill_policy=0
+  grep -Fq '[ "$got" = "true" ]' hermes/profiles-bootstrap.sh \
+    || skill_policy=0
+  grep -Fq '# ADR-0013:' hermes/profiles-bootstrap.sh || skill_policy=0
+  [ -f "$policy_adr" ] || skill_policy=0
+  if [ -f "$policy_adr" ]; then
+    grep -Fq '`skills` toolset' "$policy_adr" || skill_policy=0
+    grep -Fq '`skills.write_approval=true`' "$policy_adr" || skill_policy=0
+    grep -Fq '`skill_manage`' "$policy_adr" || skill_policy=0
+    grep -Fq 'stage a proposed skill rewrite' "$policy_adr" || skill_policy=0
+    grep -Fq 'cannot apply that rewrite' "$policy_adr" || skill_policy=0
+  fi
+  if grep -Fq '**Should the lane keep `skill_manage`?**' docs/open-questions.md; then
+    skill_policy=0
+  fi
+  [ "$skill_policy" = 1 ] \
+    && ok "lane-skill-management-policy (skills retained; writes approval-gated)" \
+    || bad "lane-skill-management-policy" \
+        "ADR-0013, generated write_approval readback, retained skills toolset, residual staged write, and open-question retirement must agree"
+
   # The driver pin is the F22/F36 shape on the metered side. F22 measured what a
   # model pin changing mid-run costs: it confounded the one chunk that failed,
   # because nothing recorded that the pin had moved. F36 found the same staleness
@@ -363,6 +496,38 @@ run_cli_group() {
 # ---------------------------------------------------------------------------
 run_config_group() {
   group config
+  # Compare the operator's live Codex config with the checked-in pair. First
+  # drive a known mismatch through the same helper so a green run proves the
+  # required two-value diagnostic rather than only today's agreement.
+  local codex_config codex_diag mismatch_config
+  if ! load_checked_in_codex_pins; then
+    bad "codex-pin-live" "checked-in Codex pin is unreadable; cli/codex-pin-documented also fails"
+  elif [ "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT" \
+       != "$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT" ]; then
+    bad "codex-pin-live" \
+        "checked-in pins disagree: forge-lane '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT', state '$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT'"
+  else
+    mismatch_config="$TMPROOT/codex-config-mismatch.toml"
+    printf 'model = "fixture-wrong"\nmodel_reasoning_effort = "low"\n' > "$mismatch_config"
+    codex_diag="$(codex_live_pin_diagnostic "$mismatch_config" 2>&1)"; local codex_diag_rc=$?
+    if [ "$codex_diag_rc" -ne 0 ] \
+       && printf '%s' "$codex_diag" | grep -Fq "fixture-wrong/low" \
+       && printf '%s' "$codex_diag" | grep -Fq "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT"; then
+      ok "codex-pin-live-diagnostic-names-both-values"
+    else
+      bad "codex-pin-live-diagnostic-names-both-values" \
+          "known mismatch did not print live and checked-in pairs (got: ${codex_diag:-no diagnostic})"
+    fi
+    codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+    if [ ! -f "$codex_config" ]; then
+      skip "codex-pin-live" "$codex_config is absent; no live operator pin to judge"
+    elif codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
+      ok "codex-pin-live ($CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT)"
+    else
+      bad "codex-pin-live" "$codex_diag"
+    fi
+  fi
+
   if ! command -v hermes >/dev/null 2>&1; then
     skip "per-profile" "hermes not on PATH"; return
   fi
@@ -833,10 +998,16 @@ if [ "$LIST_ONLY" = 1 ]; then
 cli/flags-exist                   every long flag named beside a tracked command exists in its --help
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 300
+cli/skill-section-references-resolve every named numeric skill section exists
+cli/skill-section-reference-rename-is-named a renamed target reports source and missing heading
 cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not protocol)
 cli/no-programs-in-souls          no fenced block in a SOUL exceeds 6 lines
 cli/permissions-are-read-only     no allowlist wildcard admits a paid or mutating command
 cli/model-pin-documented          profiles-bootstrap.sh's model pins are named in state.md (F22/F36)
+cli/codex-pin-documented          forge-lane and state.md agree without reading live config (F36)
+cli/lane-skill-management-policy  retained skills toolset is write-approval-gated (ADR-0013)
+config/codex-pin-live-diagnostic-names-both-values mismatch output names live and checked-in pins
+config/codex-pin-live             ~/.codex/config.toml agrees with the checked-in model-and-effort pair
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
 config/external-dirs/<profile>    points at this checkout's skills/
@@ -1201,7 +1372,10 @@ run_lane_group() {
   _blast_fixture() { # $1=run id
     brun="$1"
     rm -rf "$bmain" "$brepo" "$bsibling" "$borigin"
-    git init -q --bare "$borigin" >/dev/null 2>&1 || return 1
+    # Bare-repository HEAD follows the host's init.defaultBranch. Pin it: a
+    # dangling `master` HEAD on Linux makes connectivity checks reject an
+    # otherwise healthy fixture whose only pushed branch is main.
+    git init -q --bare -b main "$borigin" >/dev/null 2>&1 || return 1
     git init -q -b main "$bmain" >/dev/null 2>&1 || return 1
     mkdir -p "$bmain/.forge"
     printf 'policy=v1\n' > "$bmain/.forge/policy"
@@ -1233,13 +1407,20 @@ run_lane_group() {
       >/dev/null 2>&1
   }
   _blast_rc() {
-    _rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" check "$brepo" "$brun"
+    local rc
+    env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" check "$brepo" "$brun" \
+      > "$TMPROOT/$brun-check.out" 2>&1
+    rc=$?
+    printf '%s\n' "$rc"
   }
   _expect_blast() { # name expected actual
+    local detail evidence
     if [ "$3" = "$2" ]; then
       ok "$1"
     else
-      bad "$1" "lane-blast-radius expected exit $2, observed $3"
+      detail="$(tr '\n' ' ' < "$TMPROOT/$brun-check.out" 2>/dev/null | sed 's/[[:space:]]*$//')"
+      evidence="$(tail -8 "$laudit/$brun/breach.txt" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+      bad "$1" "lane-blast-radius expected exit $2, observed $3; output: ${detail:-<none>}; evidence: ${evidence:-<none>}"
     fi
   }
 
