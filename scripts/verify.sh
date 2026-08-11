@@ -30,6 +30,7 @@
 #               driving `codex exec` by hand against a live chunk (rung 2).
 #   bootstrap/  staged board creation against a stateful Hermes stub: validate
 #               the graph first, create one root, then extend idempotently.
+#   commission/ paid launch evidence against command stubs; never spends in CI.
 #   metrics/    the flywheel's review and observability signals, computed from
 #               checked-in board/profile fixtures and diffed against one exact
 #               expectation. Schema drift must fail a check, not a quarter (F27)
@@ -74,11 +75,11 @@ while [ $# -gt 0 ]; do
     --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap metrics metadata prejudge sweep roadmap gate"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -1129,6 +1130,13 @@ bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed de
 bootstrap/full-extends-root-idempotently full bootstrap reuses the root key and atomically attaches every remaining parent
 bootstrap/completed-interactive-root-is-reused full bootstrap extends the human-completed root without re-blocking it
 bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
+commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
+commission/propagates-prerequisite-failure a named nonzero prerequisite makes commissioning fail
+commission/preserves-roadmap-warn       advisory WARN remains WARN in the report
+commission/requires-enforceable-gate    repository visibility never substitutes for merge protection
+commission/binds-github-to-origin       GitHub identity must exactly match the parsed origin URL
+commission/report-publication-failure-is-fatal an unpublished evidence artifact can never report success
+commission/leaves-project-and-board-unchanged only ignored evidence is written and no Hermes mutation runs
 bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes rather than the command stub
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
@@ -2119,6 +2127,194 @@ REAL_BOOTSTRAP_GRAPH
   fi
 }
 wants bootstrap && run_bootstrap_group
+
+# ---------------------------------------------------------------------------
+# commission/ — CHUNK-9's paid launch wrapper, driven entirely through stubs.
+# The one real paid probe is an operator action recorded in docs/state.md; the
+# default suite proves the wrapper's sequencing, evidence and refusal paths.
+# ---------------------------------------------------------------------------
+run_commission_group() {
+  group commission
+  local commission="$REPO_ROOT/scripts/commission.sh"
+  local cases='records-all-prerequisites propagates-prerequisite-failure preserves-roadmap-warn requires-enforceable-gate binds-github-to-origin report-publication-failure-is-fatal leaves-project-and-board-unchanged'
+  local case_name
+
+  if [ ! -x "$commission" ] || ! grep -q '^commission:' "$REPO_ROOT/Makefile"; then
+    for case_name in $cases; do
+      bad "$case_name" "scripts/commission.sh and the make commission target do not exist yet"
+    done
+    return
+  fi
+
+  local root="$LABROOT/commission" product="$LABROOT/commission/product"
+  local state="$LABROOT/commission/state" real_make real_mv report rc before after out
+  real_make="$(command -v make)"
+  real_mv="$(command -v mv)"
+  rm -rf "$root"
+  mkdir -p "$product" "$root/bin" "$state" "$root/hermes"
+  git -C "$product" init -q -b main
+  printf '.forge/\n' > "$product/.gitignore"
+  printf 'fixture\n' > "$product/README.md"
+  git -C "$product" add .gitignore README.md
+  git -C "$product" -c user.name=Forge -c user.email=forge@example.invalid \
+    commit -q -m fixture
+  git -C "$product" remote add origin git@github.com:acme/product.git
+
+  cat > "$root/bin/make" <<'COMMISSION_MAKE_STUB'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "${CALLS:?}"
+case "$*" in
+  'verify WITH_CODEX=1')
+    printf 'paid probe: recorded\n'
+    ;;
+  preflight)
+    printf 'preflight: checked\n'
+    [ "${MAKE_FAIL:-}" != preflight ] || exit 7
+    ;;
+  roadmap-check*)
+    if [ "${ROADMAP_WARN:-0}" = 1 ]; then
+      printf 'WARN CHUNK-99 is advisory-sized\n'
+    else
+      printf 'roadmap-check: no warnings\n'
+    fi
+    ;;
+  *) printf 'unexpected make invocation: %s\n' "$*" >&2; exit 64;;
+esac
+COMMISSION_MAKE_STUB
+
+  cat > "$root/bin/gh" <<'COMMISSION_GH_STUB'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "${GH_CALLS:?}"
+case "$*" in
+  repo\ view\ *\ --json\ nameWithOwner,defaultBranchRef)
+    printf '{"nameWithOwner":"%s","defaultBranchRef":{"name":"main"}}\n' "${GH_VIEW_SLUG:-acme/product}"
+    ;;
+  'api repos/acme/product')
+    printf '%s\n' '{"default_branch":"main"}'
+    ;;
+  'api --paginate repos/acme/product/rulesets')
+    printf '%s\n' '[]'
+    ;;
+  'api repos/acme/product/branches/main/protection')
+    [ "${GH_GATE:-classic}" != none ] || exit 1
+    printf '%s\n' '{"required_pull_request_reviews":{},"required_status_checks":{"contexts":["check"]}}'
+    ;;
+  *) printf 'unexpected gh invocation: %s\n' "$*" >&2; exit 64;;
+esac
+COMMISSION_GH_STUB
+
+  cat > "$root/bin/mv" <<'COMMISSION_MV_STUB'
+#!/usr/bin/env bash
+set -u
+if [ "${MV_FAIL:-0}" = 1 ]; then
+  echo 'injected report publication failure' >&2
+  exit 73
+fi
+exec "${REAL_MV:?}" "$@"
+COMMISSION_MV_STUB
+
+  cat > "$root/bin/hermes" <<'COMMISSION_HERMES_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${HERMES_CALLS:?}"
+exit 65
+COMMISSION_HERMES_STUB
+  chmod +x "$root/bin/make" "$root/bin/gh" "$root/bin/hermes" "$root/bin/mv"
+
+  _commission_run() { # $1=make failure $2=roadmap warn $3=gate shape $4=mv failure $5=view slug
+    rm -rf "$product/.forge"
+    : > "$state/make-calls"
+    : > "$state/gh-calls"
+    : > "$state/hermes-calls"
+    MAKE_FAIL="$1" ROADMAP_WARN="$2" GH_GATE="$3" MV_FAIL="$4" \
+      GH_VIEW_SLUG="$5" REAL_MV="$real_mv" CALLS="$state/make-calls" \
+      GH_CALLS="$state/gh-calls" HERMES_CALLS="$state/hermes-calls" \
+      HERMES_HOME="$root/hermes" PATH="$root/bin:$PATH" \
+      "$real_make" --no-print-directory commission PROJECT="$product" BOARD=commission-fixture \
+      > "$state/run.out" 2>&1
+    rc=$?
+    report="$(find "$product/.forge" -maxdepth 1 -type f -name 'commission-*.md' -print 2>/dev/null | head -1)"
+    out="$(cat "$state/run.out")"
+  }
+
+  _commission_run '' 0 classic 0 acme/product
+  if [ "$rc" = 0 ] && [ -n "$report" ] \
+     && grep -Fq '## paid-codex-probe' "$report" \
+     && grep -Fq '## preflight' "$report" \
+     && grep -Fq '## roadmap-check' "$report" \
+     && grep -Fq '## durable-path' "$report" \
+     && grep -Fq '## clean-tree-before' "$report" \
+     && grep -Fq '## remote-resolution' "$report" \
+     && grep -Fq '## merge-gate' "$report" \
+     && grep -Fxq 'verify WITH_CODEX=1' "$state/make-calls" \
+     && grep -Fxq 'preflight' "$state/make-calls" \
+     && grep -Fq "roadmap-check PROJECT=$product" "$state/make-calls"; then
+    ok "records-all-prerequisites"
+  else
+    bad "records-all-prerequisites" "commissioning must record every named gate; exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  _commission_run preflight 0 classic 0 acme/product
+  if [ "$rc" != 0 ] && [ -n "$report" ] \
+     && grep -A2 '^## preflight$' "$report" | grep -Fq 'exit: 7' \
+     && grep -Fq 'overall: FAIL' "$report"; then
+    ok "propagates-prerequisite-failure"
+  else
+    bad "propagates-prerequisite-failure" "preflight exit 7 must name the failing section and fail commissioning; exit $rc"
+  fi
+
+  _commission_run '' 1 classic 0 acme/product
+  if [ "$rc" = 0 ] && [ -n "$report" ] \
+     && grep -Fq 'WARN CHUNK-99 is advisory-sized' "$report"; then
+    ok "preserves-roadmap-warn"
+  else
+    bad "preserves-roadmap-warn" "roadmap advisory output must survive verbatim; exit $rc"
+  fi
+
+  _commission_run '' 0 none 0 acme/product
+  if [ "$rc" != 0 ] && [ -n "$report" ] \
+     && grep -A8 '^## merge-gate$' "$report" | grep -Fq 'NONE via=none'; then
+    ok "requires-enforceable-gate"
+  else
+    bad "requires-enforceable-gate" "a repository with no enforceable gate must be refused regardless of visibility; exit $rc"
+  fi
+
+  git -C "$product" remote set-url origin git@github.com:other/product.git
+  _commission_run '' 0 classic 0 acme/product
+  if [ "$rc" != 0 ] && [ -n "$report" ] \
+     && grep -A8 '^## remote-resolution$' "$report" | grep -Fq 'origin repository mismatch: expected other/product, GitHub returned acme/product' \
+     && grep -Fxq 'repo view other/product --json nameWithOwner,defaultBranchRef' "$state/gh-calls" \
+     && grep -Fq 'overall: FAIL' "$report"; then
+    ok "binds-github-to-origin"
+  else
+    bad "binds-github-to-origin" "a mismatched ambient GitHub repository must not satisfy the origin-bound check; exit $rc"
+  fi
+  git -C "$product" remote set-url origin git@github.com:acme/product.git
+
+  _commission_run '' 0 classic 1 acme/product
+  if [ "$rc" != 0 ] && [ -z "$report" ] \
+     && grep -Fq 'commission: could not publish evidence report' "$state/run.out"; then
+    ok "report-publication-failure-is-fatal"
+  else
+    bad "report-publication-failure-is-fatal" "an unpublished report must fail commissioning and leave no final PASS artifact; exit $rc, report='${report:-}'"
+  fi
+
+  before="$(git -C "$product" status --porcelain)"
+  _commission_run '' 0 classic 0 acme/product
+  after="$(git -C "$product" status --porcelain)"
+  if [ "$rc" = 0 ] && [ "$before" = "$after" ] && [ -z "$after" ] \
+     && [ ! -s "$state/hermes-calls" ] \
+     && [ ! -e "$root/hermes/kanban.db" ] \
+     && git -C "$product" check-ignore -q .forge/commission-probe \
+     && grep -Fq 'before: ABSENT' "$report" \
+     && grep -Fq 'after: ABSENT' "$report"; then
+    ok "leaves-project-and-board-unchanged"
+  else
+    bad "leaves-project-and-board-unchanged" "only ignored evidence may change; project status='$after', Hermes calls=$(wc -l < "$state/hermes-calls" | tr -d ' ')"
+  fi
+}
+wants commission && run_commission_group
 
 # ---------------------------------------------------------------------------
 # metrics/ — the flywheel's own numbers (F27). Before scripts/metrics.sh, /retro

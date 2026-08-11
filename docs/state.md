@@ -31,6 +31,22 @@ isolated temporary `HERMES_HOME`: root-only created one task, full bootstrap
 reused the same idempotency mapping and produced two tasks with one real
 `task_links` edge. `make validate` was also **OK**.
 
+CHUNK-9 real-source host proof on 2026-08-11: the full `make commission` command
+ran against the clean durable checkout of `wielas/forgeboard-report`. Origin
+resolution returned that exact slug, its real classic protection reported
+`GATED ... checks=check`, roadmap output retained 3 advisory warnings, preflight
+reported 85 PASS / 3 WARN / 0 FAIL, and the paid verification completed **289
+passed / 0 failed / 3 skipped**. Its live case was
+`substrate/codex-worktree-commit`, run `verify-codex-1786440235-35663`. Both git
+clean checks passed, the selected board was absent before and after, and the
+atomically published report ended `overall: PASS` (SHA-256
+`813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`). An
+earlier control against `wielas/forge` failed closed because that repository
+requires `validate` and `verify`, not the product contract's `check`. Seven
+ordinary `commission` cases use command stubs and spend nothing in CI; they now
+also reject origin/GitHub identity mismatch and injected report-publication
+failure.
+
 *Prior header, still true of the sections below it:* updated 2026-08-06, after
 the audit repair slices through the lane boundary and completed-run metadata
 producer contract. The 2026-07-28 ladder and fault exercises remain the live

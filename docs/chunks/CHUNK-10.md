@@ -2,7 +2,7 @@
 - **Goal:** Make the audit, first-run roadmap, current state, and operator guide agree with the code and measured pre-launch evidence.
 - **Milestone:** M5 · **Depends on:** CHUNK-2, CHUNK-3, CHUNK-9
 - **Serves:** F40, F81, F101, F103 · **Relevant ADRs:** 0002, 0003, 0012
-- **Touches:** `docs/audit-forgeboard-2026-07-30.md`, `docs/roadmap-first-run.md`, `docs/state.md`, `docs/operator-guide.md`
+- **Touches:** `docs/audit-forgeboard-2026-07-30.md`, `docs/roadmap-first-run.md`, `docs/state.md`, `docs/operator-guide.md`, `scripts/verify.sh`
 - **Scenarios:**
   - Given every finding touched by this roadmap, When the ledger is reconciled, Then each status header agrees with executable evidence and names the closing chunk or remaining proof.
   - Given the old first-run roadmap mixes shipped and future work, When it is reconciled, Then landed tracks, remaining commands, and the operational run sequence are unambiguous.

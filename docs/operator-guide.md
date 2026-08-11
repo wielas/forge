@@ -214,6 +214,37 @@ defaulted to `..`, a *relative* path, so the project landed next to whatever
 directory the operator happened to be standing in. Symlinks are resolved before
 the check, so `/tmp` and `/private/tmp` are the same refusal.
 
+## Commission before the board can spend
+
+Commissioning is the one intentionally paid readiness command. Run it from the
+Forge checkout only after the product has a clean tree, an `origin` remote and
+an ignored `.forge/` directory:
+
+```bash
+PROJECT=$HOME/dev/my-project
+BOARD=my-project
+make commission PROJECT="$PROJECT" BOARD="$BOARD"
+```
+
+It runs `make verify WITH_CODEX=1`, `make preflight`, the product roadmap check,
+the durable-path and clean-tree guards, remote resolution, and the existing
+merge-gate check. Every result and its exact output lands in
+`$PROJECT/.forge/commission-<UTC>.<unique>.md`; roadmap `WARN` text remains a
+warning. The GitHub repository is parsed from the product's exact `origin` URL,
+passed explicitly to `gh repo view`, compared with GitHub's returned identity,
+and then passed unchanged to the merge gate. Ambient `gh` context cannot
+silently select a different repository. The report is published atomically;
+failure to create, write, or publish it makes commissioning fail. That ignored
+report is the only permitted project change, and commissioning fingerprints
+the board files before and after without opening them or calling Hermes.
+
+Once the inputs pass the initial structural checks, expect the paid Codex probe
+to run even when another prerequisite fails: the command completes the evidence
+report instead of stopping at its first error. Any nonzero prerequisite makes
+commissioning exit nonzero. Repository visibility is never evidence of a gate;
+a private repository without enforceable PR protection and required `check`
+status is refused.
+
 ## Stage the first board card
 
 Do not release a new product graph all at once. After the roadmap is clear and
@@ -222,7 +253,6 @@ commissioning is green, create only its root card:
 ```bash
 PROJECT=$HOME/dev/my-project
 BOARD=my-project
-make roadmap-check PROJECT="$PROJECT"
 (cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
 ```
 

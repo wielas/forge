@@ -142,7 +142,6 @@ authorized GitHub export; the branch was pushed and stacked PR #36 opened
 against `chunk/3-deterministic-diagnostics`, whose exact remote head remains
 CHUNK-4's merge-base. The PR is intentionally unmerged and must stay stacked
 until PR #35 and the lower chain land.
-
 2026-08-11 CHUNK-4: Independent review rejected the operator guide's use of the
 Make wrapper as though it preserved `metadata-live.sh`'s exact 0/1/2 machine
 contract. GNU Make cannot preserve a recipe's 1-versus-2 distinction. The guide
@@ -181,3 +180,59 @@ space, slash, traversal, and malformed-dependency mutations. Terminal
 interactive roots retain their done state and human assignee. An opt-in run
 against the installed Hermes CLI in an isolated temporary home proved the real
 one-root-to-two-card extension and its actual `task_links` edge (7/0/0).
+
+2026-08-11 CHUNK-9: The human explicitly authorized a convergence stack for the
+two open prerequisite lines. `integration/chunk-9-prerequisites` starts at the
+CHUNK-8 head and merges the CHUNK-5 head; the CHUNK-9 branch and PR use that
+synthetic branch as their base so prejudge and judge see only the CHUNK-9 diff.
+Merge the existing chains in their declared parent-first order, retarget CHUNK-9
+to `main` only after both prerequisite heads are integrated, and delete no base
+branch until its child PR has been retargeted. The synthetic base is never
+merged independently; it exists only to give the authorized stack one complete
+review base.
+
+2026-08-11 CHUNK-9: Commissioning is an evidence aggregator over existing
+controls, not a new launch policy. After safe inputs and the ignored evidence
+path are established, it runs every prerequisite even if an earlier one fails,
+so the report is complete and the single paid Codex probe still spends. Any
+nonzero result makes the aggregate fail; roadmap output is stored verbatim and
+is never renamed PASS.
+
+2026-08-11 CHUNK-9: Board invariance is measured without opening SQLite. The
+commissioner fingerprints the selected database plus `-wal`, `-shm`, and
+`-journal` sidecars before and after, calls no Hermes command, and separately
+requires both clean git states. Remote visibility is deliberately not queried:
+the existing `merge-gate.sh` must prove a PR rule and the product template's
+required `check` context.
+
+2026-08-11 CHUNK-9: This repository still has no `make check` target. The
+chunk's frozen done condition names `make validate` and `make verify`, so those
+are the end-ceremony proof. The intentional host run used `WITH_CODEX=1` and
+completed at 281 passed, 0 failed, 2 skipped; its live probe id was
+`verify-codex-1786433343-27716`. No requirements or architecture decision moved.
+
+2026-08-11 CHUNK-9 audit correction: The earlier paid verification was not an
+end-to-end commissioning run. Independent review also found that ambient
+`gh repo view` could identify a repository different from the product's
+`origin`, and that report writes were unchecked. Commissioning now parses and
+validates GitHub HTTPS/SSH origin forms, queries that explicit slug, requires
+the returned identity to match exactly, and publishes a uniquely named report
+atomically with every write checked. Regressions cover a mismatched GitHub
+identity and failed final publication.
+
+2026-08-11 CHUNK-9 live correction: A control run against `wielas/forge`
+correctly failed closed because its real required contexts are `validate` and
+`verify`, not the product contract's `check`. The definitive `make commission`
+run then used the real protected first-run product `wielas/forgeboard-report`:
+all nine report sections exited zero; protection was `GATED via=classic
+pr=yes checks=check`; paid verification was 289/0/3 with live run
+`verify-codex-1786440235-35663`; clean tree and absent-board fingerprints were
+unchanged; and the atomic report ended PASS with SHA-256
+`813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`.
+
+2026-08-11 CHUNK-10 planning amendment: Independent review found that the
+reconciliation branch already changes `scripts/verify.sh` to enforce its four
+documentation scenarios, but the frozen contract authorized only the four
+documents. Before CHUNK-10 implementation is integrated, its Touches surface is
+widened on the approved base to include that executable verifier. Scenarios,
+real-source declarations, acceptance path, and feature bytes do not change.

@@ -30,6 +30,10 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **CHUNK-8:** done 2026-08-10 — root-only bootstrap validates the complete
   single-root graph before mutation, creates only the idempotent root, and lets
   full bootstrap extend it without weakening atomic parent reconciliation.
+- **CHUNK-9:** done 2026-08-11 — paid commissioning records every existing
+  launch gate, binds GitHub identity to the exact origin, publishes evidence
+  atomically, preserves advisory output, and has passed against the protected
+  first-run product without changing tracked product or board state.
 
 ### CHUNK-1: Enforce methodology references and runtime pins
 - **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.
@@ -191,7 +195,7 @@ acceptance, commission the staged launch, then reconcile documentation.
 - **Goal:** Make the audit, first-run roadmap, current state, and operator guide agree with the code and measured pre-launch evidence.
 - **Milestone:** M5 · **Depends on:** CHUNK-2, CHUNK-3, CHUNK-9
 - **Serves:** F40, F81, F101, F103 · **Relevant ADRs:** 0002, 0003, 0012
-- **Touches:** `docs/audit-forgeboard-2026-07-30.md`, `docs/roadmap-first-run.md`, `docs/state.md`, `docs/operator-guide.md`
+- **Touches:** `docs/audit-forgeboard-2026-07-30.md`, `docs/roadmap-first-run.md`, `docs/state.md`, `docs/operator-guide.md`, `scripts/verify.sh`
 - **Scenarios:**
   - Given every finding touched by this roadmap, When the ledger is reconciled, Then each status header agrees with executable evidence and names the closing chunk or remaining proof.
   - Given the old first-run roadmap mixes shipped and future work, When it is reconciled, Then landed tracks, remaining commands, and the operational run sequence are unambiguous.
