@@ -400,7 +400,5 @@ profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
           forge-digest (deepseek-v4-flash-0731) · codex pinned gpt-5.6-sol xhigh
 ```
 
-The older linked-worktree result of 126 passed / 3 failed / 7 skipped and the
-PASS 82 preflight belong to the 2026-08-06 producer-contract slice. They are
-historical, not the launch baseline. The current measured baseline is the
-CHUNK-10 proof at the top of this file.
+The older 126 / 3 / 7 verify and PASS 82 preflight are historical; the current
+baseline is CHUNK-10's proof above.

@@ -187,3 +187,7 @@ the live version while the dated 2026-08-09 measurement remains unchanged.
 HANDOFF: CHUNK-10 is green on `chunk/10-reconcile-launch-ledger-and-operator-contract`; GitHub export was rejected absent explicit authorization.
 After authorization: push, open the stacked PR against `chunk/9-commission-product-run-with-existing-gates` with `.forge/chunk-10-pr-body.md`, then write/validate metadata with its PR URL.
 Do not merge; retarget only after the lower readiness stacks integrate.
+
+2026-08-11 CHUNK-10: The preceding HANDOFF is resolved. Human authorization exported the branch and opened stacked PR #42 against CHUNK-9's exact remote branch.
+GitHub reports the intended seven-file diff as open and mergeable; `.forge/chunk-10-metadata.json` validates against the lane completion contract.
+Do not merge; retarget only after the lower readiness stacks integrate.

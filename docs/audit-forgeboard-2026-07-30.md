@@ -29,8 +29,7 @@ against the file rather than the one it was opened with:
 
 ## Readiness reconciliation — 2026-08-11 (CHUNK-10)
 
-This supersedes the 2026-08-06 disposition without rewriting its measurements.
-“Product run proof” means the mechanism shipped but still owes live evidence.
+This supersedes the 2026-08-06 disposition without rewriting its measurements; “product run proof” means the mechanism shipped but still owes live evidence.
 
 | Finding | Current disposition | Executable evidence or remaining proof |
 |---|---|---|

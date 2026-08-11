@@ -55,9 +55,8 @@ make metrics BOARD="$BOARD"
 Commissioning proves inputs without creating cards; the first metadata sweep
 decides whether root-only may expand to the rest of the graph.
 
-Everything below is the preserved planning analysis that led to this contract.
-Where its future tense conflicts with the current contract above, the current
-contract wins.
+Everything below preserves the planning analysis; the current contract wins
+where their tenses conflict.
 
 ---
 
