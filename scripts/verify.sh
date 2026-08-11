@@ -1376,7 +1376,10 @@ run_lane_group() {
   _blast_fixture() { # $1=run id
     brun="$1"
     rm -rf "$bmain" "$brepo" "$bsibling" "$borigin"
-    git init -q --bare "$borigin" >/dev/null 2>&1 || return 1
+    # Bare-repository HEAD follows the host's init.defaultBranch. Pin it: a
+    # dangling `master` HEAD on Linux makes connectivity checks reject an
+    # otherwise healthy fixture whose only pushed branch is main.
+    git init -q --bare -b main "$borigin" >/dev/null 2>&1 || return 1
     git init -q -b main "$bmain" >/dev/null 2>&1 || return 1
     mkdir -p "$bmain/.forge"
     printf 'policy=v1\n' > "$bmain/.forge/policy"
