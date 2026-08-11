@@ -31,8 +31,9 @@ acceptance, commission the staged launch, then reconcile documentation.
   single-root graph before mutation, creates only the idempotent root, and lets
   full bootstrap extend it without weakening atomic parent reconciliation.
 - **CHUNK-9:** done 2026-08-11 — paid commissioning records every existing
-  launch gate, preserves advisory output, refuses unenforceable repositories,
-  and proves the ignored evidence report is its only product-side effect.
+  launch gate, binds GitHub identity to the exact origin, publishes evidence
+  atomically, preserves advisory output, and has passed against the protected
+  first-run product without changing tracked product or board state.
 
 ### CHUNK-1: Enforce methodology references and runtime pins
 - **Goal:** Make section references, the Codex pin, and the retained `skill_manage` boundary executable claims before more unattended work runs.

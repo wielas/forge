@@ -229,10 +229,14 @@ make commission PROJECT="$PROJECT" BOARD="$BOARD"
 It runs `make verify WITH_CODEX=1`, `make preflight`, the product roadmap check,
 the durable-path and clean-tree guards, remote resolution, and the existing
 merge-gate check. Every result and its exact output lands in
-`$PROJECT/.forge/commission-<UTC>.md`; roadmap `WARN` text remains a warning.
-The report itself is the only permitted project change, and commissioning
-fingerprints the board files before and after without opening them or calling
-Hermes.
+`$PROJECT/.forge/commission-<UTC>.<unique>.md`; roadmap `WARN` text remains a
+warning. The GitHub repository is parsed from the product's exact `origin` URL,
+passed explicitly to `gh repo view`, compared with GitHub's returned identity,
+and then passed unchanged to the merge gate. Ambient `gh` context cannot
+silently select a different repository. The report is published atomically;
+failure to create, write, or publish it makes commissioning fail. That ignored
+report is the only permitted project change, and commissioning fingerprints
+the board files before and after without opening them or calling Hermes.
 
 Once the inputs pass the initial structural checks, expect the paid Codex probe
 to run even when another prerequisite fails: the command completes the evidence

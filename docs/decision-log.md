@@ -204,3 +204,22 @@ chunk's frozen done condition names `make validate` and `make verify`, so those
 are the end-ceremony proof. The intentional host run used `WITH_CODEX=1` and
 completed at 281 passed, 0 failed, 2 skipped; its live probe id was
 `verify-codex-1786433343-27716`. No requirements or architecture decision moved.
+
+2026-08-11 CHUNK-9 audit correction: The earlier paid verification was not an
+end-to-end commissioning run. Independent review also found that ambient
+`gh repo view` could identify a repository different from the product's
+`origin`, and that report writes were unchecked. Commissioning now parses and
+validates GitHub HTTPS/SSH origin forms, queries that explicit slug, requires
+the returned identity to match exactly, and publishes a uniquely named report
+atomically with every write checked. Regressions cover a mismatched GitHub
+identity and failed final publication.
+
+2026-08-11 CHUNK-9 live correction: A control run against `wielas/forge`
+correctly failed closed because its real required contexts are `validate` and
+`verify`, not the product contract's `check`. The definitive `make commission`
+run then used the real protected first-run product `wielas/forgeboard-report`:
+all nine report sections exited zero; protection was `GATED via=classic
+pr=yes checks=check`; paid verification was 289/0/3 with live run
+`verify-codex-1786440235-35663`; clean tree and absent-board fingerprints were
+unchanged; and the atomic report ended PASS with SHA-256
+`813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`.
