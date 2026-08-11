@@ -5412,8 +5412,16 @@ DISPOSITIONS
   fi
 
   local f81 f103
-  f81="$(sed -n '/^### F81\([^0-9]\|$\)/,/^### F82\([^0-9]\|$\)/p' "$audit")"
-  f103="$(sed -n '/^### F103\([^0-9]\|$\)/,/^## Ledger addition from the merge-gate slice/p' "$audit")"
+  f81="$(awk '
+    /^### F81([^0-9]|$)/ { printing=1 }
+    printing && /^### F82([^0-9]|$)/ { exit }
+    printing { print }
+  ' "$audit")"
+  f103="$(awk '
+    /^### F103([^0-9]|$)/ { printing=1 }
+    printing && /^## Ledger addition from the merge-gate slice/ { exit }
+    printing { print }
+  ' "$audit")"
   if printf '%s' "$f81" | grep -Fq 'It is **not edited here**' \
      && printf '%s' "$f81" | grep -Fq '**Superseding decision (CHUNK-10).' \
      && printf '%s' "$f103" | grep -Fq 'Recorded because a future reader' \
