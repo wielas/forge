@@ -176,3 +176,10 @@ after the lower stacks integrate.
 target. The four documentation scenarios are executable as the new `docs/`
 group in `scripts/verify.sh`; this is a small declared-path widening required by
 ADR-0003, while the frozen feature and manifest remain byte-identical.
+
+2026-08-11 CHUNK-10: Final host proof completed with `make validate` OK,
+`make verify` at 285 passed / 0 failed / 3 skipped, `make preflight` at PASS 85 /
+WARN 3 / FAIL 0, and the ten-chunk roadmap CLEAR at 9 pass / 0 warn / 0 skip
+when supplied the live `forge-codex-lane` assignee. Preflight measured Claude
+Code 2.1.227, one patch newer than the readiness source; `docs/state.md` records
+the live version while the dated 2026-08-09 measurement remains unchanged.

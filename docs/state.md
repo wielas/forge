@@ -36,6 +36,15 @@ prove the timestamped report contains every prerequisite, preserves roadmap
 gate regardless of visibility, and changes neither tracked product state nor
 any board database bytes.
 
+CHUNK-10 host proof on 2026-08-11: `make validate` **OK**; default `make verify`
+completed **285 passed / 0 failed / 3 skipped**; `make preflight` completed
+**PASS 85 / WARN 3 / FAIL 0**; and the complete ten-chunk roadmap was
+**CLEAR — 9 pass / 0 warn / 0 skip** with the live `forge-codex-lane` assignee
+supplied. The three verify skips are the two non-spawnable operator sentinels
+and the paid Codex probe. The three preflight warnings remain the documented
+healthy set: no global lefthook, the empty API-key placeholder, and the
+historical `forge-ladder` board selected by default.
+
 *Prior header, still true of the historical sections below it:* updated
 2026-08-06, after
 the audit repair slices through the lane boundary and completed-run metadata
@@ -62,7 +71,7 @@ The implementation stack now contains the complete pre-run sequence:
 | Live metadata sweep and exact driver/operator telemetry | CHUNK-4/CHUNK-5 green; genuine product rows still owed |
 | Emitted and frozen acceptance | CHUNK-6/CHUNK-7 green |
 | Root-only staging and paid commissioning | CHUNK-8/CHUNK-9 green; commissioning evidence recorded |
-| Audit, roadmap, state, and operator reconciliation | CHUNK-10 implementation branch |
+| Audit, roadmap, state, and operator reconciliation | CHUNK-10 green on its implementation branch |
 
 What remains is integration plus live product evidence, not another readiness
 mechanism. Merge the stack parent-first, republish profiles after the relevant
@@ -390,7 +399,7 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 ```
-Hermes 0.19.0 · codex-cli 0.146.0 · Claude Code 2.1.226 · gh 2.97.0
+Hermes 0.19.0 · codex-cli 0.146.0 · Claude Code 2.1.227 · gh 2.97.0
 lefthook 2.1.10 · uv 0.11.32 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
@@ -399,7 +408,5 @@ profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
 
 The older linked-worktree result of 126 passed / 3 failed / 7 skipped and the
 PASS 82 preflight belong to the 2026-08-06 producer-contract slice. They are
-historical, not the launch baseline. The current measured baselines are the
-CHUNK-8 and CHUNK-9 results at the top of this file; CHUNK-10 is not complete
-until its own final `make validate`, `make verify`, `make preflight`, and CLEAR
-roadmap-check results are recorded here.
+historical, not the launch baseline. The current measured baseline is the
+CHUNK-10 proof at the top of this file.
