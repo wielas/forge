@@ -62,3 +62,11 @@ with exact one-based scenario mappings; the checker rejects missing, extra, or
 misplaced tags and hashes the same bytes it validated. This first Forge plan is
 recorded as a retrofit, and the local stack is reordered so CHUNK-6 follows
 CHUNK-3 and precedes CHUNK-4/5 before merge.
+
+2026-08-11 CHUNK-7: Independent review reproduced a contract-only
+self-amendment: weakening a chunk's `Then` while leaving its feature and hash
+unchanged passed `--check-base`. The implementation gate now compares the
+approved and head Scenarios block, Real sources mapping, and Acceptance path in
+addition to manifest and feature bytes. Mutations cover both a weakened Then
+and a redirected Acceptance field while ordinary Touches drift remains outside
+this blocking surface.

@@ -99,10 +99,71 @@ def load_manifest(root: Path, role: str):
     return value, None
 
 
+def load_graph_ids(root: Path, role: str):
+    path = root / "docs" / "chunks" / "graph.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"{role} docs/chunks/graph.json is unreadable: {exc}"
+    if not isinstance(value, list) or not value:
+        return None, f"{role} docs/chunks/graph.json is not a non-empty array"
+    ids = []
+    for index, entry in enumerate(value):
+        chunk_id = entry.get("id") if isinstance(entry, dict) else None
+        if not isinstance(chunk_id, str) or not re.fullmatch(
+            r"CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*", chunk_id
+        ):
+            return None, f"{role} graph entry {index} has invalid id {chunk_id!r}"
+        ids.append(chunk_id)
+    if len(ids) != len(set(ids)):
+        return None, f"{role} graph contains duplicate chunk ids"
+    return ids, None
+
+
+def contract_acceptance_surface(root: Path, chunk_id: str, role: str):
+    path = root / "docs" / "chunks" / f"{chunk_id}.md"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (OSError, UnicodeError) as exc:
+        return None, f"{role} {path.relative_to(root)} is unreadable: {exc}"
+
+    starts = [
+        index for index, line in enumerate(lines)
+        if re.match(r"^-\s+\*\*Scenarios:\*\*", line)
+    ]
+    real_sources = [
+        line.rstrip("\r\n") for line in lines
+        if re.match(r"^-\s+\*\*Real sources:\*\*", line)
+    ]
+    acceptance = [
+        line.rstrip("\r\n") for line in lines
+        if re.match(r"^-\s+\*\*Acceptance:\*\*", line)
+    ]
+    if len(starts) != 1 or len(real_sources) != 1 or len(acceptance) != 1:
+        return None, (
+            f"{role} {path.relative_to(root)} must contain exactly one Scenarios, "
+            "Real sources, and Acceptance field"
+        )
+    start = starts[0]
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if re.match(r"^-\s+\*\*", lines[index]):
+            end = index
+            break
+    return {
+        "scenarios": "".join(lines[start:end]),
+        "real_sources": real_sources[0],
+        "acceptance": acceptance[0],
+    }, None
+
+
 if check_base is not None:
     base_manifest, base_error = load_manifest(check_base, "approved base")
     if base_error:
         fatal(base_error)
+    base_ids, base_graph_error = load_graph_ids(check_base, "approved base")
+    if base_graph_error:
+        fatal(base_graph_error)
 
     # A corrupt base is a substrate failure, not a verdict on the implementation.
     # The planning receipt must describe the actual bytes at the approved commit.
@@ -144,6 +205,27 @@ if check_base is not None:
             errors.append(
                 f"{feature}: feature bytes differ from the approved base digest "
                 f"{expected_digest}"
+            )
+
+    # The contract prose is one of ADR-0014's three acceptance artifacts. Keep
+    # ordinary fields such as Touches amendable/advisory, but freeze the exact
+    # Scenarios block, explicit source mapping, and Acceptance path.
+    for chunk_id in sorted(base_ids):
+        base_surface, base_surface_error = contract_acceptance_surface(
+            check_base, chunk_id, "approved base"
+        )
+        if base_surface_error:
+            fatal(base_surface_error)
+        head_surface, head_surface_error = contract_acceptance_surface(
+            project, chunk_id, "implementation head"
+        )
+        if head_surface_error:
+            errors.append(head_surface_error)
+            continue
+        if base_surface != head_surface:
+            errors.append(
+                f"docs/chunks/{chunk_id}.md: contract acceptance surface differs "
+                "from the approved base (Scenarios, Real sources, or Acceptance)"
             )
 
     if errors:

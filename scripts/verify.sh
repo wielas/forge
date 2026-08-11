@@ -1169,6 +1169,8 @@ prejudge/blocks-with-exit-1       a blocking check exits 1; a clear-with-warning
 prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
 prejudge/scenario-count-is-asymmetric  fewer scenarios than the contract blocks, more only warns
 prejudge/frozen-feature-blocks-change  a feature whose bytes differ from the approved base is named and blocked
+prejudge/frozen-contract-blocks-change  implementation cannot weaken the approved Scenarios prose
+prejudge/frozen-contract-blocks-acceptance-redirect  implementation cannot redirect the approved feature path
 prejudge/frozen-feature-allows-step-definitions  ordinary implementation steps do not change frozen acceptance
 prejudge/frozen-feature-blocks-self-amendment  changing the feature and its manifest together cannot approve itself
 prejudge/frozen-feature-accepts-planning-amendment  a later branch consumes the hash already approved on its base
@@ -2825,7 +2827,7 @@ run_prejudge_group() {
   "$gate" --fixture "$prs/pr-8" >/dev/null 2>&1; local rc8=$?
   "$gate" --fixture "$prs/pr-9" >/dev/null 2>&1; local rc9=$?
   if [ "$rc8" = 1 ] && [ "$rc9" = 0 ]; then
-    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with 2 warnings)"
+    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with warnings)"
   else
     bad "blocks-with-exit-1" \
         "expected pr-8 to exit 1 and pr-9 to exit 0, got $rc8 and $rc9 — a gate that cannot fail a command gates nothing"
@@ -2889,6 +2891,7 @@ FROZEN_GRAPH
 - **Touches:** `tests/features/chunk_7.feature`, `tests/steps/chunk_7_steps.py`
 - **Scenarios:**
   - Given a SQLite source, When the reader runs, Then one real record is returned.
+- **Real sources:** `SQLite source` → scenario 1
 - **Acceptance:** tests/features/chunk_7.feature
 - **Out of scope:** planning amendments.
 - **Done when:** the base hash still matches.
@@ -2929,6 +2932,55 @@ FROZEN_FEATURE
     fi
   else
     bad "frozen-feature-blocks-change" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_contract="$TMPROOT/frozen-contract"
+  if _frozen_pr_fixture "$frozen_contract"; then
+    sed -i.bak 's/Then one real record is returned\./Then a warning may be returned./' \
+      "$frozen_contract/tree/docs/chunks/CHUNK-7.md"
+    rm -f "$frozen_contract/tree/docs/chunks/CHUNK-7.md.bak"
+    printf '1\t1\tdocs/chunks/CHUNK-7.md\n' > "$frozen_contract/numstat.tsv"
+    "$gate" --fixture "$frozen_contract" --json \
+      > "$TMPROOT/frozen-contract.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-contract.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ] \
+       && jq -e '.checks[] | select(.id=="acceptance-freeze")
+            | .evidence | contains("docs/chunks/CHUNK-7.md")' \
+          "$TMPROOT/frozen-contract.json" >/dev/null 2>&1; then
+      ok "frozen-contract-blocks-change"
+    else
+      bad "frozen-contract-blocks-change" \
+          "a contract-only Then weakening must block and name docs/chunks/CHUNK-7.md (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-contract-blocks-change" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_redirect="$TMPROOT/frozen-contract-redirect"
+  if _frozen_pr_fixture "$frozen_redirect"; then
+    sed -i.bak 's#tests/features/chunk_7.feature#tests/features/weaker.feature#' \
+      "$frozen_redirect/tree/docs/chunks/CHUNK-7.md"
+    rm -f "$frozen_redirect/tree/docs/chunks/CHUNK-7.md.bak"
+    printf '1\t1\tdocs/chunks/CHUNK-7.md\n' > "$frozen_redirect/numstat.tsv"
+    "$gate" --fixture "$frozen_redirect" --json \
+      > "$TMPROOT/frozen-contract-redirect.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-contract-redirect.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ] \
+       && jq -e '.checks[] | select(.id=="acceptance-freeze")
+            | .evidence | contains("docs/chunks/CHUNK-7.md")' \
+          "$TMPROOT/frozen-contract-redirect.json" >/dev/null 2>&1; then
+      ok "frozen-contract-blocks-acceptance-redirect"
+    else
+      bad "frozen-contract-blocks-acceptance-redirect" \
+          "redirecting only the contract Acceptance path must block (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-contract-blocks-acceptance-redirect" \
+        "could not create the frozen-acceptance fixture"
   fi
 
   local frozen_steps="$TMPROOT/frozen-steps"
