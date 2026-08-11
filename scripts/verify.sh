@@ -1491,13 +1491,20 @@ run_lane_group() {
       >/dev/null 2>&1
   }
   _blast_rc() {
-    _rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" check "$brepo" "$brun"
+    local rc
+    env FORGE_LANE_AUDIT_ROOT="$laudit" "$blast" check "$brepo" "$brun" \
+      > "$TMPROOT/$brun-check.out" 2>&1
+    rc=$?
+    printf '%s\n' "$rc"
   }
   _expect_blast() { # name expected actual
+    local detail evidence
     if [ "$3" = "$2" ]; then
       ok "$1"
     else
-      bad "$1" "lane-blast-radius expected exit $2, observed $3"
+      detail="$(tr '\n' ' ' < "$TMPROOT/$brun-check.out" 2>/dev/null | sed 's/[[:space:]]*$//')"
+      evidence="$(tail -8 "$laudit/$brun/breach.txt" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+      bad "$1" "lane-blast-radius expected exit $2, observed $3; output: ${detail:-<none>}; evidence: ${evidence:-<none>}"
     fi
   }
 
