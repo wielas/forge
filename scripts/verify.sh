@@ -1445,7 +1445,10 @@ run_lane_group() {
   _blast_fixture() { # $1=run id
     brun="$1"
     rm -rf "$bmain" "$brepo" "$bsibling" "$borigin"
-    git init -q --bare "$borigin" >/dev/null 2>&1 || return 1
+    # Bare-repository HEAD follows the host's init.defaultBranch. Pin it: a
+    # dangling `master` HEAD on Linux makes connectivity checks reject an
+    # otherwise healthy fixture whose only pushed branch is main.
+    git init -q --bare -b main "$borigin" >/dev/null 2>&1 || return 1
     git init -q -b main "$bmain" >/dev/null 2>&1 || return 1
     mkdir -p "$bmain/.forge"
     printf 'policy=v1\n' > "$bmain/.forge/policy"
@@ -2905,7 +2908,9 @@ run_prejudge_group() {
   local errors_path=src/forgeboard_report/errors.py
 
   rm -rf "$unchanged"; cp -R "$prs/pr-9" "$unchanged"
-  grep -v $'^21\\t0\\tsrc/forgeboard_report/errors.py$' "$prs/pr-9/numstat.tsv" \
+  # ANSI-C quoting supplies literal tabs on both BSD and GNU grep. A doubled
+  # backslash was tolerated as a tab locally but matched nothing on Ubuntu.
+  grep -v $'^21\t0\tsrc/forgeboard_report/errors.py$' "$prs/pr-9/numstat.tsv" \
     > "$unchanged/numstat.tsv"
   "$gate" --fixture "$unchanged" --json > "$TMPROOT/touches-unchanged.json" 2>&1
   if [ "$(jq -r '.checks[] | select(.id=="touches") | .status' "$TMPROOT/touches-unchanged.json")" = pass ] \
