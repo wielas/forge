@@ -571,7 +571,9 @@ run_config_group() {
           "known mismatch did not print live and checked-in pairs (got: ${codex_diag:-no diagnostic})"
     fi
     codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
-    if codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
+    if [ ! -f "$codex_config" ]; then
+      skip "codex-pin-live" "$codex_config is absent; no live operator pin to judge"
+    elif codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
       ok "codex-pin-live ($CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT)"
     else
       bad "codex-pin-live" "$codex_diag"
@@ -1160,6 +1162,7 @@ metadata/validator-runtime-is-locked     the shebang the lane runs pins transiti
 metadata/unreadable-path-is-not-invalid-metadata  an unreadable path exits 2; only a real envelope earns exit 1
 metadata/blocked-reason-contract         literal producers and the metrics consumer use the registry vocabulary
 metadata/live-requires-rfc3339-since     an absent or malformed cutoff refuses before any board read
+metadata/live-operator-interface          automation is directed to the script that preserves exit 0/1/2
 metadata/live-valid-counts               valid envelopes are counted by profile and schema
 metadata/live-classifies-every-bad-row   nested, null, cross-profile and unreadable rows are named
 metadata/live-rejects-bad-block-reason   a model-authored reason outside the registry names task, run and reason
@@ -2777,6 +2780,16 @@ run_metadata_live_cases() {
   local live_root="$TMPROOT/metadata-live-home" board=metadata-live
   local db="$live_root/boards/$board/kanban.db"
   local cutoff=2026-08-09T00:00:00Z out rc
+
+  if grep -Fq './scripts/metadata-live.sh <slug> --since' docs/operator-guide.md \
+     && grep -Fq 'exits 0 for a satisfied contract, 1 for a readable contract' \
+          docs/operator-guide.md \
+     && grep -Fq 'do not use' docs/operator-guide.md; then
+    ok "live-operator-interface (direct script preserves 0/1/2; Make is human-facing)"
+  else
+    bad "live-operator-interface" \
+        "operator automation must call metadata-live.sh directly and reserve the Make wrapper for generic human-facing success/failure"
+  fi
 
   mkdir -p "$(dirname "$db")"
   if ! sqlite3 "$db" < "$fixture" >/dev/null 2>&1; then

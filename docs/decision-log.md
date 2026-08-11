@@ -135,3 +135,10 @@ authorized GitHub export; the branch was pushed and stacked PR #36 opened
 against `chunk/3-deterministic-diagnostics`, whose exact remote head remains
 CHUNK-4's merge-base. The PR is intentionally unmerged and must stay stacked
 until PR #35 and the lower chain land.
+
+2026-08-11 CHUNK-4: Independent review rejected the operator guide's use of the
+Make wrapper as though it preserved `metadata-live.sh`'s exact 0/1/2 machine
+contract. GNU Make cannot preserve a recipe's 1-versus-2 distinction. The guide
+now directs automation to the script, labels Make as a human-facing generic
+success/failure wrapper, and the metadata suite asserts that distinction. The
+planning artifact must carry the same clarification before integration.

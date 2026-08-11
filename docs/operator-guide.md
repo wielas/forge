@@ -168,13 +168,20 @@ there is never a half-written board left for a later reader to trust. **A number
 you did not get is the point**: reporting a board that could not be read as a
 board with no runs is the failure this replaced.
 
-**Prove metadata after a real run with an explicit cutoff.** This is opt-in and
-does not run under default `make verify`, because a repository gate must not
-depend on a live production board:
+**Prove metadata after a real run with an explicit cutoff.** Live-board access
+is opt-in; default `make verify` executes only the checked-in metadata fixture.
+Automation that needs the sweep's exact status classification must call its
+machine interface directly:
 
 ```bash
-make metadata-live BOARD=<slug> SINCE=2026-08-09T12:34:56Z
+./scripts/metadata-live.sh <slug> --since 2026-08-09T12:34:56Z
 ```
+
+That interface exits 0 for a satisfied contract, 1 for a readable contract
+violation, and 2 when its source or cutoff cannot be read. `make metadata-live
+BOARD=<slug> SINCE=<timestamp>` remains a human-facing convenience wrapper, but
+GNU Make maps any failed recipe to its own generic nonzero status; do not use
+the Make process status when automation must distinguish 1 from 2.
 
 Copy the exact RFC3339 start instant from the run log. A missing value, a bare
 date, or a timestamp without a timezone is refused before the command resolves
