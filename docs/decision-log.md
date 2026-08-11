@@ -33,3 +33,23 @@ resulting PR URL.
 the branch and opened stacked PR #34 against the CHUNK-1 branch; GitHub reports
 the intended seven-file diff as mergeable. Retarget to `main` after PR #33
 merges, then run the normal judge and human merge gate.
+
+2026-08-10 CHUNK-3: CHUNK-3 initially started from CHUNK-1's tip because that
+was its declared dependency. The human then explicitly requested a serial PR
+stack, so its six implementation commits were rebased onto the verified remote
+CHUNK-2 head `c618bc6`; PR #34 is open, non-draft, mergeable/CLEAN, with both
+required checks passing.
+
+2026-08-10 CHUNK-3: The five Given/When/Then cases are executable mutations in
+`scripts/verify.sh`; the repository still has no `tests/features` runner or
+`make check`, so the chunk contract's `make validate` and `make verify` remain
+the definition of done.
+
+2026-08-10 CHUNK-3: The sandboxed full verify run could not create the protected
+home-directory lab or use the UV cache and produced substrate-only failures.
+The required host-access rerun completed with 246 passed, 0 failed, 3 skipped.
+
+2026-08-10 CHUNK-3: The local untracked roadmap is marked done, but—as for
+CHUNK-2—the readiness planning bundle remains outside implementation commits.
+Now that CHUNK-3 is stacked on CHUNK-2, its entries extend the tracked
+append-only decision log without an add/add conflict.
