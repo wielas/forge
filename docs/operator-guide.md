@@ -1,7 +1,30 @@
 # Operator guide — the 20% you'll use 80% of the time
 
 Organised by what you want to do, not by which tool owns it. Everything here was
-verified on 2026-07-27; re-check after a `hermes update`.
+reconciled against the readiness stack on 2026-08-11; re-check after a
+`hermes update`.
+
+## Launch a genuine product run
+
+Once a product has a durable absolute path, a protected remote, a committed
+frozen roadmap, and a new empty board slug, run this sequence from the Forge
+checkout. The next command is deliberately advisory: repeat it and fix the plan
+until it prints `CLEAR`.
+
+```bash
+PROJECT=/absolute/path/to/product
+BOARD=product-slug
+
+make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
+make commission PROJECT="$PROJECT" BOARD="$BOARD"   # paid; must be green
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
+```
+
+After the root PR merges, run the post-`RUN_START` metadata and metrics checks
+described below. Stop on invalid or unjudged metadata. Only a green checkpoint
+authorises full bootstrap; after the graph completes, repeat both checks, run
+`/retro`, and reconcile the live-proof findings. Commissioning is readiness
+evidence, not a substitute for the lifecycle.
 
 ## The daily loop
 
@@ -142,9 +165,15 @@ trust it:
   the worktree is still reclaimed and the branch is reported `RETAINED` for you
   to delete by hand once you have checked nothing is unpushed.
 
-Sweep when the board is idle. Anything it refuses is still yours to remove by
-hand — `git worktree remove --force <path>` then `git branch -D <branch>` — but
-you are then the one deciding that nothing in there was unpushed.
+Sweep when the board is idle.
+
+**Explicit review outside the bound.** Anything the sweep refuses stays in
+place until a human targets that exact worktree and checks its path, branch,
+`git status`, unpushed commits, and remote PR/merge state. Never widen the unattended sweep
+to reach a sibling checkout or make F80 disappear. Only after
+that review may the operator deliberately run `git worktree remove --force
+<path>` and `git branch -D <branch>` for the named checkout; those destructive
+commands are not part of the unattended procedure.
 
 **Reading a live board is never a direct read.** `make metrics` and the suite's
 live-board checks both go through `scripts/board-snapshot.sh`, which copies the
