@@ -45,7 +45,9 @@ command -v python3 >/dev/null 2>&1 \
 # check happens before mkdir so a refusal cannot dirty the product it protects.
 git -C "$PROJECT" check-ignore -q .forge/commission-probe \
   || { echo "commission: $PROJECT/.forge must be ignored before commissioning" >&2; exit 2; }
-mkdir -p "$PROJECT/.forge"
+EVIDENCE_DIR="$PROJECT/.forge"
+mkdir -p "$EVIDENCE_DIR" \
+  || { echo "commission: could not create evidence directory: $EVIDENCE_DIR" >&2; exit 2; }
 
 HERMES_ROOT="${HERMES_HOME:-${HOME:?}/.hermes}"
 KANBAN_ROOT="${HERMES_KANBAN_HOME:-$HERMES_ROOT/kanban}"
@@ -81,10 +83,16 @@ PY
 }
 
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
-REPORT="$PROJECT/.forge/commission-$STAMP.md"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-commission.XXXXXX")" \
   || { echo "commission: could not create scratch directory" >&2; exit 2; }
-trap 'rm -rf "$WORK"' EXIT
+REPORT_TMP="$(mktemp "$EVIDENCE_DIR/commission-$STAMP.XXXXXX.tmp")" \
+  || { echo "commission: could not create evidence report" >&2; rm -rf "$WORK"; exit 2; }
+REPORT="${REPORT_TMP%.tmp}.md"
+cleanup() {
+  rm -rf "$WORK"
+  [ ! -e "$REPORT_TMP" ] || rm -f "$REPORT_TMP"
+}
+trap cleanup EXIT
 
 BOARD_BEFORE="$(board_fingerprint)" \
   || { echo "commission: could not fingerprint $BOARD_DB" >&2; exit 2; }
@@ -92,7 +100,7 @@ FAILED=0
 REMOTE_SLUG=""
 DEFAULT_BRANCH=""
 
-cat > "$REPORT" <<EOF
+cat > "$REPORT_TMP" <<EOF
 # Forge commissioning report
 
 timestamp: $STAMP
@@ -101,19 +109,29 @@ board: $BOARD
 board-db: $BOARD_DB
 
 EOF
+[ "$?" = 0 ] \
+  || { echo "commission: could not initialize evidence report" >&2; exit 2; }
+
+report_printf() {
+  printf "$@" >> "$REPORT_TMP" \
+    || { echo "commission: could not write evidence report" >&2; exit 2; }
+}
+
+report_cat() {
+  cat "$1" >> "$REPORT_TMP" \
+    || { echo "commission: could not write evidence report" >&2; exit 2; }
+}
 
 record() { # $1=section, remaining args=command or shell function
   local name="$1" log="$WORK/$1.log" rc
   shift
   "$@" >"$log" 2>&1
   rc=$?
-  {
-    printf '## %s\n\n' "$name"
-    printf 'exit: %s\n\n' "$rc"
-    printf '%s\n' '```text'
-    cat "$log"
-    printf '\n%s\n\n' '```'
-  } >> "$REPORT"
+  report_printf '## %s\n\n' "$name"
+  report_printf 'exit: %s\n\n' "$rc"
+  report_printf '%s\n' '```text'
+  report_cat "$log"
+  report_printf '\n%s\n\n' '```'
   [ "$rc" = 0 ] || FAILED=1
 }
 
@@ -135,14 +153,41 @@ clean_tree() {
   printf 'clean: %s\n' "$PROJECT"
 }
 
+github_slug_from_remote() { # $1=origin URL; print owner/repo or refuse
+  local remote="$1" path owner repo
+  case "$remote" in
+    https://github.com/*) path="${remote#https://github.com/}" ;;
+    git@github.com:*) path="${remote#git@github.com:}" ;;
+    ssh://git@github.com/*) path="${remote#ssh://git@github.com/}" ;;
+    *) printf 'unsupported origin URL: %s\n' "$remote" >&2; return 1 ;;
+  esac
+  path="${path%.git}"
+  case "$path" in
+    */*) owner="${path%%/*}"; repo="${path#*/}" ;;
+    *) printf 'origin does not name owner/repository: %s\n' "$remote" >&2; return 1 ;;
+  esac
+  case "$owner" in
+    ''|[._-]*|*[!A-Za-z0-9._-]*) printf 'unsafe GitHub owner in origin: %s\n' "$owner" >&2; return 1 ;;
+  esac
+  case "$repo" in
+    ''|[._-]*|*[!A-Za-z0-9._-]*|*/*) printf 'unsafe GitHub repository in origin: %s\n' "$repo" >&2; return 1 ;;
+  esac
+  printf '%s/%s\n' "$owner" "$repo"
+}
+
 resolve_remote() {
-  local json remote
+  local json remote expected_slug viewed_slug
   remote="$(git -C "$PROJECT" remote get-url origin)" || return $?
-  json="$(cd "$PROJECT" && gh repo view --json nameWithOwner,defaultBranchRef)" \
+  expected_slug="$(github_slug_from_remote "$remote")" || return $?
+  json="$(gh repo view "$expected_slug" --json nameWithOwner,defaultBranchRef)" \
     || return $?
-  REMOTE_SLUG="$(printf '%s' "$json" | jq -r '.nameWithOwner // empty')"
+  viewed_slug="$(printf '%s' "$json" | jq -r '.nameWithOwner // empty')"
   DEFAULT_BRANCH="$(printf '%s' "$json" | jq -r '.defaultBranchRef.name // empty')"
-  [ -n "$REMOTE_SLUG" ] && [ -n "$DEFAULT_BRANCH" ] || return 1
+  [ "$viewed_slug" = "$expected_slug" ] \
+    || { printf 'origin repository mismatch: expected %s, GitHub returned %s\n' \
+           "$expected_slug" "${viewed_slug:-<empty>}"; return 1; }
+  [ -n "$DEFAULT_BRANCH" ] || return 1
+  REMOTE_SLUG="$expected_slug"
   printf 'origin: %s\nrepository: %s\ndefault-branch: %s\n' \
     "$remote" "$REMOTE_SLUG" "$DEFAULT_BRANCH"
 }
@@ -176,14 +221,15 @@ record paid-codex-probe forge_make verify WITH_CODEX=1
 record clean-tree-after clean_tree
 record board-unchanged board_unchanged
 
-{
-  printf '## result\n\n'
-  if [ "$FAILED" = 0 ]; then
-    printf 'overall: PASS\n'
-  else
-    printf 'overall: FAIL\n'
-  fi
-} >> "$REPORT"
+report_printf '## result\n\n'
+if [ "$FAILED" = 0 ]; then
+  report_printf 'overall: PASS\n'
+else
+  report_printf 'overall: FAIL\n'
+fi
+
+mv "$REPORT_TMP" "$REPORT" \
+  || { echo "commission: could not publish evidence report" >&2; exit 2; }
 
 printf 'commission report: %s\n' "$REPORT"
 if [ "$FAILED" != 0 ]; then
