@@ -223,3 +223,10 @@ pr=yes checks=check`; paid verification was 289/0/3 with live run
 `verify-codex-1786440235-35663`; clean tree and absent-board fingerprints were
 unchanged; and the atomic report ended PASS with SHA-256
 `813af7f013c301869079d49b408e53788049dd0bfec1e4a57c652066fb72bc80`.
+
+2026-08-11 CHUNK-10 planning amendment: Independent review found that the
+reconciliation branch already changes `scripts/verify.sh` to enforce its four
+documentation scenarios, but the frozen contract authorized only the four
+documents. Before CHUNK-10 implementation is integrated, its Touches surface is
+widened on the approved base to include that executable verifier. Scenarios,
+real-source declarations, acceptance path, and feature bytes do not change.
