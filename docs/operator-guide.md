@@ -169,8 +169,8 @@ Sweep when the board is idle.
 
 **Explicit review outside the bound.** Anything the sweep refuses stays in
 place until a human targets that exact worktree and checks its path, branch,
-`git status`, unpushed commits, and remote PR/merge state. Never widen the unattended sweep
-to reach a sibling checkout or make F80 disappear. Only after
+`git status`, unpushed commits, and remote PR/merge state. **Never widen the unattended sweep.**
+It must not reach a sibling checkout merely to make F80 disappear. Only after
 that review may the operator deliberately run `git worktree remove --force
 <path>` and `git branch -D <branch>` for the named checkout; those destructive
 commands are not part of the unattended procedure.
