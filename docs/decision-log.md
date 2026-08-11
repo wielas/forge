@@ -53,6 +53,50 @@ The required host-access rerun completed with 246 passed, 0 failed, 3 skipped.
 CHUNK-2—the readiness planning bundle remains outside implementation commits.
 Now that CHUNK-3 is stacked on CHUNK-2, its entries extend the tracked
 append-only decision log without an add/add conflict.
+2026-08-10 CHUNK-4: CHUNK-4 initially started from CHUNK-1's tip, its declared
+dependency. During the run, the tracked CHUNK-3 handoff recorded the human's
+explicit serial-stack decision, so the four unpublished CHUNK-4 commits were
+rebased without conflict onto the verified CHUNK-3 head `0fb1a9a`.
+
+2026-08-10 CHUNK-4: The five Given/When/Then cases and the snapshot dependency
+proof are executable mutations in `scripts/verify.sh`. This repository still
+has no `tests/features` runner or `make check`; the chunk's explicit
+`make validate` and `make verify` done condition remains authoritative.
+
+2026-08-10 CHUNK-4: `scripts/metadata-live.sh` owns the exact 0/1/2 contract.
+The Make wrapper is the documented operator vocabulary, but make itself maps a
+failed recipe to a generic nonzero status; diagnostics and the four printed
+counts retain the contract-vs-unjudged distinction for Make callers.
+
+2026-08-10 CHUNK-4: The required host-access proof on the final rebased stack
+completed with `make validate` green and `make verify` at 252 passed, 0 failed,
+7 skipped. The skips are the paid Codex probe, two non-spawnable assignees, and
+four linked-worktree profile-path checks against the main checkout.
+
+2026-08-10 CHUNK-4: The local untracked roadmap is marked done. As for CHUNK-2
+and CHUNK-3, the readiness planning bundle remains outside implementation
+commits; the tracked append-only decision log carries the durable reconciliation.
+
+HANDOFF: CHUNK-4 is green and locally complete on
+`chunk/4-scoped-live-metadata-sweep`, stacked on PR #35's exact remote head.
+No branch or payload has been exported. After the human explicitly authorizes
+GitHub export, push the branch, open a PR against
+`chunk/3-deterministic-diagnostics` with `.forge/chunk-4-pr-body.md`, then write
+and validate `.forge/chunk-4-metadata.json` with the resulting PR URL. Do not
+merge; retarget only after the lower stack lands.
+
+2026-08-10 CHUNK-4: The preceding HANDOFF is resolved. The human explicitly
+authorized GitHub export; the branch was pushed and stacked PR #36 opened
+against `chunk/3-deterministic-diagnostics`, whose exact remote head remains
+CHUNK-4's merge-base. The PR is intentionally unmerged and must stay stacked
+until PR #35 and the lower chain land.
+
+2026-08-11 CHUNK-4: Independent review rejected the operator guide's use of the
+Make wrapper as though it preserved `metadata-live.sh`'s exact 0/1/2 machine
+contract. GNU Make cannot preserve a recipe's 1-versus-2 distinction. The guide
+now directs automation to the script, labels Make as a human-facing generic
+success/failure wrapper, and the metadata suite asserts that distinction. The
+planning artifact must carry the same clarification before integration.
 
 2026-08-11 CHUNK-6: Independent review found that the first acceptance freeze
 required only one global `@real-source` tag and inferred sources from a finite

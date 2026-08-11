@@ -1156,6 +1156,13 @@ metadata/rejects-missing-metadata        a completed producer run cannot carry n
 metadata/validator-runtime-is-locked     the shebang the lane runs pins transitive validation code, not just jsonschema
 metadata/unreadable-path-is-not-invalid-metadata  an unreadable path exits 2; only a real envelope earns exit 1
 metadata/blocked-reason-contract         literal producers and the metrics consumer use the registry vocabulary
+metadata/live-requires-rfc3339-since     an absent or malformed cutoff refuses before any board read
+metadata/live-operator-interface          automation is directed to the script that preserves exit 0/1/2
+metadata/live-valid-counts               valid envelopes are counted by profile and schema
+metadata/live-classifies-every-bad-row   nested, null, cross-profile and unreadable rows are named
+metadata/live-rejects-bad-block-reason   a model-authored reason outside the registry names task, run and reason
+metadata/live-ignores-pre-cutoff         historical rows are counted as ignored, never judged
+metadata/live-uses-snapshot              the opt-in reader depends on board-snapshot.sh at runtime
 prejudge/help-exits-zero          scripts/prejudge.sh --help works with no PR
 prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces a checked-in expectation
 prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x)==render(x) are both reported
@@ -2662,7 +2669,148 @@ run_metadata_group() {
         "${silent:+no class matched in:$silent — the sweep went blind, not green; }${legacy:+the retired reason-class form is back in: $legacy; }a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"
   fi
 }
+
+run_metadata_live_cases() {
+  CURRENT_GROUP=metadata
+  local fixture=scripts/fixtures/metadata/live-board.sql
+  local live_root="$TMPROOT/metadata-live-home" board=metadata-live
+  local db="$live_root/boards/$board/kanban.db"
+  local cutoff=2026-08-09T00:00:00Z out rc
+
+  if grep -Fq './scripts/metadata-live.sh <slug> --since' docs/operator-guide.md \
+     && grep -Fq 'exits 0 for a satisfied contract, 1 for a readable contract' \
+          docs/operator-guide.md \
+     && grep -Fq 'do not use' docs/operator-guide.md; then
+    ok "live-operator-interface (direct script preserves 0/1/2; Make is human-facing)"
+  else
+    bad "live-operator-interface" \
+        "operator automation must call metadata-live.sh directly and reserve the Make wrapper for generic human-facing success/failure"
+  fi
+
+  mkdir -p "$(dirname "$db")"
+  if ! sqlite3 "$db" < "$fixture" >/dev/null 2>&1; then
+    bad "live-fixture" "could not create the WAL-mode metadata board"
+    return
+  fi
+
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      make metadata-live BOARD=missing SINCE= 2>&1)"; rc=$?
+  if [ "$rc" = 2 ] \
+     && printf '%s' "$out" | grep -Fq 'SINCE must be RFC3339' \
+     && ! printf '%s' "$out" | grep -Fq 'no board database'; then
+    out="$(HERMES_KANBAN_HOME="$live_root" \
+        make metadata-live BOARD=missing SINCE=2026-08-09 2>&1)"; rc=$?
+    if [ "$rc" = 2 ] \
+       && printf '%s' "$out" | grep -Fq 'SINCE must be RFC3339' \
+       && ! printf '%s' "$out" | grep -Fq 'no board database'; then
+      ok "live-requires-rfc3339-since (absent and malformed values refused before board resolution)"
+    else
+      bad "live-requires-rfc3339-since" \
+          "malformed SINCE must exit 2 before looking for BOARD=missing; got exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+    fi
+  else
+    bad "live-requires-rfc3339-since" \
+        "missing SINCE must exit 2 before looking for BOARD=missing; got exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  local good_out="$out" good_rc="$rc"
+  sqlite3 "$db" "UPDATE task_runs SET profile='default' WHERE id=2;"
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  sqlite3 "$db" "UPDATE task_runs SET profile='forge-prejudge' WHERE id=2;"
+  if [ "$good_rc" = 0 ] \
+     && printf '%s' "$good_out" | grep -Fq 'valid=3 invalid=0 unjudged=0 ignored=2' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=1' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-prejudge schema=forge.judge.v1 valid=1' \
+     && [ "$rc" = 1 ] \
+     && printf '%s' "$out" | grep -Fq 'missing producer=forge-prejudge'; then
+    ok "live-valid-counts (profile/schema counts exact; a missing contracted producer exits 1)"
+  else
+    bad "live-valid-counts" \
+        "canonical counts or missing-producer enforcement drifted; got exits $good_rc/$rc: $(printf '%s' "$out" | tail -6 | tr '\n' ' ')"
+  fi
+
+  # Mutate only post-cutoff rows. The historical nested envelope and bad reason
+  # remain ignored, which proves the scope independently of the good fixture.
+  sqlite3 "$db" <<'SQL'
+UPDATE task_runs
+   SET task_id='t_bad_nested', metadata='{"forge.chunk.v1":{"chunk_id":"CHUNK-4"}}'
+ WHERE id=1;
+INSERT INTO task_runs VALUES
+  (5,'t_bad_null','forge-codex-lane','done',1786234000,1786234010,'completed',NULL),
+  (6,'t_bad_cross','forge-codex-lane','done',1786234020,1786234030,'completed','{"schema":"forge.judge.v1"}');
+UPDATE task_events
+   SET task_id='t_bad_reason', payload='{"reason":"free-form model excuse","kind":"needs_input"}'
+ WHERE id=1;
+SQL
+
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  local named=1 id
+  for id in t_bad_nested t_bad_null t_bad_cross; do
+    printf '%s' "$out" | grep -Fq "task=$id" || named=0
+  done
+  local invalid_out="$out" invalid_rc="$rc"
+
+  if [ "$invalid_rc" = 1 ] \
+     && printf '%s' "$invalid_out" | grep -Fq 'valid=1 invalid=4 unjudged=0 ignored=2' \
+     && printf '%s' "$invalid_out" | grep -Fq 'invalid task=t_bad_reason run=1' \
+     && printf '%s' "$invalid_out" | grep -Fq 'reason="free-form model excuse"'; then
+    ok "live-rejects-bad-block-reason (task, run and reason printed)"
+  else
+    bad "live-rejects-bad-block-reason" \
+        "the invalid model-authored reason must be an exit-1 contract violation with task and run"
+  fi
+
+  sqlite3 "$db" \
+    "INSERT INTO task_runs VALUES (7,'t_unreadable','forge-codex-lane','done',1786234040,1786234050,'completed','{not json');"
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  if [ "$invalid_rc" = 1 ] && [ "$named" = 1 ] \
+     && [ "$rc" = 2 ] \
+     && printf '%s' "$out" | grep -Fq 'unjudged task=t_unreadable run=7' \
+     && printf '%s' "$out" | grep -Fq 'valid=1 invalid=4 unjudged=1 ignored=2'; then
+    ok "live-classifies-every-bad-row (invalid exits 1; unjudged is named and dominates as exit 2)"
+  else
+    bad "live-classifies-every-bad-row" \
+        "bad rows must be named with distinct exit-1/exit-2 outcomes; got exits $invalid_rc/$rc: $(printf '%s' "$out" | tail -9 | tr '\n' ' ')"
+  fi
+
+  if printf '%s' "$out" | grep -Fq 'ignored=2' \
+     && ! printf '%s' "$out" | grep -Fq 'invalid task=t_old_nested'; then
+    ok "live-ignores-pre-cutoff (one producer row plus one block event)"
+  else
+    bad "live-ignores-pre-cutoff" \
+        "pre-cutoff rows must contribute only to ignored"
+  fi
+
+  local isolated="$TMPROOT/metadata-live-isolated"
+  mkdir -p "$isolated/scripts" "$isolated/rubrics" \
+           "$isolated/kanban/boards/$board"
+  cp scripts/metadata-live.sh scripts/board-snapshot.sh \
+     scripts/validate-metadata.py scripts/validate-metadata.py.lock \
+     "$isolated/scripts/" 2>/dev/null || true
+  cp rubrics/*.json "$isolated/rubrics/" 2>/dev/null || true
+  sqlite3 "$isolated/kanban/boards/$board/kanban.db" \
+    < "$fixture" >/dev/null 2>&1
+  HERMES_KANBAN_HOME="$isolated/kanban" \
+    "$isolated/scripts/metadata-live.sh" "$board" --since "$cutoff" \
+    >/dev/null 2>&1; local control_rc=$?
+  chmod -x "$isolated/scripts/board-snapshot.sh" 2>/dev/null || true
+  HERMES_KANBAN_HOME="$isolated/kanban" \
+    "$isolated/scripts/metadata-live.sh" "$board" --since "$cutoff" \
+    >/dev/null 2>&1; local dependency_rc=$?
+  if [ "$control_rc" = 0 ] && [ "$dependency_rc" = 2 ]; then
+    ok "live-uses-snapshot (control exit 0; unavailable primitive exit 2)"
+  else
+    bad "live-uses-snapshot" \
+        "metadata-live must work with the primitive and fail closed without it; exits $control_rc/$dependency_rc"
+  fi
+}
 wants metadata  && run_metadata_group
+wants metadata  && run_metadata_live_cases
 
 # ---------------------------------------------------------------------------
 # prejudge/ — tier 1's deterministic FIRST STAGE (F35, ADR-0009). Modelled on

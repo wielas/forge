@@ -14,6 +14,43 @@ contract with a locked JSON Schema runtime. `make verify SUITES=metadata` runs a
 recorded PR through the real gate producer and validates its output alongside
 chunk/judge fixtures, without reading a live board.
 
+## Scoped live proof
+
+The fixture gate proves the contract; the opt-in live sweep proves that the
+model-controlled producers obeyed it on an actual run:
+
+```bash
+make metadata-live BOARD=<slug> SINCE=2026-08-09T12:34:56Z
+```
+
+`SINCE` is mandatory RFC3339 with a timezone. Use the recorded run-start
+instant, not a calendar date. The cutoff is validated before the board path is
+resolved, so historical envelopes cannot be judged accidentally. Rows before
+the cutoff are counted as `ignored` and are never normalized or validated.
+
+The command routes through `scripts/board-snapshot.sh`; the live WAL database
+is copied but never opened. From the snapshot it checks:
+
+- every post-cutoff `outcome=completed` run from a profile registered in
+  `run-metadata-contract.json`;
+- presence of every registered producer profile after the cutoff; and
+- every post-cutoff `blocked` event carrying a run id, which is the board's
+  durable marker that the reason came from a worker rather than a manual block.
+
+Every bad item is printed with its task and run. `valid` includes conforming
+envelopes and block reasons; the additional `profile=… schema=… valid=…` lines
+break envelope successes down by producer contract. `invalid` is a readable
+contract violation. `unjudged` is an item whose JSON cannot be read, and it is
+never counted as valid. `ignored` is relevant producer output before `SINCE`.
+
+`scripts/metadata-live.sh` exits 0 only when every expected producer is present
+and all scoped items are valid, 1 for contract violations or a missing producer,
+and 2 when any item is unjudged or the source/scope cannot be read. When both
+invalid and unjudged items exist, exit 2 dominates because the sweep could not
+form a verdict over its whole source. `make` reports any failed recipe with its
+own generic nonzero status; the printed classification and summary retain the
+distinction.
+
 ## Chunk completion — `forge.chunk.v1`
 
 Defined by [`chunk-handoff.schema.json`](chunk-handoff.schema.json). The
@@ -107,9 +144,9 @@ of these documented class prefixes: `stale-spec`, `failing-prereq`, `env`,
 `scripts/metrics.sh` derives the class from the `task_events.reason` prefix and
 uses the registry regex to decide whether it is documented. The registry owns
 the regex; `metadata/blocked-reason-contract` checks every literal program/SOUL
-producer and the metrics consumer against it. A live sweep is still required
-to prove model-authored terminators obey the prompt rather than merely reading
-it.
+producer and the metrics consumer against it. The scoped live sweep checks the
+durable model-authored events, proving terminators obey the prompt rather than
+merely reading it.
 
 ## Rules
 - Additive top-level keys are allowed and ignored by consumers. Changing a
