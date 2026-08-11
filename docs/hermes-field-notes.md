@@ -168,9 +168,46 @@ perfectly healthy gateway for a whole afternoon.
 
 ## How things really connect
 
+**Live schema inspection checks every board, by name.** There is no meaningful
+"first" board: the persisted default can change, and filesystem enumeration is
+not a selection policy. `make verify` enumerates every immediate
+`boards/<slug>/kanban.db` in bytewise path order, snapshots each through
+`scripts/board-snapshot.sh`, and reports a separate named result for each slug.
+An unreadable board is a failure for that named board, never a reason to fall
+through to another one. The sweep remains an operator-host diagnostic; CI does
+not gain live-board access.
+
 **Profiles** are separate `HERMES_HOME` directories created with `hermes profile
 create <name> --description "<role>"`; the description feeds orchestrator routing.
 There is no `profiles:` block in `config.yaml`.
+
+**Worker usage joins exactly across two SQLite databases.** Hermes 0.19 stamps
+the dispatched worker's session id at top-level
+`task_runs.metadata.worker_session_id`; `task_runs.profile` names the only state
+database allowed to satisfy it:
+`$HERMES_HOME/profiles/<profile>/state.db`. Measured on historical
+`forge-codex-lane` runs, the id equals `sessions.id`; no title, timestamp or
+model-name inference is needed. Inspect the contract only through snapshots:
+
+```
+board=$(scripts/board-snapshot.sh ~/.hermes/kanban/boards/<slug>/kanban.db /tmp/board-snap)
+state=$(scripts/board-snapshot.sh ~/.hermes/profiles/<profile>/state.db /tmp/state-snap)
+sqlite3 "$board" "select profile,json_extract(metadata,'$.worker_session_id') from task_runs"
+sqlite3 "$state" ".schema sessions"
+sqlite3 "$state" ".schema session_model_usage"
+```
+
+`sessions` carries the per-session totals: model, `billing_provider`, API calls,
+input/output/cache-read/cache-write/reasoning tokens, estimated and actual cost,
+status and source. `session_model_usage` carries one or more rows for the same
+session and is the per-model breakdown; keep every matching row. On the live
+profile databases measured 2026-08-10, all 44 lane sessions said
+`cost_status=estimated`, all 44 had an estimate, and all 44 had null actual
+cost. The per-model schema instead declares `actual_cost_usd REAL NOT NULL
+DEFAULT 0`; 55/55 rows held that zero, including the 44 explicitly estimated
+rows. That zero is storage, not evidence. Unless the row's status says actual,
+render actual cost as missing. If the id or profile database is unavailable,
+the run is unjudged and base board metrics remain readable.
 
 **Worker lifecycle.** A dispatched worker must end in exactly one of
 `kanban_complete` or `kanban_block`. Exiting without either is reaped as

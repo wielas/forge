@@ -88,9 +88,9 @@ INSERT INTO task_links (parent_id, child_id) VALUES
 -- which must still leave it inside the denominator.
 INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, metadata) VALUES
   ('t_c1','forge-codex-lane','done',1785200010,1785200100,'completed',
-   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1"}'),
-  ('t_c2','forge-codex-lane','done',1785200110,1785200200,'completed',
-   '{"forge.chunk.v1":{"chunk_id":"CHUNK-2","pr":"https://example/pull/2"},"tests_run":9}'),
+   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1","worker_session_id":"session-exact"}'),
+  ('t_c2','forge-missing-driver','done',1785200110,1785200200,'completed',
+   '{"forge.chunk.v1":{"chunk_id":"CHUNK-2","pr":"https://example/pull/2"},"tests_run":9,"worker_session_id":"session-unavailable"}'),
   ('t_c3','forge-codex-lane','done',1785200210,1785200300,'completed',
    '{"changed_files":["a.py"],"tests_run":4}');
 

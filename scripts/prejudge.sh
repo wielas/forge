@@ -29,6 +29,7 @@
 #   scenario-count  block   F13 — ONLY when the PR has FEWER than the contract
 #   acceptance-freeze block F14 — implementation cannot rewrite its planning receipt
 #   touches         warn    F55 — 3 of 5 drifting paths are undeclarable process docs
+#   touches-widened warn    F57 — the head cannot silently expand its own contract
 #   size-budget     warn    F53 — fires on 11 of 11; a planning defect, seen late
 #   real-source     warn    F53 — fires on 8 of 11, same argument
 #
@@ -93,7 +94,9 @@ emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >> "$RESULTS"; }
 # blocks now, so `--fixture <dir>` replays a RECORDED PR: `pr.json` as `gh pr
 # view --json` returned it, `numstat.tsv` as `git diff --numstat base..head`
 # printed it, and `tree/` holding the files the checks read. No gh, no git, no
-# network. `make verify`'s prejudge/ group runs the whole gate that way.
+# network. `tree/` is the recorded head tree and `base-tree/` carries the base
+# contract used for comparisons that a head-only recording cannot make. `make
+# verify`'s prejudge/ group runs the whole gate that way.
 # ---------------------------------------------------------------------------
 if [ -n "$FIXTURE" ]; then
   [ -f "$FIXTURE/pr.json" ] || { echo "no $FIXTURE/pr.json" >&2; exit 2; }
@@ -183,6 +186,21 @@ case "$HEAD_REF" in
 esac
 CONTRACT=""
 [ -n "$CHUNK" ] && [ -f "$TREE/docs/chunks/$CHUNK.md" ] && CONTRACT="$TREE/docs/chunks/$CHUNK.md"
+BASE_CONTRACT=""
+if [ -n "$CHUNK" ]; then
+  if [ -n "$FIXTURE" ]; then
+    [ -f "$FIXTURE/base-tree/docs/chunks/$CHUNK.md" ] \
+      && BASE_CONTRACT="$FIXTURE/base-tree/docs/chunks/$CHUNK.md"
+  else
+    base_contract_file="$TMP/base-tree/docs/chunks/$CHUNK.md"
+    mkdir -p "$(dirname "$base_contract_file")"
+    if G show "$BASE_OID:docs/chunks/$CHUNK.md" > "$base_contract_file" 2>/dev/null; then
+      BASE_CONTRACT="$base_contract_file"
+    else
+      rm -f "$base_contract_file"
+    fi
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 1. CI state (F5) — and its FOURTH state.
@@ -315,11 +333,14 @@ TOUCHES_EXEMPT_FILE="$(dirname "${BASH_SOURCE[0]:-$0}")/touches-exempt.sh"
   echo "prejudge: missing $TOUCHES_EXEMPT_FILE — the Touches exemption has one definition and this is it" >&2
   exit 2; }
 . "$TOUCHES_EXEMPT_FILE"
+contract_touches() {
+  grep -m1 -- '- \*\*Touches:\*\*' "$1" \
+    | grep -oE '`[^`]+`' | tr -d '`' | sort -u
+}
 touches() {
   [ -n "$CONTRACT" ] || { emit touches skip "no contract for ${CHUNK:-this branch} in the PR tree"; return; }
   local listed drift changed
-  listed="$(grep -m1 -- '- \*\*Touches:\*\*' "$CONTRACT" \
-            | grep -oE '`[^`]+`' | tr -d '`' | sort -u)"
+  listed="$(contract_touches "$CONTRACT")"
   [ -n "$listed" ] || { emit touches skip "contract $CHUNK.md has no parseable Touches list"; return; }
   changed="$(changed_paths | grep -vE "$TOUCHES_EXEMPT")"
   drift="$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "$listed"))"
@@ -329,6 +350,41 @@ touches() {
   else
     emit touches warn "$n path(s) outside Touches: $(printf '%s' "$drift" | tr '\n' ' ' | sed 's/ $//')" \
       "for each path, either add it to Touches in $CHUNK.md in this PR with one line saying why, or revert it — advisory, so it does not gate the merge"
+  fi
+}
+
+# A head-only contract can certify its own expansion: add a path to `Touches`,
+# implement that path, and the ordinary set difference truthfully reports that
+# the implementation is inside the (new) declaration. Keep that head reading —
+# it is the contract the implementer used — and report the contract change as a
+# separate advisory signal by comparing base and head declarations.
+touches_widened() {
+  [ -n "$CONTRACT" ] \
+    || { emit touches-widened skip "no head contract for ${CHUNK:-this branch}; no Touches comparison is possible"; return; }
+  [ -n "$BASE_CONTRACT" ] \
+    || { emit touches-widened skip "no base contract for $CHUNK at $BASE_OID; no Touches comparison is possible"; return; }
+
+  local head_listed base_listed widened n
+  head_listed="$(contract_touches "$CONTRACT")"
+  base_listed="$(contract_touches "$BASE_CONTRACT")"
+  [ -n "$head_listed" ] \
+    || { emit touches-widened skip "head contract $CHUNK.md has no parseable Touches list"; return; }
+  [ -n "$base_listed" ] \
+    || { emit touches-widened skip "base contract $CHUNK.md has no parseable Touches list"; return; }
+
+  # The same exemption policy as `touches`: process documents mandated by the
+  # methodology are not implementation surface, whether they appear in a diff
+  # or are newly declared in a contract. Filtering both lists also makes a path
+  # removal naturally non-widening: only head-minus-base can warn.
+  head_listed="$(printf '%s\n' "$head_listed" | grep -vE "$TOUCHES_EXEMPT")"
+  base_listed="$(printf '%s\n' "$base_listed" | grep -vE "$TOUCHES_EXEMPT")"
+  widened="$(comm -23 <(printf '%s\n' "$head_listed") <(printf '%s\n' "$base_listed"))"
+  n="$(printf '%s' "$widened" | grep -c . || true)"
+  if [ "$n" = 0 ]; then
+    emit touches-widened pass "head Touches adds no declarable path absent from the base contract"
+  else
+    emit touches-widened warn "$n path(s) added to Touches on this branch: $(printf '%s' "$widened" | tr '\n' ' ' | sed 's/ $//')" \
+      "review each head-only path as a contract amendment; either revert it or record why the implementation branch had to widen its advisory scope"
   fi
 }
 
@@ -549,7 +605,7 @@ frozen_acceptance() {
   esac
 }
 
-ci_state; branch_name; touches; size_budget
+ci_state; branch_name; touches; touches_widened; size_budget
 then_asserts; scenario_count; real_source; frozen_acceptance
 
 # ---------------------------------------------------------------------------

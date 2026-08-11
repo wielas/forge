@@ -19,6 +19,14 @@
 # =============================================================================
 set -uo pipefail   # deliberately NOT -e: a failing probe is data, not a crash
 
+helptext() {
+  awk '
+    /^# forge preflight / { printing = 1 }
+    printing && /^# =+$/ { exit }
+    printing { sub(/^# ?/, ""); print }
+  ' "$0"
+}
+
 # Probes are OPT-IN. Inspection (config reads, --help, --version) is free,
 # instant and safe; model probes cost tokens and can hang. Mixing them made the
 # default run both slow and billable. --skip-llm is kept as a no-op alias for
@@ -30,7 +38,7 @@ while [ $# -gt 0 ]; do
     --forge-dir) FORGE_DIR_OPT="${2:?--forge-dir needs a path}"; shift 2;;
     --probe) PROBE=1; shift;;
     --skip-llm) PROBE=0; shift;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0;;
+    -h|--help) helptext; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done

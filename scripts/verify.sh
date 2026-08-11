@@ -29,9 +29,9 @@
 #               driving `codex exec` by hand against a live chunk (rung 2).
 #   bootstrap/  staged board creation against a stateful Hermes stub: validate
 #               the graph first, create one root, then extend idempotently.
-#   metrics/    the flywheel's three numbers, computed from a checked-in SQL
-#               fixture and diffed against a checked-in expectation. A schema
-#               drift must fail a check rather than a quarter                (F27)
+#   metrics/    the flywheel's review and observability signals, computed from
+#               checked-in board/profile fixtures and diffed against one exact
+#               expectation. Schema drift must fail a check, not a quarter (F27)
 #   metadata/   completed-run envelopes against their versioned JSON Schemas,
 #               from fixtures only; no live board is opened              (F1, F2, F44)
 #   sweep/      durability of what `make new` stamps, and reclamation of the
@@ -43,6 +43,8 @@
 #   roadmap/    the sizing rules at PLAN time: one checked-in passing roadmap,
 #               one mutation per rule family, and the audited run's own CHUNK-5
 #               driven through the real check              (F11, F53, ADR-0012)
+#   gate/       repository merge protection and required-check diagnostics,
+#               driven through recorded API response shapes                    (F79)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -56,12 +58,20 @@ REPO_ROOT="$(pwd)"
 MAIN_ROOT="$(cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)/.." 2>/dev/null && pwd)"
 MAIN_ROOT="${MAIN_ROOT:-$REPO_ROOT}"
 
+helptext() {
+  awk '
+    /^# forge verify / { printing = 1 }
+    printing && /^# =+$/ { exit }
+    printing { sub(/^# ?/, ""); print }
+  ' "$0"
+}
+
 WITH_CODEX=0; LIST_ONLY=0; SUITES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-codex) WITH_CODEX=1; shift;;
     --list) LIST_ONLY=1; shift;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0;;
+    -h|--help) helptext; exit 0;;
     cli|config|substrate|template|lane|bootstrap|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
@@ -198,6 +208,48 @@ codex_live_pin_diagnostic() { # $1=config.toml; checked-in pins already loaded
 
 run_cli_group() {
   group cli
+  # Help is a contract header, not a line interval. Grow each header before
+  # asking for help so this case fails against a range that merely happens to
+  # fit today's prose.
+  local verify_help_fixture="$TMPROOT/verify-help.sh" verify_help
+  awk '
+    /^# Exit 0 iff/ { print "#   appended/  a newly appended suite remains visible in --help" }
+    { print }
+  ' scripts/verify.sh > "$verify_help_fixture"
+  chmod +x "$verify_help_fixture"
+  verify_help="$("$verify_help_fixture" --help 2>/dev/null)"
+  local help_groups_complete=1 help_suite
+  while IFS= read -r help_suite; do
+    [ -n "$help_suite" ] || continue
+    printf '%s' "$verify_help" | grep -Fq "  $help_suite/" || help_groups_complete=0
+  done < <(sed -n 's/^[[:space:]]*\([^)]*\)) SUITES=.*/\1/p' scripts/verify.sh | tr '|' '\n')
+  if printf '%s' "$verify_help" | grep -Fq 'appended/' \
+     && [ "$help_groups_complete" = 1 ] \
+     && ! grep -Eq -- "-h\\|--help\\).*sed -n '[0-9]+,[0-9]+p'" scripts/verify.sh; then
+    ok "verify-help-grows-with-the-group-header"
+  else
+    bad "verify-help-grows-with-the-group-header" \
+        "verify.sh --help lost an accepted/appended group or is pinned to a numeric sed range"
+  fi
+
+  local preflight_help_fixture="$TMPROOT/preflight-help.sh" preflight_help
+  awk '
+    /^# Usage \(on the Mac mini\):/ {
+      for (i = 1; i <= 10; i++) print "# Help growth probe " i "."
+    }
+    { print }
+  ' scripts/preflight.sh > "$preflight_help_fixture"
+  chmod +x "$preflight_help_fixture"
+  preflight_help="$("$preflight_help_fixture" --help 2>/dev/null)"
+  if printf '%s' "$preflight_help" | grep -Fq 'Usage (on the Mac mini):' \
+     && printf '%s' "$preflight_help" | grep -Fq 'Exit code:' \
+     && ! grep -Eq -- "-h\\|--help\\).*sed -n '[0-9]+,[0-9]+p'" scripts/preflight.sh; then
+    ok "preflight-help-grows-with-the-header"
+  else
+    bad "preflight-help-grows-with-the-header" \
+        "preflight.sh --help lost its Usage or Exit section after header growth, or is line-pinned"
+  fi
+
   # No early return when hermes is missing: each command is judged (or skipped)
   # on its own, so CI still checks every tool it does have.
   local claims="$TMPROOT/claims.tsv"; : > "$claims"
@@ -996,6 +1048,8 @@ run_template_group() {
 if [ "$LIST_ONLY" = 1 ]; then
   cat <<'EOF'
 cli/flags-exist                   every long flag named beside a tracked command exists in its --help
+cli/verify-help-grows-with-the-group-header  appended groups remain visible without numeric line pins
+cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 300
 cli/skill-section-references-resolve every named numeric skill section exists
@@ -1071,11 +1125,18 @@ bootstrap/full-extends-root-idempotently full bootstrap reuses the root key and 
 bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
+metrics/driver-usage-joins-exact-session  session totals and every per-model row come from worker_session_id
+metrics/driver-usage-missing-id-is-unjudged  a completed chunk run without worker_session_id is not zero usage
+metrics/driver-usage-missing-profile-is-explicit  unreadable profile state preserves base metrics and names the gap
+metrics/driver-usage-estimate-keeps-actual-absent  estimated Hermes cost never manufactures zero actual cost
+metrics/markdown-row-has-operator-and-driver-cells  generated rows match the retro log's expanded header
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
 metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from bounces (ADR-0009 D9.4)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
-metrics/is-read-only              reading a board does not change its sha256
+metrics/is-read-only              reading changes neither database nor sidecar membership/bytes
+metrics/read-only-fingerprint-includes-sidecars  membership and bytes cover db, wal, shm and journal
 metrics/live-schema-has-fixture-columns  the columns the fixture declares still exist on a real board
+metrics/live-schema-selection-is-complete-and-deterministic  every board is named in stable order
 metrics/live-schema-read-survives-an-idle-board  a WAL board with no -shm is still readable, so the check above cannot flake (F67)
 metrics/retro-skill-runs-the-command    /retro runs `make metrics`, and does not compute the numbers itself
 metrics/help-names-its-usage      --help and the no-board error both reach the Usage block, not line-pinned prose
@@ -1104,11 +1165,21 @@ metadata/rejects-missing-metadata        a completed producer run cannot carry n
 metadata/validator-runtime-is-locked     the shebang the lane runs pins transitive validation code, not just jsonschema
 metadata/unreadable-path-is-not-invalid-metadata  an unreadable path exits 2; only a real envelope earns exit 1
 metadata/blocked-reason-contract         literal producers and the metrics consumer use the registry vocabulary
+metadata/live-requires-rfc3339-since     an absent or malformed cutoff refuses before any board read
+metadata/live-valid-counts               valid envelopes are counted by profile and schema
+metadata/live-classifies-every-bad-row   nested, null, cross-profile and unreadable rows are named
+metadata/live-rejects-bad-block-reason   a model-authored reason outside the registry names task, run and reason
+metadata/live-ignores-pre-cutoff         historical rows are counted as ignored, never judged
+metadata/live-uses-snapshot              the opt-in reader depends on board-snapshot.sh at runtime
 prejudge/help-exits-zero          scripts/prejudge.sh --help works with no PR
 prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces a checked-in expectation
 prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x)==render(x) are both reported
 prejudge/steps-walker-has-no-false-positives     six legitimate Then-step shapes are not reported
 prejudge/recorded-prs-exact       two recorded PRs reproduce a checked-in severity map, offline
+prejudge/touches-widening-is-visible head-only Touches additions warn even when the implementation is in scope
+prejudge/touches-removal-is-not-widening paths removed from Touches do not warn as widening
+prejudge/touches-unchanged-passes unchanged contracts with in-scope implementation pass both Touches checks
+prejudge/touches-widening-shares-exemptions process docs are exempt through the single shared policy definition
 prejudge/blocks-with-exit-1       a blocking check exits 1; a clear-with-warnings PR exits 0
 prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
 prejudge/scenario-count-is-asymmetric  fewer scenarios than the contract blocks, more only warns
@@ -1178,6 +1249,7 @@ roadmap/bijection-file-with-no-id       a chunk file the graph forgot is reporte
 roadmap/bijection-dangling-depends-on   depends_on naming an id the graph does not define
 roadmap/acyclic-catches-a-cycle         a cycle is named before a board exists
 roadmap/single-root-catches-two-roots   Track E's --root-only needs exactly one root
+roadmap/reachable-is-diagnostic-evidence  pass is named as evidence, never an independent detector
 roadmap/fields-names-the-missing-one    a missing contract field fails and is named
 roadmap/serves-over-four                more than 4 requirements per chunk (F11's own number)
 roadmap/touches-over-six                more than 6 declarable paths per chunk
@@ -1903,6 +1975,56 @@ wants bootstrap && run_bootstrap_group
 # HERMES_KANBAN_HOME, which exercises the real path-resolution code rather than
 # a test-only escape hatch.
 # ---------------------------------------------------------------------------
+db_source_fingerprint() { # $1=kanban.db; membership + bytes of SQLite's source set
+  local source="$1" file suffix
+  for suffix in "" -wal -shm -journal; do
+    file="$source$suffix"
+    if [ -e "$file" ]; then
+      printf '%s %s\n' "${file##*/}" "$(shasum -a 256 "$file" | cut -d' ' -f1)"
+    else
+      printf '%s absent\n' "${file##*/}"
+    fi
+  done
+}
+
+live_schema_report() { # $1=boards root $2=snapshot root; TSV board/status/detail
+  local boards_root="$1" snapshot_root="$2"
+  local live board snapdir snapdb err missing spec t c ordinal=0
+  mkdir -p "$snapshot_root" 2>/dev/null || return 2
+
+  while IFS= read -r live; do
+    [ -n "$live" ] || continue
+    ordinal=$((ordinal+1))
+    board="$(basename "$(dirname "$live")")"
+    snapdir="$snapshot_root/$ordinal"
+    err="$snapshot_root/$ordinal.err"
+    rm -rf "$snapdir" "$err"
+    if ! snapdb="$(scripts/board-snapshot.sh "$live" "$snapdir" 2>"$err")" \
+       || [ -z "$snapdb" ]; then
+      printf '%s\tunreadable\t%s\n' "$board" \
+        "$(tr '\t\n' '  ' < "$err" | sed 's/[[:space:]]*$//')"
+      continue
+    fi
+
+    missing=""
+    for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
+                "task_events:kind,payload,created_at" "task_comments:author,created_at" \
+                "task_links:parent_id,child_id"; do
+      t="${spec%%:*}"
+      for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
+        sqlite3 "$snapdb" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
+          || missing="$missing $t.$c"
+      done
+    done
+    if [ -z "$missing" ]; then
+      printf '%s\tpass\t\n' "$board"
+    else
+      printf '%s\tmissing\t%s\n' "$board" "$missing"
+    fi
+  done < <(find "$boards_root" -mindepth 2 -maxdepth 2 -type f -name kanban.db \
+             -print 2>/dev/null | LC_ALL=C sort)
+}
+
 run_metrics_group() {
   group metrics
   local ms=scripts/metrics.sh fx=scripts/fixtures/metrics-board.sql
@@ -1920,7 +2042,9 @@ run_metrics_group() {
     bad "help-exits-zero" "$ms --help did not exit 0 without a board"
   fi
 
-  local home="$TMPROOT/kanban" db="$TMPROOT/kanban/boards/metrics-fixture/kanban.db"
+  local hermes_root="$TMPROOT/hermes" home="$TMPROOT/hermes/kanban"
+  local db="$home/boards/metrics-fixture/kanban.db"
+  local profile_db="$hermes_root/profiles/forge-codex-lane/state.db"
   mkdir -p "$(dirname "$db")"
   # stdout is discarded: the fixture's `PRAGMA journal_mode=wal` echoes its
   # result, and that is fixture noise, not a case result.
@@ -1929,13 +2053,160 @@ run_metrics_group() {
     return
   fi
 
+  # A separate profile state fixture is essential: worker_session_id joins two
+  # independent SQLite substrates in production. Session totals deliberately
+  # differ from either model row, and actual_cost_usd is the schema's misleading
+  # zero in the per-model table while cost_status remains estimated. The output
+  # must use the sessions row for totals, preserve both breakdown rows, and turn
+  # that storage default back into an honest missing actual cost.
+  mkdir -p "$(dirname "$profile_db")"
+  sqlite3 "$profile_db" <<'METRICS_STATE_SQL'
+CREATE TABLE sessions (
+  id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT,
+  billing_provider TEXT, api_call_count INTEGER DEFAULT 0,
+  input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0, cache_write_tokens INTEGER DEFAULT 0,
+  reasoning_tokens INTEGER DEFAULT 0, estimated_cost_usd REAL,
+  actual_cost_usd REAL, cost_status TEXT, cost_source TEXT
+);
+CREATE TABLE session_model_usage (
+  session_id TEXT NOT NULL, model TEXT NOT NULL,
+  billing_provider TEXT NOT NULL DEFAULT '', billing_base_url TEXT NOT NULL DEFAULT '',
+  billing_mode TEXT NOT NULL DEFAULT '', task TEXT NOT NULL DEFAULT '',
+  api_call_count INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0, actual_cost_usd REAL NOT NULL DEFAULT 0,
+  cost_status TEXT, cost_source TEXT, first_seen REAL, last_seen REAL
+);
+INSERT INTO sessions VALUES
+  ('session-exact','kanban','deepseek-v4-flash','openrouter',7,
+   1000,200,800,50,70,1.25,NULL,'estimated','openrouter-model-pricing');
+INSERT INTO session_model_usage VALUES
+  ('session-exact','deepseek-v4-flash','openrouter','https://openrouter.example/api/v1',
+   'api','driver',5,900,150,700,40,60,0.75,0,'estimated',
+   'openrouter-model-pricing',1785200011.0,1785200090.0),
+  ('session-exact','routing-helper','openrouter','https://openrouter.example/api/v1',
+   'api','routing',2,100,50,100,10,10,0.50,0,'estimated',
+   'openrouter-model-pricing',1785200010.0,1785200011.0);
+METRICS_STATE_SQL
+
+  # Changing only sidecar membership must change the same fingerprint used by
+  # the end-to-end read-only assertion below. The main database remains byte
+  # identical throughout this mutation.
+  local fp_lab="$TMPROOT/source-fingerprint" fp_db fp_before fp_after
+  mkdir -p "$fp_lab"
+  fp_db="$fp_lab/kanban.db"
+  printf 'unchanged database bytes\n' > "$fp_db"
+  fp_before="$(db_source_fingerprint "$fp_db" 2>/dev/null)"
+  : > "$fp_db-wal"
+  fp_after="$(db_source_fingerprint "$fp_db" 2>/dev/null)"
+  if [ -n "$fp_before" ] && [ -n "$fp_after" ] && [ "$fp_before" != "$fp_after" ]; then
+    ok "read-only-fingerprint-includes-sidecars"
+  else
+    bad "read-only-fingerprint-includes-sidecars" \
+        "adding kanban.db-wal did not change the source-set fingerprint while kanban.db stayed unchanged"
+  fi
+
+  # The live-board policy is every kanban.db below the board root, in bytewise
+  # path order. Both deliberately unreadable probes must still be named: a
+  # failed check is evidence about that board, not permission to omit it.
+  local selection_root="$TMPROOT/live-selection/boards" selection_report selection_names
+  local selection_blocker="$TMPROOT/live-selection/not-a-directory" selection_workspace_rc
+  mkdir -p "$selection_root/z-board" "$selection_root/a-board"
+  printf 'not sqlite\n' > "$selection_root/z-board/kanban.db"
+  printf 'not sqlite\n' > "$selection_root/a-board/kanban.db"
+  selection_report="$(live_schema_report "$selection_root" "$TMPROOT/live-selection/snapshots" 2>/dev/null)"
+  selection_names="$(printf '%s\n' "$selection_report" | awk -F '\t' 'NF { print $1 }')"
+  printf 'block snapshot creation\n' > "$selection_blocker"
+  live_schema_report "$selection_root" "$selection_blocker/child" >/dev/null 2>&1
+  selection_workspace_rc=$?
+  if [ "$selection_names" = "$(printf 'a-board\nz-board')" ] \
+     && [ "$(printf '%s\n' "$selection_report" | awk -F '\t' '$2=="unreadable"{n++} END{print n+0}')" = 2 ] \
+     && [ "$selection_workspace_rc" != 0 ]; then
+    ok "live-schema-selection-is-complete-and-deterministic"
+  else
+    bad "live-schema-selection-is-complete-and-deterministic" \
+        "expected both boards in deterministic order; got: ${selection_names:-no named boards}"
+  fi
+
   # Exact, whole-document diff. Asserting a handful of fields would let a new
   # bucket appear, or an old one silently vanish, without failing anything.
-  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture --json > "$TMPROOT/metrics.json" 2>&1
+  HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+    "$ms" metrics-fixture --json > "$TMPROOT/metrics.json" 2>&1
   if diff -u "$exp" "$TMPROOT/metrics.json" > "$TMPROOT/metrics.diff" 2>&1; then
     ok "fixture-numbers-exact ($(jq -r '.verdicts.total' "$exp") verdicts, every field)"
   else
     bad "fixture-numbers-exact" "$(head -12 "$TMPROOT/metrics.diff" | tr '\n' ' ')"
+  fi
+
+  local driver_exact driver_missing driver_profile driver_cost
+  driver_exact="$(jq -c '[.driver_usage.sessions[0]
+                          | .model, .provider, .api_calls, .input_tokens,
+                            .output_tokens, .cache_read_tokens,
+                            .cache_write_tokens, .reasoning_tokens,
+                            .cost_status, (.models | length)]' \
+                    "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_exact" = '["deepseek-v4-flash","openrouter",7,1000,200,800,50,70,"estimated",2]' ]; then
+    ok "driver-usage-joins-exact-session"
+  else
+    bad "driver-usage-joins-exact-session" \
+        "expected exact session totals and both model rows, got ${driver_exact:-nothing}"
+  fi
+
+  driver_missing="$(jq -c '[.driver_usage.coverage.unjudged,
+                            ([.driver_usage.unjudged[]
+                              | select(.reason == "missing-worker-session-id")
+                              | .task_id] | first)]' \
+                      "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_missing" = '[2,"t_c3"]' ]; then
+    ok "driver-usage-missing-id-is-unjudged"
+  else
+    bad "driver-usage-missing-id-is-unjudged" \
+        "a missing worker_session_id must be unjudged, not zero usage; got ${driver_missing:-nothing}"
+  fi
+
+  driver_profile="$(jq -c '[.verdicts.total,
+                            (.driver_usage.limitations
+                              | index("profile state unavailable: forge-missing-driver")),
+                            ([.driver_usage.unjudged[]
+                              | select(.reason == "profile-state-unavailable")
+                              | .task_id] | first)]' \
+                      "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_profile" = '[6,0,"t_c2"]' ]; then
+    ok "driver-usage-missing-profile-is-explicit"
+  else
+    bad "driver-usage-missing-profile-is-explicit" \
+        "base metrics must survive and name the unavailable profile state; got ${driver_profile:-nothing}"
+  fi
+
+  driver_cost="$(jq -c '[.driver_usage.cost.estimated_usd,
+                         .driver_usage.cost.actual_usd,
+                         .driver_usage.sessions[0].actual_cost_usd,
+                         [.driver_usage.sessions[0].models[].actual_cost_usd]]' \
+                   "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_cost" = '[1.25,null,null,[null,null]]' ]; then
+    ok "driver-usage-estimate-keeps-actual-absent"
+  else
+    bad "driver-usage-estimate-keeps-actual-absent" \
+        "estimated cost must stay labelled and actual cost absent, including per-model storage defaults; got ${driver_cost:-nothing}"
+  fi
+
+  local markdown_header markdown_row header_cells row_cells row_operator row_driver
+  markdown_header="$(awk '/^\| Retro date \| Period \|/{print; exit}' docs/retro-metrics.md)"
+  markdown_row="$(HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+                    "$ms" metrics-fixture --markdown-row 2>/dev/null)"
+  header_cells="$(printf '%s\n' "$markdown_header" | awk -F '|' '{print NF-2}')"
+  row_cells="$(printf '%s\n' "$markdown_row" | awk -F '|' '{print NF-2}')"
+  row_operator="$(printf '%s\n' "$markdown_row" | awk -F '|' '{gsub(/^ +| +$/, "", $7); print $7}')"
+  row_driver="$(printf '%s\n' "$markdown_row" | awk -F '|' '{gsub(/^ +| +$/, "", $8); print $8}')"
+  if [ "$header_cells" = 9 ] && [ "$row_cells" = 9 ] \
+     && [ "$row_operator" = 4 ] \
+     && [ "$row_driver" = 'driver 0.33 (1/3) · estimated $1.25 · actual n/a' ]; then
+    ok "markdown-row-has-operator-and-driver-cells"
+  else
+    bad "markdown-row-has-operator-and-driver-cells" \
+        "expected matching 9-cell header/row with operator and driver cells; got header=$header_cells row=$row_cells operator='${row_operator:-}' driver='${row_driver:-}'"
   fi
 
   # The lane writes chunk metadata NESTED under a key named for the schema,
@@ -1992,7 +2263,8 @@ run_metrics_group() {
   # corrupt board instead of a resting one.
   sqlite3 "$qdb" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1
   rm -f "$qdb-wal" "$qdb-shm" "$qdb-journal"
-  if HERMES_KANBAN_HOME="$qhome" "$ms" metrics-fixture --json > "$TMPROOT/quiescent.json" 2>&1 \
+  if HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$qhome" \
+     "$ms" metrics-fixture --json > "$TMPROOT/quiescent.json" 2>&1 \
      && jq -e '.verdicts.total' "$TMPROOT/quiescent.json" >/dev/null 2>&1; then
     ok "reads-a-quiescent-board (no -wal, no -shm, nothing holding it open)"
   else
@@ -2000,18 +2272,22 @@ run_metrics_group() {
         "a board at rest could not be read — the state every /retro finds it in: $(head -2 "$TMPROOT/quiescent.json" | tr '\n' ' ')"
   fi
 
-  # A live board is production data for the whole flywheel. The script snapshots
-  # it and reads the copy; this proves the original's bytes, because "read-only"
-  # is a claim in a comment and claims in comments are what this suite is for.
+  # A live board and profile state are production data for the whole flywheel.
+  # The script snapshots both and reads the copies; this proves the originals'
+  # bytes, because "read-only" is a claim in a comment and claims in comments
+  # are what this suite is for.
   local before after
-  before="$(shasum -a 256 "$db" | cut -d' ' -f1)"
-  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture >/dev/null 2>&1
-  HERMES_KANBAN_HOME="$home" "$ms" metrics-fixture --since 2026-07-28 --markdown-row >/dev/null 2>&1
-  after="$(shasum -a 256 "$db" | cut -d' ' -f1)"
+  before="$(db_source_fingerprint "$db"; db_source_fingerprint "$profile_db")"
+  HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+    "$ms" metrics-fixture >/dev/null 2>&1
+  HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+    "$ms" metrics-fixture --since 2026-07-28 --markdown-row >/dev/null 2>&1
+  after="$(db_source_fingerprint "$db"; db_source_fingerprint "$profile_db")"
   if [ "$before" = "$after" ]; then
-    ok "is-read-only (sha256 unchanged across three invocations)"
+    ok "is-read-only (board/profile dbs and all sidecars unchanged across two invocations)"
   else
-    bad "is-read-only" "the database changed while being read — mode=ro is not holding"
+    bad "is-read-only" \
+        "the database source set changed while being read. before: $(printf '%s' "$before" | tr '\n' ' ') after: $(printf '%s' "$after" | tr '\n' ' ')"
   fi
 
   # The fixture declares a schema by hand, so it can drift away from the real
@@ -2040,32 +2316,32 @@ run_metrics_group() {
   # share a message. The primitive proves the snapshot opens (`SELECT 1` needs
   # no table and no column) before it returns a path, so every column failure
   # below is unambiguously about the column.
-  local live
-  live="$(ls -1 "${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"/*/kanban.db 2>/dev/null | head -1)"
-  if [ -z "$live" ]; then
+  local boards_root live_report live_report_rc board status detail
+  boards_root="${HERMES_KANBAN_HOME:-${HERMES_HOME:-$HOME/.hermes}/kanban}/boards"
+  rm -rf "$TMPROOT/live-schema"
+  live_report="$(live_schema_report "$boards_root" "$TMPROOT/live-schema")"
+  live_report_rc=$?
+  if [ "$live_report_rc" != 0 ]; then
+    bad "live-schema-has-fixture-columns" \
+        "could not create the private snapshot workspace; no live board was checked (exit $live_report_rc)"
+  elif [ -z "$live_report" ]; then
     skip "live-schema-has-fixture-columns" "no live board to compare against"
   else
-    local snapdb board
-    board="$(basename "$(dirname "$live")")"
-    rm -rf "$TMPROOT/live-schema"
-    if ! snapdb="$(scripts/board-snapshot.sh "$live" "$TMPROOT/live-schema" 2>"$TMPROOT/live-schema.err")" \
-       || [ -z "$snapdb" ]; then
-      bad "live-schema-has-fixture-columns" \
-          "could not read a snapshot of board '$board' — the board was unreadable, which is not a schema change; the fixture is unverified this run, not disproven: $(tr '\n' ' ' < "$TMPROOT/live-schema.err")"
-    else
-      local missing="" t c
-      for spec in "tasks:id,status" "task_runs:task_id,profile,outcome,started_at,metadata" \
-                  "task_events:kind,payload,created_at" "task_comments:author,created_at" \
-                  "task_links:parent_id,child_id"; do
-        t="${spec%%:*}"
-        for c in $(printf '%s' "${spec#*:}" | tr ',' ' '); do
-          sqlite3 "$snapdb" "SELECT $c FROM $t LIMIT 0;" >/dev/null 2>&1 \
-            || missing="$missing $t.$c"
-        done
-      done
-      [ -z "$missing" ] && ok "live-schema-has-fixture-columns ($board)" \
-        || bad "live-schema-has-fixture-columns" "a live board no longer has:$missing — the fixture is testing a schema that no longer exists"
-    fi
+    while IFS=$'\t' read -r board status detail; do
+      case "$status" in
+        pass)
+          ok "live-schema-has-fixture-columns ($board)";;
+        unreadable)
+          bad "live-schema-has-fixture-columns ($board)" \
+              "could not read a snapshot of board '$board' — the board was unreadable, which is not a schema change; the fixture is unverified this run, not disproven: $detail";;
+        missing)
+          bad "live-schema-has-fixture-columns ($board)" \
+              "live board '$board' no longer has:$detail — the fixture is testing a schema that no longer exists";;
+        *)
+          bad "live-schema-has-fixture-columns ($board)" \
+              "live schema inspection returned unknown status '${status:-empty}'";;
+      esac
+    done <<< "$live_report"
   fi
 
   # F67 as a regression, offline and on a board this suite builds itself. The
@@ -2204,15 +2480,8 @@ EOF
   # Membership AND bytes, over the sidecars too: a `-shm` or `-wal` that the
   # snapshot CREATED beside the live board would be a write to production even
   # though the database itself hashed the same.
-  _snap_fp() {
-    local f
-    for f in "$1" "$1-wal" "$1-shm" "$1-journal"; do
-      if [ -e "$f" ]; then printf '%s %s\n' "${f##*/}" "$(shasum -a 256 "$f" | cut -d' ' -f1)"
-      else printf '%s absent\n' "${f##*/}"; fi
-    done
-  }
   local before after out rc
-  before="$(_snap_fp "$src")"
+  before="$(db_source_fingerprint "$src")"
 
   out="$("$bs" "$src" "$lab/snap" 2>"$lab/snap.err")"; rc=$?
   if [ "$rc" = 0 ] && [ -n "$out" ] \
@@ -2223,7 +2492,7 @@ EOF
         "a WAL board at rest could not be snapshot-read (exit $rc, path '${out}') — that is the state every /retro finds a board in: $(tr '\n' ' ' < "$lab/snap.err")"
   fi
 
-  after="$(_snap_fp "$src")"
+  after="$(db_source_fingerprint "$src")"
   if [ "$before" = "$after" ]; then
     ok "snapshot/source-is-byte-identical (db and all three sidecars, present or absent)"
   else
@@ -2701,7 +2970,138 @@ run_metadata_group() {
         "${silent:+no class matched in:$silent — the sweep went blind, not green; }${legacy:+the retired reason-class form is back in: $legacy; }a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"
   fi
 }
+
+run_metadata_live_cases() {
+  CURRENT_GROUP=metadata
+  local fixture=scripts/fixtures/metadata/live-board.sql
+  local live_root="$TMPROOT/metadata-live-home" board=metadata-live
+  local db="$live_root/boards/$board/kanban.db"
+  local cutoff=2026-08-09T00:00:00Z out rc
+
+  mkdir -p "$(dirname "$db")"
+  if ! sqlite3 "$db" < "$fixture" >/dev/null 2>&1; then
+    bad "live-fixture" "could not create the WAL-mode metadata board"
+    return
+  fi
+
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      make metadata-live BOARD=missing SINCE= 2>&1)"; rc=$?
+  if [ "$rc" = 2 ] \
+     && printf '%s' "$out" | grep -Fq 'SINCE must be RFC3339' \
+     && ! printf '%s' "$out" | grep -Fq 'no board database'; then
+    out="$(HERMES_KANBAN_HOME="$live_root" \
+        make metadata-live BOARD=missing SINCE=2026-08-09 2>&1)"; rc=$?
+    if [ "$rc" = 2 ] \
+       && printf '%s' "$out" | grep -Fq 'SINCE must be RFC3339' \
+       && ! printf '%s' "$out" | grep -Fq 'no board database'; then
+      ok "live-requires-rfc3339-since (absent and malformed values refused before board resolution)"
+    else
+      bad "live-requires-rfc3339-since" \
+          "malformed SINCE must exit 2 before looking for BOARD=missing; got exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+    fi
+  else
+    bad "live-requires-rfc3339-since" \
+        "missing SINCE must exit 2 before looking for BOARD=missing; got exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  local good_out="$out" good_rc="$rc"
+  sqlite3 "$db" "UPDATE task_runs SET profile='default' WHERE id=2;"
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  sqlite3 "$db" "UPDATE task_runs SET profile='forge-prejudge' WHERE id=2;"
+  if [ "$good_rc" = 0 ] \
+     && printf '%s' "$good_out" | grep -Fq 'valid=3 invalid=0 unjudged=0 ignored=2' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=1' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-prejudge schema=forge.judge.v1 valid=1' \
+     && [ "$rc" = 1 ] \
+     && printf '%s' "$out" | grep -Fq 'missing producer=forge-prejudge'; then
+    ok "live-valid-counts (profile/schema counts exact; a missing contracted producer exits 1)"
+  else
+    bad "live-valid-counts" \
+        "canonical counts or missing-producer enforcement drifted; got exits $good_rc/$rc: $(printf '%s' "$out" | tail -6 | tr '\n' ' ')"
+  fi
+
+  # Mutate only post-cutoff rows. The historical nested envelope and bad reason
+  # remain ignored, which proves the scope independently of the good fixture.
+  sqlite3 "$db" <<'SQL'
+UPDATE task_runs
+   SET task_id='t_bad_nested', metadata='{"forge.chunk.v1":{"chunk_id":"CHUNK-4"}}'
+ WHERE id=1;
+INSERT INTO task_runs VALUES
+  (5,'t_bad_null','forge-codex-lane','done',1786234000,1786234010,'completed',NULL),
+  (6,'t_bad_cross','forge-codex-lane','done',1786234020,1786234030,'completed','{"schema":"forge.judge.v1"}');
+UPDATE task_events
+   SET task_id='t_bad_reason', payload='{"reason":"free-form model excuse","kind":"needs_input"}'
+ WHERE id=1;
+SQL
+
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  local named=1 id
+  for id in t_bad_nested t_bad_null t_bad_cross; do
+    printf '%s' "$out" | grep -Fq "task=$id" || named=0
+  done
+  local invalid_out="$out" invalid_rc="$rc"
+
+  if [ "$invalid_rc" = 1 ] \
+     && printf '%s' "$invalid_out" | grep -Fq 'valid=1 invalid=4 unjudged=0 ignored=2' \
+     && printf '%s' "$invalid_out" | grep -Fq 'invalid task=t_bad_reason run=1' \
+     && printf '%s' "$invalid_out" | grep -Fq 'reason="free-form model excuse"'; then
+    ok "live-rejects-bad-block-reason (task, run and reason printed)"
+  else
+    bad "live-rejects-bad-block-reason" \
+        "the invalid model-authored reason must be an exit-1 contract violation with task and run"
+  fi
+
+  sqlite3 "$db" \
+    "INSERT INTO task_runs VALUES (7,'t_unreadable','forge-codex-lane','done',1786234040,1786234050,'completed','{not json');"
+  out="$(HERMES_KANBAN_HOME="$live_root" \
+      scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  if [ "$invalid_rc" = 1 ] && [ "$named" = 1 ] \
+     && [ "$rc" = 2 ] \
+     && printf '%s' "$out" | grep -Fq 'unjudged task=t_unreadable run=7' \
+     && printf '%s' "$out" | grep -Fq 'valid=1 invalid=4 unjudged=1 ignored=2'; then
+    ok "live-classifies-every-bad-row (invalid exits 1; unjudged is named and dominates as exit 2)"
+  else
+    bad "live-classifies-every-bad-row" \
+        "bad rows must be named with distinct exit-1/exit-2 outcomes; got exits $invalid_rc/$rc: $(printf '%s' "$out" | tail -9 | tr '\n' ' ')"
+  fi
+
+  if printf '%s' "$out" | grep -Fq 'ignored=2' \
+     && ! printf '%s' "$out" | grep -Fq 'invalid task=t_old_nested'; then
+    ok "live-ignores-pre-cutoff (one producer row plus one block event)"
+  else
+    bad "live-ignores-pre-cutoff" \
+        "pre-cutoff rows must contribute only to ignored"
+  fi
+
+  local isolated="$TMPROOT/metadata-live-isolated"
+  mkdir -p "$isolated/scripts" "$isolated/rubrics" \
+           "$isolated/kanban/boards/$board"
+  cp scripts/metadata-live.sh scripts/board-snapshot.sh \
+     scripts/validate-metadata.py scripts/validate-metadata.py.lock \
+     "$isolated/scripts/" 2>/dev/null || true
+  cp rubrics/*.json "$isolated/rubrics/" 2>/dev/null || true
+  sqlite3 "$isolated/kanban/boards/$board/kanban.db" \
+    < "$fixture" >/dev/null 2>&1
+  HERMES_KANBAN_HOME="$isolated/kanban" \
+    "$isolated/scripts/metadata-live.sh" "$board" --since "$cutoff" \
+    >/dev/null 2>&1; local control_rc=$?
+  chmod -x "$isolated/scripts/board-snapshot.sh" 2>/dev/null || true
+  HERMES_KANBAN_HOME="$isolated/kanban" \
+    "$isolated/scripts/metadata-live.sh" "$board" --since "$cutoff" \
+    >/dev/null 2>&1; local dependency_rc=$?
+  if [ "$control_rc" = 0 ] && [ "$dependency_rc" = 2 ]; then
+    ok "live-uses-snapshot (control exit 0; unavailable primitive exit 2)"
+  else
+    bad "live-uses-snapshot" \
+        "metadata-live must work with the primitive and fail closed without it; exits $control_rc/$dependency_rc"
+  fi
+}
 wants metadata  && run_metadata_group
+wants metadata  && run_metadata_live_cases
 
 # ---------------------------------------------------------------------------
 # prejudge/ — tier 1's deterministic FIRST STAGE (F35, ADR-0009). Modelled on
@@ -2720,11 +3120,12 @@ wants metadata  && run_metadata_group
 #     mergedAt,url,additions,deletions,changedFiles,statusCheckRollup | jq -S .
 #   git diff --numstat <baseRefOid> <headRefOid>        > numstat.tsv
 #   git archive <headRefOid> docs/chunks tests/features | tar -x -C tree/
+#   git show <baseRefOid>:docs/chunks/<CHUNK>.md         > base-tree/docs/chunks/<CHUNK>.md
 #
 # The recorded `tree/` carries the contract and the feature file and NOT the
 # 3,500-line test suite, so `then-asserts` skips on these fixtures. That check
 # is covered exactly, and separately, by the walker fixture above — the point of
-# these two is the four checks that were covered by nothing.
+# these two is the GitHub/tree-facing set that was covered by nothing.
 # ---------------------------------------------------------------------------
 run_prejudge_group() {
   group prejudge
@@ -2789,8 +3190,78 @@ run_prejudge_group() {
   # list and the result. Asserting the evidence strings too would fail on every
   # reworded sentence and teach the next person to regenerate the file without
   # reading it, which is how a checked-in expectation stops being evidence.
-  [ -z "$drift" ] && ok "recorded-prs-exact (2 PRs, 7 checks each, offline)" \
+  [ -z "$drift" ] && ok "recorded-prs-exact (2 PRs, 8 checks each, offline)" \
     || bad "recorded-prs-exact" "the severity map moved on:$drift — $(jq -c . "$TMPROOT/${drift## }.json" 2>/dev/null | cut -c1-200)"
+
+  # The head contract is still the source for the ordinary `touches` check.
+  # Comparing it with the recorded base contract adds a second, independent
+  # signal: a branch cannot silently widen its own declaration and then have
+  # the implementation certified against only that widened declaration.
+  local unchanged="$TMPROOT/touches-unchanged"
+  local widened="$TMPROOT/touches-widened"
+  local removed="$TMPROOT/touches-removed"
+  local exempted="$TMPROOT/touches-exempted"
+  local contract_rel=tree/docs/chunks/CHUNK-5.md
+  local base_contract_rel=base-tree/docs/chunks/CHUNK-5.md
+  local errors_path=src/forgeboard_report/errors.py
+
+  rm -rf "$unchanged"; cp -R "$prs/pr-9" "$unchanged"
+  grep -v $'^21\\t0\\tsrc/forgeboard_report/errors.py$' "$prs/pr-9/numstat.tsv" \
+    > "$unchanged/numstat.tsv"
+  "$gate" --fixture "$unchanged" --json > "$TMPROOT/touches-unchanged.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches") | .status' "$TMPROOT/touches-unchanged.json")" = pass ] \
+     && [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-unchanged.json")" = pass ]; then
+    ok "touches-unchanged-passes"
+  else
+    bad "touches-unchanged-passes" \
+        "an unchanged contract with an in-scope diff must pass touches and touches-widened"
+  fi
+
+  rm -rf "$widened"; cp -R "$prs/pr-9" "$widened"
+  sed "s#\`src/forgeboard_report/domain.py\`, #\`src/forgeboard_report/domain.py\`, \`$errors_path\`, #" \
+    "$widened/$contract_rel" > "$widened/contract.tmp"
+  mv "$widened/contract.tmp" "$widened/$contract_rel"
+  "$gate" --fixture "$widened" --json > "$TMPROOT/touches-widened.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches") | .status' "$TMPROOT/touches-widened.json")" = pass ] \
+     && [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-widened.json")" = warn ] \
+     && jq -e --arg path "$errors_path" \
+          '.checks[] | select(.id=="touches-widened") | .evidence | contains($path)' \
+          "$TMPROOT/touches-widened.json" >/dev/null; then
+    ok "touches-widening-is-visible ($errors_path)"
+  else
+    bad "touches-widening-is-visible" \
+        "a head-only Touches addition must warn with its path while ordinary touches passes"
+  fi
+
+  rm -rf "$removed"; cp -R "$unchanged" "$removed"
+  sed "s#\`src/forgeboard_report/domain.py\`, #\`src/forgeboard_report/domain.py\`, \`$errors_path\`, #" \
+    "$removed/$base_contract_rel" > "$removed/contract.tmp"
+  mv "$removed/contract.tmp" "$removed/$base_contract_rel"
+  "$gate" --fixture "$removed" --json > "$TMPROOT/touches-removed.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-removed.json")" = pass ] \
+     && ! jq -e --arg path "$errors_path" \
+          '.checks[] | select(.id=="touches-widened") | .evidence | contains($path)' \
+          "$TMPROOT/touches-removed.json" >/dev/null; then
+    ok "touches-removal-is-not-widening"
+  else
+    bad "touches-removal-is-not-widening" \
+        "a path present only in the base Touches list must not be reported as widening"
+  fi
+
+  rm -rf "$exempted"; cp -R "$unchanged" "$exempted"
+  sed 's#`tests/test_render.py`#`tests/test_render.py`, `docs/decision-log.md`#' \
+    "$exempted/$contract_rel" > "$exempted/contract.tmp"
+  mv "$exempted/contract.tmp" "$exempted/$contract_rel"
+  printf '1\t0\tdocs/decision-log.md\n' >> "$exempted/numstat.tsv"
+  "$gate" --fixture "$exempted" --json > "$TMPROOT/touches-exempted.json" 2>&1
+  if [ "$(jq -r '.checks[] | select(.id=="touches") | .status' "$TMPROOT/touches-exempted.json")" = pass ] \
+     && [ "$(jq -r '.checks[] | select(.id=="touches-widened") | .status' "$TMPROOT/touches-exempted.json")" = pass ] \
+     && [ "$(grep -Rhc '^TOUCHES_EXEMPT=' scripts/*.sh | awk '{n+=$1} END {print n+0}')" = 1 ]; then
+    ok "touches-widening-shares-exemptions"
+  else
+    bad "touches-widening-shares-exemptions" \
+        "docs/decision-log.md must be exempt from both comparisons through the one TOUCHES_EXEMPT definition"
+  fi
 
   # The gate blocks. This is the property the whole slice turns on, and it is
   # asserted on the exit code rather than on the printed word, because that is
@@ -3931,6 +4402,16 @@ run_roadmap_group() {
   # was encoding the contract the checker got wrong, so a check written against
   # the fixture could not have found it. Only names a profile actually backs.
   export FORGE_ASSIGNEES="forge-codex-lane forge-prejudge"
+
+  local reachable_line
+  reachable_line="$("$rc" "$good" -v 2>/dev/null | awk '$2=="reachable"{getline; print}')"
+  if printf '%s' "$reachable_line" | grep -Fq 'diagnostic evidence' \
+     && grep -Fq 'not an independent detector' docs/adr/0012-sizing-at-plan-time.md; then
+    ok "reachable-is-diagnostic-evidence"
+  else
+    bad "reachable-is-diagnostic-evidence" \
+        "reachable pass must label itself diagnostic evidence and ADR-0012 must say it is not an independent detector"
+  fi
 
   # Status/evidence of one check id, from the real script's real output. The
   # `|| true` is load-bearing under `set -o pipefail`: these two read OUTPUT,

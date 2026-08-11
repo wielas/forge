@@ -3,17 +3,18 @@
 # requires-python = ">=3.11"
 # dependencies = ["jsonschema==4.26.0"]
 # ///
-"""Validate one completed-run metadata envelope against its producer contract."""
+"""Validate completed-run metadata against its producer contract."""
 
 from __future__ import annotations
 
 import argparse
 from collections import Counter
+from datetime import datetime
 import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -26,6 +27,10 @@ CHUNK_ID = re.compile(r"^CHUNK-([0-9]+)$")
 CHUNK_BRANCH = re.compile(r"^chunk/([0-9]+)-[a-z0-9]+(?:-[a-z0-9]+)*$")
 PR_URL = re.compile(
     r"^https://github\.com/(?P<repo>[^/\s]+/[^/\s]+)/pull/(?P<number>[1-9][0-9]*)$"
+)
+RFC3339 = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
 )
 
 
@@ -142,6 +147,164 @@ def instance_from(path_arg: str) -> Any:
         raise UnreadableError(f"cannot read {path}: {exc.strerror}") from exc
 
 
+def rfc3339_epoch(value: str) -> float:
+    """Return a timezone-aware RFC3339 timestamp as Unix seconds."""
+    if not RFC3339.fullmatch(value):
+        raise ValueError("SINCE must be RFC3339, e.g. 2026-08-09T00:00:00Z")
+    try:
+        parsed = datetime.fromisoformat(value.removesuffix("Z") + ("+00:00" if value.endswith("Z") else ""))
+    except ValueError as exc:
+        raise ValueError(
+            "SINCE must be RFC3339, e.g. 2026-08-09T00:00:00Z"
+        ) from exc
+    if parsed.utcoffset() is None:
+        raise ValueError("SINCE must include an RFC3339 timezone offset")
+    return parsed.timestamp()
+
+
+def batch_stream(path_arg: str) -> tuple[TextIO, bool]:
+    if path_arg == "-":
+        return sys.stdin, False
+    path = Path(path_arg)
+    try:
+        return path.open(), True
+    except OSError as exc:
+        raise UnreadableError(f"cannot read batch source {path}: {exc.strerror}") from exc
+
+
+def batch_rows(path_arg: str) -> list[dict[str, Any]]:
+    stream, close = batch_stream(path_arg)
+    result: list[dict[str, Any]] = []
+    try:
+        for line_number, line in enumerate(stream, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise UnreadableError(
+                    f"batch row {line_number} is not JSON: {exc.msg}"
+                ) from exc
+            if not isinstance(row, dict):
+                raise UnreadableError(f"batch row {line_number} is not an object")
+            result.append(row)
+    except OSError as exc:
+        raise UnreadableError(f"cannot read batch source: {exc.strerror}") from exc
+    finally:
+        if close:
+            stream.close()
+    return result
+
+
+def row_identity(row: dict[str, Any]) -> str:
+    task = row.get("task")
+    run = row.get("run")
+    return f"task={task if isinstance(task, str) and task else '<missing>'} run={run!s}"
+
+
+def decoded_field(row: dict[str, Any], field: str) -> Any:
+    raw = row.get(field)
+    if raw is None or not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise UnreadableError(f"{field} is not JSON: {exc.msg}") from exc
+
+
+def validate_batch(contract: dict[str, Any], path_arg: str, since: float) -> int:
+    """Validate the JSON-lines projection produced by metadata-live.sh."""
+    counts: Counter[str] = Counter()
+    valid_envelopes: Counter[tuple[str, str]] = Counter()
+    seen_profiles: set[str] = set()
+
+    for position, row in enumerate(batch_rows(path_arg), start=1):
+        kind = row.get("kind")
+        if kind not in {"run", "block"}:
+            raise UnreadableError(
+                f"batch row {position} has unknown kind {kind!r}"
+            )
+
+        profile = row.get("profile")
+        if kind == "run" and profile not in contract["profiles"]:
+            # The board also contains operator and orchestration runs. They are
+            # not completed-run producers until the registry says they are.
+            continue
+
+        at = row.get("at")
+        if not isinstance(at, (int, float)) or isinstance(at, bool):
+            counts["unjudged"] += 1
+            print(f"unjudged {row_identity(row)}: event timestamp is unreadable")
+            continue
+        if at < since:
+            counts["ignored"] += 1
+            continue
+
+        if kind == "run":
+            assert isinstance(profile, str)  # registry membership above
+            seen_profiles.add(profile)
+            try:
+                instance = decoded_field(row, "metadata")
+            except UnreadableError as exc:
+                counts["unjudged"] += 1
+                print(f"unjudged {row_identity(row)} profile={profile}: {exc}")
+                continue
+
+            errors = validate_instance(contract, profile, instance)
+            if errors:
+                counts["invalid"] += 1
+                print(
+                    f"invalid {row_identity(row)} profile={profile}: "
+                    + "; ".join(errors)
+                )
+                continue
+
+            schema_id = instance["schema"]
+            counts["valid"] += 1
+            valid_envelopes[(profile, schema_id)] += 1
+            continue
+
+        try:
+            payload = decoded_field(row, "payload")
+        except UnreadableError as exc:
+            counts["unjudged"] += 1
+            print(f"unjudged {row_identity(row)}: {exc}")
+            continue
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        if not isinstance(reason, str):
+            counts["invalid"] += 1
+            print(f"invalid {row_identity(row)}: blocked event has no string reason")
+        elif not re.fullmatch(contract["blocked_reason_pattern"], reason):
+            counts["invalid"] += 1
+            print(
+                f"invalid {row_identity(row)} reason={json.dumps(reason)}: "
+                "blocked reason does not match blocked_reason_pattern"
+            )
+        else:
+            counts["valid"] += 1
+
+    for (profile, schema_id), count in sorted(valid_envelopes.items()):
+        print(f"profile={profile} schema={schema_id} valid={count}")
+
+    missing = sorted(set(contract["profiles"]) - seen_profiles)
+    for profile in missing:
+        print(f"missing producer={profile}: no post-cutoff completed run")
+
+    print(
+        "valid={valid} invalid={invalid} unjudged={unjudged} ignored={ignored}".format(
+            valid=counts["valid"],
+            invalid=counts["invalid"],
+            unjudged=counts["unjudged"],
+            ignored=counts["ignored"],
+        )
+    )
+    if counts["unjudged"]:
+        return 2
+    if counts["invalid"] or missing:
+        return 1
+    return 0
+
+
 def validate_instance(contract: dict[str, Any], profile: str, instance: Any) -> list[str]:
     if not isinstance(instance, dict):
         return ["metadata must be an object; completed producer runs may not store null"]
@@ -219,11 +382,26 @@ def semantic_errors(schema_id: str, instance: dict[str, Any]) -> list[str]:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
-        description="Validate Forge completed-run metadata without opening a board."
+        description="Validate Forge completed-run metadata without opening a live board."
     )
     result.add_argument("metadata", nargs="?", help="JSON file, or - for stdin")
     result.add_argument("--profile", help="producer profile, e.g. forge-codex-lane")
     result.add_argument("--reason", help="validate one blocked-event reason string")
+    result.add_argument(
+        "--rfc3339-epoch",
+        metavar="SINCE",
+        help="validate a scoped-sweep cutoff and print Unix seconds",
+    )
+    result.add_argument(
+        "--batch",
+        metavar="JSONL",
+        help="validate metadata-live JSON lines, or - for stdin",
+    )
+    result.add_argument(
+        "--since",
+        metavar="RFC3339",
+        help="mandatory cutoff for --batch",
+    )
     result.add_argument(
         "--check-schemas",
         action="store_true",
@@ -237,6 +415,40 @@ def main() -> int:
     try:
         contract = load_contract()
         check_schemas(contract)
+        if args.rfc3339_epoch is not None:
+            if (
+                args.metadata
+                or args.profile
+                or args.reason is not None
+                or args.check_schemas
+                or args.batch
+                or args.since
+            ):
+                parser().error(
+                    "--rfc3339-epoch takes no other validation arguments"
+                )
+            try:
+                epoch = rfc3339_epoch(args.rfc3339_epoch)
+            except ValueError as exc:
+                print(exc, file=sys.stderr)
+                return 2
+            print(int(epoch) if epoch.is_integer() else epoch)
+            return 0
+        if args.batch:
+            if args.metadata or args.profile or args.reason is not None or args.check_schemas:
+                parser().error(
+                    "--batch takes no metadata, --profile, --reason or --check-schemas"
+                )
+            if args.since is None:
+                parser().error("--batch requires --since RFC3339")
+            try:
+                since = rfc3339_epoch(args.since)
+            except ValueError as exc:
+                print(exc, file=sys.stderr)
+                return 2
+            return validate_batch(contract, args.batch, since)
+        if args.since is not None:
+            parser().error("--since is only valid with --batch")
         if args.check_schemas:
             if args.metadata or args.profile or args.reason is not None:
                 parser().error("--check-schemas takes no metadata, --profile or --reason")

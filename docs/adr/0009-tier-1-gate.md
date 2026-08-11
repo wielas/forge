@@ -52,7 +52,7 @@ So this ADR ships the half that is measured and leaves the half that is argued.
 ## Decision
 
 **D9.1 — Tier 1 has two stages, and the first is a program.**
-`scripts/prejudge.sh` (`make prejudge PR=<n>`) runs seven checks, prints
+`scripts/prejudge.sh` (`make prejudge PR=<n>`) runs eight checks, prints
 `pass | block | warn | skip` with evidence for each, and **exits 1 when any check
 blocks**. It runs before the scorer, on every PR. A clear result is not an
 approval: it is the input the scorer then reads. Exit 2 — the gate could not run
@@ -67,8 +67,19 @@ approval: it is the input the scorer then reads. Exit 2 — the gate could not r
 | `then-asserts` | block | F14/F54. Both shapes are defects on their face |
 | `scenario-count` | block **only when fewer** | fewer is spec infidelity; more is a planner underestimating |
 | `touches` | warn | F55. 3 of 5 drifting paths are process docs no contract may declare |
+| `touches-widened` | warn | F57. A head contract can otherwise certify paths it added to itself |
 | `size-budget` | warn | F53. Fires on 11 of 11 — a gate that blocks everything is not a filter |
 | `real-source` | warn | F53. Same argument, 8 of 11 |
+
+The two Touches checks answer different questions and neither is an approval.
+`touches` compares the implementation diff with the **head** contract, because
+that is the contract the implementer used. `touches-widened` compares the
+head's declaration with the contract at the PR's recorded base OID and reports
+only head-minus-base additions. A removal is not widening. Both comparisons
+source ADR-0012 D12.4's one process-document exemption; neither carries a
+private copy. If either contract cannot be read, widening is `skip`, never
+`pass`. A widening finding remains advisory and does not change the gate's exit
+status.
 
 `parents-merged` is **deleted**, not demoted (F52): by the time a PR exists its
 parent has merged, so the check cannot ever fire here. F10's waste happens
