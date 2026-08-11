@@ -1181,6 +1181,13 @@ prejudge/touches-widening-shares-exemptions process docs are exempt through the 
 prejudge/blocks-with-exit-1       a blocking check exits 1; a clear-with-warnings PR exits 0
 prejudge/absent-ci-is-not-a-pass  an empty statusCheckRollup blocks after a wait, never passes (F5)
 prejudge/scenario-count-is-asymmetric  fewer scenarios than the contract blocks, more only warns
+prejudge/frozen-feature-blocks-change  a feature whose bytes differ from the approved base is named and blocked
+prejudge/frozen-contract-blocks-change  implementation cannot weaken the approved Scenarios prose
+prejudge/frozen-contract-blocks-acceptance-redirect  implementation cannot redirect the approved feature path
+prejudge/frozen-feature-allows-step-definitions  ordinary implementation steps do not change frozen acceptance
+prejudge/frozen-feature-blocks-self-amendment  changing the feature and its manifest together cannot approve itself
+prejudge/frozen-feature-accepts-planning-amendment  a later branch consumes the hash already approved on its base
+prejudge/judge-scores-frozen-real-source  @real-source remains in the judge's scored acceptance surface
 prejudge/skip-is-distinguishable-from-pass  a check that could not run has not passed
 prejudge/emits-an-action-per-block  every blocking finding carries an action a fresh worker can execute
 prejudge/emits-its-own-shape-not-the-verdict-schema  the gate emits forge.gate.v1, never a scored verdict
@@ -3115,7 +3122,7 @@ run_prejudge_group() {
   "$gate" --fixture "$prs/pr-8" >/dev/null 2>&1; local rc8=$?
   "$gate" --fixture "$prs/pr-9" >/dev/null 2>&1; local rc9=$?
   if [ "$rc8" = 1 ] && [ "$rc9" = 0 ]; then
-    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with 2 warnings)"
+    ok "blocks-with-exit-1 (pr-8 blocks, pr-9 clears with warnings)"
   else
     bad "blocks-with-exit-1" \
         "expected pr-8 to exit 1 and pr-9 to exit 0, got $rc8 and $rc9 — a gate that cannot fail a command gates nothing"
@@ -3147,6 +3154,201 @@ run_prejudge_group() {
     ok "scenario-count-is-asymmetric (1-of-5 blocks, 6-of-5 warns)"
   else
     bad "scenario-count-is-asymmetric" "fewer=$fewer more=$more; expected block and warn"
+  fi
+
+  # -- acceptance is immutable on implementation PRs (ADR-0014 D14.3) ------
+  #
+  # The base/ directory is the separately approved planning tree; tree/ is the
+  # implementation head. Each mutation drives the whole prejudge program, so a
+  # helper that merely compares two local files cannot make these cases green.
+  _frozen_pr_fixture() { # $1=fixture root
+    local frozen_root="$1" frozen_base="$1/base"
+    rm -rf "$frozen_root"
+    mkdir -p "$frozen_base/docs/chunks" "$frozen_base/tests/features"
+    cp "$prs/pr-9/pr.json" "$frozen_root/pr.json"
+    jq '.number = 7
+        | .title = "CHUNK-7: Enforce frozen acceptance"
+        | .headRefName = "chunk/7-enforce-frozen-acceptance"
+        | .url = "https://github.com/wielas/forgeboard-report/pull/7"' \
+      "$frozen_root/pr.json" > "$frozen_root/pr.next.json"
+    mv "$frozen_root/pr.next.json" "$frozen_root/pr.json"
+    : > "$frozen_root/numstat.tsv"
+    cat > "$frozen_base/docs/chunks/graph.json" <<'FROZEN_GRAPH'
+[
+  {"id":"CHUNK-7","lane":"claude-interactive","depends_on":[]}
+]
+FROZEN_GRAPH
+    cat > "$frozen_base/docs/chunks/CHUNK-7.md" <<'FROZEN_CHUNK'
+### CHUNK-7: Frozen acceptance fixture
+- **Goal:** Keep approved acceptance immutable during implementation.
+- **Milestone:** M1 · **Depends on:** none
+- **Serves:** F14, F25 · **Relevant ADRs:** 0014
+- **Touches:** `tests/features/chunk_7.feature`, `tests/steps/chunk_7_steps.py`
+- **Scenarios:**
+  - Given a SQLite source, When the reader runs, Then one real record is returned.
+- **Real sources:** `SQLite source` → scenario 1
+- **Acceptance:** tests/features/chunk_7.feature
+- **Out of scope:** planning amendments.
+- **Done when:** the base hash still matches.
+- **Lane:** claude-interactive · **Risk:** high
+FROZEN_CHUNK
+    cat > "$frozen_base/tests/features/chunk_7.feature" <<'FROZEN_FEATURE'
+Feature: CHUNK-7 frozen acceptance fixture
+
+  @real-source
+  Scenario: Read the approved source
+    Given a SQLite source
+    When the reader runs
+    Then one real record is returned
+FROZEN_FEATURE
+    "$REPO_ROOT/scripts/acceptance-freeze.sh" "$frozen_base" >/dev/null 2>&1 \
+      || return 1
+    mkdir -p "$frozen_root/tree"
+    cp -R "$frozen_base/." "$frozen_root/tree/"
+  }
+
+  local frozen_changed="$TMPROOT/frozen-changed" frozen_json frozen_status frozen_rc
+  if _frozen_pr_fixture "$frozen_changed"; then
+    printf '\n# implementation rewrote approved bytes\n' \
+      >> "$frozen_changed/tree/tests/features/chunk_7.feature"
+    printf '1\t0\ttests/features/chunk_7.feature\n' > "$frozen_changed/numstat.tsv"
+    "$gate" --fixture "$frozen_changed" --json > "$TMPROOT/frozen-changed.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-changed.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ] \
+       && jq -e '.checks[] | select(.id=="acceptance-freeze")
+            | .evidence | contains("tests/features/chunk_7.feature")' \
+          "$TMPROOT/frozen-changed.json" >/dev/null 2>&1; then
+      ok "frozen-feature-blocks-change"
+    else
+      bad "frozen-feature-blocks-change" \
+          "prejudge must block and name tests/features/chunk_7.feature when its bytes differ from the approved base (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-feature-blocks-change" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_contract="$TMPROOT/frozen-contract"
+  if _frozen_pr_fixture "$frozen_contract"; then
+    sed -i.bak 's/Then one real record is returned\./Then a warning may be returned./' \
+      "$frozen_contract/tree/docs/chunks/CHUNK-7.md"
+    rm -f "$frozen_contract/tree/docs/chunks/CHUNK-7.md.bak"
+    printf '1\t1\tdocs/chunks/CHUNK-7.md\n' > "$frozen_contract/numstat.tsv"
+    "$gate" --fixture "$frozen_contract" --json \
+      > "$TMPROOT/frozen-contract.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-contract.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ] \
+       && jq -e '.checks[] | select(.id=="acceptance-freeze")
+            | .evidence | contains("docs/chunks/CHUNK-7.md")' \
+          "$TMPROOT/frozen-contract.json" >/dev/null 2>&1; then
+      ok "frozen-contract-blocks-change"
+    else
+      bad "frozen-contract-blocks-change" \
+          "a contract-only Then weakening must block and name docs/chunks/CHUNK-7.md (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-contract-blocks-change" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_redirect="$TMPROOT/frozen-contract-redirect"
+  if _frozen_pr_fixture "$frozen_redirect"; then
+    sed -i.bak 's#tests/features/chunk_7.feature#tests/features/weaker.feature#' \
+      "$frozen_redirect/tree/docs/chunks/CHUNK-7.md"
+    rm -f "$frozen_redirect/tree/docs/chunks/CHUNK-7.md.bak"
+    printf '1\t1\tdocs/chunks/CHUNK-7.md\n' > "$frozen_redirect/numstat.tsv"
+    "$gate" --fixture "$frozen_redirect" --json \
+      > "$TMPROOT/frozen-contract-redirect.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-contract-redirect.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ] \
+       && jq -e '.checks[] | select(.id=="acceptance-freeze")
+            | .evidence | contains("docs/chunks/CHUNK-7.md")' \
+          "$TMPROOT/frozen-contract-redirect.json" >/dev/null 2>&1; then
+      ok "frozen-contract-blocks-acceptance-redirect"
+    else
+      bad "frozen-contract-blocks-acceptance-redirect" \
+          "redirecting only the contract Acceptance path must block (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-contract-blocks-acceptance-redirect" \
+        "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_steps="$TMPROOT/frozen-steps"
+  if _frozen_pr_fixture "$frozen_steps"; then
+    mkdir -p "$frozen_steps/tree/tests/steps"
+    printf 'def given_the_source():\n    return "ready"\n' \
+      > "$frozen_steps/tree/tests/steps/chunk_7_steps.py"
+    printf '2\t0\ttests/steps/chunk_7_steps.py\n' > "$frozen_steps/numstat.tsv"
+    "$gate" --fixture "$frozen_steps" --json > "$TMPROOT/frozen-steps.json" 2>&1
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-steps.json" 2>/dev/null)"
+    if [ "$frozen_status" = pass ]; then
+      ok "frozen-feature-allows-step-definitions"
+    else
+      bad "frozen-feature-allows-step-definitions" \
+          "adding only tests/steps/chunk_7_steps.py must pass the frozen-feature check (status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-feature-allows-step-definitions" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_self="$TMPROOT/frozen-self"
+  if _frozen_pr_fixture "$frozen_self"; then
+    printf '\n# implementation rewrote and rehashed approved bytes\n' \
+      >> "$frozen_self/tree/tests/features/chunk_7.feature"
+    "$REPO_ROOT/scripts/acceptance-freeze.sh" "$frozen_self/tree" >/dev/null 2>&1
+    printf '1\t0\ttests/features/chunk_7.feature\n1\t1\tdocs/chunks/contract-freeze.json\n' \
+      > "$frozen_self/numstat.tsv"
+    "$gate" --fixture "$frozen_self" --json > "$TMPROOT/frozen-self.json" 2>&1
+    frozen_rc=$?
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-self.json" 2>/dev/null)"
+    if [ "$frozen_rc" = 1 ] && [ "$frozen_status" = block ]; then
+      ok "frozen-feature-blocks-self-amendment"
+    else
+      bad "frozen-feature-blocks-self-amendment" \
+          "regenerating contract-freeze.json on the implementation head must still block against the approved base (exit $frozen_rc, status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-feature-blocks-self-amendment" "could not create the frozen-acceptance fixture"
+  fi
+
+  local frozen_amended="$TMPROOT/frozen-amended"
+  if _frozen_pr_fixture "$frozen_amended"; then
+    printf '\n# separately approved planning amendment\n' \
+      >> "$frozen_amended/base/tests/features/chunk_7.feature"
+    "$REPO_ROOT/scripts/acceptance-freeze.sh" "$frozen_amended/base" >/dev/null 2>&1
+    rm -rf "$frozen_amended/tree"
+    mkdir -p "$frozen_amended/tree/tests/steps"
+    cp -R "$frozen_amended/base/." "$frozen_amended/tree/"
+    printf 'def given_the_amended_source():\n    return "ready"\n' \
+      > "$frozen_amended/tree/tests/steps/chunk_7_steps.py"
+    printf '2\t0\ttests/steps/chunk_7_steps.py\n' > "$frozen_amended/numstat.tsv"
+    "$gate" --fixture "$frozen_amended" --json > "$TMPROOT/frozen-amended.json" 2>&1
+    frozen_status="$(jq -r '.checks[] | select(.id=="acceptance-freeze") | .status' \
+      "$TMPROOT/frozen-amended.json" 2>/dev/null)"
+    if [ "$frozen_status" = pass ]; then
+      ok "frozen-feature-accepts-planning-amendment"
+    else
+      bad "frozen-feature-accepts-planning-amendment" \
+          "an implementation branch matching its already-amended base must pass (status ${frozen_status:-missing})"
+    fi
+  else
+    bad "frozen-feature-accepts-planning-amendment" "could not create the frozen-acceptance fixture"
+  fi
+
+  if grep -Fq 'contract-freeze.json' skills/judge/SKILL.md \
+     && grep -Fq '@real-source' skills/judge/SKILL.md \
+     && grep -Fq 'scored acceptance surface' skills/judge/SKILL.md; then
+    ok "judge-scores-frozen-real-source"
+  else
+    bad "judge-scores-frozen-real-source" \
+        "/judge must read the frozen manifest and keep every @real-source scenario in the scored acceptance surface"
   fi
 
   # A check that could not run has not passed. If skip collapsed into pass the
