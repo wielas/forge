@@ -184,12 +184,6 @@ when supplied the live `forge-codex-lane` assignee. Preflight measured Claude
 Code 2.1.227, one patch newer than the readiness source; `docs/state.md` records
 the live version while the dated 2026-08-09 measurement remains unchanged.
 
-HANDOFF: CHUNK-10 is green and locally complete on
-`chunk/10-reconcile-launch-ledger-and-operator-contract`, stacked on the exact
-CHUNK-9 tip `52b4be0`. External approval rejected GitHub export because this
-request did not explicitly authorize disclosure to the configured remote. After
-the human explicitly authorizes export, run `git push -u origin HEAD`, open a PR
-against `chunk/9-commission-product-run-with-existing-gates` using
-`.forge/chunk-10-pr-body.md`, then write and validate
-`.forge/chunk-10-metadata.json` with the resulting PR URL. Do not merge; retarget
-to `main` only after the lower readiness stacks integrate.
+HANDOFF: CHUNK-10 is green on `chunk/10-reconcile-launch-ledger-and-operator-contract`; GitHub export was rejected absent explicit authorization.
+After authorization: push, open the stacked PR against `chunk/9-commission-product-run-with-existing-gates` with `.forge/chunk-10-pr-body.md`, then write/validate metadata with its PR URL.
+Do not merge; retarget only after the lower readiness stacks integrate.

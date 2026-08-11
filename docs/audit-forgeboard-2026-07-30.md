@@ -29,10 +29,8 @@ against the file rather than the one it was opened with:
 
 ## Readiness reconciliation — 2026-08-11 (CHUNK-10)
 
-This table supersedes the 2026-08-06 planning disposition immediately below;
-it does not rewrite the measurements in any finding body. “Product run proof”
-means the mechanism is shipped and fixture- or commissioning-proven, while the
-first genuine product lifecycle still owes the live evidence.
+This supersedes the 2026-08-06 disposition without rewriting its measurements.
+“Product run proof” means the mechanism shipped but still owes live evidence.
 
 | Finding | Current disposition | Executable evidence or remaining proof |
 |---|---|---|
