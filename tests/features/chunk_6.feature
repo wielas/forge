@@ -5,11 +5,10 @@ Feature: CHUNK-6 planning-time acceptance freeze
     When `/roadmap` finishes
     Then its `Acceptance` field names an existing `tests/features/chunk_<id>.feature` whose Given/When/Then steps match the contract.
 
-  @real-source
   Scenario: Plan real-source coverage
-    Given a contract names an external source
+    Given a contract declares each external source and its scenario index
     When `/roadmap` finishes
-    Then its feature file contains a `@real-source` scenario.
+    Then every declared source maps to a matching `@real-source` scenario.
 
   Scenario: Hash every planned feature
     Given all planned feature files exist

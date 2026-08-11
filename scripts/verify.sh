@@ -1198,7 +1198,7 @@ roadmap/skill-delegates-to-the-checker  /roadmap names the script, via ~/.forge/
 roadmap/thresholds-are-the-skills-own-numbers  the caps have not drifted from skills/roadmap/SKILL.md
 roadmap/skill-emits-frozen-acceptance    one planning pass writes feature paths, executable scenarios, and the manifest
 roadmap/acceptance-matches-contract      every generated Given/When/Then step matches its chunk contract
-roadmap/real-source-is-planned           an external-source contract carries a @real-source scenario before implementation
+roadmap/real-source-is-planned           arbitrary declared sources map exactly to their @real-source scenarios
 roadmap/freeze-is-deterministic           sorted repo-relative paths map to the feature bytes' SHA-256 digests
 roadmap/missing-feature-is-named          freeze refuses atomically and names the chunk plus expected path
 EOF
@@ -4027,7 +4027,9 @@ AF_GRAPH
 - **Touches:** `tests/features/chunk_6.feature`
 - **Scenarios:**
   - Given a SQLite source, When the reader runs, Then one real record is returned.
+  - Given an opaque telemetry lake, When the reader runs, Then one opaque record is returned.
   - Given the same plan twice, When acceptance is frozen, Then the manifest bytes are identical.
+- **Real sources:** `SQLite source` → scenario 1; `opaque telemetry lake` → scenario 2
 - **Acceptance:** tests/features/chunk_6.feature
 - **Out of scope:** step definitions.
 - **Done when:** acceptance is frozen.
@@ -4042,6 +4044,12 @@ Feature: CHUNK-6 acceptance
     When the reader runs
     Then one real record is returned
 
+  @real-source
+  Scenario: Read an arbitrary source label
+    Given an opaque telemetry lake
+    When the reader runs
+    Then one opaque record is returned
+
   Scenario: Freeze deterministically
     Given the same plan twice
     When acceptance is frozen
@@ -4050,6 +4058,7 @@ AF_FEATURE
   }
 
   if grep -Fq '**Acceptance:** tests/features/chunk_<id>.feature' skills/roadmap/SKILL.md \
+     && grep -Fq '**Real sources:**' skills/roadmap/SKILL.md \
      && grep -Fq '@real-source' skills/roadmap/SKILL.md \
      && grep -Fq '~/.forge/repo/scripts/acceptance-freeze.sh' skills/roadmap/SKILL.md; then
     ok "skill-emits-frozen-acceptance"
@@ -4085,18 +4094,27 @@ AF_FEATURE
           "the matching contract and feature did not freeze (exit $af_rc: ${af_out:-no diagnostic})"
     fi
 
-    local af_source="$TMPROOT/acceptance-source"
+    local af_source="$TMPROOT/acceptance-source" af_moved="$TMPROOT/acceptance-source-moved"
     _acceptance_fixture "$af_source"
     sed -i.bak '/@real-source/d' "$af_source/tests/features/chunk_6.feature"
     rm -f "$af_source/tests/features/chunk_6.feature.bak"
     af_out="$("$freeze" "$af_source" 2>&1)"; af_rc=$?
+    _acceptance_fixture "$af_moved"
+    sed -i.bak '/@real-source/d' "$af_moved/tests/features/chunk_6.feature"
+    sed -i.bak '/Scenario: Freeze deterministically/i\
+  @real-source' "$af_moved/tests/features/chunk_6.feature"
+    rm -f "$af_moved/tests/features/chunk_6.feature.bak"
+    local af_moved_out af_moved_rc
+    af_moved_out="$("$freeze" "$af_moved" 2>&1)"; af_moved_rc=$?
     if [ "$af_rc" -ne 0 ] \
        && printf '%s' "$af_out" | grep -Fq 'CHUNK-6' \
-       && printf '%s' "$af_out" | grep -Fq '@real-source'; then
-      ok "real-source-is-planned"
+       && printf '%s' "$af_out" | grep -Fq '@real-source' \
+       && [ "$af_moved_rc" -ne 0 ] \
+       && printf '%s' "$af_moved_out" | grep -Fq 'declared source scenarios'; then
+      ok "real-source-is-planned (two arbitrary labels; missing or misplaced tags fail)"
     else
       bad "real-source-is-planned" \
-          "an external-source contract without a tagged scenario must fail and name CHUNK-6 (exit $af_rc: ${af_out:-no diagnostic})"
+          "declared source mappings must reject missing and unrelated tags (exits $af_rc/$af_moved_rc: ${af_out:-no diagnostic}; ${af_moved_out:-no moved diagnostic})"
     fi
 
     local af_deterministic="$TMPROOT/acceptance-deterministic" af_digest

@@ -138,16 +138,11 @@ def contract_scenarios(chunk_id: str, contract: str):
     return parsed, None
 
 
-def feature_scenarios(chunk_id: str, feature_path: Path):
+def feature_scenarios(chunk_id: str, feature_text: str):
     scenarios = []
     pending_tags = set()
     current = None
-    try:
-        lines = feature_path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError) as exc:
-        return None, f"{chunk_id}: cannot read {feature_path}: {exc}"
-
-    for line in lines:
+    for line in feature_text.splitlines():
         stripped = line.strip()
         if stripped.startswith("@"):
             pending_tags.update(tag.removeprefix("@") for tag in stripped.split())
@@ -175,13 +170,46 @@ def feature_scenarios(chunk_id: str, feature_path: Path):
                 "Given, When, and Then in that order"
             )
         parsed.append(tuple(text for _, text in steps))
-    return (parsed, any("real-source" == tag for s in scenarios for tag in s["tags"])), None
+    tagged = {
+        index for index, scenario in enumerate(scenarios, start=1)
+        if "real-source" in scenario["tags"]
+    }
+    return (parsed, tagged), None
 
 
-external_source = re.compile(
-    r"\b(?:Hermes|GitHub(?: CLI)?|gh CLI|kanban|SQLite?|subprocess|network|HTTP)\b",
-    re.IGNORECASE,
-)
+def contract_real_sources(chunk_id: str, contract: str):
+    match = re.search(
+        r"(?m)^-\s+\*\*Real sources:\*\*\s+(.+?)\s*$", contract
+    )
+    if match is None:
+        return None, f"{chunk_id}: missing Real sources declaration"
+    declaration = match.group(1).strip()
+    if declaration.lower() == "none":
+        return [], None
+
+    sources = []
+    seen = set()
+    for item in declaration.split(";"):
+        item = item.strip()
+        parsed = re.fullmatch(
+            r"`([^`]+)`\s*(?:→|->)\s*scenario\s+([1-9][0-9]*)",
+            item,
+            re.IGNORECASE,
+        )
+        if parsed is None:
+            return None, (
+                f"{chunk_id}: invalid Real sources entry {item!r}; expected "
+                "`source label` → scenario N"
+            )
+        label = parsed.group(1).strip()
+        key = label.casefold()
+        if not label or key in seen:
+            return None, f"{chunk_id}: duplicate or empty real source {label!r}"
+        seen.add(key)
+        sources.append((label, int(parsed.group(2))))
+    return sources, None
+
+
 errors = []
 features = {}
 
@@ -208,32 +236,53 @@ for chunk_id in sorted(ids):
         continue
 
     feature_path = project / expected
-    if not feature_path.is_file():
+    try:
+        feature_bytes = feature_path.read_bytes()
+        feature_text = feature_bytes.decode("utf-8")
+    except FileNotFoundError:
         errors.append(f"{chunk_id}: missing feature; expected {expected}")
+        continue
+    except (OSError, UnicodeError) as exc:
+        errors.append(f"{chunk_id}: cannot read {expected}: {exc}")
         continue
 
     planned, contract_error = contract_scenarios(chunk_id, contract)
     if contract_error:
         errors.append(contract_error)
         continue
-    generated, feature_error = feature_scenarios(chunk_id, feature_path)
+    real_sources, source_error = contract_real_sources(chunk_id, contract)
+    if source_error:
+        errors.append(source_error)
+        continue
+    generated, feature_error = feature_scenarios(chunk_id, feature_text)
     if feature_error:
         errors.append(feature_error)
         continue
-    actual_steps, has_real_source = generated
+    actual_steps, tagged_indexes = generated
     if planned != actual_steps:
         errors.append(
             f"{chunk_id}: feature steps do not match the contract's Given/When/Then scenarios"
         )
         continue
-    if external_source.search(contract) and not has_real_source:
+    out_of_range = [
+        f"{label} → scenario {index}"
+        for label, index in real_sources if index > len(planned)
+    ]
+    if out_of_range:
         errors.append(
-            f"{chunk_id}: contract names an external source but {expected} has no "
-            "@real-source Scenario"
+            f"{chunk_id}: Real sources maps beyond its {len(planned)} scenario(s): "
+            + ", ".join(out_of_range)
+        )
+        continue
+    declared_indexes = {index for _, index in real_sources}
+    if declared_indexes != tagged_indexes:
+        errors.append(
+            f"{chunk_id}: @real-source scenarios {sorted(tagged_indexes)} do not "
+            f"match declared source scenarios {sorted(declared_indexes)}"
         )
         continue
 
-    features[expected] = hashlib.sha256(feature_path.read_bytes()).hexdigest()
+    features[expected] = hashlib.sha256(feature_bytes).hexdigest()
 
 if errors:
     for error in errors:
