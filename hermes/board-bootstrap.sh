@@ -2,6 +2,7 @@
 # =============================================================================
 # forge board bootstrap
 #   board-bootstrap.sh <board>            init board + load docs/chunks/* cards
+#   board-bootstrap.sh <board> --root-only validate graph + load its ONE root
 #   board-bootstrap.sh <board> --hello    init board + ONE hello-chunk card
 #                                         (the day-one risk burn-down test)
 # Run from the project repo root.
@@ -23,9 +24,105 @@
 # There is NO --body-file. Pass file contents with --body "$(cat f)".
 # =============================================================================
 set -euo pipefail
-BOARD="${1:?usage: board-bootstrap.sh <board> [--hello]}"
+BOARD="${1:?usage: board-bootstrap.sh <board> [--root-only|--hello]}"
 MODE="${2:-full}"
 LANE_ASSIGNEE="${FORGE_LANE_ASSIGNEE:-forge-codex-lane}"
+
+case "$MODE" in
+  full|--root-only|--hello) ;;
+  *)
+    echo "usage: board-bootstrap.sh <board> [--root-only|--hello]" >&2
+    exit 1
+    ;;
+esac
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+GRAPH=docs/chunks/graph.json
+ROOT_ID=""
+
+validate_graph() { # $1=graph; sets ROOT_ID
+  local graph="$1" roots root_count missing ids seen total progress id deps dep ready
+
+  if ! jq -e '
+      type == "array" and length > 0
+      and all(.[];
+        ((.id | type) == "string")
+        and (.id | test("^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"))
+        and ((.depends_on // []) | type == "array")
+        and all((.depends_on // [])[];
+          (type == "string")
+          and test("^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"))
+        and (((.depends_on // []) | unique | length)
+             == ((.depends_on // []) | length)))
+      and ((map(.id) | unique | length) == length)
+    ' "$graph" >/dev/null 2>&1; then
+    echo "FATAL: $graph has invalid or duplicate ids/dependencies" >&2
+    return 1
+  fi
+
+  missing="$(jq -r '
+      [.[].id] as $ids
+      | [ .[] | (.depends_on // [])[] as $dep
+          | select(($ids | index($dep)) == null) | $dep ]
+      | unique[]
+    ' "$graph")"
+  if [ -n "$missing" ]; then
+    echo "FATAL: $graph names missing dependencies: $(printf '%s' "$missing" | paste -sd, -)" >&2
+    return 1
+  fi
+
+  roots="$(jq -r '.[] | select(((.depends_on // []) | length) == 0) | .id' "$graph")"
+  root_count="$(printf '%s\n' "$roots" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$root_count" != 1 ]; then
+    echo "FATAL: --root-only requires exactly one graph root; found $root_count" >&2
+    return 1
+  fi
+  ROOT_ID="$roots"
+
+  ids="$(mktemp)"
+  seen="$(mktemp)"
+  jq -r '.[].id' "$graph" > "$ids"
+  total="$(wc -l < "$ids" | tr -d ' ')"
+  while [ "$(wc -l < "$seen" | tr -d ' ')" -lt "$total" ]; do
+    progress=0
+    while IFS= read -r id; do
+      grep -Fxq "$id" "$seen" && continue
+      deps="$(jq -r --arg id "$id" \
+        '.[] | select(.id == $id) | (.depends_on // [])[]' "$graph")"
+      ready=1
+      for dep in $deps; do
+        grep -Fxq "$dep" "$seen" || { ready=0; break; }
+      done
+      [ "$ready" = 1 ] || continue
+      printf '%s\n' "$id" >> "$seen"
+      progress=$((progress + 1))
+    done < "$ids"
+    if [ "$progress" = 0 ]; then
+      rm -f "$ids" "$seen"
+      echo "FATAL: $graph contains a cycle or a chunk unreachable from $ROOT_ID" >&2
+      return 1
+    fi
+  done
+
+  while IFS= read -r id; do
+    if [ ! -f "docs/chunks/$id.md" ]; then
+      rm -f "$ids" "$seen"
+      echo "FATAL: $graph names $id but docs/chunks/$id.md does not exist" >&2
+      return 1
+    fi
+  done < "$ids"
+  rm -f "$ids" "$seen"
+}
+
+# Graph validation is a board-mutation boundary in both staged and full modes.
+# A malformed plan must fail before even initializing a board.
+if [ "$MODE" != "--hello" ]; then
+  [ -f "$GRAPH" ] || {
+    echo "no $GRAPH found — run /roadmap first (it emits the chunk specs AND the graph)" >&2
+    exit 1
+  }
+  validate_graph "$GRAPH" || exit 1
+fi
 
 # Pin the board for every hermes call in this script AND for anything it spawns.
 # This is the same mechanism `--board` uses internally (it sets this var for the
@@ -41,7 +138,6 @@ hermes kanban boards create "$BOARD" 2>/dev/null || true   # `boards` ignores --
 # below the first card auto-blocks on tick 1 — no worker output, no obvious
 # cause. Set it here and read it back; `boards create` above is a no-op when the
 # board already exists, so the flag on `create` cannot be relied on.
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 hermes kanban boards set-default-workdir "$BOARD" "$REPO_ROOT"
 readback=$(hermes kanban boards list --json \
   | jq -r --arg b "$BOARD" '.[]|select(.slug==$b)|.default_workdir // "null"')
@@ -83,7 +179,7 @@ create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=bra
 # pick it up, because a skipped chunk is invisible to the graph — and its
 # dependents would then have no unmet prerequisite and auto-promote to ready.
 create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [parent args...]
-  local cid state
+  local cid state status
   cid=$(hermes kanban --board "$BOARD" create "$1" \
     --body "$(cat "$2")" \
     --assignee forge-operator-handoff \
@@ -92,20 +188,46 @@ create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [parent a
     "${@:4}" \
     --json | jq -r '.id')
   state=$(hermes kanban --board "$BOARD" show "$cid" --json)
-  if printf '%s' "$state" | jq -e '.task.status == "running"' >/dev/null; then
-    hermes kanban --board "$BOARD" block --kind needs_input "$cid" \
-      "interactive chunk: human implementation required" >/dev/null
-    hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
-    state=$(hermes kanban --board "$BOARD" show "$cid" --json)
-  fi
-  printf '%s' "$state" | jq -e '
-    .task.status == "blocked"
-    and .task.assignee == null
-    and any(.events[]; .kind == "blocked")
+  printf '%s' "$state" | jq -e --arg id "$cid" --arg title "$1" '
+    .task.id == $id and .task.title == $title
   ' >/dev/null || {
-    echo "FATAL: interactive card $cid is not sticky-blocked and unassigned" >&2
+    echo "FATAL: interactive idempotency key mapped to the wrong card identity" >&2
     exit 1
   }
+  status=$(printf '%s' "$state" | jq -r '.task.status // empty')
+  case "$status" in
+    running)
+      hermes kanban --board "$BOARD" block --kind needs_input "$cid" \
+        "interactive chunk: human implementation required" >/dev/null
+      hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
+      state=$(hermes kanban --board "$BOARD" show "$cid" --json)
+      printf '%s' "$state" | jq -e '
+        .task.status == "blocked"
+        and .task.assignee == null
+        and any(.events[]; .kind == "blocked")
+      ' >/dev/null || {
+        echo "FATAL: interactive card $cid is not sticky-blocked and unassigned" >&2
+        exit 1
+      }
+      ;;
+    blocked)
+      printf '%s' "$state" | jq -e '
+        .task.assignee == null and any(.events[]; .kind == "blocked")
+      ' >/dev/null || {
+        echo "FATAL: existing interactive card $cid lost its sticky block" >&2
+        exit 1
+      }
+      ;;
+    done)
+      # Full bootstrap follows the documented human checkpoint. Reuse the
+      # terminal root as the same dependency card; never re-block completed
+      # work or erase its human assignee. Parent identity is read back below.
+      ;;
+    *)
+      echo "FATAL: existing interactive card $cid has unsafe status '${status:-missing}'" >&2
+      exit 1
+      ;;
+  esac
   printf '%s\n' "$cid"
 }
 
@@ -132,13 +254,12 @@ EOF
   exit 0
 fi
 
-# full mode: cards AND edges, both driven by docs/chunks/graph.json.
+# full/root-only mode: cards AND edges, driven by docs/chunks/graph.json.
 #
 # The graph is the ONLY source of truth here. Parsing "Depends on" out of prose,
 # or printing link commands for a human to paste, loses edges silently — and a
 # child whose parent edge is missing is immediately dispatchable with its
 # prerequisite unbuilt. /roadmap emits graph.json for exactly this reason.
-GRAPH=docs/chunks/graph.json
 if [ ! -f "$GRAPH" ]; then
   echo "no $GRAPH found — run /roadmap first (it emits the chunk specs AND the graph)" >&2
   exit 1
@@ -159,9 +280,16 @@ card_id_of() { awk -F'\t' -v k="$1" '$1==k{print $2; found=1} END{exit !found}' 
 declared=$(jq '[.[].depends_on // [] | length] | add // 0' "$GRAPH")
 created=0
 total=$(jq 'length' "$GRAPH")
-while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$total" ]; do
+target_total="$total"
+expected_declared="$declared"
+if [ "$MODE" = "--root-only" ]; then
+  target_total=1
+  expected_declared=0
+fi
+while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
   progress=0
   while IFS= read -r id; do
+    [ "$MODE" != "--root-only" ] || [ "$id" = "$ROOT_ID" ] || continue
     card_id_of "$id" >/dev/null 2>&1 && continue
 
     lane=$(jq -r --arg id "$id" --arg lane "$LANE_ASSIGNEE" \
@@ -236,9 +364,9 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$total" ]; do
   }
 done
 
-if [ "$created" != "$declared" ]; then
-  echo "FATAL: attached $created parents but $GRAPH declares $declared." >&2
+if [ "$created" != "$expected_declared" ]; then
+  echo "FATAL: attached $created parents for the created set but expected $expected_declared." >&2
   exit 1
 fi
 
-echo "board '$BOARD': $(wc -l < "$IDMAP" | tr -d ' ') cards, $created/$declared parents attached atomically."
+echo "board '$BOARD': $(wc -l < "$IDMAP" | tr -d ' ') cards, $created/$expected_declared parents attached atomically."

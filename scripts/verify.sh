@@ -16,6 +16,7 @@
 #   ./scripts/verify.sh                 # every group, with free substrate probes
 #   ./scripts/verify.sh cli config      # only these groups
 #   ./scripts/verify.sh --with-codex    # also run the sandbox probes (spend tokens)
+#   ./scripts/verify.sh bootstrap --with-hermes  # run isolated real-Hermes bootstrap proof
 #   ./scripts/verify.sh --list          # list cases without running them
 #
 # Groups:
@@ -27,6 +28,8 @@
 #   lane/       preconditions the unattended lane needs and cannot create for
 #               itself. Every case was a real failure seen on 2026-07-28 while
 #               driving `codex exec` by hand against a live chunk (rung 2).
+#   bootstrap/  staged board creation against a stateful Hermes stub: validate
+#               the graph first, create one root, then extend idempotently.
 #   metrics/    the flywheel's review and observability signals, computed from
 #               checked-in board/profile fixtures and diffed against one exact
 #               expectation. Schema drift must fail a check, not a quarter (F27)
@@ -64,17 +67,18 @@ helptext() {
   ' "$0"
 }
 
-WITH_CODEX=0; LIST_ONLY=0; SUITES=""
+WITH_CODEX=0; WITH_HERMES=0; LIST_ONLY=0; SUITES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-codex) WITH_CODEX=1; shift;;
+    --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|metrics|metadata|prejudge|sweep|roadmap|gate) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane metrics metadata prejudge sweep roadmap gate"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap metrics metadata prejudge sweep roadmap gate"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -1119,6 +1123,13 @@ lane/prejudge-delegates-its-protocol    the SOUL names the script and the script
 lane/prejudge-terminator-mapping        rc 0 -> kanban_complete, rc 3 -> kanban_block; an outage is not a rejection
 lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
 lane/prejudge-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
+bootstrap/root-only-creates-one-card    a valid graph creates only its unique root
+bootstrap/multiple-roots-mutate-nothing invalid staged graphs refuse before the first Hermes command
+bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed dependency ids invoke no Hermes command
+bootstrap/full-extends-root-idempotently full bootstrap reuses the root key and atomically attaches every remaining parent
+bootstrap/completed-interactive-root-is-reused full bootstrap extends the human-completed root without re-blocking it
+bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
+bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes rather than the command stub
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/driver-usage-joins-exact-session  session totals and every per-model row come from worker_session_id
@@ -1287,7 +1298,7 @@ EOF
 fi
 
 echo "forge verify — $(date '+%Y-%m-%d %H:%M:%S %Z')"
-echo "groups:$SUITES$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')"
+echo "groups:$SUITES$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')$([ "$WITH_HERMES" = 1 ] && echo ' (+real Hermes)')"
 
 wants cli       && run_cli_group
 wants config    && run_config_group
@@ -1789,6 +1800,325 @@ run_lane_group() {
   fi
 }
 wants lane      && run_lane_group
+
+# ---------------------------------------------------------------------------
+# bootstrap/ — CHUNK-8 staged launch, executed through the real source.
+# ---------------------------------------------------------------------------
+run_bootstrap_group() {
+  group bootstrap
+  local bootstrap="$REPO_ROOT/hermes/board-bootstrap.sh"
+
+  _bootstrap_fixture() { # $1=root $2=graph shape
+    local root="$1" shape="$2" id
+    rm -rf "$root"
+    mkdir -p "$root/bin" "$root/docs/chunks" "$root/state"
+    git -C "$root" init -q
+
+    case "$shape" in
+      normal)
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-2"]}
+]
+BOOTSTRAP_GRAPH
+        ;;
+      multi-root)
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-1"]}
+]
+BOOTSTRAP_GRAPH
+        ;;
+      interactive)
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"claude-interactive","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-2"]}
+]
+BOOTSTRAP_GRAPH
+        ;;
+      bad-space)
+        printf '%s\n' '[{"id":"CHUNK 1","lane":"forge-codex-lane","depends_on":[]}]' \
+          > "$root/docs/chunks/graph.json"
+        ;;
+      bad-slash)
+        printf '%s\n' '[{"id":"CHUNK/1","lane":"forge-codex-lane","depends_on":[]}]' \
+          > "$root/docs/chunks/graph.json"
+        ;;
+      bad-traversal)
+        printf '%s\n' '[{"id":"CHUNK-../1","lane":"forge-codex-lane","depends_on":[]}]' \
+          > "$root/docs/chunks/graph.json"
+        ;;
+      bad-dependency)
+        printf '%s\n' '[{"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":["CHUNK 0"]}]' \
+          > "$root/docs/chunks/graph.json"
+        ;;
+      *) return 1;;
+    esac
+
+    for id in CHUNK-1 CHUNK-2 CHUNK-3; do
+      printf '### %s: bootstrap fixture\n' "$id" > "$root/docs/chunks/$id.md"
+    done
+
+    cat > "$root/bin/hermes" <<'HERMES_STUB'
+#!/usr/bin/env bash
+set -eu
+state="${STUB_STATE:?}"
+[ "${1:-}" = kanban ] || exit 64
+shift
+printf '%s\n' "$*" >> "$state/commands.log"
+
+case "${1:-}" in
+  init) exit 0;;
+  assignees) printf 'forge-codex-lane\n'; exit 0;;
+  boards)
+    shift
+    case "${1:-}" in
+      create) exit 0;;
+      set-default-workdir)
+        printf '%s' "$2" > "$state/board"
+        printf '%s' "$3" > "$state/workdir"
+        exit 0
+        ;;
+      list)
+        jq -n --arg board "$(cat "$state/board")" \
+              --arg workdir "$(cat "$state/workdir")" \
+              '[{slug:$board,default_workdir:$workdir}]'
+        exit 0
+        ;;
+    esac
+    ;;
+  --board)
+    board="$2"
+    shift 2
+    command="${1:-}"
+    shift
+    case "$command" in
+      create)
+        title="${1:-}"
+        shift
+        key=""; parents=""; assignee=""; initial="todo"
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --idempotency-key) key="$2"; shift 2;;
+            --parent) parents="${parents}${2}"$'\n'; shift 2;;
+            --assignee) assignee="$2"; shift 2;;
+            --initial-status) initial="$2"; shift 2;;
+            --body|--workspace|--branch|--max-retries|--skill) shift 2;;
+            --json) shift;;
+            *) shift;;
+          esac
+        done
+        [ -n "$key" ] || exit 65
+        touch "$state/keys.tsv" "$state/creates.tsv"
+        cid="$(awk -F '\t' -v key="$key" '$1==key{print $2; exit}' "$state/keys.tsv")"
+        if [ -z "$cid" ]; then
+          cid="card-$(( $(wc -l < "$state/keys.tsv" | tr -d ' ') + 1 ))"
+          printf '%s\t%s\n' "$key" "$cid" >> "$state/keys.tsv"
+          printf '%s' "$parents" > "$state/$cid.parents"
+          printf '%s' "$initial" > "$state/$cid.status"
+          printf '%s' "$assignee" > "$state/$cid.assignee"
+          printf '%s' "$title" > "$state/$cid.title"
+          printf '%s\t%s\t%s\t%s\n' "$key" "$cid" \
+            "$(printf '%s' "$parents" | paste -sd, -)" "$title" >> "$state/creates.tsv"
+        fi
+        jq -n --arg id "$cid" --arg board "$board" '{id:$id,board:$board}'
+        exit 0
+        ;;
+      show)
+        cid="${1:?}"
+        if [ "${STUB_DROP_PARENTS:-0}" = 1 ]; then
+          parents='[]'
+        else
+          parents="$(jq -R -s 'split("\n") | map(select(length > 0))' \
+            "$state/$cid.parents")"
+        fi
+        status="$(cat "$state/$cid.status")"
+        assignee="$(cat "$state/$cid.assignee")"
+        if [ -f "$state/$cid.blocked" ]; then
+          events='[{"kind":"blocked"}]'
+        else
+          events='[]'
+        fi
+        jq -n --argjson parents "$parents" --argjson events "$events" \
+          --arg status "$status" --arg assignee "$assignee" \
+          --arg id "$cid" --arg title "$(cat "$state/$cid.title")" \
+          '{task:{id:$id,title:$title,status:$status,
+                  assignee:(if $assignee == "" then null else $assignee end)},
+            events:$events,parents:$parents}'
+        exit 0
+        ;;
+      block)
+        cid=""
+        for arg in "$@"; do case "$arg" in card-*) cid="$arg";; esac; done
+        [ -n "$cid" ] || exit 65
+        printf blocked > "$state/$cid.status"
+        : > "$state/$cid.blocked"
+        exit 0
+        ;;
+      assign)
+        cid="${1:?}"
+        [ "${2:-}" = none ] || exit 65
+        : > "$state/$cid.assignee"
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+
+printf 'unexpected hermes invocation: %s\n' "$*" >&2
+exit 64
+HERMES_STUB
+    chmod +x "$root/bin/hermes"
+  }
+
+  _bootstrap_run() { # $1=fixture $2=mode [drop-parent-readback]
+    local root="$1" mode="$2" drop="${3:-0}"
+    (cd "$root" && STUB_STATE="$root/state" STUB_DROP_PARENTS="$drop" \
+      PATH="$root/bin:$PATH" "$bootstrap" stage "$mode")
+  }
+
+  local root="$TMPROOT/bootstrap-root" out rc count
+  _bootstrap_fixture "$root" normal
+  out="$(_bootstrap_run "$root" --root-only 2>&1)"; rc=$?
+  count="$(wc -l < "$root/state/keys.tsv" 2>/dev/null | tr -d ' ')"
+  if [ "$rc" = 0 ] && [ "$count" = 1 ] \
+     && grep -q $'^stage-CHUNK-1\t' "$root/state/keys.tsv" \
+     && ! grep -q $'^stage-CHUNK-[23]\t' "$root/state/keys.tsv"; then
+    ok "root-only-creates-one-card"
+  else
+    bad "root-only-creates-one-card" \
+        "--root-only must create only CHUNK-1; exit $rc, cards ${count:-0}: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  local multi="$TMPROOT/bootstrap-multi"
+  _bootstrap_fixture "$multi" multi-root
+  out="$(_bootstrap_run "$multi" --root-only 2>&1)"; rc=$?
+  if [ "$rc" = 1 ] && [ ! -e "$multi/state/commands.log" ] \
+     && [ ! -s "$multi/state/keys.tsv" ]; then
+    ok "multiple-roots-mutate-nothing"
+  else
+    bad "multiple-roots-mutate-nothing" \
+        "a multi-root graph must exit 1 before invoking Hermes; exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  local malformed="$TMPROOT/bootstrap-malformed" shape malformed_ok=1
+  for shape in bad-space bad-slash bad-traversal bad-dependency; do
+    _bootstrap_fixture "$malformed" "$shape"
+    out="$(_bootstrap_run "$malformed" --root-only 2>&1)"; rc=$?
+    if [ "$rc" != 1 ] || [ -e "$malformed/state/commands.log" ]; then
+      malformed_ok=0
+      break
+    fi
+  done
+  if [ "$malformed_ok" = 1 ]; then
+    ok "malformed-ids-mutate-nothing (space, slash, traversal, dependency)"
+  else
+    bad "malformed-ids-mutate-nothing" \
+        "$shape reached Hermes or returned $rc instead of structural exit 1: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  local extend="$TMPROOT/bootstrap-extend" root_id child2_id child3_id staged_count final_count
+  _bootstrap_fixture "$extend" normal
+  out="$(_bootstrap_run "$extend" --root-only 2>&1)"; rc=$?
+  staged_count="$(wc -l < "$extend/state/keys.tsv" 2>/dev/null | tr -d ' ')"
+  root_id="$(awk -F '\t' '$1=="stage-CHUNK-1"{print $2}' "$extend/state/keys.tsv" 2>/dev/null)"
+  out="$(_bootstrap_run "$extend" full 2>&1)"; local full_rc=$?
+  final_count="$(wc -l < "$extend/state/keys.tsv" 2>/dev/null | tr -d ' ')"
+  child2_id="$(awk -F '\t' '$1=="stage-CHUNK-2"{print $2}' "$extend/state/keys.tsv" 2>/dev/null)"
+  child3_id="$(awk -F '\t' '$1=="stage-CHUNK-3"{print $2}' "$extend/state/keys.tsv" 2>/dev/null)"
+  if [ "$rc" = 0 ] && [ "$full_rc" = 0 ] \
+     && [ "$staged_count" = 1 ] && [ "$final_count" = 3 ] \
+     && [ -n "$root_id" ] && [ -n "$child2_id" ] && [ -n "$child3_id" ] \
+     && [ "$(cat "$extend/state/$child2_id.parents")" = "$root_id" ] \
+     && [ "$(cat "$extend/state/$child3_id.parents")" = "$child2_id" ]; then
+    ok "full-extends-root-idempotently"
+  else
+    bad "full-extends-root-idempotently" \
+        "root-only then full must retain one root mapping and create both parented children; exits $rc/$full_rc, counts ${staged_count:-0}/${final_count:-0}: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  local interactive="$TMPROOT/bootstrap-interactive" interactive_blocks
+  _bootstrap_fixture "$interactive" interactive
+  out="$(_bootstrap_run "$interactive" --root-only 2>&1)"; rc=$?
+  root_id="$(awk -F '\t' '$1=="stage-CHUNK-1"{print $2}' \
+              "$interactive/state/keys.tsv" 2>/dev/null)"
+  if [ -n "$root_id" ]; then
+    printf done > "$interactive/state/$root_id.status"
+    printf human-operator > "$interactive/state/$root_id.assignee"
+  fi
+  interactive_blocks="$(grep -c ' block ' "$interactive/state/commands.log" 2>/dev/null || true)"
+  out="$(_bootstrap_run "$interactive" full 2>&1)"; full_rc=$?
+  final_count="$(wc -l < "$interactive/state/keys.tsv" 2>/dev/null | tr -d ' ')"
+  if [ "$rc" = 0 ] && [ "$full_rc" = 0 ] && [ "$final_count" = 3 ] \
+     && [ "$(cat "$interactive/state/$root_id.status" 2>/dev/null)" = done ] \
+     && [ "$(cat "$interactive/state/$root_id.assignee" 2>/dev/null)" = human-operator ] \
+     && [ "$(grep -c ' block ' "$interactive/state/commands.log" 2>/dev/null || true)" = "$interactive_blocks" ]; then
+    ok "completed-interactive-root-is-reused (done state and human assignee preserved)"
+  else
+    bad "completed-interactive-root-is-reused" \
+        "full bootstrap must reuse a completed interactive root without re-blocking it; exits $rc/$full_rc, cards ${final_count:-0}: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
+  fi
+
+  local scoped="$TMPROOT/bootstrap-scoped" root_rc full_bad_rc
+  _bootstrap_fixture "$scoped" normal
+  _bootstrap_run "$scoped" --root-only 1 >/dev/null 2>&1; root_rc=$?
+  _bootstrap_run "$scoped" full 1 >/dev/null 2>&1; full_bad_rc=$?
+  if [ "$root_rc" = 0 ] && [ "$full_bad_rc" = 1 ]; then
+    ok "reconciliation-is-mode-scoped"
+  else
+    bad "reconciliation-is-mode-scoped" \
+        "empty root readback must pass root-only, while missing full-mode parent readback must fail; exits $root_rc/$full_bad_rc"
+  fi
+
+  if [ "$WITH_HERMES" != 1 ]; then
+    skip "real-hermes-root-and-extension" "needs --with-hermes (isolated host integration)"
+  elif ! command -v hermes >/dev/null 2>&1; then
+    skip "real-hermes-root-and-extension" "hermes not on PATH"
+  else
+    local real="$TMPROOT/bootstrap-real" real_project="$TMPROOT/bootstrap-real/project"
+    local real_home="$TMPROOT/bootstrap-real/hermes-home" real_db real_root_id
+    mkdir -p "$real_project/docs/chunks" "$real_home"
+    git -C "$real_project" init -q
+    cat > "$real_project/docs/chunks/graph.json" <<'REAL_BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"default","depends_on":[]},
+  {"id":"CHUNK-2","lane":"default","depends_on":["CHUNK-1"]}
+]
+REAL_BOOTSTRAP_GRAPH
+    printf '### CHUNK-1: real root\n' > "$real_project/docs/chunks/CHUNK-1.md"
+    printf '### CHUNK-2: real child\n' > "$real_project/docs/chunks/CHUNK-2.md"
+    out="$(cd "$real_project" && HERMES_HOME="$real_home" \
+      FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real --root-only 2>&1)"; rc=$?
+    real_db="$real_home/kanban/boards/stage-real/kanban.db"
+    staged_count="$(sqlite3 "$real_db" 'SELECT COUNT(*) FROM tasks;' 2>/dev/null || true)"
+    real_root_id="$(sqlite3 "$real_db" \
+      "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-1';" 2>/dev/null)"
+    out="$(cd "$real_project" && HERMES_HOME="$real_home" \
+      FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real 2>&1)"; full_rc=$?
+    final_count="$(sqlite3 "$real_db" 'SELECT COUNT(*) FROM tasks;' 2>/dev/null || true)"
+    root_id="$(sqlite3 "$real_db" \
+      "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-1';" 2>/dev/null)"
+    child2_id="$(sqlite3 "$real_db" \
+      "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-2';" 2>/dev/null)"
+    if [ "$rc" = 0 ] && [ "$full_rc" = 0 ] \
+       && [ "$staged_count" = 1 ] && [ "$final_count" = 2 ] \
+       && [ -n "$real_root_id" ] && [ "$root_id" = "$real_root_id" ] \
+       && [ "$(sqlite3 "$real_db" \
+              "SELECT COUNT(*) FROM task_links WHERE parent_id='$root_id' AND child_id='$child2_id';" 2>/dev/null)" = 1 ]; then
+      ok "real-hermes-root-and-extension (isolated board: 1 root -> 2 cards, 1 edge)"
+    else
+      bad "real-hermes-root-and-extension" \
+          "actual Hermes did not preserve the staged root and atomic edge; exits $rc/$full_rc, cards ${staged_count:-?}/${final_count:-?}: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
+    fi
+  fi
+}
+wants bootstrap && run_bootstrap_group
 
 # ---------------------------------------------------------------------------
 # metrics/ — the flywheel's own numbers (F27). Before scripts/metrics.sh, /retro

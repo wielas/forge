@@ -1,8 +1,9 @@
 # Forge — current state
 
-**Updated 2026-08-08, after the first-run repair effort landed: PRs #30, #26,
-#27 and #28, in that order.** Earlier dated measurements below are kept as the
-observations they were; the current ones are here:
+**Updated 2026-08-11 during the independent first-run readiness review.** The last
+fully integrated `main` baseline remains the repair effort landed as PRs #30,
+#26, #27 and #28, in that order. Earlier dated measurements below are kept as
+the observations they were; that baseline is here:
 
 ```
 main                fc006eb
@@ -17,7 +18,18 @@ signal, not the absolute number. What those four PRs added: `scripts/new-dest.sh
 and `scripts/worktree-sweep.sh` (F18, F19) · `scripts/board-snapshot.sh`, the one
 WAL-safe board read (F47, F67) · `scripts/roadmap-check.sh` and ADR-0012, sizing
 at plan time, advisory (F11, F53, F55) · `scripts/merge-gate.sh` (F79, F110).
-`verify.sh` gained the `sweep`, `roadmap` and `gate` groups; CI runs all three.
+`verify.sh` gained the `sweep`, `roadmap`, `gate` and staged `bootstrap` groups;
+CI runs the complete default suite rather than a second allowlist. Six ordinary
+bootstrap cases execute the board script against a stateful Hermes stub,
+including malformed ids and a completed interactive root. That is fixture
+proof, not a claim about the installed substrate.
+
+CHUNK-8 real-source host proof on 2026-08-11:
+`./scripts/verify.sh bootstrap --with-hermes` completed **7 passed / 0 failed /
+0 skipped**. Its opt-in seventh case used the installed Hermes CLI with an
+isolated temporary `HERMES_HOME`: root-only created one task, full bootstrap
+reused the same idempotency mapping and produced two tasks with one real
+`task_links` edge. `make validate` was also **OK**.
 
 *Prior header, still true of the sections below it:* updated 2026-08-06, after
 the audit repair slices through the lane boundary and completed-run metadata
@@ -73,6 +85,7 @@ If this file and any other file disagree, run `make verify` — it arbitrates.
 | A card parked on a non-existent profile is detectable | `make preflight` walks every board and WARNs; caught `forge-operator` on `forge-ladder`, the shape the first two tier-2 attempts produced |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
 | Branch protection is a real merge gate | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **And now on this repository too** — ruleset `mainprotect`, active 2026-08-07, requires a PR plus green `validate` and `verify`; a red PR reports `mergeStateStatus: BLOCKED`. Zero approvals required, deliberately. Asserted by `make verify SUITES=gate` (16 cases, `gh` stubbed) and reported by `make preflight` section 10, through `scripts/merge-gate.sh` (F79, F110) |
+| Staged root-only bootstrap is fixture-proven | `make verify SUITES=bootstrap` runs the real `board-bootstrap.sh` against a stateful Hermes stub: invalid multi-root graphs invoke no Hermes command; a valid graph creates one root; full bootstrap reuses that key and attaches the remaining parents atomically; missing full-mode parent readback still fails |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
 **The driver model moved on 2026-08-07, and that makes one Proven row
