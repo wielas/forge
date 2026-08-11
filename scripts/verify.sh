@@ -1133,6 +1133,7 @@ bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes 
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/driver-usage-joins-exact-session  session totals and every per-model row come from worker_session_id
+metrics/driver-usage-shared-session-counts-once multiple runs retain mappings without charging one session twice
 metrics/driver-usage-missing-id-is-unjudged  a completed chunk run without worker_session_id is not zero usage
 metrics/driver-usage-missing-profile-is-explicit  unreadable profile state preserves base metrics and names the gap
 metrics/driver-usage-estimate-keeps-actual-absent  estimated Hermes cost never manufactures zero actual cost
@@ -1173,6 +1174,7 @@ metadata/validator-runtime-is-locked     the shebang the lane runs pins transiti
 metadata/unreadable-path-is-not-invalid-metadata  an unreadable path exits 2; only a real envelope earns exit 1
 metadata/blocked-reason-contract         literal producers and the metrics consumer use the registry vocabulary
 metadata/live-requires-rfc3339-since     an absent or malformed cutoff refuses before any board read
+metadata/live-operator-interface          automation is directed to the script that preserves exit 0/1/2
 metadata/live-valid-counts               valid envelopes are counted by profile and schema
 metadata/live-classifies-every-bad-row   nested, null, cross-profile and unreadable rows are named
 metadata/live-rejects-bad-block-reason   a model-authored reason outside the registry names task, run and reason
@@ -2284,7 +2286,7 @@ METRICS_STATE_SQL
     bad "fixture-numbers-exact" "$(head -12 "$TMPROOT/metrics.diff" | tr '\n' ' ')"
   fi
 
-  local driver_exact driver_missing driver_profile driver_cost
+  local driver_exact driver_shared driver_missing driver_profile driver_cost
   driver_exact="$(jq -c '[.driver_usage.sessions[0]
                           | .model, .provider, .api_calls, .input_tokens,
                             .output_tokens, .cache_read_tokens,
@@ -2296,6 +2298,21 @@ METRICS_STATE_SQL
   else
     bad "driver-usage-joins-exact-session" \
         "expected exact session totals and both model rows, got ${driver_exact:-nothing}"
+  fi
+
+  driver_shared="$(jq -c '[.driver_usage.coverage.eligible,
+                            .driver_usage.coverage.joined,
+                            (.driver_usage.sessions | length),
+                            .driver_usage.sessions[0].runs,
+                            .driver_usage.totals.api_calls,
+                            .driver_usage.cost.estimated_usd,
+                            .driver_usage.shared_attribution[0].run_ids]' \
+                      "$TMPROOT/metrics.json" 2>/dev/null)"
+  if [ "$driver_shared" = '[4,2,1,[{"run_id":1,"task_id":"t_c1"},{"run_id":2,"task_id":"t_c1"}],7,1.25,[1,2]]' ]; then
+    ok "driver-usage-shared-session-counts-once (2 runs, 1 session, 1 charge)"
+  else
+    bad "driver-usage-shared-session-counts-once" \
+        "shared profile/session mappings must preserve both runs and charge telemetry once; got ${driver_shared:-nothing}"
   fi
 
   driver_missing="$(jq -c '[.driver_usage.coverage.unjudged,
@@ -2346,7 +2363,7 @@ METRICS_STATE_SQL
   row_driver="$(printf '%s\n' "$markdown_row" | awk -F '|' '{gsub(/^ +| +$/, "", $8); print $8}')"
   if [ "$header_cells" = 9 ] && [ "$row_cells" = 9 ] \
      && [ "$row_operator" = 4 ] \
-     && [ "$row_driver" = 'driver 0.33 (1/3) · estimated $1.25 · actual n/a' ]; then
+     && [ "$row_driver" = 'driver 0.50 (2/4) · estimated $1.25 · actual n/a' ]; then
     ok "markdown-row-has-operator-and-driver-cells"
   else
     bad "markdown-row-has-operator-and-driver-cells" \
@@ -2361,11 +2378,11 @@ METRICS_STATE_SQL
   local e
   e="$(jq -c '[.envelope.flat,.envelope.nested,.envelope.neither,.envelope.total,.chunk_cards]' \
         "$TMPROOT/metrics.json" 2>/dev/null)"
-  if [ "$e" = "[1,1,1,3,3]" ]; then
-    ok "detects-noncanonical-envelope (1 flat, 1 nested, 1 neither, none normalized away)"
+  if [ "$e" = "[2,1,1,4,3]" ]; then
+    ok "detects-noncanonical-envelope (2 flat runs, 1 nested, 1 neither, none normalized away)"
   else
     bad "detects-noncanonical-envelope" \
-        "expected [flat,nested,neither,total,chunk_cards]=[1,1,1,3,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
+        "expected [flat,nested,neither,total,chunk_cards]=[2,1,1,4,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
   fi
 
   # ADR-0009 D9.4. A gate block and a bounce are different events and must stay
@@ -3121,6 +3138,16 @@ run_metadata_live_cases() {
   local live_root="$TMPROOT/metadata-live-home" board=metadata-live
   local db="$live_root/boards/$board/kanban.db"
   local cutoff=2026-08-09T00:00:00Z out rc
+
+  if grep -Fq './scripts/metadata-live.sh <slug> --since' docs/operator-guide.md \
+     && grep -Fq 'exits 0 for a satisfied contract, 1 for a readable contract' \
+          docs/operator-guide.md \
+     && grep -Fq 'do not use' docs/operator-guide.md; then
+    ok "live-operator-interface (direct script preserves 0/1/2; Make is human-facing)"
+  else
+    bad "live-operator-interface" \
+        "operator automation must call metadata-live.sh directly and reserve the Make wrapper for generic human-facing success/failure"
+  fi
 
   mkdir -p "$(dirname "$db")"
   if ! sqlite3 "$db" < "$fixture" >/dev/null 2>&1; then

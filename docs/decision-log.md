@@ -97,6 +97,14 @@ GitHub reports the intended base and head, the PR is open and mergeable, and
 `.forge/chunk-5-metadata.json` validates against the `forge-codex-lane`
 completion contract. Do not merge before the lower stack lands.
 
+2026-08-11 CHUNK-5: Independent review found that completed runs 37 and 60 on
+the 2026-07-29..2026-07-30 `forge-ladder` replay share
+`forge-codex-lane/20260730_091931_9a5faf`. The original replay charged that
+session twice. Coverage remains 15/17 joined runs, but those joins represent 14
+unique sessions and the corrected estimated cost is `$1.452335808` with actual
+cost absent. Metrics now preserves both run mappings and aggregates each unique
+profile/session tuple once.
+
 2026-08-10 CHUNK-4: CHUNK-4 initially started from CHUNK-1's tip, its declared
 dependency. During the run, the tracked CHUNK-3 handoff recorded the human's
 explicit serial-stack decision, so the four unpublished CHUNK-4 commits were
@@ -134,16 +142,12 @@ authorized GitHub export; the branch was pushed and stacked PR #36 opened
 against `chunk/3-deterministic-diagnostics`, whose exact remote head remains
 CHUNK-4's merge-base. The PR is intentionally unmerged and must stay stacked
 until PR #35 and the lower chain land.
-
-2026-08-11 CHUNK-9: The human explicitly authorized a convergence stack for the
-two open prerequisite lines. `integration/chunk-9-prerequisites` starts at the
-CHUNK-8 head and merges the CHUNK-5 head; the CHUNK-9 branch and PR use that
-synthetic branch as their base so prejudge and judge see only the CHUNK-9 diff.
-Merge the existing chains in their declared parent-first order, retarget CHUNK-9
-to `main` only after both prerequisite heads are integrated, and delete no base
-branch until its child PR has been retargeted. The synthetic base is never
-merged independently; it exists only to give the authorized stack one complete
-review base.
+2026-08-11 CHUNK-4: Independent review rejected the operator guide's use of the
+Make wrapper as though it preserved `metadata-live.sh`'s exact 0/1/2 machine
+contract. GNU Make cannot preserve a recipe's 1-versus-2 distinction. The guide
+now directs automation to the script, labels Make as a human-facing generic
+success/failure wrapper, and the metadata suite asserts that distinction. The
+planning artifact must carry the same clarification before integration.
 
 2026-08-11 CHUNK-6: Independent review found that the first acceptance freeze
 required only one global `@real-source` tag and inferred sources from a finite
@@ -170,3 +174,13 @@ space, slash, traversal, and malformed-dependency mutations. Terminal
 interactive roots retain their done state and human assignee. An opt-in run
 against the installed Hermes CLI in an isolated temporary home proved the real
 one-root-to-two-card extension and its actual `task_links` edge (7/0/0).
+
+2026-08-11 CHUNK-9: The human explicitly authorized a convergence stack for the
+two open prerequisite lines. `integration/chunk-9-prerequisites` starts at the
+CHUNK-8 head and merges the CHUNK-5 head; the CHUNK-9 branch and PR use that
+synthetic branch as their base so prejudge and judge see only the CHUNK-9 diff.
+Merge the existing chains in their declared parent-first order, retarget CHUNK-9
+to `main` only after both prerequisite heads are integrated, and delete no base
+branch until its child PR has been retargeted. The synthetic base is never
+merged independently; it exists only to give the authorized stack one complete
+review base.
