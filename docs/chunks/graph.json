@@ -1,0 +1,12 @@
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-4","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-5","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-6","lane":"claude-interactive","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-7","lane":"claude-interactive","depends_on":["CHUNK-6"]},
+  {"id":"CHUNK-8","lane":"forge-codex-lane","depends_on":["CHUNK-4","CHUNK-7"]},
+  {"id":"CHUNK-9","lane":"forge-codex-lane","depends_on":["CHUNK-4","CHUNK-5","CHUNK-8"]},
+  {"id":"CHUNK-10","lane":"forge-codex-lane","depends_on":["CHUNK-2","CHUNK-3","CHUNK-9"]}
+]

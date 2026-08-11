@@ -1,0 +1,15 @@
+### CHUNK-8: Bootstrap only the validated root card
+- **Goal:** Add an idempotent `--root-only` mode that validates a single-root graph before creating the staged launch card.
+- **Milestone:** M4 · **Depends on:** CHUNK-4, CHUNK-7
+- **Serves:** E1, E2, E3 · **Relevant ADRs:** 0003, 0008, 0012
+- **Touches:** `hermes/board-bootstrap.sh`, `scripts/verify.sh`, `.github/workflows/verify.yml`, `docs/operator-guide.md`, `docs/state.md`
+- **Scenarios:**
+  - Given a valid graph with one root, When bootstrap runs with `--root-only`, Then it creates only that root card.
+  - Given a graph has multiple roots, When root-only bootstrap runs, Then it fails before any card is created.
+  - Given root-only already created the root, When full bootstrap runs, Then the same idempotency key maps the root and every remaining parent is attached atomically.
+  - Given root-only mode, When parent-count reconciliation runs, Then it checks the created set without weakening full mode's declared-edge assertion.
+- **Real sources:** `Hermes board` → scenario 1
+- **Acceptance:** tests/features/chunk_8.feature
+- **Out of scope:** changing dispatcher scheduling, creating stacked branches, bypassing `roadmap-check`, or bootstrapping the product before the metadata checkpoint is green.
+- **Done when:** `make validate` and `make verify` are green, the real script passes stubbed Hermes scenarios, CI runs the group, and staged-launch docs are updated.
+- **Lane:** forge-codex-lane · **Risk:** medium

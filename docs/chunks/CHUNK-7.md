@@ -1,0 +1,17 @@
+### CHUNK-7: Enforce frozen acceptance during implementation
+- **Goal:** Block implementation PRs that rewrite planned acceptance while preserving a human planning-PR amendment path.
+- **Milestone:** M3 · **Depends on:** CHUNK-6
+- **Serves:** F14, F25, F53 · **Relevant ADRs:** 0003, 0009, 0012, 0014
+- **Touches:** `scripts/acceptance-freeze.sh`, `scripts/prejudge.sh`, `scripts/verify.sh`, `skills/start-chunk/SKILL.md`, `skills/judge/SKILL.md`, `templates/python-service/template/AGENTS.md.jinja`
+- **Scenarios:**
+  - Given a feature file hash differs from the planning manifest, When prejudge runs on an implementation PR, Then it blocks and names the changed file.
+  - Given only step definitions are added, When prejudge runs, Then the frozen-feature check passes.
+  - Given an implementation PR changes a feature and its manifest entry together, When prejudge compares both against main, Then the self-amendment still blocks.
+  - Given acceptance genuinely needs amendment, When a human planning PR updates the feature and manifest on main, Then a later implementation branch can start from the new hash.
+  - Given a frozen contract names an external source, When judge reviews it, Then the `@real-source` scenario remains part of the scored acceptance surface.
+- **Real sources:** `approved base and implementation trees` → scenario 1
+- **Acceptance:** tests/features/chunk_7.feature
+- **Stop rule:** If C2 accumulates two tier-2 bounces before both halves are independently green, park CHUNK-6 and CHUNK-7, keep C1 advisory, and run with F14/F25 still open rather than shipping a half-built freeze.
+- **Out of scope:** letting an implementation PR update its own manifest, semantic grading by hash, or blocking ordinary step-definition work.
+- **Done when:** `make validate` and `make verify` are green, positive and negative scenarios pass, the template documents the boundary, and the escape hatch requires a separate human planning PR.
+- **Lane:** claude-interactive · **Risk:** high (docker backend)

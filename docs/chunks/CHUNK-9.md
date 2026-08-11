@@ -1,0 +1,17 @@
+### CHUNK-9: Commission a product run with existing gates
+- **Goal:** Provide a paid, non-mutating commissioning command that records every prerequisite result before a board is allowed to spend.
+- **Milestone:** M4 · **Depends on:** CHUNK-4, CHUNK-5, CHUNK-8
+- **Serves:** F102, E1, E2, E6 · **Relevant ADRs:** 0003, 0004, 0008, 0012
+- **Touches:** `scripts/commission.sh`, `Makefile`, `scripts/verify.sh`, `.github/workflows/verify.yml`, `docs/operator-guide.md`, `docs/state.md`
+- **Scenarios:**
+  - Given a clean durable project with a protected remote, When `make commission` runs, Then it executes the paid Codex probe, preflight, roadmap check, and launch prerequisites into one timestamped report.
+  - Given a prerequisite exits nonzero, When commissioning finishes, Then the report names that check and the command exits nonzero.
+  - Given roadmap-check emits advisory warnings, When commissioning records it, Then the report preserves WARN rather than relabelling it PASS.
+  - Given the repository is private without an enforceable merge gate, When commissioning checks protection, Then it refuses regardless of repository visibility labels.
+  - Given commissioning succeeds, When the operator inspects the project, Then tracked files and the board are unchanged and evidence lives under ignored `.forge/` state.
+- **Real sources:** `Codex paid probe` → scenario 1; `GitHub merge protection` → scenario 4
+- **Acceptance:** tests/features/chunk_9.feature
+- **Command contract:** Run from the Forge checkout with `PROJECT=<absolute product path>` and `BOARD=<slug>`; record `make verify WITH_CODEX=1`, `make preflight`, the product's roadmap check, durable-path and clean-tree checks, remote resolution, and `merge-gate.sh` into `$PROJECT/.forge/commission-<UTC>.md` without calling Hermes board mutation commands.
+- **Out of scope:** creating a repository, changing visibility, creating cards, running the product graph, or inventing new pass criteria inside the wrapper.
+- **Done when:** `make validate` and `make verify` are green, command stubs cover every exit path, one intentional paid probe is recorded on the mini, and the operator guide names the cost.
+- **Lane:** forge-codex-lane · **Risk:** medium
