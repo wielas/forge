@@ -109,5 +109,19 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh \
 	  scripts/roadmap-check.sh scripts/touches-exempt.sh scripts/merge-gate.sh \
 	  scripts/metadata-live.sh scripts/commission.sh
-	@python3 -c 'import ast; [ast.parse(open(f).read()) for f in ["scripts/prejudge-steps.py", "scripts/validate-metadata.py"]]'
+	@# GLOBBED, not enumerated. This was a hardcoded two-file list, and
+	@# scripts/respawn-guard-probe.py landed outside it — so `make validate` and
+	@# CI both went green on a Python file that could not even parse, and the
+	@# breakage only surfaced on the mini as a confident, wrong preflight FAIL.
+	@# Same reasoning profiles-bootstrap.sh applies to disabled_skills_for():
+	@# derive it from the checkout so the NEXT script is covered by default
+	@# instead of silently going unchecked. (`*.py` does not match
+	@# scripts/validate-metadata.py.lock, and an empty match is an error below,
+	@# not a silent pass — a gate checking nothing must not look like a gate.)
+	@pyfiles=$$(ls scripts/*.py 2>/dev/null); \
+	 test -n "$$pyfiles" || { echo "BAD: scripts/*.py matched nothing — the Python syntax gate is checking NOTHING"; exit 1; }; \
+	 for f in $$pyfiles; do \
+	   python3 -c 'import ast,sys; sys.tracebacklimit=0; ast.parse(open(sys.argv[1]).read(), filename=sys.argv[1])' "$$f" \
+	     || { echo "BAD Python syntax: $$f"; exit 1; }; \
+	 done
 	@echo "forge validate: OK"

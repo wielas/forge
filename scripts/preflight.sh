@@ -868,6 +868,155 @@ if [ -n "$FORGE_DIR" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+sect "11. The carried Hermes patch — asserted by BEHAVIOUR, not by SHA"
+# ---------------------------------------------------------------------------
+# `hermes update` falls back to `git reset --hard origin/<branch>` whenever a
+# fast-forward is not possible (hermes_cli/update_cmd.py, the ff-only branch).
+# The 0.19.0 -> 0.20.4 upgrade took that branch and DESTROYED the locally
+# carried commit `fix(kanban): let unblock supersede prior PR guard`. It was
+# restored by hand. Two things make that worse than a one-off:
+#   * the 0.20.4 version banner no longer prints a carried-commit count, so the
+#     signal that made the patch visible at a glance is gone;
+#   * nothing in Forge asserted the patch's behaviour, so its loss is silent
+#     until a card misbehaves — and Forge has already been bitten by the
+#     underlying bug in production (`respawn_guarded: active_pr after explicit
+#     unblock`, docs/audit-forgeboard-2026-07-30.md).
+#
+# So this checks BEHAVIOUR. A commit SHA changes on every re-cherry-pick and
+# says nothing about what the code does; four assertions against
+# check_respawn_guard say exactly what it does. Two of the four are upstream's
+# own contracts, which is deliberate: a probe that only knew the local patch
+# could not tell "the patch is gone" from "the function changed shape".
+#
+# READ-ONLY: the probe redirects HERMES_HOME into a temp dir before importing
+# hermes_cli, unsets the env vars that could override that, passes the board
+# path explicitly, asserts the resolved path is under $TMPDIR before writing a
+# row, and removes the dir on every exit path. No live board is opened. See the
+# header of scripts/respawn-guard-probe.py.
+#
+# NOTE ON PATHS: $FORGE_DIR is resolved in section 10 above and would work
+# here, but section 10's body is wrapped in `if [ -n "$FORGE_DIR" ]`, so
+# depending on it would drag this check into that empty-case branch. Resolve
+# from this script's own location the way section 9 does instead.
+PF_SELF_REPO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
+PF_PROBE="$PF_SELF_REPO/scripts/respawn-guard-probe.py"
+
+# READ IT WHERE IT LIVES NOW (the same discipline section 9 applies to the
+# tier-2 sentinel, and for the same reason). `hermes` on PATH is a bash shim
+# whose last line execs the venv entrypoint; the interpreter that can import
+# hermes_cli is the python3 beside that entrypoint. Hardcoding the venv path
+# here would be a second copy of a location that already moved once —
+# precisely the bug the section 9 comment describes. FORGE_HERMES_SHIM
+# overrides which shim is read; it exists so the "cannot run" branch below can
+# be exercised without touching ~/.hermes, and is intentionally not in the
+# --help header because it is a test seam, not an operator knob.
+PF_SHIM="${FORGE_HERMES_SHIM:-$(command -v hermes 2>/dev/null)}"
+PF_PY=""
+if [ -n "$PF_SHIM" ] && [ -r "$PF_SHIM" ]; then
+  # Quoted form first (`exec "/path/to/hermes" "$@"`), then bare.
+  PF_HBIN="$(sed -n 's/^[[:space:]]*exec[[:space:]]\{1,\}"\([^"]\{1,\}\)".*/\1/p' "$PF_SHIM" 2>/dev/null | tail -1)"
+  [ -z "$PF_HBIN" ] && PF_HBIN="$(sed -n 's/^[[:space:]]*exec[[:space:]]\{1,\}\([^ "]\{1,\}\).*/\1/p' "$PF_SHIM" 2>/dev/null | tail -1)"
+  # Sensible fallback, still derived rather than hardcoded: if there is no exec
+  # line to read, `hermes` is its own entrypoint, so look beside IT.
+  [ -z "$PF_HBIN" ] && PF_HBIN="$PF_SHIM"
+  PF_CAND="$(dirname "$PF_HBIN")/python3"
+  [ -x "$PF_CAND" ] && PF_PY="$PF_CAND"
+fi
+
+# WARN vs FAIL here turns on ONE question: is the SYSTEM broken, or is the
+# INVOCATION? Two doctrines in this file meet at that line and both are right.
+# Section 9: a control that cannot find the thing it exists to guard has not
+# passed. Section 4b: "A readiness gate that says FAIL when the system is right
+# teaches its operator to ignore it, and that is how the real FAIL gets missed."
+# A piped run ($BASH_SOURCE unset, so no path to resolve from) is section 0's
+# case, not section 9's — the same shape as the SSH keychain WARN up top, "an
+# artifact of HOW you ran this, not a real fault". Every other way this section
+# can go dark is the system, and every one of them still FAILs.
+# PIPED is tested FIRST, before the file even gets looked for, and that order
+# is the point. With BASH_SOURCE unset, $0 is `bash`, so PF_SELF_REPO resolves
+# to the parent of the CURRENT DIRECTORY — which may hold a
+# scripts/respawn-guard-probe.py belonging to some other checkout entirely.
+# Testing the file first would then find one, run it, and report a verdict
+# about a repository nobody asked about. Refusing to guess is the only honest
+# answer when there is no path to resolve from; this is the same "resolved to
+# something accidental" trap section 9's comment warns about.
+if [ "$PIPED" = 1 ]; then
+  warn "cannot locate scripts/respawn-guard-probe.py because this script was piped"
+  say  "      in on stdin — there is no file path to resolve it from, and anything"
+  say  "      found relative to the current directory could belong to a different"
+  say  "      checkout, so this refuses to guess. That is an artifact of HOW you ran"
+  say  "      this, not a fault in the system: nothing here claims the carried Hermes"
+  say  "      patch is fine, only that it was not looked at. Re-run from a checkout"
+  say  "      (./scripts/preflight.sh) to actually check it."
+elif [ ! -f "$PF_PROBE" ]; then
+  # FAIL, not WARN — the doctrine section 9 states for the tier-2 sentinel: a
+  # control that cannot find the thing it exists to guard has not passed. A
+  # checkout that genuinely lacks the file is a real fault, and is NOT the
+  # piped case handled above.
+  fail "scripts/respawn-guard-probe.py is missing — the carried Hermes patch is unguarded"
+  say  "      Nothing here verifies that an explicit unblock still supersedes a"
+  say  "      prior PR comment. The last time that went unasserted, an upgrade"
+  say  "      deleted the patch and nothing said so."
+elif [ -z "$PF_PY" ]; then
+  # Same doctrine. "I could not find an interpreter" is this check reporting
+  # its own blindness; reporting that as a minor note is how a silent loss
+  # happens twice.
+  fail "cannot resolve the Hermes venv python3 from the 'hermes' shim — the carried"
+  say  "      patch is UNCHECKED, not fine. shim: ${PF_SHIM:-<not on PATH>}"
+  say  "      The shim's last line should exec the venv entrypoint; python3 is"
+  say  "      expected beside it. Fix the shim or install Hermes, then re-run."
+else
+  PF_OUT="$("$PF_PY" "$PF_PROBE" 2>&1)"; PF_RC=$?
+  # THE EXIT CODE IS NOT THE WHOLE VERDICT, and believing it was is the same
+  # conflation this section exists to prevent. CPython exits 1 — not 2 — on a
+  # SyntaxError in the file it was handed, and on any exception that escapes
+  # main(). Those paths evaluate no contract at all, yet arrive here wearing
+  # exit 1's clothes, and the naive reading sends an operator off to
+  # re-cherry-pick a commit that is sitting right where it always was.
+  # `make validate` does not ast.parse this probe (it enumerates only
+  # prejudge-steps.py and validate-metadata.py), so a syntax error in it
+  # reaches this host green. Require the probe's OWN verdict line before
+  # believing either the pass or the accusation.
+  PF_VERDICT_GREEN='^RESULT: ALL GREEN'
+  PF_VERDICT_RED='^RESULT: [0-9]\{1,\} of 4 contracts VIOLATED'
+  case $PF_RC in
+    0)
+      if printf '%s\n' "$PF_OUT" | grep -q "$PF_VERDICT_GREEN"; then
+        pass "respawn guard: all 4 contracts hold (carried unblock-supersedes-PR fix intact)"
+      else
+        fail "respawn guard: the probe exited 0 without printing a verdict — it did"
+        say  "      not reach its own comparisons, so NOTHING was verified. A silent"
+        say  "      zero is exactly the shape of the failure this section guards."
+        while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_OUT"
+      fi
+      ;;
+    1)
+      if printf '%s\n' "$PF_OUT" | grep -q "$PF_VERDICT_RED"; then
+        fail "respawn guard: a contract is VIOLATED. The carried commit"
+        say  "      'fix(kanban): let unblock supersede prior PR guard' is most likely"
+        say  "      gone from ~/.hermes/hermes-agent — 'hermes update' resets --hard on"
+        say  "      divergence and 0.20.4 no longer prints a carried-commit count."
+      else
+        fail "respawn guard: exit 1 with NO verdict line — the probe never reached its"
+        say  "      own comparisons, so nothing was verified. This is the 'could not"
+        say  "      run' case wearing exit 1's clothes (a SyntaxError in the probe, or"
+        say  "      an exception escaping main(), exits 1 — not 2). Do NOT read this as"
+        say  "      the carried patch being gone; fix the probe, then re-run."
+      fi
+      while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_OUT"
+      ;;
+    *)
+      fail "respawn guard: the probe COULD NOT RUN (exit $PF_RC) — nothing was verified."
+      say  "      This is not a pass. A control that cannot reach its subject has"
+      say  "      not passed; the whole reason this section exists is that the"
+      say  "      patch was already lost once with nothing red to show for it."
+      say  "      interpreter: $PF_PY"
+      while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_OUT"
+      ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------------
 say ""
 say "## Summary"
 say ""
