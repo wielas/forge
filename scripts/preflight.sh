@@ -343,7 +343,10 @@ elif [ "$TMO" -le 300 ]; then
   say  "      delegation in the BACKGROUND and poll, which is the pattern we chose."
 else pass "terminal.timeout=${TMO}s"; fi
 
-for k in approvals.mode kanban.dispatch_in_gateway kanban.max_in_progress \
+# kanban.max_in_progress WAS listed here. It now has its own check at the end
+# of this section: on this host "unset" is not a neutral fact to report, and an
+# info line that says "(unset → built-in default)" actively misinforms.
+for k in approvals.mode kanban.dispatch_in_gateway \
          skills.write_approval goals.max_turns; do
   v="$(hcfg "$k")"; [ -n "$v" ] && info "$k = $v" || info "$k = (unset → built-in default)"
 done
@@ -367,6 +370,97 @@ esac
 [ "$(hcfg skills.write_approval)" = "true" ] \
   && pass "skills.write_approval on (L5 consent gate)" \
   || warn "skills.write_approval not confirmed on — the flywheel's consent gate (ADR-0005)"
+
+# --- the global concurrency cap -------------------------------------------
+# This was one key in the info loop above until a read of Hermes 0.20.4 showed
+# that "unset" does not mean, on this host, what the operator reading that line
+# would assume.
+#
+# 0.20.4 added two anti-fan-out protections after two production incidents
+# ("larrikin-lollies", "synclare-task-manager") in which a dispatcher with no
+# configured cap spawned 26-31 concurrent workers and swap-thrashed the box —
+# see the "Memory-aware dispatch guard (OOF-30 / OOF-77)" block in
+# hermes_cli/kanban_db.py. The two are a memory-DERIVED default cap
+# (derive_default_max_in_progress, clamp(MemTotal/512 MiB, 2, 8)) and a live
+# memory-PRESSURE guard (_memory_pressure_level). BOTH read /proc, both are
+# Linux-only, and both FAIL OPEN. Measured on this host through the Hermes venv
+# interpreter on 2026-08-18:
+#
+#     _system_memory_sample()          -> {}         (macOS has no /proc)
+#     derive_default_max_in_progress() -> None
+#     resolve_max_in_progress(None)    -> None       <- no cap
+#     _memory_pressure_level()         -> "unknown"  <- no spawn restriction
+#
+# config_defaults.py states it beside the key itself: "On hosts where total
+# memory can't be read (macOS/Windows), unset falls back to no cap."
+#
+# WARN, NOT FAIL — and that needs justifying, because section 9 and section 11
+# apply the opposite doctrine (F65/F66: a control that cannot run has NOT
+# passed) to what looks like the same shape. The difference is what the absent
+# control was guarding. In 9/11 the subject is present and goes unverified. Here
+# the derived cap, had /proc existed, would not have bound this workload at all:
+# hw.memsize on this mini is 16 GiB, so MemTotal/512 MiB saturates
+# DERIVED_MAX_IN_PROGRESS_CEILING (8), whereas the peak simultaneously-ready
+# width of this repo's own plan is 5 — measured over docs/chunks/graph.json, and
+# reached the moment CHUNK-1 lands and promotes its five children at once. An
+# unset cap here is therefore an unbounded RISK, not a defeated CONTROL, and a
+# FAIL would block every unattended run on a host that has never been near the
+# incident shape. (Forge's roadmaps are not orchestrator fan-outs: roadmap-check
+# also reports on single-root — advisory, `emit single-root warn`, not a hard
+# gate — so the plan shape is a strong prior, not a guarantee.)
+#
+# It stays a WARN rather than becoming a PASS for the reason config_defaults.py
+# gives: the cap is HOST-global, counted "across every active board and across
+# both the ready and review dispatch lanes". The roadmap graph bounds one
+# board's plan. It says nothing about whatever else this machine is running.
+#
+# READ HERE IN SECTION 4 AND DELIBERATELY NOT RE-READ PER PROFILE IN 4b. Section
+# 4b exists because each profile's own config decides that profile's fate; this
+# key is the opposite. The dispatcher runs in-gateway and the cap bounds the
+# whole host, so the GATEWAY's value is the governing one and a per-profile
+# reading would invent four answers to a single question.
+#
+# FORGE_MAX_IN_PROGRESS is a TEST SEAM, not an operator knob: it REPLACES what
+# this check reads (it does not merge with hcfg) so both branches can be
+# exercised without `hermes config set` ever touching ~/.hermes. Same precedent
+# and same reason as FORGE_HERMES_SHIM in section 11, and like it, kept out of
+# the --help header because operators must not reach for it.
+MIP_RAW="${FORGE_MAX_IN_PROGRESS-$(hcfg kanban.max_in_progress)}"
+MIP="$(printf '%s' "$MIP_RAW" | tr -d "\"' ")"
+DIG="$(hcfg kanban.dispatch_in_gateway | tr -d "\"' ")"
+if [ "$DIG" = "true" ]; then
+  DIG_CLAUSE="kanban.dispatch_in_gateway=true, so this host is the one spawning workers."
+else
+  DIG_CLAUSE="kanban.dispatch_in_gateway=${DIG:-<unreadable>} — confirm where the dispatcher runs."
+fi
+# `hermes config get` prints the literal string "null" for an unset key, so
+# "null" is the UNSET case and must not fall through to the non-numeric branch.
+if [ -z "$MIP" ] || [ "$MIP" = "null" ] || [ "$MIP" = "None" ]; then
+  warn "kanban.max_in_progress is unset. On THIS host that means NO CAP AT ALL, not"
+  say  "      \"a sensible built-in default\". Hermes 0.20.4 derives a default cap from"
+  say  "      MemTotal (clamp(MemTotal/512 MiB, 2, 8)) and defers spawning under memory"
+  say  "      pressure; both read /proc, both are Linux-only, and both fail OPEN. Measured"
+  say  "      here: memory sample {}, derived default None, resolve_max_in_progress(None)"
+  say  "      None, pressure level 'unknown'. config_defaults.py says so beside the key:"
+  say  "      \"On hosts where total memory can't be read (macOS/Windows), unset falls back"
+  say  "      to no cap.\" The two incidents that added this spawned 26-31 workers."
+  say  "      $DIG_CLAUSE"
+  say  "      Fix: hermes config set kanban.max_in_progress <n>  — host-global, counted"
+  say  "      across every active board and both dispatch lanes. To bound ONE heavy lane"
+  say  "      instead of the whole machine, kanban.max_in_progress_per_profile is the"
+  say  "      better lever; it caps workers per profile and defers the rest to the next"
+  say  "      dispatcher tick."
+elif printf '%s' "$MIP" | grep -qE '^[1-9][0-9]*$'; then
+  pass "kanban.max_in_progress=$MIP — host concurrency cap is EXPLICIT (0.20.4's"
+  say  "      memory-derived default is /proc-based and cannot run on macOS, so an"
+  say  "      explicit value is the only cap this host has)"
+else
+  warn "kanban.max_in_progress read as '$MIP_RAW', which Hermes will not accept as a cap."
+  say  "      configured_max_in_progress() takes a POSITIVE integer and falls through to the"
+  say  "      memory-derived default for anything else — 0 and negatives included. On macOS"
+  say  "      that default is None, so this host currently has NO CAP. Set a positive"
+  say  "      integer: hermes config set kanban.max_in_progress <n>, then re-run."
+fi
 
 # ---------------------------------------------------------------------------
 sect "4b. LANE config, read PER PROFILE — this is what workers actually run on"

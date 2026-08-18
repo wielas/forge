@@ -8,7 +8,8 @@ entry is something a running system told us, with the command that showed it.
 status change under you; `make preflight` establishes those in one read-only run,
 and a written copy would just be a lie with a date on it. Run preflight after
 every `hermes update` — config drifts across upgrades (0.18.2 → 0.19.0 silently
-changed `approvals.mode` and `goals.max_turns`).
+changed `approvals.mode` and `goals.max_turns`), and an update can reset the
+checkout out from under you (0.19.0 → 0.20.4 did; see below).
 
 Decisions live in `docs/adr/`. This file is evidence, not intent.
 
@@ -17,7 +18,8 @@ Decisions live in `docs/adr/`. This file is evidence, not intent.
 ## The traps: documented-but-untrue, or silent
 
 **`custom_toolsets:` does nothing.** It is documented in
-`website/docs/reference/toolsets-reference.md`, and no code in 0.19.0 reads it. A
+`website/docs/reference/toolsets-reference.md`, and no code in 0.20.4 reads it —
+re-measured on the upgrade: `custom_toolsets` still appears in no `.py` file. A
 profile whose `toolsets:` names a custom bundle gets **zero tools** — no terminal,
 no kanban, not even the ability to terminate its own run — and nothing warns you.
 
@@ -166,6 +168,69 @@ import, i.e. after exec. Measured: a Python process that sets `os.environ[X]`
 post-exec shows zero `ps` matches. A preflight check built on `ps` WARNed on a
 perfectly healthy gateway for a whole afternoon.
 
+**`hermes update` destroys carried commits.** It fetches, then runs `git merge
+--ff-only origin/<branch>`; a locally carried commit is precisely what makes
+that fail, and the fallback is `git reset --hard origin/<branch>`
+(`hermes_cli/update_cmd.py`, the ff-only branch of the "→ Pulling updates…"
+path). It warns first — `⚠ Fast-forward not possible (history diverged),
+resetting to match remote...` — and `_stash_local_changes_if_needed` autostashes
+the working tree, so uncommitted work survives and **committed** divergence does
+not. The 0.19.0 → 0.20.4 upgrade took that branch and deleted the carried
+`fix(kanban): let unblock supersede prior PR guard`; it was restored by hand.
+Anything carried in `~/.hermes/hermes-agent` must be re-appliable from a source
+that is not that checkout.
+
+**0.20.4's banner no longer prints a carried-commit count.** The one signal that
+made a carried patch visible at a glance is gone, so the reset above is silent
+in both directions:
+
+```
+$ hermes --version
+Hermes Agent v0.20.4 (2026.8.18)
+Install directory: /Users/goonlab/.hermes/hermes-agent
+Python: 3.11.15
+OpenAI SDK: 2.24.0
+```
+
+The replacement is behavioural, not a SHA — a SHA changes on every
+re-cherry-pick and says nothing about what the code does.
+`scripts/respawn-guard-probe.py` asserts four contracts against
+`check_respawn_guard` (two of them upstream's own, so "the patch is gone" is
+distinguishable from "the function changed shape"), and preflight §11 runs it
+and refuses to read a bare exit code as a verdict.
+
+**The 0.20.4 memory guard is Linux-only, and on macOS it protects nothing.**
+Two production OOM incidents (`larrikin-lollies`, `synclare-task-manager`) where
+the dispatcher fanned out 26–31 workers added two safeguards in
+`hermes_cli/kanban_db.py`: a memory-derived default for `kanban.max_in_progress`
+(`derive_default_max_in_progress`, `clamp(MemTotal/512 MiB, 2, 8)`) and a live
+pressure guard (`_memory_pressure_level`). Both read `/proc`, and both fail
+open. Measured on this mini through the Hermes venv interpreter:
+
+```
+$ ~/.hermes/hermes-agent/venv/bin/python3 -c 'from hermes_cli import kanban_db as k; \
+    print(k._system_memory_sample(), k.derive_default_max_in_progress(), \
+          k.resolve_max_in_progress(None), k._memory_pressure_level())'
+{} None None unknown
+#  ^  ^    ^    ^-- no spawn restriction
+#  |  |    +------- no cap
+#  |  +------------ no derived default
+#  +--------------- macOS has no /proc
+```
+
+`hermes` on PATH is a bash shim whose last line execs the real entrypoint; the
+interpreter that can import `hermes_cli` is the `python3` beside that entrypoint.
+Derive it, never hardcode it — that path has already moved once.
+
+`config_defaults.py` says it beside the key: *"On hosts where total memory can't
+be read (macOS/Windows), unset falls back to no cap."* So on macOS **unset means
+unbounded**, not "a sensible default" — and with
+`kanban.dispatch_in_gateway=true` this is the host doing the spawning. Set
+`kanban.max_in_progress` explicitly; `configured_max_in_progress()` accepts only
+a positive integer and silently falls through for `0`, negatives and non-numerics.
+`kanban.max_in_progress_per_profile` bounds one lane rather than the machine.
+Preflight §4 checks this.
+
 ## How things really connect
 
 **Live schema inspection checks every board, by name.** There is no meaningful
@@ -181,7 +246,7 @@ not gain live-board access.
 create <name> --description "<role>"`; the description feeds orchestrator routing.
 There is no `profiles:` block in `config.yaml`.
 
-**Worker usage joins exactly across two SQLite databases.** Hermes 0.19 stamps
+**Worker usage joins exactly across two SQLite databases.** Hermes 0.20.4 stamps
 the dispatched worker's session id at top-level
 `task_runs.metadata.worker_session_id`; `task_runs.profile` names the only state
 database allowed to satisfy it:
