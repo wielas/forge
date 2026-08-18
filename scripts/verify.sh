@@ -1094,6 +1094,8 @@ template/python-pinned            .python-version is stamped and the venv actual
 lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
+lane/terminator-set-is-closed     kanban_request_review/_changes are named forbidden, not merely unlisted
+lane/terminators-match-the-substrate    every terminator the installed Hermes exposes is accounted for in §7 (--with-hermes)
 lane/blast/missing-run-capture    a check with no current-run immutable baseline cannot pass
 lane/blast/capture-is-single-use  Codex cannot replace the pre-Codex baseline
 lane/blast/check-is-single-use    a completed final audit cannot be overwritten or replayed
@@ -1473,6 +1475,124 @@ run_lane_group() {
   else
     bad "driver-never-authors-diff" \
         "forge-codex-lane must prohibit direct implementation even for one-line fixes"
+  fi
+
+  # Hermes 0.20.4 added a first-class `review` state and TWO new terminating
+  # kanban tools. The injected KANBAN_GUIDANCE routes a worker whose
+  # kanban_show() lists no children straight at kanban_request_review — and §7
+  # creates the prejudge child AT completion time, so the driver is on that
+  # branch at every decision point it has. §7 said "exiting without one of
+  # these is a protocol violation", which forbids exiting WITHOUT a terminator,
+  # not calling a THIRD one; a cheap driver satisfies both texts by requesting
+  # review. The card then sits in `review`, not `done`, so ADR-0008 never
+  # promotes its dependents, validate-metadata.py (which sits only on the
+  # kanban_complete path) is bypassed, and review dispatch respawns the lane as
+  # its own reviewer.
+  #
+  # So the verdict is ONE bounded-window match, not three independent greps.
+  # Three greps would still pass with the policy INVERTED — "call
+  # `kanban_request_review` when …" while the word "forbidden" survived
+  # elsewhere in §7 — which is F65's shape again: a check that survives the
+  # removal of the thing it guards was never guarding it. The three greps below
+  # only build the failure message. This case never skips; CI is where it earns
+  # its keep, so a missing §7 is a FAIL, not an absence of evidence.
+  local sec7 sec7_flat term_ok=1 term_detail=""
+  sec7="$(sed -n '/^## 7\./,/^## Hard rules/p' "$lane")"
+  # Normalised to one line: the prohibition is prose and wraps unpredictably.
+  sec7_flat="$(printf '%s' "$sec7" | tr '\n' ' ' | tr -s ' ')"
+  [ -n "$sec7_flat" ] || { term_ok=0; term_detail="$term_detail no-section-7"; }
+  printf '%s' "$sec7_flat" | grep -Fq 'kanban_request_review' \
+    || { term_ok=0; term_detail="$term_detail request_review-unnamed"; }
+  printf '%s' "$sec7_flat" | grep -Fq 'kanban_request_changes' \
+    || { term_ok=0; term_detail="$term_detail request_changes-unnamed"; }
+  printf '%s' "$sec7_flat" | grep -Fq 'forbidden' \
+    || { term_ok=0; term_detail="$term_detail no-prohibition-word"; }
+  printf '%s' "$sec7_flat" \
+    | grep -Eq 'kanban_request_review.{0,80}kanban_request_changes.{0,80}forbidden' \
+    || { term_ok=0; term_detail="$term_detail prohibition-not-one-clause"; }
+  if [ "$term_ok" = 1 ]; then
+    ok "terminator-set-is-closed"
+  else
+    bad "terminator-set-is-closed" \
+        "forge-lane §7 must name kanban_request_review and kanban_request_changes as forbidden in one clause — a card left in review is not done, so ADR-0008 never promotes its dependents —$term_detail"
+  fi
+
+  # And the set has to stay closed as the substrate moves. Enumerate the
+  # kanban_* tools the INSTALLED Hermes exposes, subtract the coordination
+  # verbs that hand control straight back, and require §7 to account for every
+  # name that remains — allowed or forbidden, this case does not care which,
+  # only that a human decided. The subtraction is deliberately the wrong way
+  # round: a new NON-terminating tool trips this too. That false positive is
+  # the safe direction — it costs one name in the list below — and it is the
+  # only shape that notices 0.21's next terminator instead of re-learning this
+  # lesson in production.
+  # TWO sources, unioned, because they merely overlap. `EXPOSED_TOOLS` in the
+  # MCP transport is the codex_app_server subset (11 kanban tools); toolsets.py's
+  # `kanban` toolset carries 14, and IT is what a lane actually resolves from —
+  # ~/.hermes/profiles/forge-codex-lane/config.yaml declares
+  # `toolsets: [terminal, file, kanban, memory, skills]`. Reading only the MCP
+  # list would miss a terminator added to the toolset and not to the transport,
+  # which is F65's shape reproduced inside the check written to prevent it.
+  # Unioned, neither source moving can silently shrink coverage.
+  local hermes_root="$HOME/.hermes/hermes-agent"
+  local mcp_src="$hermes_root/agent/transports/hermes_tools_mcp_server.py"
+  local ts_src="$hermes_root/toolsets.py"
+  local kanban_nonterminating=" kanban_show kanban_list kanban_comment kanban_heartbeat kanban_create kanban_link kanban_unblock kanban_attach kanban_attach_url kanban_attachments "
+  # Only a missing CHECKOUT skips. A source that is present but yields nothing
+  # is a FAIL: a control that could not run has not passed (F65/F66), and
+  # "the other source still had the names" is precisely how coverage shrinks
+  # unnoticed. A file missing from a present checkout means upstream moved it.
+  if [ "$WITH_HERMES" != 1 ]; then
+    skip "terminators-match-the-substrate" "--with-hermes not given"
+  elif [ ! -d "$hermes_root" ]; then
+    skip "terminators-match-the-substrate" "hermes source not found"
+  else
+    # Quoted entries only, and windowed to the declaring list in each file:
+    # both name kanban tools in nearby prose comments, and matching those
+    # would enumerate the wrong set.
+    local mcp_tools="" ts_tools="" exposed unaccounted="" ktool src_detail=""
+    if [ ! -f "$mcp_src" ]; then
+      src_detail="$src_detail mcp-source-missing($mcp_src)"
+    else
+      mcp_tools="$(awk '/^EXPOSED_TOOLS/{p=1} p{print} p&&/^\)/{exit}' "$mcp_src" \
+                   | grep -oE '"kanban_[a-z_]+"' | tr -d '"')"
+      [ -n "$mcp_tools" ] || src_detail="$src_detail mcp-source-yielded-no-kanban-tools"
+    fi
+    if [ ! -f "$ts_src" ]; then
+      src_detail="$src_detail toolsets-source-missing($ts_src)"
+    else
+      ts_tools="$(awk '/^[[:space:]]*"kanban":[[:space:]]*\{/{k=1} k&&/"tools":[[:space:]]*\[/{t=1} t{print} t&&/\]/{exit}' \
+                    "$ts_src" | grep -oE '"kanban_[a-z_]+"' | tr -d '"')"
+      [ -n "$ts_tools" ] || src_detail="$src_detail toolsets-source-yielded-no-kanban-tools"
+    fi
+    exposed="$(printf '%s\n%s\n' "$mcp_tools" "$ts_tools" | grep -E '^kanban_' | sort -u)"
+    if [ -n "$src_detail" ]; then
+      bad "terminators-match-the-substrate" \
+          "the kanban tool enumeration broke, which is not evidence about the skill — fix the reader, do not let the other source stand in for it:$src_detail"
+    elif [ -z "$sec7_flat" ]; then
+      bad "terminators-match-the-substrate" \
+          "forge-lane §7 did not delimit — cannot tell which terminators it accounts for"
+    else
+      # Subtract the coordination verbs that hand control straight back; every
+      # name left ENDS the run and §7 must account for it — allowed or
+      # forbidden, this case does not care which, only that a human decided.
+      # The subtraction is deliberately the wrong way round: a new
+      # NON-terminating tool trips this too. That false positive is the safe
+      # direction — it costs one name in the list above — and it is the only
+      # shape that notices 0.21's next terminator instead of re-learning this
+      # lesson in production.
+      for ktool in $exposed; do
+        case "$kanban_nonterminating" in *" $ktool "*) continue;; esac
+        printf '%s' "$sec7_flat" | grep -Fq "$ktool" \
+          || unaccounted="$unaccounted $ktool"
+      done
+      if [ -z "$unaccounted" ]; then
+        ok "terminators-match-the-substrate ($(printf '%s\n' "$exposed" | grep -c .) kanban tools unioned from EXPOSED_TOOLS + the kanban toolset; every terminator among them is named in §7)"
+      else
+        bad "terminators-match-the-substrate" \
+            "the installed Hermes exposes kanban tools §7 never mentions:$unaccounted — name each in §7 as allowed or forbidden, or (if it does not end the run) add it to kanban_nonterminating in this case"
+      fi
+    fi
   fi
 
   # The grant is bounded by a NAMED set, not by freezing the shared .git. An

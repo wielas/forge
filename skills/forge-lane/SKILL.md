@@ -21,7 +21,7 @@ missing lane with your own judgement.
 
 ## 0. Your runtime
 
-Set by the dispatcher (verified, Hermes 0.19.0 `kanban-worker-lanes` contract):
+Set by the dispatcher (verified, Hermes 0.20.4 `kanban-worker-lanes` contract):
 
 | var | carries |
 |---|---|
@@ -214,12 +214,8 @@ make check
 Run it **plain** — no `UV_CACHE_DIR`, no `UV_OFFLINE`. If §3 did its job this
 is the same command CI runs, which is the only reason its green means anything.
 
-That equivalence is not free, and it has already failed once: on 2026-07-28 a
-warm `.ruff_cache` in the worktree answered "All checks passed!" for bytes that
-a cold clone and CI both rejected. The template's `lint` target now runs ruff
-with `--no-cache` so the verdict cannot come from a cache. If you are working a
-project whose `Makefile` predates that, `rm -rf .ruff_cache` before you believe
-this step — and a green you cannot reproduce in a cold checkout is not a green.
+A green from a warm cache is not a green (measured 2026-07-28). The template's
+`lint` runs `--no-cache`; on an older `Makefile`, `rm -rf .ruff_cache` first.
 
 Codex's claim that it passed is advisory. **Not green is not done** — no
 `--no-verify`, and never weaken a scenario to make it pass. Read
@@ -286,7 +282,10 @@ from `~/.forge/rubrics/run-metadata-contract.json`, after a `kanban_comment`
 carrying the evidence (`kanban_block` only stores the reason string).
 
 **Exiting without one of these is a protocol violation** — the kernel reaps the
-run as `crashed`, the failure counter ticks, and the work is wasted.
+run as `crashed`, the failure counter ticks, and the work is wasted. The set is
+closed: `kanban_request_review` and `kanban_request_changes` are **forbidden**
+here — review is carried by the prejudge child card, and a parent parked in
+`review` is not `done`, so ADR-0008 never promotes its dependents.
 
 ## Hard rules
 
