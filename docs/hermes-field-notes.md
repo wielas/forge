@@ -194,10 +194,14 @@ OpenAI SDK: 2.24.0
 
 The replacement is behavioural, not a SHA — a SHA changes on every
 re-cherry-pick and says nothing about what the code does.
-`scripts/respawn-guard-probe.py` asserts four contracts against
+`scripts/respawn-guard-probe.py` asserts five contracts against
 `check_respawn_guard` (two of them upstream's own, so "the patch is gone" is
 distinguishable from "the function changed shape"), and preflight §11 runs it
-and refuses to read a bare exit code as a verdict.
+and refuses to read a bare exit code as a verdict. The fifth bounds the carried
+fix from the other side: only an EXPLICIT operator/reviewer continuation clears
+`active_pr`. An automatic one — a crash `reclaimed`, or `promoted` from
+`recompute_ready` — must not, or a reclaim respawns a worker while the prior
+PR is open and opens the duplicate the guard exists to prevent.
 
 **The 0.20.4 memory guard is Linux-only, and on macOS it protects nothing.**
 Two production OOM incidents (`larrikin-lollies`, `synclare-task-manager`) where

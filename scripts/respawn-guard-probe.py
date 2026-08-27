@@ -1,4 +1,4 @@
-"""Assert the four contracts of Hermes' `check_respawn_guard`, behaviourally.
+"""Assert the five contracts of Hermes' `check_respawn_guard`, behaviourally.
 
 WHAT THIS TOUCHES: a throwaway directory under $TMPDIR and nothing else. It
 never reads, opens, copies or writes ~/.hermes/kanban.db or any other live
@@ -20,11 +20,11 @@ been bitten by the underlying bug in production — docs/audit-forgeboard-
 2026-07-30.md records `respawn_guarded: active_pr after explicit unblock`.
 
 WHY BEHAVIOUR, NOT A SHA: pinning the commit hash proves nothing about what the
-code does and goes stale on every re-cherry-pick. These four assertions hold for
+code does and goes stale on every re-cherry-pick. These five assertions hold for
 any implementation that behaves correctly, and fail for any that does not —
 including a fresh upstream release that never carried the patch at all.
 
-The four contracts:
+The five contracts:
   1. active_pr fires when a PR-evidence comment is the newest thing on the task.
   2. CARRIED FIX: an explicit re-queue event (`unblocked`) AFTER that comment
      supersedes it, so the guard clears. Upstream applies exactly this
@@ -33,6 +33,12 @@ The four contracts:
   3. UPSTREAM: without a re-queue, the ready lane still defers on active_pr.
   4. UPSTREAM: the review lane bypasses active_pr entirely — a fresh PR comment
      is the *precondition* of a review handoff, not duplicate-work evidence.
+  5. CARRIED FIX, NARROWED: an AUTOMATIC re-queue (`reclaimed`, and likewise
+     `promoted` from recompute_ready) does NOT clear the guard. Only explicit
+     operator/reviewer continuations do. A crash reclaim that cleared it would
+     respawn a worker while the prior PR is still open — the duplicate PR the
+     rule exists to prevent. This bounds contract 2 from the other side: 2
+     alone is satisfied by a patch that clears on everything.
 
 Contracts 3 and 4 are upstream's behaviour, not the patch's. They are asserted
 here because a regression in either is equally worth catching, and because a
@@ -168,6 +174,24 @@ def _run(tmp):
             )
             ready_lane = kb.check_respawn_guard(conn, t2)
             review_lane = kb.check_respawn_guard(conn, t2, lane="review")
+
+            # Contract 5 — an AUTOMATIC re-queue after the PR comment must NOT
+            # clear the guard. The event must land AFTER the comment: on a task
+            # with no PR evidence this would pass under any implementation and
+            # assert nothing at all.
+            t3 = kb.create_task(conn, title="auto-reclaimed", assignee="worker")
+            kb.add_comment(
+                conn,
+                t3,
+                author="worker",
+                body="Opened https://github.com/example/repo/pull/124 for review.",
+            )
+            conn.execute(
+                "INSERT INTO task_events (task_id, kind, created_at) "
+                "VALUES (?, 'reclaimed', ?)",
+                (t3, now),
+            )
+            after_auto = kb.check_respawn_guard(conn, t3)
         finally:
             conn.close()
     except Exception as exc:  # noqa: BLE001 — fixture build failed: no verdict
@@ -183,12 +207,14 @@ def _run(tmp):
     check("CARRIED FIX: unblock supersedes active_pr", after is None)
     check("UPSTREAM: ready lane still defers on active_pr", ready_lane == "active_pr")
     check("UPSTREAM: review lane bypasses active_pr", review_lane is None)
+    check("CARRIED FIX NARROWED: automatic reclaim does NOT clear active_pr",
+          after_auto == "active_pr")
 
     print()
     if not fails:
-        print("RESULT: ALL GREEN — 4/4 contracts hold (exit 0)")
+        print("RESULT: ALL GREEN — 5/5 contracts hold (exit 0)")
         return EXIT_OK
-    print("RESULT: %d of 4 contracts VIOLATED (exit 1): %s" % (len(fails), ", ".join(fails)))
+    print("RESULT: %d of 5 contracts VIOLATED (exit 1): %s" % (len(fails), ", ".join(fails)))
     if "CARRIED FIX: unblock supersedes active_pr" in fails:
         print("        The carried commit 'fix(kanban): let unblock supersede prior")
         print("        PR guard' is most likely gone from ~/.hermes/hermes-agent.")

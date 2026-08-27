@@ -1072,11 +1072,11 @@ else
   # reaches this host green. Require the probe's OWN verdict line before
   # believing either the pass or the accusation.
   PF_VERDICT_GREEN='^RESULT: ALL GREEN'
-  PF_VERDICT_RED='^RESULT: [0-9]\{1,\} of 4 contracts VIOLATED'
+  PF_VERDICT_RED='^RESULT: [0-9]\{1,\} of 5 contracts VIOLATED'
   case $PF_RC in
     0)
       if printf '%s\n' "$PF_OUT" | grep -q "$PF_VERDICT_GREEN"; then
-        pass "respawn guard: all 4 contracts hold (carried unblock-supersedes-PR fix intact)"
+        pass "respawn guard: all 5 contracts hold (carried unblock-supersedes-PR fix intact)"
       else
         fail "respawn guard: the probe exited 0 without printing a verdict — it did"
         say  "      not reach its own comparisons, so NOTHING was verified. A silent"

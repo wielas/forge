@@ -406,7 +406,7 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 ```
-Hermes 0.19.0 · codex-cli 0.146.0 · Claude Code 2.1.227 · gh 2.97.0
+Hermes 0.20.6 · codex-cli 0.146.0 · Claude Code 2.1.227 · gh 2.97.0
 lefthook 2.1.10 · uv 0.11.32 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
