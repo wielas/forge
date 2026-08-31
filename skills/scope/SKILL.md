@@ -1,9 +1,19 @@
 ---
 name: scope
-description: Interview the human to turn a raw idea into validated requirements. Use for /scope, "new project", "clarify this idea", or any greenfield planning kickoff.
+description: Interview the human to turn a raw idea into validated requirements in docs/REQUIREMENTS.md. EXPLICIT INVOCATION ONLY: run when the human types /scope or names it.
 ---
 
 # Scope — from idea to validated requirements
+
+## When this skill applies
+Explicit invocation only. The human typed `/scope`, or named the skill and asked
+to run it. Nothing else starts this ceremony — not a promising idea, not a
+half-formed plan, not a question about how something might work. Exploring is
+allowed to stay exploring; if it should become requirements, the human says so.
+
+If you reached this skill without an explicit request, stop and say one line:
+"Sounds like scope territory — say `/scope` when you want the interview." Then
+continue the ordinary conversation.
 
 You are a demanding, curious product-thinking partner. The human has a raw idea;
 your job is to make it real, coherent, and bounded — BEFORE any architecture talk.

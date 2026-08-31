@@ -46,11 +46,13 @@ forge/
 ├── README.md                  ← you are here (architecture + quickstart)
 ├── Makefile                   ← forge-level commands (install, new, check)
 ├── install.sh                 ← publish skills to every harness
-├── docs/adr/                  ← why the Forge is shaped this way
-├── skills/                    ← L1: the eight ceremony skills
+├── docs/
+│   ├── staged-run-guide.md    ← canonical root-first launch procedure
+│   └── adr/                   ← why the Forge is shaped this way
+├── skills/                    ← L1: ceremonies + the unattended lane protocol
 │   ├── scope/  architect/  roadmap/
 │   ├── start-chunk/  end-chunk/
-│   ├── judge/  retro/
+│   └── judge/  retro/  forge-lane/
 ├── rubrics/
 │   ├── judge-rubric.md        ← scoring dimensions + verdict schema
 │   └── kanban-metadata-schema.md ← structured handoff contract
@@ -59,7 +61,10 @@ forge/
 │   ├── claude/forge-claude-plugin/
 │   └── codex/
 ├── scripts/
-│   └── preflight.sh           ← read-only revalidation of the mini (make preflight)
+│   ├── preflight.sh           ← read-only revalidation of the mini
+│   ├── commission.sh          ← paid, non-mutating launch proof
+│   ├── metadata-live.sh       ← completed-run contract sweep
+│   └── metrics.sh             ← computed flywheel evidence
 └── hermes/                    ← L4/L5 config + profile definitions
     ├── config-examples.yaml   ← settings for the DEFAULT profile
     ├── profiles-bootstrap.sh  ← creates the four forge-* profiles
@@ -71,6 +76,12 @@ There is no lane runner. The lane IS a Hermes profile (`forge-codex-lane`)
 that the kanban dispatcher spawns; its protocol is `skills/forge-lane/SKILL.md`.
 
 ## Quickstart
+
+The safe production path is staged: commission, create only the root card,
+merge and inspect it, then release the rest of the graph. The complete command
+sequence and stop rules live in the
+[`staged unattended run guide`](docs/staged-run-guide.md). Do not use a full
+bootstrap as the first mutation of a genuine product board.
 
 ```bash
 # 0. Prereqs on the mini + laptop: git, gh, uv, copier, jq, codex CLI, hermes
@@ -84,20 +95,30 @@ uv tool install copier
 # DEST is required, absolute and durable — a temp dir is refused (F19), and so
 # is any DEST or NAME that walks into one. NAME is a single path component.
 make new NAME=my-project DEST=$HOME/dev
-cd $HOME/dev/my-project && make setup
+cd $HOME/dev/my-project
+git init -b main
+make setup
+# Commit and push the initial project, create its GitHub origin, then: make protect
 
-# 3. Plan interactively (Claude Code, subscription-covered, you present)
+# 3. Plan interactively; commit the frozen plan before launch
 claude                             # then: /scope → /architect → /roadmap
-                                   # /roadmap ends by emitting kanban cards
 
-# 4. Let the board work (on the mini)
-./hermes/board-bootstrap.sh my-project
-# the gateway's embedded dispatcher spawns forge-codex-lane on each ready card
+# 4. From Forge: clear the advisory roadmap report, then commission once
+cd "$HOME/.forge/repo"
+make roadmap-check PROJECT="$HOME/dev/my-project"  # repeat until status is CLEAR
+make commission PROJECT="$HOME/dev/my-project" BOARD=my-project-run-1
 
-# 5. Spot-check from anywhere
-# Judge verdicts land as card metadata → Telegram gate pings you.
-# Approve/bounce from your phone; steer live Claude sessions via /rc.
+# 5. Release ONE root card and watch it from the desktop/CLI
+cd "$HOME/dev/my-project"
+RUN_START="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+"$HOME/.forge/repo/hermes/board-bootstrap.sh" my-project-run-1 --root-only
+hermes kanban --board my-project-run-1 watch
 ```
+
+After tier 1, perform `/judge`, merge an approved root PR, and run
+`metadata-live` plus `metrics` using the recorded `RUN_START`. Only that green
+checkpoint authorises the same bootstrap command without `--root-only`. The
+first run should not depend on the still-unproven Telegram approval flow.
 
 ## `make verify` — the only claim in this README that checks itself
 
@@ -105,7 +126,7 @@ Forge tells every project it stamps that *skills persuade, gates enforce*
 (ADR-0003). `make verify` is that rule applied to Forge:
 
 ```bash
-make verify                     # cli + config + substrate + template + lane + metrics + metadata + prejudge
+make verify                     # every default suite
 make verify SUITES="cli config" # one or more suites
 make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 ./scripts/verify.sh --list      # what it checks, without running it
@@ -121,6 +142,12 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `metrics/` | the flywheel's own numbers: a checked-in SQL board must reproduce a checked-in JSON expectation field for field, a nonconforming chunk envelope must be reported rather than normalized away, reading a board must not change it, gate blocks must stay counted apart from bounces, and `/retro` must still run the command instead of doing the arithmetic |
 | `metadata/` | completed-run envelopes against their locked profile contract and versioned schemas, without opening a live board: a recorded PR is run through the real gate producer; chunk/judge fixtures and its gate output pass; nesting, missing keys, derived-field contradictions, drift, profile mismatch, null metadata and undocumented block reasons fail; additive Hermes dashboard keys remain legal |
 | `prejudge/` | tier 1, **run rather than read**: two **recorded** PRs of the audited run reproduce a checked-in severity map with no `gh`, no `git` and no network; a blocking check exits 1; every blocking finding carries an action a fresh worker can execute; the whole protocol routes a block to a bounce with no model spawned and moves a recorded 63 KB patch without printing a byte of it; and the `claude -p` control arm is diffed against `main` line for line |
+| `sweep/` | merged-worktree cleanup stays dry by default, bounded to the product's `.worktrees/`, and refuses unsafe or unmerged candidates |
+| `roadmap/` | chunk envelopes, graph integrity, frozen acceptance, lane resolution, and the advisory `CLEAR` report |
+| `gate/` | GitHub merge-gate interpretation against recorded API shapes and failure modes |
+| `bootstrap/` | malformed graphs create nothing; root-only creates one root; full mode reuses it and attaches remaining parents atomically |
+| `commission/` | launch evidence is complete, paid only when requested, atomically published, and board-non-mutating |
+| `docs/` | the readiness ledger, staged sequence, ownership boundaries, and shared next command remain reconciled |
 
 Run it in CI, after every `hermes update`, and after every `codex`/`claude`
 upgrade. A tool version bump that changes a flag or a sandbox rule should fail a
@@ -223,7 +250,7 @@ have deliberately not decided yet is in
     are read by an interactive operator alongside a whole project's context, so
     every line competes with the work. Long material goes to `rubrics/` or a
     skill-local `references/` dir (progressive disclosure).
-  - **`forge-lane` ≤ 300 lines** (283 today). It is not a ceremony: it is the
+  - **`forge-lane` ≤ 300 lines.** It is not a ceremony: it is the
     entire job of one dedicated unattended profile, so the context argument that
     justifies 150 is at its weakest exactly there — and its length is
     accumulated *measured failures*, not prose. Cutting it means deleting the
@@ -248,8 +275,9 @@ is in [docs/hermes-field-notes.md](docs/hermes-field-notes.md).
 - [ ] Hermes `config.yaml` schema for profiles/cron (`hermes/config-examples.yaml`
       is a commented draft to reconcile against current docs).
 - [ ] Claude Code hooks JSON schema in `adapters/claude/.../hooks/hooks.json`.
-- [x] Codex non-interactive flags — codex-cli 0.145.0 has NO `--full-auto`;
-      the lane uses `-s workspace-write` (`skills/forge-lane/SKILL.md`).
+- [x] Codex non-interactive flags — the verified CLI has no `--full-auto`;
+      the lane uses `-s workspace-write` (`skills/forge-lane/SKILL.md`), and
+      `make preflight` rechecks the live installation.
 - [x] A real card end to end — burned down 2026-07-28, PR #1 merged.
 - [x] The lane's model holds the protocol — `deepseek-v4-flash`, first run.
 - [x] GitHub branch protection as the merge gate — active, and it refused a

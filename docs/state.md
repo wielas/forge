@@ -1,9 +1,10 @@
 # Forge — current state
 
-**Updated 2026-08-11 by CHUNK-10 during the independent first-run readiness
-review.** The readiness work is implemented on the open convergence stack;
-`origin/main` does not yet contain that stack. Earlier dated measurements below
-remain the observations they were. The measured pre-readiness baseline was:
+**Updated 2026-08-11 after the independent first-run readiness stack merged.**
+`origin/main` contains CHUNK-1 through CHUNK-10 at `bb8ade6`; the staged launch
+machinery and its reviewed proofs are integrated. Earlier dated measurements
+below remain the observations they were. The measured pre-readiness baseline
+was:
 
 ```
 main                fc006eb
@@ -84,10 +85,11 @@ The implementation stack now contains the complete pre-run sequence:
 | Live metadata sweep and exact driver/operator telemetry | CHUNK-4/CHUNK-5 green; genuine product rows still owed |
 | Emitted and frozen acceptance | CHUNK-6/CHUNK-7 green |
 | Root-only staging and paid commissioning | CHUNK-8/CHUNK-9 green; commissioning evidence recorded |
-| Audit, roadmap, state, and operator reconciliation | CHUNK-10 green on its implementation branch |
+| Audit, roadmap, state, and operator reconciliation | CHUNK-10 merged to `main` |
 
-What remains is integration plus live product evidence. Merge parent-first,
-republish profiles, re-run preflight, and point Forge at a durable product path:
+What remains is live product evidence. Follow the canonical
+[`staged unattended run guide`](staged-run-guide.md) and point Forge at a
+durable product path:
 
 ```bash
 PROJECT=/absolute/path/to/product
@@ -102,19 +104,21 @@ F25, F26, and F44 await that run. ADR-0011 still awaits ten reviews.
 
 1. This file — where things stand.
 2. `README.md` — the five layers and why.
-3. `docs/hermes-field-notes.md` — how the substrate really behaves. Every trap
+3. `docs/staged-run-guide.md` — the root-first run, its hard checkpoints, and
+   stop rules.
+4. `docs/hermes-field-notes.md` — how the substrate really behaves. Every trap
    here cost a run to find.
-4. `docs/ladder-2026-07-28.md` — the second climb, on a fresh project. Sixteen
+5. `docs/ladder-2026-07-28.md` — the second climb, on a fresh project. Sixteen
    findings with the commands that produced them, including the two that
    defeated a gate: a `make check` green that CI rejected, and a tier-2 human
    card the dispatcher claimed.
-5. `docs/experiment-2026-07-28.md` — the four exercises that made the system
+6. `docs/experiment-2026-07-28.md` — the four exercises that made the system
    fail on purpose: the deliberate bounce, the dependency edge, a killed
    worker, a red CI. Read with `docs/adr/0008-integrated-dependencies.md`,
    which is what the dependency exercise cost.
-6. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
+7. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
    record of what reading-only analysis can and cannot catch.
-7. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
+8. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
    improving".
 
 ---

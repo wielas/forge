@@ -6,6 +6,11 @@ reconciled against the readiness stack on 2026-08-11; re-check after a
 
 ## Launch a genuine product run
 
+The canonical, copyable procedure is
+[`docs/staged-run-guide.md`](staged-run-guide.md). It includes host preparation,
+the new-board assertion, exact checkpoint exit codes, stop rules, and closeout.
+The abbreviated contract below is only a reminder.
+
 Once a product has a durable absolute path, a protected remote, a committed
 frozen roadmap, and a new empty board slug, run this sequence from the Forge
 checkout. The next command is deliberately advisory: repeat it and fix the plan
