@@ -2,13 +2,14 @@
 
 **Status: superseded as a planning proposal on 2026-08-11 by CHUNK-10's current
 launch contract below.** The original §0 onward is a historical decision record,
-not operator instructions; `docs/state.md` owns live-proof status.
+not operator instructions; `docs/state.md` owns live-proof status and
+[`docs/staged-run-guide.md`](staged-run-guide.md) owns the procedure.
 
 ## Current launch contract (CHUNK-10)
 
 ### Landed tracks
 
-“Landed” means green on the open readiness stack, which still integrates parent-first.
+“Landed” means reviewed and merged to `main` in the readiness stack.
 
 | Track | Current implementation |
 |---|---|
@@ -21,8 +22,8 @@ not operator instructions; `docs/state.md` owns live-proof status.
 
 ### Remaining proof
 
-- Integrate the stack into `main`; republish profiles after the relevant merge
-  and re-run preflight.
+- Republish profiles from integrated `main` and re-run preflight before the
+  genuine product run.
 - Correct a genuine product roadmap until the advisory checker is CLEAR, then
   commission it.
 - Run the staged root → metadata checkpoint → full graph sequence. F1, F2, F3's

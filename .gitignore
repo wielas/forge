@@ -15,3 +15,8 @@ preflight.md
 # the repo's own read-only tooling (verify/preflight/metrics). The .local file
 # is whatever this particular machine happened to approve, and is not methodology.
 .claude/settings.local.json
+
+# per-run exhaust written by /end-chunk and the lane (chunk metadata, PR bodies).
+# Same rule the staged run guide puts on every product: run evidence is real, and
+# it does not belong in the methodology repo.
+.forge/

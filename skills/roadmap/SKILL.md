@@ -128,7 +128,11 @@ Where a finding is wrong about your plan, record why in the sign-off instead of
 editing the plan to satisfy it.
 
 ## Handoff
-Human runs `hermes/board-bootstrap.sh <project>`, which reads `graph.json`,
-creates every card (interactive chunks included, blocked rather than skipped)
-and creates the edges. Implementation proceeds via /start-chunk (interactive) or
-the forge-codex-lane profile (unattended).
+Follow `~/.forge/repo/docs/staged-run-guide.md`; never release the full graph
+first. From Forge, run `make roadmap-check PROJECT=<absolute-path>` until its
+status is `CLEAR`. Then run
+`make commission PROJECT=<absolute-path> BOARD=<new-slug>`.
+From the project root, bootstrap `--root-only`. After its approved PR is merged
+and the metadata/metrics checkpoint is green, run the full bootstrap.
+Interactive chunks use /start-chunk; unattended chunks use the forge-codex-lane
+profile.
