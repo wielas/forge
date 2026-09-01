@@ -84,13 +84,19 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate docs quota"
+DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate docs quota manifest"
+[ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
-ok()    { PASS=$((PASS+1)); printf '  ok    %s/%s\n' "$CURRENT_GROUP" "$1"; }
-bad()   { FAIL=$((FAIL+1)); printf '  FAIL  %s/%s\n        %s\n' "$CURRENT_GROUP" "$1" "$2"; }
-skip()  { SKIP=$((SKIP+1)); printf '  skip  %s/%s (%s)\n' "$CURRENT_GROUP" "$1" "$2"; }
+# Every case records the name it reported under, so the manifest/ group can
+# compare what this run actually executed against what --list claims it does.
+# The dynamic tail (" (14 flag claims …)") is stripped: it is diagnostic detail,
+# not part of the case's identity.
+_emit()  { [ -n "${TMPROOT:-}" ] && printf '%s/%s\n' "$CURRENT_GROUP" "${1%% (*}" >> "$TMPROOT/emitted.txt"; return 0; }
+ok()    { PASS=$((PASS+1)); _emit "$1"; printf '  ok    %s/%s\n' "$CURRENT_GROUP" "$1"; }
+bad()   { FAIL=$((FAIL+1)); _emit "$1"; printf '  FAIL  %s/%s\n        %s\n' "$CURRENT_GROUP" "$1" "$2"; }
+skip()  { SKIP=$((SKIP+1)); _emit "$1"; printf '  skip  %s/%s (%s)\n' "$CURRENT_GROUP" "$1" "$2"; }
 group() { CURRENT_GROUP="$1"; printf '\n== %s ==\n' "$1"; }
 wants() { case " $SUITES " in *" $1 "*) return 0;; *) return 1;; esac; }
 
@@ -6720,6 +6726,75 @@ QSTUB3
   fi
 }
 wants quota     && run_quota_group
+
+# ---------------------------------------------------------------------------
+# manifest/ — `--list` is a hand-maintained catalogue, and nothing compared it
+# to the suite it describes. Measured 2026-09-01 on `main` at 273b207: 38 cases
+# executed under names `--list` never mentions, including ALL SIXTEEN of the
+# `gate/` group and half of `quota/`. The newest check in the repo was invisible
+# to the one command a newcomer would use to discover checks.
+#
+# This is the same failure as F65/F66 wearing different clothes: a description
+# that has stopped matching reality looks exactly like one that never did. The
+# repair is to make the catalogue an executable claim.
+#
+# It runs LAST because it can only judge a run that has finished, and only a
+# COMPLETE one: a narrowed `SUITES=` emits a subset, and reporting the absent
+# groups as drift would be a check that cries wolf. That case skips, loudly.
+# ---------------------------------------------------------------------------
+run_manifest_group() {
+  group manifest
+
+  if [ "$SUITES" != "$DEFAULT_SUITES" ]; then
+    skip "list-matches-the-suite" "narrowed run (SUITES='$SUITES'); the emitted set is a subset by construction"
+    return
+  fi
+  local emitted="$TMPROOT/emitted.txt"
+  if [ ! -s "$emitted" ]; then
+    bad "list-matches-the-suite" "no case names were recorded — the recorder is broken, not the manifest"
+    return
+  fi
+
+  # The catalogue documents parameterised families with a `<placeholder>`, e.g.
+  # `config/soul-in-sync/<profile>` standing for one case per profile. Turn each
+  # placeholder into a glob so one entry legitimately covers its whole family.
+  local entries="$TMPROOT/manifest.txt"
+  "$0" --list | grep -E '^[a-z]+/' | awk '{print $1}' | sort -u > "$entries"
+
+  local name pat matched unlisted="" unlisted_n=0 orphan="" orphan_n=0 checked=0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    checked=$((checked+1)); matched=0
+    while IFS= read -r pat; do
+      # shellcheck disable=SC2254
+      case "$name" in ${pat//<*>/*}) matched=1; break;; esac
+    done < "$entries"
+    [ "$matched" = 1 ] || { unlisted="$unlisted $name"; unlisted_n=$((unlisted_n+1)); }
+  done < <(sort -u "$emitted")
+
+  # The other direction: an entry describing a case that no longer runs is drift
+  # too, and it is the shape that makes a catalogue quietly grow fiction.
+  while IFS= read -r pat; do
+    [ -n "$pat" ] || continue
+    matched=0
+    while IFS= read -r name; do
+      # shellcheck disable=SC2254
+      case "$name" in ${pat//<*>/*}) matched=1; break;; esac
+    done < <(sort -u "$emitted")
+    [ "$matched" = 1 ] || { orphan="$orphan $pat"; orphan_n=$((orphan_n+1)); }
+  done < "$entries"
+
+  if [ -n "$unlisted" ]; then
+    bad "list-matches-the-suite" \
+        "$unlisted_n case(s) ran under names --list does not mention:$(printf '%s' "$unlisted" | cut -c1-400)"
+  elif [ -n "$orphan" ]; then
+    bad "list-matches-the-suite" \
+        "$orphan_n --list entr(y/ies) matched no case in this run:$(printf '%s' "$orphan" | cut -c1-400)"
+  else
+    ok "list-matches-the-suite ($checked cases, every one documented)"
+  fi
+}
+wants manifest  && run_manifest_group
 
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
