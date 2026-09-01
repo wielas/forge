@@ -1273,6 +1273,7 @@ metadata/lane-validates-before-complete the nondeterministic lane gates the exac
 metadata/valid-by-profile               canonical chunk/judge fixtures and the recorded gate producer validate by profile
 metadata/published-examples-validate    the two JSON examples in the canonical document satisfy their own schemas
 metadata/rejects-nested-chunk            the historical $."forge.chunk.v1" envelope is not canonical
+metadata/chunk-id-is-not-digits          letter-prefixed and dotted ids validate, and mismatched ids are still caught
 metadata/rejects-reserved-nested-copy    a flat envelope cannot hide a second copy under a forge.* key
 metadata/rejects-incomplete-chunk        a chunk missing a required exhaust field cannot complete
 metadata/rejects-coverage-key-drift      check.coverage cannot silently replace check.coverage_pct
@@ -3600,6 +3601,51 @@ run_metadata_group() {
           "an envelope whose derived fields contradict its evidence was accepted"
     fi
   fi
+
+  # The SAME defect one layer down, and the layer that costs most. The lane's
+  # §7 gates `kanban_complete` on this validator exiting 0, so a digits-only
+  # `chunk_id`/`branch` pattern kills a JobApp run at the TERMINATOR — after the
+  # PR is open and the whole chunk is paid for. Measured on this worktree before
+  # the widening, against `chunk-valid.json` retargeted to C10:
+  #
+  #   branch: 'chunk/C10-instance-paths' does not match '^chunk/[0-9]+-…'
+  #   chunk_id: 'CHUNK-C10' does not match '^CHUNK-[0-9]+$'
+  #
+  # The MISMATCH rows are the ones that earn this case. `semantic_errors()`
+  # compares the branch id to the chunk id only when BOTH of its own regexes
+  # match, so widening the schemas alone would let `CHUNK-C10` sail past a
+  # comparison that silently stopped happening — a check switched off by the
+  # repair, which is this repo's signature bug. The digits rows are the control:
+  # nothing about the old shape may change.
+  local ids_ok=1 rc
+  for spec in \
+    "chunk:CHUNK-C10:chunk/C10-instance-paths:0" \
+    "chunk:CHUNK-C9.1:chunk/C9.1-pipeline-observability:0" \
+    "chunk:CHUNK-7:chunk/7-sync-engine:0" \
+    "chunk:CHUNK-C10:chunk/C9.1-pipeline-observability:1" \
+    "chunk:CHUNK-7:chunk/8-sync-engine:1" \
+    "gate:CHUNK-C10:chunk/C10-instance-paths:0" \
+    "gate:CHUNK-C10:chunk/C9.1-pipeline-observability:1"; do
+    local kind="${spec%%:*}" rest="${spec#*:}"
+    local cid="${rest%%:*}"; rest="${rest#*:}"
+    local br="${rest%%:*}" want_rc="${rest##*:}"
+    if [ "$kind" = chunk ]; then
+      rc="$(jq --arg c "$cid" --arg b "$br" '.chunk_id=$c | .branch=$b' \
+              "$fixtures/chunk-valid.json" \
+            | metadata_rc --profile forge-codex-lane -)"
+    else
+      rc="$(jq --arg c "$cid" --arg b "$br" '.chunk=$c | .branch=$b' \
+              "$TMPROOT/metadata-produced-gate.json" \
+            | metadata_rc --profile forge-prejudge -)"
+    fi
+    if [ "$rc" != "$want_rc" ]; then
+      bad "chunk-id-is-not-digits" \
+          "$kind envelope $cid on $br returned $rc, expected $want_rc: $(tail -2 "$validator_log" | tr '\n' ' ')"
+      ids_ok=0; break
+    fi
+  done
+  [ "$ids_ok" = 1 ] \
+    && ok "chunk-id-is-not-digits (7 envelopes: C10, C9.1 and 7 accepted, mismatched ids still refused)"
 
   if metadata_validate --profile forge-codex-lane "$fixtures/chunk-additive.json"; then
     ok "allows-additive-hermes-keys (changed_files/tests_run stay siblings)"
