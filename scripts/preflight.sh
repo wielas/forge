@@ -869,6 +869,64 @@ if [ -n "$FORGE_DIR" ]; then
   ( cd "$FORGE_DIR" && make validate >/dev/null 2>&1 ) \
     && pass "make validate green" || fail "make validate failed — run it to see why"
 
+  # ---- the recorded environment IS the cause set --------------------------
+  # docs/state.md's environment line is what a later run reads to decide
+  # whether a tool upgrade belongs in the suspect set for a failure (F22).
+  # Nothing asserted it until 2026-09-01, and by then it was two versions stale
+  # on two of four tools. The reason is exact: verify.sh's env-block scrape
+  # anchors on the `profiles: forge-orchestrator` line BELOW it
+  # (cli/model-pin-documented), so the model pins were executable while the
+  # tool versions directly above them were prose. This is that repair.
+  #
+  # It lives in preflight rather than verify because only the host that owns
+  # the tools can answer it: a CI runner has different ones and the same check
+  # there would be red forever. The precedent is config/codex-pin-live, which
+  # skips when the operator's ~/.codex/config.toml is absent.
+  #
+  # Drift WARNs rather than FAILs — a stale record does not stop a run, it only
+  # makes the next failure harder to attribute. A line that cannot be parsed
+  # ALSO warns, because a control that could not run has not passed (F65/F66).
+  ENVLINE="$(grep -E '^Hermes .*codex-cli .*Claude Code .*gh ' \
+               "$FORGE_DIR/docs/state.md" 2>/dev/null | tail -1)"
+  if [ -z "$ENVLINE" ]; then
+    warn "docs/state.md has no 'Hermes … codex-cli … Claude Code … gh' line to check."
+    say  "      The recorded environment is the cause set for every later run; a"
+    say  "      check that cannot find it has not passed it."
+  else
+    # Recorded side: split the line on its separator and read the version out of
+    # the segment carrying each label. Splitting first is what keeps a greedy
+    # match on one label from reaching into another's segment.
+    _env_recorded() { # $1=label
+      printf '%s' "$ENVLINE" | tr '·' '\n' | grep -F "$1 " | head -1 \
+        | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+    }
+    _env_live() { # $1=binary -> first version-shaped token in its --version
+      "$1" --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+    }
+    ENVDRIFT=""; ENVBLIND=""; ENVSEEN=0
+    for _pair in "hermes|Hermes" "codex|codex-cli" "claude|Claude Code" "gh|gh"; do
+      _bin="${_pair%%|*}"; _label="${_pair##*|}"
+      command -v "$_bin" >/dev/null 2>&1 || continue
+      _live="$(_env_live "$_bin")"; _rec="$(_env_recorded "$_label")"
+      if [ -z "$_rec" ] || [ -z "$_live" ]; then
+        ENVBLIND="$ENVBLIND $_label"
+      elif [ "$_rec" != "$_live" ]; then
+        ENVDRIFT="$ENVDRIFT $_label(recorded $_rec, live $_live)"
+      else
+        ENVSEEN=$((ENVSEEN+1))
+      fi
+    done
+    if [ -n "$ENVDRIFT" ]; then
+      warn "docs/state.md's recorded environment has drifted:$ENVDRIFT"
+      say  "      Update the line. When a run misbehaves this is what says whether"
+      say  "      a tool upgrade is in the cause set — stale, it says the wrong thing."
+    elif [ -n "$ENVBLIND" ]; then
+      warn "could not compare recorded vs live for:$ENVBLIND (unparsed on one side)"
+    else
+      pass "docs/state.md's recorded environment matches the host ($ENVSEEN tools)"
+    fi
+  fi
+
   # THE GATE FOR F47/F67, because `make verify` cannot be it.
   #
   # The snapshot group's headline regression — a WAL board with no `-shm`

@@ -70,6 +70,14 @@ reports 9 skips: the four `config/external-dirs/*` cases skip because the
 profiles point at the main checkout, which is F49's documented caveat and not a
 regression. Check the count from `main` before reading a rise in skips as one.
 
+The environment line below is now **asserted**, not merely written down.
+`make preflight` section 10 compares each recorded version against the live
+binary and WARNs on drift (2026-09-01). It had gone two versions stale on two of
+four tools — Hermes and Claude Code — because `cli/model-pin-documented`'s
+scrape anchors on the `profiles:` line *below* it, so the model pins were
+executable while the tool versions were prose. The check is in preflight rather
+than verify because only the host that owns the tools can answer it.
+
 ADR-0016 (2026-08-31) added the `quota/` group: default `make verify` then
 completed **323 passed / 0 failed / 5 skipped**. The rise is the 24 `quota/`
 cases plus `cli/codex-run-flags-exist`; nothing was removed. That skip count is
@@ -470,7 +478,7 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 ```
-Hermes 0.19.0 · codex-cli 0.148.0 · Claude Code 2.1.227 · gh 2.97.0
+Hermes 0.20.6 · codex-cli 0.148.0 · Claude Code 2.1.252 · gh 2.97.0
 lefthook 2.1.10 · uv 0.11.32 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
