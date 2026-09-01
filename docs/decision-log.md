@@ -277,3 +277,41 @@ independent repairs and remains historical. The reviewed stack completed
 `make validate` OK, default `make verify` at 297/0/4, clean-tree preflight at
 PASS 85 / WARN 3 / FAIL 0, the ten-chunk roadmap at CLEAR 9/0/0 with both
 declared assignees supplied, and the opt-in installed-Hermes bootstrap at 7/0/0.
+
+2026-09-01 slice/ungatable-repos: Branch protection is a paid GitHub feature, so
+`merge-gate.sh` returned exit 2 for every private repository on a free plan and
+`commission.sh` refused it. That reading was wrong in kind, not degree: a 403
+carrying GitHub's own "Upgrade to GitHub Pro" sentence is the platform answering
+that no gate can exist, so none was missed. ADR-0017 adds a fifth verdict,
+`UNAVAILABLE` / exit 5, guarded by a conjunction with `.private == true` and with
+both mechanisms agreeing; anything less degrades to 2, which still refuses.
+Commissioning tolerates 5 and nothing else, records the real exit rather than
+laundering it to 0, and now ends every report with a mandatory `posture:` line.
+`REQUIRE_GATE=1` restores the refusal. Proof: `make validate` OK, default
+`make verify` 329/0/5 from the main checkout, clean-tree `make preflight`
+PASS 89 / WARN 3 / FAIL 0, `gate/` 22 cases and `commission/` 11. Live readback
+returned 5 for `wielas/JobApp` and still 0 for the public control `wielas/forge`.
+
+2026-09-01 slice/ungatable-repos, two decisions worth keeping: First, the frozen
+CHUNK-9 acceptance is NOT amended. `tests/features/chunk_9.feature` and its
+`docs/ROADMAP.md` card both say commissioning "refuses regardless of repository
+visibility labels" — a rule against treating `private: true` as evidence a gate
+exists. The new verdict turns on GitHub's capability answer instead, and the
+scenario's fixture drives the 404 path, which is untouched; amending either half
+of that matched pair would also have broken the contract-to-feature validation
+for no gain. ADR-0014 D14.3 forbids self-amendment inside an implementation PR,
+so the reasoning is recorded in ADR-0017 rather than acted on. Second, two of the
+new checks shipped green over their own defect and were only caught by mutation
+testing: a public repository's incoherent 403 was refused by the OTHER
+mechanism's arm, so the exit code alone could not say which branch had decided.
+Both now assert which arm produced the refusal, and a sixth case covers the
+classic arm's conjunct that the first five could not reach at all. Seven
+mutations, each caught by a named case. This is F65/F66 in a new shape — not a
+check anchored to content that moved, but a check whose subject was reachable by
+two paths, only one of which it meant.
+
+2026-09-01 slice/ungatable-repos: Still owed. No genuine `make commission` has
+run against a private product, so the end-to-end claim is fixture proof plus a
+live primitive. `docs/state.md` and ADR-0017 both say so; the first real private
+product run settles it.
+
