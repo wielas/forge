@@ -63,9 +63,17 @@ preflight warnings remain the documented healthy set: no global lefthook, the
 empty API-key placeholder, and the historical `forge-ladder` board selected by
 default.
 
+The `manifest/` group (2026-09-01) added one case, taking default `make verify`
+to **334 passed / 0 failed / 5 skipped**. It asserts that `--list` names every
+case the suite actually runs; 48 did not, including the whole `gate/` group. It
+does **not** assert the counts written in this file — see the correction below,
+which no check could have made.
+
 ADR-0017 (2026-09-01) added ten cases to the existing `gate/` and `commission/`
-groups — no new group — taking default `make verify` to **329 passed / 0 failed
-/ 5 skipped** from the main checkout. Run from a *linked worktree* the same tree
+groups — no new group — taking default `make verify` to **333 passed / 0 failed
+/ 5 skipped** from the main checkout. *That total read 329 until 2026-09-01, and
+the paragraph contradicted itself: ten cases added to a 323 baseline is 333, and
+333 is what the suite reports. The delta was right and the total was wrong.* Run from a *linked worktree* the same tree
 reports 9 skips: the four `config/external-dirs/*` cases skip because the
 profiles point at the main checkout, which is F49's documented caveat and not a
 regression. Check the count from `main` before reading a rise in skips as one.

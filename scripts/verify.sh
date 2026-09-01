@@ -1124,6 +1124,7 @@ run_template_group() {
 if [ "$LIST_ONLY" = 1 ]; then
   cat <<'EOF'
 cli/flags-exist                   every long flag named beside a tracked command exists in its --help
+cli/flags-exist/<command>         one tracked command could not be judged: absent, or its --help lists no flags
 cli/verify-help-grows-with-the-group-header  appended groups remain visible without numeric line pins
 cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
@@ -1149,15 +1150,18 @@ config/model-pin-live/<profile>   live model.default matches the pin that would 
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/board-default-workdir      every forge board has a worktree anchor
 config/per-profile/<assignee>             a declared assignee with no profile on disk is named, not trusted (F43)
-config/preflight-agrees-about-real-profiles  preflight resolves the same profile set, with no second implementation
+config/per-profile                        the per-profile sweep could not run at all (no hermes, or no forge-* profiles)
+config/preflight-agrees-about-real-profiles  preflight's profile source carries no second implementation of the resolution
 substrate/worktree-ownership      dispatcher resolves the worktree before spawning
 substrate/worktree-gitfile        .git is a file in a linked worktree; writes fail
 substrate/kanban-json-shapes      the --json shapes board-bootstrap and monitoring read are unchanged
 substrate/codex-worktree-commit   codex can commit in a worktree with --add-dir (--with-codex)
 template/stamp                            copier stamps a project from the template into a durable path
+template/stamp-setup-check                the stamp/setup/check probe could not run (uvx absent)
 template/setup                            make setup builds the venv and installs the toolchain
 template/hooks-installed                  lefthook really installs its hooks into the stamped repo's .git
 template/check-green                      make check passes on the freshly stamped project
+template/push-gate                        the real-bare-remote push probe could not reach a probe commit
 template/gitignores-worktrees     .worktrees/ is ignored (dispatcher worktrees live in-repo)
 template/bootstrap-push-allowed   the push that CREATES main is allowed (real bare remote)
 template/main-push-blocked        every later direct push to main is refused
@@ -1340,6 +1344,7 @@ sweep/sweep-keeps-what-it-cannot-read       a git that fails is not a clean work
 sweep/sweep-fails-when-it-cannot-enumerate  "nothing to sweep" and "I could not look" are different exits
 sweep/sweep-never-touches-outside-the-bound APPLY still cannot reach outside the bound
 sweep/sweep-refuses-an-unreadable-bound     a bound that cannot be entered must not become every path
+sweep/sweep-fixture                         the sweep fixture could not be built (git absent)
 sweep/sweep-never-force-deletes-a-branch    unreachable commit survives; reported, never -D'd
 sweep/sweep-carries-no-forced-delete        the script contains no `git branch -D`
 sweep/sweep-tolerates-missing-remote-branch the merge deletes origin/<branch>; that is normal
@@ -1395,11 +1400,11 @@ gate/no-rule-from-either-mechanism-is-exit-4  neither mechanism present is NONE 
 gate/an-inactive-ruleset-is-not-a-gate    a ruleset that is not enforced does not gate
 gate/a-ruleset-for-another-branch-does-not-gate-main  a rule scoped to another ref leaves main ungated
 gate/an-excluded-branch-is-not-gated      main on a ruleset's exclusion list is not gated by it
-gate/an-unreadable-repo-is-exit-2         cannot ask is exit 2 and WARNs — it is not a pass (F65/F66)
+gate/an-unreadable-repo-is-exit-2           a repository that cannot be read is exit 2 — not a pass (F65/F66)
 gate/unreadable-rulesets-is-exit-2-not-exit-4  a failed rulesets read is 'could not ask', never 'no rule exists'
 gate/unreadable-classic-protection-is-exit-2  the same distinction for classic protection
 gate/one-mechanism-unavailable-is-exit-2  one mechanism unreadable is exit 2 even when the other answers
-gate/a-missing-gh-warns-rather-than-vanishing  no gh binary is exit 2, not silence
+gate/a-missing-gh-warns-rather-than-vanishing  preflight WARNs about an absent gh rather than saying nothing
 gate/a-malformed-slug-is-named-not-misreported  a bad owner/name is reported as malformed, not as ungated
 gate/an-unavailable-plan-is-exit-5-not-exit-2  a plan without protection is UNAVAILABLE (exit 5), a distinct answer (ADR-0017)
 gate/an-unavailable-repo-is-never-reported-gated  an unavailable posture can never read as gated
@@ -6779,10 +6784,14 @@ wants quota     && run_quota_group
 
 # ---------------------------------------------------------------------------
 # manifest/ — `--list` is a hand-maintained catalogue, and nothing compared it
-# to the suite it describes. Measured 2026-09-01 on `main` at 273b207: 38 cases
-# executed under names `--list` never mentions, including ALL SIXTEEN of the
-# `gate/` group and half of `quota/`. The newest check in the repo was invisible
-# to the one command a newcomer would use to discover checks.
+# to the suite it describes. Measured 2026-09-01 on this branch's base, `main`
+# at 49cc60b: 48 existing cases executed under names `--list` never mentions,
+# including ALL TWENTY-TWO of the `gate/` group, half of `quota/`, ADR-0017's
+# four `commission/` cases, and `cli/codex-run-flags-exist` — the newest check
+# in the repo was invisible to the one command a newcomer would use to discover
+# checks. (An earlier draft of this comment cited the same measurement taken at
+# 273b207, one merge earlier: 38 and sixteen. Correct then, stale by the time it
+# was written down, in a check whose whole subject is exactly that.)
 #
 # This is the same failure as F65/F66 wearing different clothes: a description
 # that has stopped matching reality looks exactly like one that never did. The
@@ -6808,8 +6817,28 @@ run_manifest_group() {
   # The catalogue documents parameterised families with a `<placeholder>`, e.g.
   # `config/soul-in-sync/<profile>` standing for one case per profile. Turn each
   # placeholder into a glob so one entry legitimately covers its whole family.
+  # Read the catalogue out of this script's own source rather than re-running it.
+  # `"$0" --list` would re-execute the whole file, and the child installs
+  # `trap cleanup EXIT` over $LABROOT — a FIXED path under $HOME, not a mktemp —
+  # so the child's exit would delete the live run's sandbox lab. That is
+  # harmless only while this group runs last, which is a property of the file's
+  # ordering rather than anything asserted. Reading the heredoc needs no child.
   local entries="$TMPROOT/manifest.txt"
-  "$0" --list | grep -E '^[a-z]+/' | awk '{print $1}' | sort -u > "$entries"
+  sed -n '/^if \[ "\$LIST_ONLY" = 1 \]/,/^EOF$/p' "$0" \
+    | grep -E '^[a-z]+/' | awk '{print $1}' | sort -u > "$entries"
+  if [ ! -s "$entries" ]; then
+    bad "list-matches-the-suite" "could not read the --list catalogue out of $0 — the reader is broken, not the manifest"
+    return
+  fi
+  # The glob below substitutes every <placeholder> at once, so an entry carrying
+  # TWO of them collapses to the group root and would match every case in it.
+  # No entry does today; nothing stopped one from being added, and the failure
+  # would widen the match into a silent pass, which is this repo's signature bug.
+  if grep -qE '<[^>]*>.*<[^>]*>' "$entries"; then
+    bad "list-matches-the-suite" \
+        "a catalogue entry carries two <placeholders>; its glob collapses to the group root and would match anything: $(grep -m1 -E '<[^>]*>.*<[^>]*>' "$entries")"
+    return
+  fi
 
   local name pat matched unlisted="" unlisted_n=0 checked=0
   while IFS= read -r name; do
@@ -6822,16 +6851,23 @@ run_manifest_group() {
     [ "$matched" = 1 ] || { unlisted="$unlisted $name"; unlisted_n=$((unlisted_n+1)); }
   done < <(sort -u "$emitted")
 
-  # WHAT THIS DELIBERATELY DOES NOT CHECK: the reverse direction, "an entry that
-  # matched no case in this run". It is tempting and it is wrong here, because
-  # which cases run is platform-dependent. `skip "flags-exist/$cmd"` emits only
-  # where that command is ABSENT — never on this host, always on a runner
-  # lacking it — so an entry describing it would be an orphan on macOS and a
-  # requirement on CI. A check that must be red on one of the two platforms is
-  # not a check. So a stale entry for a deleted case is NOT caught; that is
-  # stated rather than quietly hoped away, and it is the weaker half anyway:
-  # fiction in the catalogue misleads, while a case running undocumented is the
-  # failure that actually happened (all 16 of gate/, 2026-09-01).
+  # WHAT THIS DELIBERATELY DOES NOT CHECK: the reverse direction, "a catalogue
+  # entry that matched no case in this run". Which cases emit is
+  # platform-dependent — `cli/flags-exist/<command>`, `config/per-profile`,
+  # `template/stamp-setup-check`, `template/push-gate` and `sweep/sweep-fixture`
+  # are emitted only where a tool is ABSENT, so they appear on a bare CI runner
+  # and never here. Asserting the reverse would therefore be red on one platform
+  # or the other by construction.
+  #
+  # Note what that does NOT justify: those entries still belong in the
+  # catalogue. In this direction an entry matching nothing costs nothing, and
+  # leaving them out is what would turn CI red. An earlier draft of this comment
+  # used the orphan argument to omit them and would have failed the required
+  # `verify` check on the very PR that introduced it.
+  #
+  # The real cost of the missing direction: a stale entry for a deleted case is
+  # not caught. That is the weaker half — fiction in the catalogue misleads,
+  # while a case running undocumented is the failure that actually happened.
   if [ -n "$unlisted" ]; then
     bad "list-matches-the-suite" \
         "$unlisted_n case(s) ran under names --list does not mention:$(printf '%s' "$unlisted" | cut -c1-400)"
