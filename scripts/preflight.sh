@@ -758,20 +758,25 @@ fi
 # ---------------------------------------------------------------------------
 # The lane's protocol is partly a program too (audit F64): §3 and §5 invoke
 # scripts/lane-setup.sh and scripts/lane-blast-radius.sh through ~/.forge/repo,
-# and §7 now gates its completion metadata the same way, through
-# scripts/validate-metadata.py. An unattended lane reaches them by that path and
-# by no other, so a missing symlink or a cleared executable bit is a night-run
+# §4 now drives Codex through scripts/codex-run.sh the same way (ADR-0016), and
+# §7 gates its completion metadata through scripts/validate-metadata.py.
+# codex-run.sh reaches its two helpers by its OWN directory rather than through
+# ~/.forge/repo, so they are checked here beside it: a run that parks and then
+# cannot find quota-window.py would wait forever on a question nothing answers.
+# An unattended lane reaches all of these by that path and by no other, so a
+# missing symlink or a cleared executable bit is a night-run
 # failure the operator would only meet as a reaped `crashed` run — and for §7
 # that reaping happens AFTER the PR is already open. Checked THROUGH
 # ~/.forge/repo, the way the lane calls them, rather than in this checkout — the
 # checkout being fine is not the property that matters, and `make verify`
 # already covers that one.
 # ---------------------------------------------------------------------------
-for _lscript in lane-setup.sh lane-blast-radius.sh validate-metadata.py; do
+for _lscript in lane-setup.sh lane-blast-radius.sh validate-metadata.py \
+                codex-run.sh quota-window.py codex-progress.py; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
-    say  "      forge-lane §3/§5 invoke it by exactly that path. Check the"
+    say  "      forge-lane §3/§4/§5 invoke it by exactly that path. Check the"
     say  "      ~/.forge/repo symlink, then re-run ./hermes/profiles-bootstrap.sh."
   elif [ ! -x "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript is not executable"

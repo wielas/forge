@@ -80,6 +80,20 @@ hermes kanban context <id>       # exactly what the worker was shown
 `context` is the one to reach for when a worker did something baffling: it shows
 the card as the model saw it. Usually the card was ambiguous, not the model stupid.
 
+**A parked lane is working, not stuck.** A card whose log shows `PARKED on
+primary,secondary until …` hit a Codex usage limit and is sleeping until the
+provider's own stated reset, then resuming the same session (ADR-0016). Leave
+it. `~/.forge/lane-parks/<task-id>.json` says which windows blocked, when it
+wakes, and which session it will resume; the same facts are on the card as a
+`PARK-COMMENT` comment. Two things are worth checking rather than assuming:
+that heartbeats are still landing (a window can outlast the 4h stale timeout,
+and the heartbeat is all that keeps the card alive), and — if you need the
+worktree back sooner — that you set `FORGE_QUOTA_MAX_WAIT`, since the default
+is to wait however long it takes. **It is a whole number of seconds**, not a
+duration: `14400`, not `4h`. Every knob is validated at startup and a value the
+runner cannot read exits `2` naming the knob, rather than quietly dropping the
+bound you thought you had set.
+
 **Things that look like bugs but aren't:** a card that reverted to `ready` was
 *reclaimed* (no heartbeat in an hour) — benign, it re-runs. A card that refuses to
 re-spawn hit the **respawn guard**: quota/auth error, a recent success, or a
