@@ -46,7 +46,8 @@
     },
     "chunk": {
       "type": ["string", "null"],
-      "pattern": "^CHUNK-[0-9]+$"
+      "description": "Chunk id parsed from the branch, or null on a planning PR. Not a decimal integer: the same grammar hermes/board-bootstrap.sh and scripts/acceptance-freeze.sh already enforce on card ids, so a producer emitting CHUNK-C9.1 does not violate its own declared contract.",
+      "pattern": "^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "branch": {
       "type": "string",

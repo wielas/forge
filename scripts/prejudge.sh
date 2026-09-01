@@ -181,9 +181,21 @@ changed_paths() { cut -f3 "$NUMSTAT" | sort -u; }
 # branch that fails the naming rule can still be parsed for its id, and a PR
 # with no chunk at all (the planning PR) skips the contract checks rather than
 # inventing one.
+#
+# AN ID IS NOT A DECIMAL INTEGER. JobApp's board runs `C6`, `C9.1` and `C10`,
+# and `chunk/[0-9]*` matches none of them, so the id came back empty, so
+# CONTRACT came back empty, so `touches` and `scenario-count` SKIPPED — and
+# `scenario-count` blocks. Reading the id as a number does not merely misname a
+# branch, it switches a blocking check off without saying so. The grammar is the
+# one `hermes/board-bootstrap.sh` and `scripts/acceptance-freeze.sh` already
+# enforce on card ids, narrowed to what a branch can carry: the branch separator
+# IS a hyphen, so `chunk/hello-1-greet` reads as id `hello` and slug `1-greet`,
+# and its contract checks skip NAMING `CHUNK-hello` rather than silently.
 CHUNK=""
 case "$HEAD_REF" in
-  chunk/[0-9]*) CHUNK="CHUNK-$(printf '%s' "$HEAD_REF" | sed -E 's#^chunk/([0-9]+).*#\1#')";;
+  chunk/[A-Za-z0-9]*)
+    CHUNK="CHUNK-$(printf '%s' "$HEAD_REF" \
+                   | sed -E 's#^chunk/([A-Za-z0-9]+(\.[A-Za-z0-9]+)*).*#\1#')";;
 esac
 CONTRACT=""
 [ -n "$CHUNK" ] && [ -f "$TREE/docs/chunks/$CHUNK.md" ] && CONTRACT="$TREE/docs/chunks/$CHUNK.md"
@@ -279,21 +291,46 @@ branch_name() {
   local title is_chunk=0 want
   title="$(q .title)"
   case "$HEAD_REF" in chunk/*) is_chunk=1;; esac
-  case "$title"    in CHUNK-[0-9]*) is_chunk=1;; esac
+  case "$title"    in CHUNK-[A-Za-z0-9]*) is_chunk=1;; esac
   if [ "$is_chunk" = 0 ]; then
     emit branch-name skip "neither the branch nor the title names a chunk; the chunk/<id>-<slug> rule does not apply to $HEAD_REF"
     return
   fi
-  # `CHUNK-5: Render and atomically publish …` -> `chunk/5-render-and-atomically`
-  local id; id="$(printf '%s' "${CHUNK:-$title}" | sed -E 's/^[^0-9]*([0-9]+).*/\1/')"
+  # `CHUNK-5: Render and atomically publish …`  -> `chunk/5-render-and-atomically`
+  # `CHUNK-C9.1: pipeline observability`        -> `chunk/C9.1-pipeline-observability`
+  #
+  # The id is what the card calls itself, up to the `:` or the first space — NOT
+  # the first run of digits inside it. `s/^[^0-9]*([0-9]+).*/\1/` turned
+  # `CHUNK-C10` into `10` and `CHUNK-C9.1` into `9`, and the second sed's
+  # `[0-9]+` then failed to strip the prefix at all, so the gate blocked and
+  # handed the worker `git branch -m … chunk/10-chunk-c10-instance`. Obeying that
+  # leaves a branch whose id no longer matches its card — a worse state than the
+  # one being repaired, produced by the very line whose job is repairing it.
+  # Both seds now cut on the SEPARATOR rather than on a character class, which is
+  # what `CHUNK-<id>: <title>` actually promises.
+  local id; id="$(printf '%s' "${CHUNK:-$title}" \
+      | sed -E 's/^[Cc][Hh][Uu][Nn][Kk]-//; s/(:|[[:space:]]).*$//')"
   want="chunk/$id-$(printf '%s' "$title" \
-      | sed -E 's/^[Cc][Hh][Uu][Nn][Kk]-[0-9]+:?[[:space:]]*//' \
+      | sed -E 's/^[Cc][Hh][Uu][Nn][Kk]-[^:[:space:]]+(:|[[:space:]])[[:space:]]*//' \
       | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' \
       | cut -d- -f1-3 | sed -E 's/^-+|-+$//g')"
   local act="rename the branch and force-push, keeping the same PR: 'git branch -m $HEAD_REF $want && git push --force-with-lease origin $want'. The slug is derived from the PR title; any lowercase-hyphen slug is fine."
+  # <id> is `[A-Za-z0-9]+` with optional dotted segments — `C10`, `C9.1`, `7`.
+  # <slug> is unchanged and stays strict: lowercase alphanumeric words joined by
+  # SINGLE hyphens. `chunk/[0-9]*-*` could not match a letter, so every
+  # `chunk/C10-…` fell through to the arm below and was blocked as having "no
+  # <slug>" — a sentence that is false about the branch it names, on a BLOCK
+  # check, on every chunk of a 15-chunk run, each after a full unattended lane
+  # run had already been paid for. F7's cost with the sign flipped.
+  #
+  # The regex is byte-identical to the one in the template's
+  # scripts/branch-name.sh. That is the point: F30 is two copies of a rule
+  # disagreeing, and these two DID — the template's `[a-z0-9-]+` slug accepted
+  # `chunk/7--foo` that this one refused, so a branch could pass the push hook
+  # and be blocked at review, which is F7's cost paid twice for one name.
   case "$HEAD_REF" in
-    chunk/[0-9]*-*)
-      if printf '%s' "$HEAD_REF" | grep -qE '^chunk/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'; then
+    chunk/[A-Za-z0-9]*-*)
+      if printf '%s' "$HEAD_REF" | grep -qE '^chunk/[A-Za-z0-9]+(\.[A-Za-z0-9]+)*-[a-z0-9]+(-[a-z0-9]+)*$'; then
         emit branch-name pass "$HEAD_REF"
       else
         emit branch-name block "$HEAD_REF does not match chunk/<id>-<slug> (slug must be lowercase alphanumeric words separated by single hyphens)" "$act"
