@@ -63,8 +63,15 @@ preflight warnings remain the documented healthy set: no global lefthook, the
 empty API-key placeholder, and the historical `forge-ladder` board selected by
 default.
 
-ADR-0016 (2026-08-31) added the `quota/` group: default `make verify` now
-completes **323 passed / 0 failed / 5 skipped**. The rise is the 24 `quota/`
+ADR-0017 (2026-09-01) added ten cases to the existing `gate/` and `commission/`
+groups — no new group — taking default `make verify` to **329 passed / 0 failed
+/ 5 skipped** from the main checkout. Run from a *linked worktree* the same tree
+reports 9 skips: the four `config/external-dirs/*` cases skip because the
+profiles point at the main checkout, which is F49's documented caveat and not a
+regression. Check the count from `main` before reading a rise in skips as one.
+
+ADR-0016 (2026-08-31) added the `quota/` group: default `make verify` then
+completed **323 passed / 0 failed / 5 skipped**. The rise is the 24 `quota/`
 cases plus `cli/codex-run-flags-exist`; nothing was removed. That skip count is
 local: CI has no `codex` binary, so `cli/codex-run-flags-exist` skips its
 `--help` half there while still asserting the argv half.
@@ -162,7 +169,7 @@ F25, F26, and F44 await that run. ADR-0011 still awaits ten reviews.
 | Tier-2 is a durable human gate | approval rerun `t_180c38a1` completed with verified child `t_2c0f1f00`; child stayed blocked, unassigned, and undispatched across dispatcher sweeps |
 | A card parked on a non-existent profile is detectable | `make preflight` walks every board and WARNs; caught `forge-operator` on `forge-ladder`, the shape the first two tier-2 attempts produced |
 | The template stamps green and installs hooks | `make verify` template group, plus a real repo |
-| Branch protection is a real merge gate | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **And now on this repository too** — ruleset `mainprotect`, active 2026-08-07, requires a PR plus green `validate` and `verify`; a red PR reports `mergeStateStatus: BLOCKED`. Zero approvals required, deliberately. Asserted by `make verify SUITES=gate` (16 cases, `gh` stubbed) and reported by `make preflight` section 10, through `scripts/merge-gate.sh` (F79, F110) |
+| Branch protection is a real merge gate | `wielas/forgeboard-report` (public): `required_status_checks.contexts:["check"]`, `enforce_admins: true`, no force-push, no deletion. **And now on this repository too** — ruleset `mainprotect`, active 2026-08-07, requires a PR plus green `validate` and `verify`; a red PR reports `mergeStateStatus: BLOCKED`. Zero approvals required, deliberately. Asserted by `make verify SUITES=gate` (22 cases, `gh` stubbed) and reported by `make preflight` section 10, through `scripts/merge-gate.sh` (F79, F110). Since ADR-0017 the gate has a **fifth** verdict: a private repository on a free plan is `UNAVAILABLE` (exit 5), because GitHub answers that protection is a paid feature it does not have — and "no rule can exist" is a different fact from "no rule exists" (F120) |
 | Staged root-only bootstrap is fixture-proven | `make verify SUITES=bootstrap` runs the real `board-bootstrap.sh` against a stateful Hermes stub: invalid multi-root graphs invoke no Hermes command; a valid graph creates one root; full bootstrap reuses that key and attaches the remaining parents atomically; missing full-mode parent readback still fails |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
@@ -353,13 +360,26 @@ load. Prefer running the smallest real thing over reasoning about the large one.
    **And the claim is executed now, which is the half that mattered.**
    `scripts/merge-gate.sh` asks the repository directly — both mechanisms, since
    `make protect` creates *classic* protection and no rulesets — and separates
-   four outcomes: *gated* (a PR rule **and** required status checks, naming
+   five outcomes: *gated* (a PR rule **and** required status checks, naming
    `validate` and `verify`) exits 0; *the gate exists and does not gate* exits 3,
    which covers both a PR rule with no required checks **and** required checks
    with no PR rule, since either alone lets a change onto `main` unchecked; *no
    applicable rule* exits 4; and *cannot be asked* (403, no `gh`, no access)
    exits 2 and **WARNs rather than passing**, because a control that could not
    run has not passed (F65/F66).
+
+   **The fifth outcome landed 2026-09-01 (ADR-0017, F120).** Branch protection
+   is a paid feature, so on a *private repository on a free plan* both endpoints
+   403 with GitHub's own "Upgrade to GitHub Pro" sentence. That is the platform
+   answering — no gate can exist, so none was missed — and reporting it as exit 2
+   made `make commission` refuse every private product outright. It is now
+   `UNAVAILABLE`, exit **5**: never `GATED`, never `NONE`, non-blocking at
+   commissioning, and a named WARN at preflight. The rule is a conjunction with
+   `.private == true` and with *both* mechanisms agreeing, and anything less
+   degrades to 2 — deliberately, because 2 still refuses. Live readback:
+   `wielas/JobApp` returns 5 and the public control `wielas/forge` still returns
+   0. **Not proven:** no genuine `make commission` has yet run against a private
+   product.
 
    `make preflight` section 10 reports that verdict, and `verify.sh`'s `gate`
    group drives the primitive against a `gh` stub for **16 cases**, including the

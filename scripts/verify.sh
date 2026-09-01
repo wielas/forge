@@ -2396,12 +2396,27 @@ case "$*" in
     printf '{"nameWithOwner":"%s","defaultBranchRef":{"name":"main"}}\n' "${GH_VIEW_SLUG:-acme/product}"
     ;;
   'api repos/acme/product')
-    printf '%s\n' '{"default_branch":"main"}'
+    # `unavailable` is the private free-plan shape: GitHub answers the repo
+    # query, says it is private, and then refuses BOTH protection mechanisms
+    # with its paid-feature sentence (ADR-0017).
+    if [ "${GH_GATE:-classic}" = unavailable ]; then
+      printf '%s\n' '{"default_branch":"main","private":true}'
+    else
+      printf '%s\n' '{"default_branch":"main"}'
+    fi
     ;;
   'api --paginate repos/acme/product/rulesets')
+    [ "${GH_GATE:-classic}" != unavailable ] || {
+      echo 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2
+      exit 1
+    }
     printf '%s\n' '[]'
     ;;
   'api repos/acme/product/branches/main/protection')
+    [ "${GH_GATE:-classic}" != unavailable ] || {
+      echo 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2
+      exit 1
+    }
     [ "${GH_GATE:-classic}" != none ] || exit 1
     printf '%s\n' '{"required_pull_request_reviews":{},"required_status_checks":{"contexts":["check"]}}'
     ;;
@@ -2426,12 +2441,14 @@ exit 65
 COMMISSION_HERMES_STUB
   chmod +x "$root/bin/make" "$root/bin/gh" "$root/bin/hermes" "$root/bin/mv"
 
-  _commission_run() { # $1=make failure $2=roadmap warn $3=gate shape $4=mv failure $5=view slug
+  _commission_run() { # $1=make failure $2=roadmap warn $3=gate shape $4=mv failure
+                     # $5=view slug $6=REQUIRE_GATE (empty = the default posture)
     rm -rf "$product/.forge"
     : > "$state/make-calls"
     : > "$state/gh-calls"
     : > "$state/hermes-calls"
     MAKE_FAIL="$1" ROADMAP_WARN="$2" GH_GATE="$3" MV_FAIL="$4" \
+      REQUIRE_GATE="${6:-}" \
       GH_VIEW_SLUG="$5" REAL_MV="$real_mv" CALLS="$state/make-calls" \
       GH_CALLS="$state/gh-calls" HERMES_CALLS="$state/hermes-calls" \
       HERMES_HOME="$root/hermes" PATH="$root/bin:$PATH" \
@@ -2482,6 +2499,66 @@ COMMISSION_HERMES_STUB
     ok "requires-enforceable-gate"
   else
     bad "requires-enforceable-gate" "a repository with no enforceable gate must be refused regardless of visibility; exit $rc"
+  fi
+
+  # --- ADR-0017: a product GitHub cannot gate ------------------------------
+  # Branch protection is a paid feature, so on a private free-plan repository
+  # GitHub answers that no server-side gate can exist. Treating that answer as a
+  # control that failed to run refused every private product outright (F120).
+  # It commissions — and the report has to SAY the product is ungated, because a
+  # bare `overall: PASS` beside an unreadable gate is the claim ADR-0003 forbids.
+  # The section is extracted by its own boundaries rather than by a fixed -AN
+  # window: the diagnostic under this heading is longer than any other, and a
+  # line-count anchor is the shape that goes blind the first time text grows.
+  _commission_gate_section() {
+    awk '/^## merge-gate$/ { p = 1; next } p && /^## / { exit } p' "$1"
+  }
+  _commission_run '' 0 unavailable 0 acme/product
+  if [ "$rc" = 0 ] && [ -n "$report" ] \
+     && _commission_gate_section "$report" | grep -Fq 'exit: 5' \
+     && _commission_gate_section "$report" | grep -Fq 'UNAVAILABLE via=none' \
+     && grep -Fq 'overall: PASS' "$report" \
+     && grep -Fq 'posture: UNGATED (merge gate unavailable on this plan: acme/product)' "$report"; then
+    ok "an-ungatable-product-commissions"
+  else
+    bad "an-ungatable-product-commissions" \
+        "a product GitHub cannot gate must commission and be recorded UNGATED with its real exit 5; exit $rc: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  # The posture line is not decoration on the unavailable path — it is emitted
+  # on EVERY path, from the gate's own exit and nothing else. A gated product
+  # states its posture too, so the line cannot quietly vanish and leave the
+  # ungated case looking like every other report.
+  _commission_run '' 0 classic 0 acme/product
+  if [ "$rc" = 0 ] && [ -n "$report" ] \
+     && grep -Fq 'posture: GATED (acme/product main)' "$report"; then
+    ok "every-report-states-its-posture"
+  else
+    bad "every-report-states-its-posture" \
+        "every commissioning report must state the posture the merge gate established; exit $rc, posture='$(grep -F 'posture:' "$report" 2>/dev/null)'"
+  fi
+
+  # The strict posture is still available for a repository you DO expect to be
+  # gated. Only `1` acts; the guard refusing any other value is asserted below.
+  _commission_run '' 0 unavailable 0 acme/product 1
+  if [ "$rc" != 0 ] && [ -n "$report" ] \
+     && grep -Fq 'overall: FAIL' "$report" \
+     && grep -Fq 'posture: UNGATED' "$report"; then
+    ok "require-gate-restores-the-refusal"
+  else
+    bad "require-gate-restores-the-refusal" \
+        "REQUIRE_GATE=1 must refuse a product GitHub cannot gate; exit $rc"
+  fi
+
+  # REQUIRE_GATE=true reads as "yes, require it" and would silently do the
+  # opposite. Refused rather than reinterpreted — the root Makefile's APPLY bug.
+  _commission_run '' 0 unavailable 0 acme/product true
+  if [ "$rc" != 0 ] && [ -z "$report" ] \
+     && grep -Fq "REQUIRE_GATE='true' is not understood" "$state/run.out"; then
+    ok "an-unrecognised-require-gate-is-refused"
+  else
+    bad "an-unrecognised-require-gate-is-refused" \
+        "an unrecognised REQUIRE_GATE must be refused, never read as the lenient default; exit $rc"
   fi
 
   git -C "$product" remote set-url origin git@github.com:other/product.git
@@ -5636,20 +5713,29 @@ run_gate_group() {
   cat > "$lab/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 last=""; for a in "$@"; do last="$a"; done
+upgrade() {
+  # Both lines, because that is what `gh` really writes: its own summary AND
+  # the raw body, both on stderr. Copied from a live 403 (wielas/JobApp).
+  echo "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)" >&2
+  echo '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}' >&2
+  exit 1
+}
 case "$last" in
   */rulesets)
+    [ -f "$FIX/rulesets.upgrade403" ] && upgrade
     [ -f "$FIX/rulesets.403" ] && { echo "HTTP 403: Resource not accessible" >&2; exit 1; }
     cat "$FIX/rulesets.json" 2>/dev/null || echo '[]' ;;
   */rulesets/*)
     id="${last##*/}"
     cat "$FIX/ruleset-$id.json" 2>/dev/null || exit 1 ;;
   */protection)
+    [ -f "$FIX/protection.upgrade403" ] && upgrade
     [ -f "$FIX/protection.403" ] && { echo "HTTP 403: Must have admin rights to Repository." >&2; exit 1; }
     [ -f "$FIX/protection.json" ] || { echo "HTTP 404: Branch not protected" >&2; exit 1; }
     cat "$FIX/protection.json" ;;
   repos/*)
     [ -f "$FIX/norepo" ] && { echo "HTTP 404" >&2; exit 1; }
-    echo '{"default_branch":"main"}' ;;
+    cat "$FIX/repo.json" 2>/dev/null || echo '{"default_branch":"main"}' ;;
   *) exit 1 ;;
 esac
 STUB
@@ -5761,6 +5847,104 @@ STUB
   _fix_reset
   printf '[]' > "$lab/fix/rulesets.json"
   _gate_run "no-rule-from-either-mechanism-is-exit-4" 4 'NONE.*via=none'
+
+  # --- ADR-0017: a paid feature this repository does not have ----------------
+  # Branch protection and rulesets are Pro/Team features. On a PRIVATE repo on a
+  # free plan both endpoints answer 403 with GitHub's own "Upgrade to GitHub
+  # Pro" sentence. That is an ANSWER — no gate can exist, so none was missed —
+  # and reporting it as exit 2 refused every private product at commissioning
+  # time (F120). The verdict must never be GATED, and must never be 4 either:
+  # "no rule exists" and "no rule CAN exist" are different facts.
+  local REPO_PRIVATE='{"default_branch":"main","private":true}'
+  local REPO_PUBLIC='{"default_branch":"main","private":false}'
+
+  _fix_reset
+  printf '%s' "$REPO_PRIVATE" > "$lab/fix/repo.json"
+  : > "$lab/fix/rulesets.upgrade403"
+  : > "$lab/fix/protection.upgrade403"
+  _gate_run "an-unavailable-plan-is-exit-5-not-exit-2" 5 \
+            '^UNAVAILABLE via=none pr=no checks=none missing=check$' --require check
+
+  # The same fixture, asserted from the other side: whatever else this verdict
+  # says, it may not say the repository is gated. UNAVAILABLE means ungated for
+  # a reason no configuration can fix, and a caller reading exit 5 as success
+  # would launch unattended work against an unprotected main.
+  _fix_reset
+  printf '%s' "$REPO_PRIVATE" > "$lab/fix/repo.json"
+  : > "$lab/fix/rulesets.upgrade403"
+  : > "$lab/fix/protection.upgrade403"
+  out="$(PATH="$lab/bin:$PATH" FIX="$lab/fix" "$script" owner/repo --require check 2>/dev/null)"
+  rc=$?
+  if [ "$rc" != 0 ] && ! printf '%s\n' "$out" | grep -q 'GATED'; then
+    ok "an-unavailable-repo-is-never-reported-gated"
+  else
+    bad "an-unavailable-repo-is-never-reported-gated" \
+        "an ungatable repository must never report a gate (exit $rc, verdict '${out:-<empty>}')"
+  fi
+
+  # REGRESSION: the sentinel is a GitHub-owned prose string, so it is only ever
+  # read as a conjunction with what GitHub says about the repo itself. A public
+  # repository cannot be short of a paid feature; that reading is incoherent and
+  # incoherent is UNKNOWN, never a licence to skip the gate.
+  #
+  # THE EXIT CODE ALONE DOES NOT PIN THIS, which a mutation run proved: drop the
+  # `.private` conjunct from the RULESETS arm only, and the classic arm's
+  # generic `HTTP 403` grep still refuses, so exit 2 survives and the case stays
+  # green over a live hole. The refusal is therefore asserted by WHICH ARM
+  # produced it — the one under test — and not merely by its status.
+  _fix_reset
+  printf '%s' "$REPO_PUBLIC" > "$lab/fix/repo.json"
+  : > "$lab/fix/rulesets.upgrade403"
+  : > "$lab/fix/protection.upgrade403"
+  err="$(PATH="$lab/bin:$PATH" FIX="$lab/fix" "$script" owner/repo --require check 2>&1 >/dev/null)"
+  rc=$?
+  if [ "$rc" = 2 ] && printf '%s\n' "$err" | grep -Fq 'cannot read rulesets'; then
+    ok "a-public-repo-upgrade-403-is-exit-2"
+  else
+    bad "a-public-repo-upgrade-403-is-exit-2" \
+        "a public repo claiming a paid-feature 403 is incoherent and must be refused BY THE RULESETS ARM (exit $rc: $(printf '%s' "$err" | head -1))"
+  fi
+
+  # The SAME conjunct, on the classic arm, needs its own fixture: with both
+  # mechanisms unavailable the rulesets arm refuses first and the classic arm is
+  # never reached, so the case above cannot see it. Here rulesets ANSWERS (`[]`)
+  # and only classic claims the paid-feature 403. Both readings exit 2, so once
+  # again the status alone pins nothing — it is the diagnostic that says which
+  # branch decided, and "needs admin" is the correct one for a public repo.
+  _fix_reset
+  printf '%s' "$REPO_PUBLIC" > "$lab/fix/repo.json"
+  printf '[]' > "$lab/fix/rulesets.json"
+  : > "$lab/fix/protection.upgrade403"
+  err="$(PATH="$lab/bin:$PATH" FIX="$lab/fix" "$script" owner/repo --require check 2>&1 >/dev/null)"
+  rc=$?
+  if [ "$rc" = 2 ] && printf '%s\n' "$err" | grep -Fq 'cannot read classic protection'; then
+    ok "a-public-repo-classic-upgrade-403-is-needs-admin"
+  else
+    bad "a-public-repo-classic-upgrade-403-is-needs-admin" \
+        "a public repo cannot lack a paid feature; the classic arm must refuse it as a permissions problem (exit $rc: $(printf '%s' "$err" | head -1))"
+  fi
+
+  # REGRESSION: the new branch must not swallow the 403 that was always exit 2.
+  # "Must have admin" on a private repo is a token problem, not a plan problem.
+  #
+  # BOTH mechanisms carry the generic 403 deliberately. With only one of them
+  # set, a widened sentinel (matching any "403" rather than the sentence) still
+  # produced exit 2 — via the one-mechanism-disagrees branch — and this case
+  # passed over the defect. With both set, a widened sentinel reaches exit 5 and
+  # the case goes red, which is also the realistic shape: a token short of admin
+  # fails to read either mechanism.
+  _fix_reset
+  printf '%s' "$REPO_PRIVATE" > "$lab/fix/repo.json"
+  : > "$lab/fix/rulesets.403"
+  : > "$lab/fix/protection.403"
+  _gate_run "a-needs-admin-403-is-still-exit-2" 2 "" --require check
+
+  # One mechanism unavailable while the other ANSWERS (404 = "not protected")
+  # cannot both be true of one repository. Rather than pick a reading, refuse.
+  _fix_reset
+  printf '%s' "$REPO_PRIVATE" > "$lab/fix/repo.json"
+  : > "$lab/fix/rulesets.upgrade403"
+  _gate_run "one-mechanism-unavailable-is-exit-2" 2 "" --require check
 
   # --- F5: a control that could not run has NOT passed ----------------------
   # Both of these used to be indistinguishable from "ungated", which would have

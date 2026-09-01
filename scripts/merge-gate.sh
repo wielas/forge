@@ -45,13 +45,42 @@
 #   <verdict> via=<mechanisms> pr=<yes|no> checks=<ctx,ctx|none> missing=<ctx|->
 #
 # Exit codes — 2 is deliberately NOT a synonym for "ungated":
-#   0  GATED    a PR is required AND checks are required AND --require is met
-#   3  PARTIAL  a rule exists but does not gate (see the two shapes above)
-#   4  NONE     no applicable rule from either mechanism
-#   2  UNKNOWN  the question could not be asked (no gh, no jq, 403, no such repo)
+#   0  GATED        a PR is required AND checks are required AND --require is met
+#   3  PARTIAL      a rule exists but does not gate (see the two shapes above)
+#   4  NONE         no applicable rule from either mechanism
+#   5  UNAVAILABLE  GitHub reports the feature does not exist for this repository
+#   2  UNKNOWN      the question could not be asked (no gh, no jq, 403, no repo)
 #
 # F5/F65: a control that could not run has NOT passed. Every "could not ask"
 # path exits 2 so a caller cannot mistake it for either an answer or a failure.
+#
+# 5 IS AN ANSWER, NOT A FAILURE TO ASK, and that distinction is the whole of
+# ADR-0017. Branch protection and rulesets are PAID features. On a private
+# repository on a free plan BOTH endpoints return 403 carrying GitHub's own
+# sentence (measured against wielas/JobApp, 2026-09-01):
+#
+#   gh: Upgrade to GitHub Pro or make this repository public to enable this
+#       feature. (HTTP 403)
+#
+# That is not "we lack permission to look". It is "no such feature here", so no
+# configuration can produce a gate and there is nothing to miss. Reporting it as
+# 2 made `make commission` refuse every private product outright — F120.
+#
+# THE RULE IS A CONJUNCTION, because the discriminator is a GitHub-owned prose
+# string and this repo's recurring defect is a check anchored to content that
+# moves (F65/F66):
+#
+#   repos/{slug} readable  AND  .private == true
+#     AND the rulesets 403 carries the sentinel
+#     AND the classic-protection 403 carries the sentinel        -> 5
+#
+# ANYTHING LESS IS 2. A generic 403 ("Must have admin"), the sentinel on a repo
+# GitHub says is public, and one mechanism unavailable while the other answers
+# are all incoherent, and incoherent is UNKNOWN.
+#
+# THE DEGRADE DIRECTION IS DELIBERATE. If GitHub rewords that sentence this
+# collapses to 2, and 2 still refuses commissioning. Losing the escape hatch is
+# safe; granting it wrongly is not.
 # =============================================================================
 set -uo pipefail
 
@@ -99,6 +128,11 @@ REPO_JSON="$(gh api "repos/$SLUG" 2>/dev/null)" || REPO_JSON=""
 DEFAULT_BRANCH="$(printf '%s' "$REPO_JSON" | jq -r '.default_branch // empty' 2>/dev/null)"
 [ -n "$DEFAULT_BRANCH" ] || { echo "merge-gate: repos/$SLUG returned no default_branch"; exit 2; }
 [ -n "$BRANCH" ] || BRANCH="$DEFAULT_BRANCH"
+
+# Read off the response already in hand rather than paying for a second call.
+# Empty (absent key) is not "false" and is not "true" — every comparison below
+# is against the literal string `true`, so an absent key can never satisfy one.
+PRIVATE="$(printf '%s' "$REPO_JSON" | jq -r '.private // empty' 2>/dev/null)"
 
 # Does a ruleset condition select $BRANCH? `include` may name the branch, a
 # glob, `~ALL`, or `~DEFAULT_BRANCH`; `exclude` wins over `include`.
@@ -148,11 +182,35 @@ HAS_PR=0; HAS_CHECKS=0; CONTEXTS=""; VIA=""
 # answer to it is "not asked", never "not gated". One call, and its result is
 # reused; asking twice to get a status and a payload is how the first version
 # paid for every page twice.
-RS_RAW="$(gh api --paginate "repos/$SLUG/rulesets" 2>/dev/null)"
-if [ $? -ne 0 ]; then
-  echo "merge-gate: cannot read rulesets for $SLUG (403, or no access)."
-  echo "  A control that could not run has NOT passed (F79). Confirm by hand."
-  exit 2
+# `gh` writes BOTH its own one-line summary and the raw JSON body to stderr on a
+# 403, so either form carries the sentence; the match is on the message rather
+# than on the status, because 403 alone is ambiguous (see the header).
+upgrade_403() { # $1=path to captured stderr
+  grep -q 'Upgrade to GitHub Pro' "$1" 2>/dev/null
+}
+
+UNAVAIL_RULESETS=0
+UNAVAIL_CLASSIC=0
+
+RS_ERR="$(mktemp "${TMPDIR:-/tmp}/merge-gate.XXXXXX")"
+RS_RAW="$(gh api --paginate "repos/$SLUG/rulesets" 2>"$RS_ERR")"
+RS_RC=$?
+if [ "$RS_RC" -ne 0 ]; then
+  # ORDER MATTERS. The sentinel test runs BEFORE the generic refusal below; the
+  # other way round this arm swallows the paid-feature answer and exit 5 is
+  # unreachable. This call used to discard stderr entirely, which is why it
+  # could not tell the two apart at all.
+  if [ "$PRIVATE" = true ] && upgrade_403 "$RS_ERR"; then
+    UNAVAIL_RULESETS=1
+    rm -f "$RS_ERR"
+  else
+    rm -f "$RS_ERR"
+    echo "merge-gate: cannot read rulesets for $SLUG (403, or no access)."
+    echo "  A control that could not run has NOT passed (F79). Confirm by hand."
+    exit 2
+  fi
+else
+  rm -f "$RS_ERR"
 fi
 RS_IDS="$(printf '%s' "$RS_RAW" | jq -r '.[] | select(.enforcement=="active") | .id' 2>/dev/null)"
 
@@ -185,7 +243,12 @@ fi
 PROT_ERR="$(mktemp "${TMPDIR:-/tmp}/merge-gate.XXXXXX")"
 PROT="$(gh api "repos/$SLUG/branches/$BRANCH/protection" 2>"$PROT_ERR")" || PROT=""
 if [ -z "$PROT" ]; then
-  if grep -q 'HTTP 403\|Must have admin' "$PROT_ERR" 2>/dev/null; then
+  # Sentinel first here too: the generic 403 grep below would otherwise report
+  # GitHub's paid-feature answer to the operator as "needs admin", which is the
+  # F79 shape of a parsing bug wearing a permissions problem's clothes.
+  if [ "$PRIVATE" = true ] && upgrade_403 "$PROT_ERR"; then
+    UNAVAIL_CLASSIC=1
+  elif grep -q 'HTTP 403\|Must have admin' "$PROT_ERR" 2>/dev/null; then
     rm -f "$PROT_ERR"
     echo "merge-gate: cannot read classic protection for $SLUG ($BRANCH): needs admin."
     echo "  A control that could not run has NOT passed (F79). Confirm by hand."
@@ -225,6 +288,24 @@ MISSING="${MISSING#,}"
 
 emit() { printf '%s via=%s pr=%s checks=%s missing=%s\n' \
            "$1" "$VIA" "$2" "$CONTEXTS" "$MISSING" >&3; }
+
+# GitHub answered that the feature does not exist here. BOTH arms must say so:
+# one mechanism unavailable while the other answered is incoherent, and this
+# script does not guess its way out of an incoherent reading (ADR-0017).
+if [ "$UNAVAIL_RULESETS" = 1 ] || [ "$UNAVAIL_CLASSIC" = 1 ]; then
+  if [ "$UNAVAIL_RULESETS" = 1 ] && [ "$UNAVAIL_CLASSIC" = 1 ]; then
+    echo "$SLUG is private on a plan without branch protection: GitHub reports both"
+    echo "  rulesets and classic protection unavailable for this repository."
+    echo "  NO server-side merge gate can exist here, so none was missed. Make the"
+    echo "  repository public, or upgrade the plan. Until then the pre-push hook is"
+    echo "  the whole gate, and it is advisory (ADR-0017, F120)."
+    emit UNAVAILABLE no; exit 5
+  fi
+  echo "merge-gate: $SLUG reports one protection mechanism unavailable on this plan"
+  echo "  while the other answered. That is incoherent, so the question was NOT"
+  echo "  answered (F79). Confirm by hand."
+  exit 2
+fi
 
 if [ "$HAS_PR" = 0 ] && [ "$HAS_CHECKS" = 0 ]; then
   emit NONE no; exit 4

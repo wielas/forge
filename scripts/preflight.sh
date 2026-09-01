@@ -955,6 +955,17 @@ if [ -n "$FORGE_DIR" ]; then
           3) fail "$_slug: the gate exists and does not gate (F79)."
              [ -n "$_gate" ] && say "      $_gate";;
           4) fail "$_slug has no applicable branch rule — nothing gates a direct push (F79)";;
+          # NOT the same WARN as the one below, and the difference is the point.
+          # 2 is "the question could not be asked". 5 is GitHub ANSWERING that
+          # branch protection is a paid feature this repository does not have,
+          # so no rule was missed and none can be added without changing the
+          # plan or the visibility (ADR-0017, F120). It is still not a PASS:
+          # nothing gates a direct push to this checkout's main.
+          5) warn "$_slug CANNOT be gated on this plan — $_verdict (F120)."
+             say  "      Nothing server-side gates a direct push to $_slug main. Make the"
+             say  "      repository public, or upgrade the plan; until then the pre-push"
+             say  "      hook is the whole gate, and --no-verify skips it."
+             [ -n "$_gate" ] && say "      $_gate";;
           *) warn "cannot determine whether $_slug is gated (F79) — a control that could"
              say  "      not run has NOT passed. Confirm by hand before unattended work."
              [ -n "$_gate" ] && say "      $_gate";;
