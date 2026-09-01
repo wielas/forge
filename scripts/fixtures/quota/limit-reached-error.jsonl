@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-31T12:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":379175},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":98.0,"window_minutes":300,"resets_at":1787000000},"secondary":null,"plan_type":"plus","rate_limit_reached_type":"primary"}}}
+{"timestamp":"2026-08-31T12:00:01.000Z","type":"event_msg","payload":{"type":"error","message":"You've hit your usage limit.","error_type":"usage_limit_reached","resets_at":1787000000}}

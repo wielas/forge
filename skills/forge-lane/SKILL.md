@@ -38,7 +38,9 @@ terminal backend.
 
 `kanban_show()` — no args, it defaults to your task. Read the body (the chunk
 contract), the parent handoffs, prior attempts if you are a retry, and the whole
-comment thread. **An operator comment overrides the card body.**
+comment thread. **An operator comment overrides the card body.** A `PARK-COMMENT env: codex
+usage limit` comment means an earlier run parked on quota: §4's script resumes
+that Codex session from the park record, so let it — do not restart the chunk.
 
 ### 1a. Gate code dependencies on integration, not card completion
 
@@ -157,38 +159,35 @@ Load-bearing, not boilerplate. Reads are **not** sandboxed: the project's
 Then, from inside the worktree:
 
 ```bash
-UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache" codex exec \
-  -C "$HERMES_KANBAN_WORKSPACE" \
-  -s workspace-write \
-  --add-dir "$(git rev-parse --git-common-dir)" \
-  --output-last-message "$FORGE_LANE_RUNTIME/codex-last.md" \
-  "$(cat "$FORGE_LANE_RUNTIME/contract.md")" < /dev/null
+~/.forge/repo/scripts/codex-run.sh \
+  "$HERMES_KANBAN_WORKSPACE" "$HERMES_KANBAN_RUN_ID" "$HERMES_KANBAN_TASK"
 ```
 
-- **`< /dev/null` is mandatory.** `codex exec` reads stdin; without it, it
-  consumes whatever the parent had queued.
-- **`--add-dir "$(git rev-parse --git-common-dir)"`** — in a worktree the real
-  `.git` lives in the main repo, so `workspace-write` alone cannot commit. Be
-  clear about what this buys: the sandbox banner reads `workspace-write
-  [workdir, /tmp, $TMPDIR, <repo>/.git]`, so Codex can write **all** of the
-  shared `.git` — `hooks/` (the whole L2 local tier), `refs/heads/main`,
-  `config`, and every other worktree's admin dir. Narrower grants were not
-  attempted because git needs objects, refs and the worktree admin dir
-  together; a wrong guess breaks committing, which cost a rung to get working.
-  Treat it as bounded instead: §5 checks the blast radius afterwards.
-- **There is no `--full-auto`** in codex-cli 0.145; `-s workspace-write` is the
-  sandbox flag. Never use `--dangerously-bypass-approvals-and-sandbox`.
-- **`UV_CACHE_DIR` in the per-run temp directory** — `uv run` writes its cache,
-  and `~/.cache/uv` is outside the sandbox. `$TMPDIR` is writable by the sandbox;
-  keeping all lane scratch there means worktree cleanliness needs no blind
-  `.forge/` exclusion.
-- Model: the pin lives in `~/.codex/config.toml` (`gpt-5.6-sol`, reasoning
-  `xhigh`). Override per card with `-m <model>`; record whichever you used in
-  the completion metadata.
-- Tell Codex explicitly: work only in this worktree, commit in small scoped
-  commits, never `--no-verify`, never touch the board.
+It owns the whole invocation — the `workspace-write` sandbox, the `--add-dir`
+grant that lets Codex commit inside a worktree, `< /dev/null`, and
+`UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache"`. Its header says why each is
+load-bearing; do not reproduce the command by hand, and never use
+`--dangerously-bypass-approvals-and-sandbox`.
 
-Run it in the background so a long chunk cannot hit `terminal.timeout` (1800s):
+It also **waits out provider usage limits instead of losing the run**: on a
+limit it parks, sleeps until the window's own `resets_at`, and resumes the
+*same* Codex session, so the comprehension is paid once. A park is not a retry
+— the run never ends, its run id is never reused, and §3's capture still
+governs it. It writes `~/.forge/lane-parks/<task-id>.json` and prints a
+`PARK-COMMENT` line: put that on the card with `kanban_comment`, because it is
+what lets a later run resume the session instead of restarting the chunk.
+
+Non-zero is always a `kanban_block`: `2` you called it wrong or set a knob it
+cannot read, `3` substrate, `4` Codex failed for a reason that is not a usage
+limit, `5` the wait passed `FORGE_QUOTA_MAX_WAIT`. Each prints a canonical
+`<class>: <reason>`.
+
+- Model: the pin lives in `~/.codex/config.toml` (`gpt-5.6-sol`, reasoning
+  `xhigh`). Override per card with `FORGE_CODEX_MODEL`; record whichever you
+  used in the completion metadata.
+
+Run it in the background so a long chunk — or a park — cannot hit
+`terminal.timeout` (1800s):
 
 ```python
 r = terminal(command=..., workdir=WS, background=True, pty=True,
@@ -197,9 +196,11 @@ process(action="poll", session_id=r["session_id"])   # then "log", "wait", "kill
 ```
 
 `kanban_heartbeat(note=...)` every few minutes while it runs — the dispatcher
-reclaims a task that has been silent for an hour (stale timeout 4h). Kill the
-lane if Codex asks for credentials, edits outside the worktree, or starts
-unrelated refactors; that is a `kanban_block`, not a retry.
+reclaims a task silent for an hour (stale timeout 4h). **Keep heartbeating
+through a park**: a window can outlast that mark, and the heartbeat is the only
+thing keeping the card alive while nothing is happening. Kill the lane if Codex
+asks for credentials, edits outside the worktree, or starts unrelated
+refactors; that is a `kanban_block`, not a retry.
 
 ## 5. Verify it yourself
 

@@ -49,6 +49,9 @@
 #               driven through recorded API response shapes                    (F79)
 #   docs/       the reconciled launch ledger and operator contract: dispositions,
 #               bounded cleanup, preserved history, and one next command
+#   quota/      the usage-limit park: which window a run waits on, and that the
+#               lane resumes the same Codex session rather than restarting it.
+#               Fixtures and a stubbed codex only — spends nothing   (ADR-0016)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -77,11 +80,11 @@ while [ $# -gt 0 ]; do
     --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate|docs) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate|docs|quota) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate docs"
+[ -n "$SUITES" ] || SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate docs quota"
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -114,6 +117,7 @@ hermes kanban( .*)? boards set-default-workdir|hermes kanban boards set-default-
 hermes kanban( .*)? boards list|hermes kanban boards list
 hermes kanban( .*)? create|hermes kanban create
 hermes kanban( .*)? link|hermes kanban link
+codex exec resume|codex exec resume
 codex exec|codex exec
 gh pr create|gh pr create
 gh pr checks|gh pr checks
@@ -259,6 +263,13 @@ run_cli_group() {
   # on its own, so CI still checks every tool it does have.
   local claims="$TMPROOT/claims.tsv"; : > "$claims"
 
+  # This extractor reads INVOCATIONS: lines that look like `codex exec ...`
+  # with the flags beside them. §4's invocation has moved into
+  # scripts/codex-run.sh (ADR-0016), where the flags live in a bash array and
+  # no executable line reads as a command name. Adding that file here therefore
+  # contributes nothing -- measured, not assumed -- and pretending otherwise is
+  # how the coverage went missing in the first place. The replacement is
+  # `codex-run-flags-exist` below, which reads the array directly.
   local files; files=$(find skills hermes docs -type f \( -name '*.md' -o -name '*.sh' -o -name '*.yaml' \) 2>/dev/null)
   local f line spec rx cmd
   for f in $files; do
@@ -307,6 +318,55 @@ run_cli_group() {
   done < <(sort -u "$claims")
 
   [ "$nbad" = 0 ] && ok "flags-exist ($nclaims flag claims checked against live --help, $nskip unjudgeable)"
+
+  # The coverage flags-exist can no longer reach, restored explicitly.
+  #
+  # When §4's invocation moved into codex-run.sh, `--add-dir` and
+  # `--output-last-message` left the scanned set and the claim count went 16 →
+  # 14 with nothing turning red. That is F65/F66's exact shape -- a check
+  # anchored to content that moved, degrading silently -- landing on the most
+  # load-bearing integration point the lane has.
+  #
+  # Two-sided on purpose, because either half alone rots: the flag must still
+  # be IN the argv the runner builds (what the scraper used to prove), and must
+  # still be ACCEPTED by the subcommand it is passed to (what --help proves).
+  # `codex exec resume` is checked as its own command: it takes neither -s, -C
+  # nor --add-dir, which is the whole reason the resume path restates the
+  # sandbox grant as -c overrides.
+  local argv_body
+  argv_body="$(sed -n '/^build_argv()/,/^}/p' scripts/codex-run.sh | grep -v '^[[:space:]]*#')"
+  _codex_accepts() { # <command> <flag>
+    # shellcheck disable=SC2086
+    $1 --help 2>&1 | grep -qE -- "(^|[[:space:]])$2([[:space:],=]|$)"
+  }
+  local cr_pair cr_cmd cr_fl cr_missing="" cr_rejected="" cr_n=0
+  for cr_pair in 'codex exec|-C'            'codex exec|-s' \
+                 'codex exec|--add-dir'     'codex exec|--json' \
+                 'codex exec|-m'            'codex exec|--output-last-message' \
+                 'codex exec resume|-c'     'codex exec resume|--json' \
+                 'codex exec resume|--output-last-message'; do
+    cr_cmd="${cr_pair%%|*}"; cr_fl="${cr_pair##*|}"
+    # The terminator is "not more flag", not "whitespace": the array literal
+    # ends lines as `--json)`, and requiring a space there silently found
+    # nothing. Anchoring the START on whitespace is what keeps -m from matching
+    # inside --model.
+    printf '%s' "$argv_body" \
+      | grep -qE -- "(^|[[:space:]])$cr_fl([^A-Za-z0-9_-]|$)" \
+      || cr_missing="$cr_missing $cr_cmd/$cr_fl"
+    if command -v codex >/dev/null 2>&1; then
+      cr_n=$((cr_n + 1))
+      _codex_accepts "$cr_cmd" "$cr_fl" || cr_rejected="$cr_rejected $cr_cmd/$cr_fl"
+    fi
+  done
+  if [ -n "$cr_missing" ]; then
+    bad "codex-run-flags-exist" "codex-run.sh no longer passes:$cr_missing"
+  elif [ -n "$cr_rejected" ]; then
+    bad "codex-run-flags-exist" "the live codex --help does not accept:$cr_rejected"
+  elif [ "$cr_n" = 0 ]; then
+    skip "codex-run-flags-exist" "codex not on PATH; argv shape checked, --help not"
+  else
+    ok "codex-run-flags-exist ($cr_n flags in the runner's argv, each accepted by its subcommand)"
+  fi
 
   # Skill bodies are executed. A status marker for an unverified claim has no
   # business in one (F5): the reader is a machine that cannot tell aspiration
@@ -1313,6 +1373,18 @@ docs/launch-cleanup-stays-bounded              automated cleanup stays under .wo
 docs/launch-prior-dispositions-are-superseded  F81 and F103 keep their original record and link a superseding decision
 docs/launch-f102-cites-real-product-roadmap    F102 closes on measured product-plan evidence, not the Forge fixture
 docs/launch-f102-evidence-mutation-is-caught   changing the product identity makes the evidence contract red
+quota/latest-reset-wins                 two exhausted windows wait for the LATER reset, never the nearer
+quota/nearest-reset-mutation-is-caught  substituting min for max turns this group red
+quota/window-shape-is-not-hardcoded     the old weekly-only and the new short-window shapes both read
+quota/hard-limit-outranks-percentage    a reached marker blocks even below the threshold
+quota/missing-fields-are-unknown-not-clear  a null used_percent must not license a start
+quota/blocked-without-reset-is-not-clear  exhausted with no resets_at is still blocked
+quota/parks-then-resumes-the-same-session  a limited run waits and resumes its session, not a new one
+quota/resume-carries-the-sandbox-grant  `codex exec resume` takes no --add-dir, so -c restates it
+quota/non-quota-failure-is-not-parked   an unrelated nonzero exit blocks and clears any stale park record
+quota/wait-cap-blocks-with-a-board-class  giving up prints an `env:` reason and keeps the park record
+quota/park-record-is-adopted-by-a-successor  a new run id resumes the parked session, not a fresh one
+quota/lane-invokes-the-runner           forge-lane §4 calls it through ~/.forge/repo (ADR-0003)
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 EOF
   exit 0
@@ -1441,7 +1513,7 @@ run_lane_group() {
               "$setup" "$lrepo" capture-exists)" = 6 ] \
       || { e_ok=0; detail="$detail audit-failure-not-6"; }
     setup_line="$(grep -n '~/.forge/repo/scripts/lane-setup.sh' "$lane" | head -1 | cut -d: -f1)"
-    codex_line="$(grep -n 'UV_CACHE_DIR=.*codex exec' "$lane" | head -1 | cut -d: -f1)"
+    codex_line="$(grep -n '~/.forge/repo/scripts/codex-run.sh' "$lane" | head -1 | cut -d: -f1)"
     [ -n "$setup_line" ] && [ -n "$codex_line" ] && [ "$setup_line" -lt "$codex_line" ] \
       || { e_ok=0; detail="$detail setup-not-before-codex"; }
     if [ "$e_ok" = 1 ]; then
@@ -1850,6 +1922,7 @@ run_lane_group() {
   # contract somewhere setup never created. Setup emits it; the skill consumes it.
   if grep -Fq 'FORGE_LANE_RUNTIME=$RUNTIME_DIR' "$setup" \
      && grep -Fq 'UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache"' "$lane" \
+     && grep -Fq 'UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache"' scripts/codex-run.sh \
      && grep -Fq 'FORGE_LANE_RUNTIME' "$lane" \
      && ! grep -Fq 'forge-lane-$HERMES_KANBAN_RUN_ID' "$lane" \
      && ! grep -Fq '.forge/uv-cache' "$lane"; then
@@ -5931,6 +6004,539 @@ DISPOSITIONS
   fi
 }
 wants docs      && run_docs_group
+
+# ---------------------------------------------------------------------------
+# quota/ — the usage-limit park (ADR-0016).
+#
+# Codex quota is a rolling window whose shape the provider chooses and can
+# change. Nothing here may assume a window length: every case drives the real
+# decision function over checked-in streams in scripts/fixtures/quota/, and the
+# end-to-end cases drive the real runner against a stubbed `codex` on PATH —
+# the technique gate/ already uses for `gh`. This group spends nothing.
+#
+# Each case asserts both halves where there are two: the program behaves, and
+# the skill still calls it. A behavioural test of a program nothing invokes is
+# green and worthless.
+# ---------------------------------------------------------------------------
+run_quota_group() {
+  group quota
+  local qw=scripts/quota-window.py
+  local runner=scripts/codex-run.sh
+  local fx=scripts/fixtures/quota
+  local lane=skills/forge-lane/SKILL.md
+
+  if [ ! -x "$qw" ] || [ ! -x "$runner" ]; then
+    bad "runner-and-parser-exist" "$qw and $runner must both exist and be executable"
+    return
+  fi
+
+  # THE CLOCK IS PINNED. Fixtures carry literal epochs, and the parser now
+  # (correctly) treats a reset that has already passed as stale evidence rather
+  # than a live block. Judged against the wall clock, every fixture here would
+  # therefore start returning `clear` the moment real time overtook the numbers
+  # in it -- the whole group going quietly, permanently green on a date nobody
+  # chose. A checked-in epoch is only meaningful beside a checked-in now.
+  local QNOW=1786900000          # before every reset any fixture states
+  local QLATER=1788000000        # after every reset any fixture states
+  _q() { "$qw" --threshold "${2:-95}" --now "${3:-$QNOW}" "$fx/$1.jsonl" 2>/dev/null; }
+
+  # THE case. A short window clearing in minutes and a weekly one clearing in
+  # days are both spent; the run is blocked until BOTH clear. Waking at the
+  # nearer reset wakes straight back into a block, and a lane looping on that
+  # burns a night making no progress.
+  if [ "$(_q both-windows-exhausted)" = "blocked wake_at=1787200231 windows=primary,secondary" ]; then
+    ok "latest-reset-wins"
+  else
+    bad "latest-reset-wins" \
+        "two exhausted windows must wait for max(resets_at); got '$(_q both-windows-exhausted)'"
+  fi
+
+  # The mutation that proves the case above is load-bearing rather than merely
+  # agreeing with today's fixture: swap max for min and this group must redden.
+  local qwmut="$TMPROOT/quota-window-min.py"
+  sed 's/int(max(resets))/int(min(resets))/' "$qw" > "$qwmut" && chmod +x "$qwmut"
+  if [ "$(sed -n 's/.*int(\(m..\)(resets)).*/\1/p' "$qw" | head -1)" = max ] \
+     && [ "$("$qwmut" --threshold 95 --now $QNOW "$fx/both-windows-exhausted.jsonl" 2>/dev/null)" \
+          = "blocked wake_at=1787000000 windows=primary,secondary" ]; then
+    ok "nearest-reset-mutation-is-caught"
+  else
+    bad "nearest-reset-mutation-is-caught" \
+        "the max-over-resets_at rule must be the thing latest-reset-wins tests"
+  fi
+
+  # The same rule from the other side, and the half that `latest-reset-wins`
+  # structurally cannot see: max runs over the BLOCKED windows, not over every
+  # window reported. A spent short window beside a healthy weekly one is the
+  # ordinary shape under the rolling regime, and taking the weekly reset there
+  # sleeps five days because five hours filled.
+  local qwall="$TMPROOT/quota-window-allwindows.py"
+  sed 's/for _, w in blocked)/for _, w in windows)/' "$qw" > "$qwall" \
+    && chmod +x "$qwall"
+  if [ "$(_q short-window-exhausted)" = "blocked wake_at=1787000000 windows=primary" ] \
+     && [ "$("$qwall" --threshold 95 --now $QNOW "$fx/short-window-exhausted.jsonl" 2>/dev/null)" \
+          = "blocked wake_at=1787200231 windows=primary" ]; then
+    ok "the-wait-is-bounded-by-the-blocked-windows"
+  else
+    bad "the-wait-is-bounded-by-the-blocked-windows" \
+        "max must run over blocked windows only; got '$(_q short-window-exhausted)'"
+  fi
+
+  # When the provider NAMES the window it refused on, that name is the most
+  # precise fact in the payload. Widening it to every window is the same
+  # five-days-for-five-hours failure, reached through the hard-limit path
+  # instead of the percentage one -- and it is invisible to
+  # `hard-limit-outranks-percentage`, whose fixture has a null secondary.
+  local qwwide="$TMPROOT/quota-window-widenamed.py"
+  sed 's/blocked = named if named else windows/blocked = windows/' "$qw" \
+    > "$qwwide" && chmod +x "$qwwide"
+  if [ "$(_q named-window-reached)" = "blocked wake_at=1787000000 windows=primary" ] \
+     && [ "$("$qwwide" --threshold 95 --now $QNOW "$fx/named-window-reached.jsonl" 2>/dev/null)" \
+          = "blocked wake_at=1787500000 windows=primary,secondary" ]; then
+    ok "a-named-refusal-blocks-only-the-window-it-names"
+  else
+    bad "a-named-refusal-blocks-only-the-window-it-names" \
+        "rate_limit_reached_type must not widen to healthy windows; got '$(_q named-window-reached)'"
+  fi
+
+  # A reset that has already passed describes a window which has SINCE reset.
+  # Believing it is how a pre-flight read of an old rollout, or a reactive read
+  # of a log holding an earlier attempt, parks on a limit that expired hours
+  # ago -- with nothing bounding the wait by default.
+  if [ "$(_q both-windows-exhausted 95 $QLATER)" = clear ] \
+     && [ "$(_q named-window-reached 95 $QLATER)" = clear ]; then
+    ok "a-reset-in-the-past-is-stale-not-blocking"
+  else
+    bad "a-reset-in-the-past-is-stale-not-blocking" \
+        "an elapsed resets_at must not block; got '$(_q both-windows-exhausted 95 $QLATER)'"
+  fi
+
+  # An epoch reported in MILLISECONDS is the shape most likely to arrive
+  # unannounced, and it reads as the year 58000. Sleeping on it is
+  # indistinguishable from hanging, so it must degrade to a bounded re-probe.
+  if [ "$("$qw" --threshold 95 --now $QNOW \
+            --rate-limits '{"primary":{"used_percent":100.0,"resets_at":1787000000000}}' \
+            2>/dev/null)" = "blocked wake_at=unknown windows=primary" ]; then
+    ok "an-incredible-reset-is-not-slept-on"
+  else
+    bad "an-incredible-reset-is-not-slept-on" \
+        "a resets_at beyond the horizon must read as wake_at=unknown, not as a wait"
+  fi
+
+  # A stream carrying no rate-limit data at all -- including a torn final line,
+  # which is what a killed process leaves -- is unknown, and unknown lets the
+  # run start. Refusing there would deadlock a machine that has never run Codex.
+  "$qw" --threshold 95 --now $QNOW "$fx/no-rate-limits.jsonl" >/dev/null 2>&1
+  if [ "$?" = 3 ] && [ "$(_q no-rate-limits)" = "unknown no-rate-limit-data" ]; then
+    ok "a-stream-without-windows-is-unknown-not-clear"
+  else
+    bad "a-stream-without-windows-is-unknown-not-clear" \
+        "no rate-limit data must be exit 3 unknown; got '$(_q no-rate-limits)'"
+  fi
+
+  # A marker is evidence about the moment it was written. Carried forward over
+  # a FRESHER snapshot, one refused attempt condemns every later reading of the
+  # same log however healthy the provider now says the windows are -- which is
+  # exactly how a run parks forever on a stale log.
+  local qsticky="$TMPROOT/sticky.jsonl"
+  {
+    printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"resets_at":1787000000}}}}\n'
+    printf '{"type":"event_msg","payload":{"type":"error","error_type":"usage_limit_reached"}}\n'
+    printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":5.0,"resets_at":1787000000}}}}\n'
+  } > "$qsticky"
+  if [ "$("$qw" --threshold 95 --now $QNOW "$qsticky" 2>/dev/null)" = clear ]; then
+    ok "a-fresh-snapshot-supersedes-an-earlier-refusal"
+  else
+    bad "a-fresh-snapshot-supersedes-an-earlier-refusal" \
+        "a reached marker must not outlive the snapshot it described"
+  fi
+
+  # Rollouts on the machine this shipped from still report ONE window of 10080
+  # minutes with a null secondary; the regime this feature exists for reports a
+  # short window beside it. Both must read without a branch on window_minutes.
+  if [ "$(_q weekly-only-clear)" = clear ] \
+     && [ "$(_q five-hour-and-weekly-clear)" = clear ] \
+     && [ "$(_q weekly-only-clear 30)" = "blocked wake_at=1787200231 windows=primary" ] \
+     && ! grep -qE 'window_minutes[[:space:]]*(==|!=|<|>)' "$qw"; then
+    ok "window-shape-is-not-hardcoded"
+  else
+    bad "window-shape-is-not-hardcoded" \
+        "both the weekly-only and short-window shapes must read, with no window length in the parser"
+  fi
+
+  # The provider already refused. used_percent reads 98 in this fixture, under
+  # the threshold — a percentage must not overrule a stated refusal.
+  if [ "$(_q limit-reached-error)" = "blocked wake_at=1787000000 windows=primary" ]; then
+    ok "hard-limit-outranks-percentage"
+  else
+    bad "hard-limit-outranks-percentage" \
+        "a usage_limit_reached marker must block below the threshold; got '$(_q limit-reached-error)'"
+  fi
+
+  # A null used_percent is unknown, not clear. Counting it clear is how a
+  # parser that quietly stopped parsing keeps licensing runs until one dies.
+  "$qw" --threshold 95 "$fx/null-used-percent.jsonl" >/dev/null 2>&1
+  if [ "$?" = 3 ] && [ "$(_q null-used-percent)" != clear ]; then
+    ok "missing-fields-are-unknown-not-clear"
+  else
+    bad "missing-fields-are-unknown-not-clear" \
+        "a null used_percent must be exit 3 'unknown', never 'clear'"
+  fi
+
+  if [ "$(_q blocked-without-resets)" = "blocked wake_at=unknown windows=primary" ]; then
+    ok "blocked-without-reset-is-not-clear"
+  else
+    bad "blocked-without-reset-is-not-clear" \
+        "exhausted with no resets_at is still blocked; got '$(_q blocked-without-resets)'"
+  fi
+
+  # The horizon is one fact held in two languages: quota-window.py refuses to
+  # REPORT a reset beyond it, codex-run.sh refuses to SLEEP past it. If they
+  # drift apart, one of the two defences silently stops being reachable and
+  # everything stays green -- so make them one number by assertion, since the
+  # code cannot share it.
+  local qw_h cr_h
+  qw_h="$(python3 -c 'import re; m = re.search(r"^WAKE_HORIZON = (.+)$", open("scripts/quota-window.py").read(), re.M); print(eval(m.group(1)))' 2>/dev/null)"
+  cr_h="$(sed -n 's/^WAKE_HORIZON=\([0-9][0-9]*\).*/\1/p' scripts/codex-run.sh | head -1)"
+  if [ -n "$qw_h" ] && [ "$qw_h" = "$cr_h" ]; then
+    ok "the-horizon-is-one-number (${qw_h}s)"
+  else
+    bad "the-horizon-is-one-number" \
+        "quota-window.py says '$qw_h' and codex-run.sh says '$cr_h'"
+  fi
+
+  # ---- end to end, against a stubbed codex --------------------------------
+  #
+  # Every end-to-end case below runs under a watchdog. There is no `timeout(1)`
+  # to reach for -- macOS ships none -- and the regressions these cases exist to
+  # catch are precisely the ones that make the runner never return. A hang has
+  # no colour: it is worse than the skip/warn degradation CLAUDE.md warns about,
+  # because CI reports nothing at all rather than something misleading.
+  _qrun() { # <seconds> <command...>  -> merged output on stdout, real rc
+    local limit="$1"; shift
+    local out="$TMPROOT/qrun-out.$$" pid wpid rc
+    "$@" > "$out" 2>&1 &
+    pid=$!
+    # stdout to /dev/null, or this subshell holds the caller's command
+    # substitution open for the full sleep even after the runner exits.
+    ( sleep "$limit"; kill -9 "$pid" ) >/dev/null 2>&1 &
+    wpid=$!
+    wait "$pid"; rc=$?
+    kill -9 "$wpid" >/dev/null 2>&1
+    wait "$wpid" >/dev/null 2>&1
+    cat "$out"; rm -f "$out"
+    return "$rc"
+  }
+
+  local qroot="$TMPROOT/quota-run" qbin qws qrt qpark
+  qbin="$qroot/bin"; qws="$qroot/ws"; qrt="$qroot/runtime"; qpark="$qroot/parks"
+  mkdir -p "$qbin" "$qws" "$qrt" "$qpark" "$qroot/codexhome/sessions"
+  printf 'contract\n' > "$qrt/contract.md"
+  ( cd "$qws" && git init -q . \
+      && git -c user.email=q@q -c user.name=q commit -q --allow-empty -m init ) >/dev/null 2>&1
+
+  # Limited on the first call, clean on the resume. Windows reset seconds out,
+  # so the case exercises the real sleep rather than mocking it away.
+  cat > "$qbin/codex" <<'QSTUB'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "codex-cli stub"; exit 0;; esac
+for a in "$@"; do [ "$a" = resume ] && { echo "$*" > "$STUBDIR/resume-argv"
+  printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":2.0,"resets_at":9999999999}}}}\n'
+  printf '{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}\n'
+  exit 0; }; done
+echo first >> "$STUBDIR/calls"
+printf '{"type":"session_meta","payload":{"session_id":"verify-session-42"}}\n'
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"resets_at":%d},"secondary":{"used_percent":100.0,"resets_at":%d}}}}\n' "$(( $(date +%s) + 9 ))" "$(( $(date +%s) + 10 ))"
+printf '{"type":"event_msg","payload":{"type":"error","error_type":"usage_limit_reached"}}\n'
+exit 1
+QSTUB
+  chmod +x "$qbin/codex"
+
+  local qrc qout
+  qout="$(_qrun 120 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            "$runner" "$qws" qrun-1 qtask-1 2>&1)"
+  qrc=$?
+  if [ "$qrc" = 0 ] \
+     && printf '%s' "$qout" | grep -q 'PARKED' \
+     && printf '%s' "$qout" | grep -q 'resuming session verify-session-42' \
+     && [ "$(grep -c first "$qroot/calls" 2>/dev/null)" = 1 ]; then
+    ok "parks-then-resumes-the-same-session"
+  else
+    bad "parks-then-resumes-the-same-session" \
+        "a limited run must park, wake and resume its own session exactly once (rc=$qrc)"
+  fi
+
+  # `codex exec resume` accepts neither -s, -C nor --add-dir, so a resumed run
+  # that trusted inheritance would silently lose write access to the shared
+  # .git — the failure that cost a rung the first time it was met.
+  if grep -q 'writable_roots' "$qroot/resume-argv" 2>/dev/null \
+     && grep -q 'sandbox_mode' "$qroot/resume-argv" 2>/dev/null; then
+    ok "resume-carries-the-sandbox-grant"
+  else
+    bad "resume-carries-the-sandbox-grant" \
+        "the resume path must restate the sandbox grant as -c overrides"
+  fi
+
+  # A park record left by a killed supervisor is the successor's way back into
+  # the same session: a new run id means a new, empty scratch directory.
+  local qrt2="$qroot/runtime2"
+  mkdir -p "$qrt2" && printf 'contract\n' > "$qrt2/contract.md"
+  cat > "$qpark/qtask-2.json" <<PARKED
+{"schema":"forge.park.v1","task_id":"qtask-2","workspace":"$qws",
+ "codex_session_id":"verify-session-99","wake_at":0,"parked_at":$(date +%s)}
+PARKED
+  qout="$(_qrun 120 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt2" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            "$runner" "$qws" qrun-2 qtask-2 2>&1)"
+  if printf '%s' "$qout" | grep -q 'adopting session verify-session-99'; then
+    ok "park-record-is-adopted-by-a-successor"
+  else
+    bad "park-record-is-adopted-by-a-successor" \
+        "a durable park record must let a NEW run id resume the parked session"
+  fi
+
+  # Adoption is for a supervisor killed DURING a park. A record naming another
+  # workspace is a moved card, and one too old to date is debris -- resuming
+  # either sends "a usage limit interrupted you, continue where you stopped"
+  # into a session that was never interrupted, against a contract that has had
+  # a week to change. Both refusals are checked; only the first was before.
+  local qrt5="$qroot/runtime5"
+  mkdir -p "$qrt5" && printf 'contract\n' > "$qrt5/contract.md"
+  cat > "$qpark/qtask-5.json" <<PARKED5
+{"schema":"forge.park.v1","task_id":"qtask-5","workspace":"/somewhere/else",
+ "codex_session_id":"verify-session-elsewhere","parked_at":$(date +%s)}
+PARKED5
+  qout="$(_qrun 120 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt5" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            "$runner" "$qws" qrun-5 qtask-5 2>&1)"
+  local qforeign="$qout"
+  cat > "$qpark/qtask-6.json" <<PARKED6
+{"schema":"forge.park.v1","task_id":"qtask-6","workspace":"$qws",
+ "codex_session_id":"verify-session-ancient","parked_at":1}
+PARKED6
+  local qrt6="$qroot/runtime6"
+  mkdir -p "$qrt6" && printf 'contract\n' > "$qrt6/contract.md"
+  qout="$(_qrun 120 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt6" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            "$runner" "$qws" qrun-6 qtask-6 2>&1)"
+  if printf '%s' "$qforeign" | grep -q 'ignoring park record: it names workspace' \
+     && printf '%s' "$qout" | grep -q 'ignoring park record: parked' \
+     && ! printf '%s' "$qout" | grep -q 'adopting session verify-session-ancient'; then
+    ok "a-record-that-is-foreign-or-undatable-is-not-adopted"
+  else
+    bad "a-record-that-is-foreign-or-undatable-is-not-adopted" \
+        "adoption must refuse another workspace's record and one past the TTL"
+  fi
+
+  # THE regression case, and the one no fixture can reach: the reactive check
+  # must read the CURRENT attempt, not the append-only log.
+  #
+  # Attempt 1 is genuinely limited, and the provider does not say when the
+  # window lifts. Attempt 2 resumes and dies of something else entirely -- a
+  # dropped connection, an expired token -- before saying anything about quota
+  # at all.
+  #
+  # Both halves of that stub are load-bearing, and each defeats a DIFFERENT
+  # defence, which is the only way to isolate this one. Attempt 2's silence
+  # means the newest snapshot in the append-only log is still attempt 1's, so
+  # superseding a stale marker cannot save it. Attempt 1's missing resets_at
+  # means that evidence never ages out, so dropping elapsed windows cannot save
+  # it either. What is left is the question this case exists to ask: which file
+  # did the reactive check read?
+  #
+  # Reading the attempt's own stream finds no rate-limit data, which is
+  # `unknown`, which routes to the env: block this actually is. Reading the run
+  # log finds attempt 1's exhausted window, parks, wakes, re-invokes, and finds
+  # the same dead evidence again -- every POLL seconds, forever, spending quota
+  # on each pass, while the card heartbeats and looks perfectly alive. MAX_WAIT
+  # is 0 by default, so nothing bounds it. The watchdog is what turns that into
+  # a red case rather than a suite that never returns.
+  cat > "$qbin/codex" <<'QSTUB5'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "codex-cli stub"; exit 0;; esac
+for a in "$@"; do [ "$a" = resume ] && {
+  printf '{"type":"event_msg","payload":{"type":"error","message":"connection reset by peer"}}\n'
+  exit 7; }; done
+printf '{"type":"session_meta","payload":{"session_id":"verify-session-11"}}\n'
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0}}}}\n'
+exit 1
+QSTUB5
+  chmod +x "$qbin/codex"
+  local qrt7="$qroot/runtime7"
+  mkdir -p "$qrt7" && printf 'contract\n' > "$qrt7/contract.md"
+  qout="$(_qrun 30 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt7" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            "$runner" "$qws" qrun-7 qtask-7 2>&1)"
+  qrc=$?
+  # And the mechanism the case turns on, asserted directly: the run log
+  # accumulates across attempts while the current-attempt log is truncated for
+  # each one. If those two ever became the same file, every defence above is
+  # reasoning about a distinction that no longer exists.
+  if [ "$qrc" = 4 ] \
+     && [ "$(printf '%s' "$qout" | grep -c PARKED)" = 1 ] \
+     && printf '%s' "$qout" | grep -q 'no usage limit' \
+     && grep -q used_percent "$qrt7/codex-events.jsonl" \
+     && ! grep -q used_percent "$qrt7/codex-events.current.jsonl"; then
+    ok "the-reactive-check-reads-the-current-attempt"
+  else
+    bad "the-reactive-check-reads-the-current-attempt" \
+        "a later failure must be judged on the attempt's own stream, not the run's log (rc=$qrc)"
+  fi
+
+  # A knob that reads as garbage must not degrade quietly. MAX_WAIT=4h makes
+  # every `-gt` test fail with `integer expression expected`, which && reads as
+  # false -- silently removing the only bound on the wait. PARK_PCT=high reaches
+  # argparse, which exits 2, leaving an empty verdict that turns every quota
+  # block into a hard env: failure. Both must be usage errors, by name.
+  local qrt8="$qroot/runtime8" qbadrc=0 qbadout
+  mkdir -p "$qrt8" && printf 'contract\n' > "$qrt8/contract.md"
+  qbadout="$(_qrun 60 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
+               FORGE_LANE_RUNTIME="$qrt8" FORGE_LANE_PARK_ROOT="$qpark" \
+               FORGE_QUOTA_MAX_WAIT=4h "$runner" "$qws" qrun-8 qtask-8 2>&1)"
+  qbadrc=$?
+  qout="$(_qrun 60 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt8" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PARK_PCT=high "$runner" "$qws" qrun-8 qtask-8 2>&1)"
+  qrc=$?
+  if [ "$qbadrc" = 2 ] && [ "$qrc" = 2 ] \
+     && printf '%s' "$qbadout" | grep -q 'FORGE_QUOTA_MAX_WAIT' \
+     && printf '%s' "$qout" | grep -q 'FORGE_QUOTA_PARK_PCT'; then
+    ok "a-knob-that-reads-as-garbage-is-a-usage-error"
+  else
+    bad "a-knob-that-reads-as-garbage-is-a-usage-error" \
+        "an unparseable knob must exit 2 naming itself, not silently disable its own bound"
+  fi
+
+  # The record declares a schema and a successor parses it. A codex --version
+  # carrying a quote must not be able to make the only route back into a
+  # half-finished session unreadable.
+  cat > "$qbin/codex" <<'QSTUB6'
+#!/usr/bin/env bash
+case "${1:-}" in --version) printf 'codex "quoted" \\ version\n'; exit 0;; esac
+printf '{"type":"session_meta","payload":{"session_id":"verify-session-12"}}\n'
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"resets_at":9999999999}}}}\n'
+exit 1
+QSTUB6
+  chmod +x "$qbin/codex"
+  local qrt9="$qroot/runtime9"
+  mkdir -p "$qrt9" && printf 'contract\n' > "$qrt9/contract.md"
+  qout="$(_qrun 60 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt9" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            FORGE_QUOTA_MAX_WAIT=2 "$runner" "$qws" qrun-9 qtask-9 2>&1)"
+  if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
+       "$qpark/qtask-9.json" >/dev/null 2>&1 \
+     && printf '%s' "$qout" | grep -q '^[0-9:Z]* codex-run: PARK-COMMENT env: codex usage limit'; then
+    ok "the-park-record-is-json-and-the-comment-is-prefixed"
+  else
+    bad "the-park-record-is-json-and-the-comment-is-prefixed" \
+        "the record must survive a hostile --version as JSON, and §1's PARK-COMMENT marker must be what the runner prints"
+  fi
+
+  # §4 documents both. An override nothing asserts drifts out of the argv
+  # silently, and a missing runtime is the substrate class, not an env failure:
+  # the driver routes those differently.
+  cat > "$qbin/argv-echo" <<'QARGV'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "argv-echo stub"; exit 0;; esac
+echo "argv: $*" >&2
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"resets_at":9999999999}}}}\n'
+exit 1
+QARGV
+  chmod +x "$qbin/argv-echo"
+  local qrt10="$qroot/runtime10" qmodelout qsubrc
+  mkdir -p "$qrt10" && printf 'contract\n' > "$qrt10/contract.md"
+  qmodelout="$(_qrun 60 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
+                 FORGE_LANE_RUNTIME="$qrt10" FORGE_LANE_PARK_ROOT="$qpark" \
+                 FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+                 FORGE_QUOTA_MAX_WAIT=1 FORGE_CODEX_MODEL=gpt-probe-9 \
+                 FORGE_CODEX_BIN="$qbin/argv-echo" "$runner" "$qws" qrun-10 qtask-10 2>&1)"
+  _qrun 30 env PATH="$qbin:$PATH" FORGE_LANE_RUNTIME=/nonexistent-runtime \
+    FORGE_LANE_PARK_ROOT="$qpark" "$runner" "$qws" qrun-11 qtask-11 >/dev/null 2>&1
+  qsubrc=$?
+  if printf '%s' "$qmodelout" | grep -q 'argv: .*-m gpt-probe-9' && [ "$qsubrc" = 3 ]; then
+    ok "the-model-override-reaches-argv-and-a-missing-runtime-is-substrate"
+  else
+    bad "the-model-override-reaches-argv-and-a-missing-runtime-is-substrate" \
+        "FORGE_CODEX_MODEL must appear as -m in the argv, and no runtime must exit 3 (got $qsubrc)"
+  fi
+
+  # Codex fails for many reasons and only one is worth waiting out. Sleeping on
+  # the others would turn a five-second failure into an overnight silence.
+  cat > "$qbin/codex" <<'QSTUB2'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "codex-cli stub"; exit 0;; esac
+printf '{"type":"session_meta","payload":{"session_id":"verify-session-7"}}\n'
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":4.0,"resets_at":9999999999}}}}\n'
+exit 7
+QSTUB2
+  chmod +x "$qbin/codex"
+  local qrt3="$qroot/runtime3"; mkdir -p "$qrt3"; printf 'c\n' > "$qrt3/contract.md"
+  # Seeded with a park record so the exit-4 path is exercised against one: a
+  # run that ended for a reason unrelated to quota is not parked, and leaving a
+  # live session id behind would invite a successor to adopt a session that
+  # died for a reason no amount of waiting fixes.
+  cat > "$qpark/qtask-3.json" <<PARKED3
+{"schema":"forge.park.v1","task_id":"qtask-3","workspace":"$qws",
+ "codex_session_id":"verify-session-stale","wake_at":0}
+PARKED3
+  qout="$(_qrun 120 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt3" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            "$runner" "$qws" qrun-3 qtask-3 2>&1)"
+  qrc=$?
+  if [ "$qrc" = 4 ] && printf '%s' "$qout" | grep -q '^env: ' \
+     && ! printf '%s' "$qout" | grep -q 'PARKED' \
+     && [ ! -e "$qpark/qtask-3.json" ]; then
+    ok "non-quota-failure-is-not-parked"
+  else
+    bad "non-quota-failure-is-not-parked" \
+        "an unrelated nonzero exit must block as env: without sleeping, and must not leave a park record behind (rc=$qrc)"
+  fi
+
+  # An operator who bounds the wait gets a blockable reason and keeps the park
+  # record — the record is the evidence, so giving up must not delete it.
+  cat > "$qbin/codex" <<'QSTUB3'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "codex-cli stub"; exit 0;; esac
+printf '{"type":"session_meta","payload":{"session_id":"verify-session-8"}}\n'
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"resets_at":9999999999}}}}\n'
+exit 1
+QSTUB3
+  chmod +x "$qbin/codex"
+  local qrt4="$qroot/runtime4"; mkdir -p "$qrt4"; printf 'c\n' > "$qrt4/contract.md"
+  qout="$(_qrun 120 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt4" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            FORGE_QUOTA_MAX_WAIT=2 "$runner" "$qws" qrun-4 qtask-4 2>&1)"
+  qrc=$?
+  if [ "$qrc" = 5 ] \
+     && printf '%s' "$qout" | grep -qE '^env: codex usage limit' \
+     && [ -s "$qpark/qtask-4.json" ]; then
+    ok "wait-cap-blocks-with-a-board-class"
+  else
+    bad "wait-cap-blocks-with-a-board-class" \
+        "exceeding FORGE_QUOTA_MAX_WAIT must exit 5 with an env: reason and keep the record (rc=$qrc)"
+  fi
+
+  # The other half: a runner the lane does not call is dead code. §4 must reach
+  # it through ~/.forge/repo, the only path that resolves from a worktree.
+  if grep -Fq '~/.forge/repo/scripts/codex-run.sh' "$lane" \
+     && grep -Fq 'PARK-COMMENT' "$lane" \
+     && ! grep -Eq '^UV_CACHE_DIR=.*codex exec' "$lane"; then
+    ok "lane-invokes-the-runner"
+  else
+    bad "lane-invokes-the-runner" \
+        "forge-lane §4 must call codex-run.sh via ~/.forge/repo and stop invoking codex exec inline"
+  fi
+}
+wants quota     && run_quota_group
+
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1

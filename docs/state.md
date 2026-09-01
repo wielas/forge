@@ -53,11 +53,32 @@ default `make verify` completed **297 passed / 0 failed / 4 skipped**; clean-tre
 `make preflight` completed **PASS 85 / WARN 3 / FAIL 0**; the complete ten-chunk
 roadmap was **CLEAR — 9 pass / 0 warn / 0 skip** with both declared assignees
 supplied; and the isolated real-Hermes bootstrap proof was **7 passed / 0 failed
-/ 0 skipped**. The four default-suite skips are the two non-spawnable operator
-sentinels, the paid Codex probe, and the opt-in real-Hermes bootstrap. The three
+/ 0 skipped**. The default-suite skips are the two non-spawnable operator
+sentinels, the paid Codex probe, and the two `--with-hermes` cases —
+`bootstrap/real-hermes-root-and-extension` and
+`lane/terminators-match-the-substrate`. That is **five**, not the four this
+paragraph claimed until 2026-08-31; the count was checked against an
+unmodified `main` rather than inferred, and no check had gone blind. The three
 preflight warnings remain the documented healthy set: no global lefthook, the
 empty API-key placeholder, and the historical `forge-ladder` board selected by
 default.
+
+ADR-0016 (2026-08-31) added the `quota/` group: default `make verify` now
+completes **323 passed / 0 failed / 5 skipped**. The rise is the 24 `quota/`
+cases plus `cli/codex-run-flags-exist`; nothing was removed. That skip count is
+local: CI has no `codex` binary, so `cli/codex-run-flags-exist` skips its
+`--help` half there while still asserting the argv half.
+
+That last check is a repair, and worth knowing about before trusting the number.
+Moving §4's `codex exec` into a bash array inside `scripts/codex-run.sh` took
+`--add-dir` and `--output-last-message` out of `cli/flags-exist`'s scanned set —
+16 flag claims became 14, and **nothing turned red**. `cli/flags-exist` reads
+lines that *look like* invocations, so an invocation that stops looking like one
+simply stops being checked. F65/F66 again, on the lane's most load-bearing
+integration point. Adding the file to the scan does not fix it (measured: it
+contributes zero claims), so the coverage is restored two-sided instead: each
+flag must be present in the argv the runner builds *and* accepted by the
+subcommand's live `--help`.
 
 *Prior header, still true of the historical sections below it:* updated
 2026-08-06, after
@@ -178,6 +199,25 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   graph still needs to prove the corrected path live.
 - **Timeout/reclaim and circuit-breaker recovery.** Signal-9 retry is proven;
   stale-heartbeat reclaim and a tripped retry limit are not.
+- **The usage-limit park against a real window.** ADR-0016 shipped
+  `scripts/codex-run.sh`, and the `quota/` group proves the decision rules and
+  the park/resume loop against fixtures and a stubbed `codex` — including that
+  a run resumes its own session. What that does NOT prove: that a real Codex
+  window reports the shape the fixtures model (rollouts on this machine still
+  show only the old weekly window), that a parked card survives a multi-hour
+  wait without being reclaimed, or that Hermes will redispatch after a
+  quota-classed block — the respawn guard refuses re-spawn on `blocker_auth`,
+  and whether a park give-up lands in that class is untested.
+- **That a resumed session can still write to the shared `.git`.**
+  `codex exec resume` takes neither `-s`, `-C` nor `--add-dir`, so the resume
+  path restates the grant as `-c sandbox_mode` and
+  `-c sandbox_workspace_write.writable_roots`. Those *parse* — proven with
+  `codex debug prompt-input`, no API call, bogus-value control. Parsing is not
+  granting, and `--add-dir` *adds* to the default writable roots where
+  `writable_roots=[…]` sets a list, so the override may replace what the flag
+  extends. `quota/resume-carries-the-sandbox-grant` only asserts the overrides
+  reach the argv. One real chunk that parks and commits after waking settles
+  it; the failure mode until then is a silent loss of write access mid-run.
 - **The flywheel.** `/retro` has never executed. `retro-metrics.md` has several
   rows, all written by hand after runs rather than by the ceremony.
 - **The Telegram approval flow.**
@@ -410,7 +450,7 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 ```
-Hermes 0.19.0 · codex-cli 0.146.0 · Claude Code 2.1.227 · gh 2.97.0
+Hermes 0.19.0 · codex-cli 0.148.0 · Claude Code 2.1.227 · gh 2.97.0
 lefthook 2.1.10 · uv 0.11.32 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,

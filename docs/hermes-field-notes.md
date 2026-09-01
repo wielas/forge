@@ -290,6 +290,56 @@ worktree. The retry read the durable marker, verified the clean tree and remote
 SHA, skipped the one-shot pause, did not invoke Codex again, and opened exactly
 one PR in 55 seconds.
 
+**Codex states its own usage windows, and the shape is not ours to assume.**
+Every `token_count` event on a `codex exec --json` stream carries `rate_limits`:
+
+```
+"rate_limits": {"limit_id":"codex","primary":{"used_percent":31.0,
+ "window_minutes":10080,"resets_at":1787200231},"secondary":null,
+ "credits":{...},"plan_type":"plus","rate_limit_reached_type":null}
+```
+
+`resets_at` is an absolute epoch — the only trustworthy input to a wait, since
+a duration we pick is right for exactly one quota policy. Read on 2026-08-31,
+every rollout under `~/.codex/sessions` on this machine still reports ONE
+window of 10080 minutes with a null `secondary`, even though quota had already
+moved to shorter rolling windows elsewhere. So do not read the absence of a
+short window as evidence there is none; enumerate whatever members carry
+`used_percent`/`resets_at` and never branch on `window_minutes` (ADR-0016).
+
+**The reasoning-effort pin flaps under the desktop app.** ADR-0015 recorded
+`config/codex-pin-live` FAILing at `gpt-5.6-sol/high` against a checked-in
+`xhigh`. On 2026-08-31 the same file was read twice about two hours apart in
+one session: `high` at 20:15, `xhigh` at 22:50, with no human edit in between —
+the Codex desktop app rewrites `~/.codex/config.toml` while running. So this
+check is not merely drift-prone, it is *intermittent*, and a green run proves
+only what the file said at that moment. Effort is also a quota lever — the CLI
+warns that it "can quickly consume Plus plan rate limits" — so an unattended
+lane can inherit a different cost profile than the one the repo claims, in
+either direction, without anything changing in version control.
+
+Two more things measured against codex-cli 0.148.0, both load-bearing:
+
+- **`codex exec resume <session-id>` takes neither `-s`, `-C` nor `--add-dir`.**
+  So a resumed run cannot restate the sandbox grant the way the first call
+  does. `-c sandbox_mode="workspace-write"` and
+  `-c sandbox_workspace_write.writable_roots=[…]` do parse — confirmed through
+  `codex debug prompt-input`, which validates config without an API call, with
+  a bogus value rejected as the control.
+
+  **Parsing is not granting, and only the parsing is measured.** Nothing here
+  establishes that those two overrides actually let a *resumed* session commit
+  into the shared `.git`, and there is a specific reason to doubt the
+  equivalence rather than assume it: `--add-dir` is documented as adding to the
+  default writable roots, while `writable_roots=[…]` sets a list, so the
+  override may replace what the flag would have extended. The failure mode is
+  silent loss of write access mid-run — the defect that cost this repo a rung
+  the first time it was met. Settling it costs one real chunk; until then it is
+  in `state.md`'s not-proven list and stays out of every skill body.
+- **`--json` replaces the human-readable stream rather than adding to it.** A
+  driver watching a `--json` run through `process(action="log")` sees raw JSONL
+  and nothing else, which is why `scripts/codex-progress.py` exists.
+
 **Long work does not need forge machinery.** `terminal.timeout` (1800s) caps a
 *synchronous* command, but the terminal tool takes `background=True, pty=True,
 notify_on_complete=True` and the `process` tool polls it. That is native, so cap
