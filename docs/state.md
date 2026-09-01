@@ -70,13 +70,21 @@ reports 9 skips: the four `config/external-dirs/*` cases skip because the
 profiles point at the main checkout, which is F49's documented caveat and not a
 regression. Check the count from `main` before reading a rise in skips as one.
 
-The environment line below is now **asserted**, not merely written down.
+The two tool lines below are now **checked**, not merely written down.
 `make preflight` section 10 compares each recorded version against the live
-binary and WARNs on drift (2026-09-01). It had gone two versions stale on two of
-four tools — Hermes and Claude Code — because `cli/model-pin-documented`'s
-scrape anchors on the `profiles:` line *below* it, so the model pins were
-executable while the tool versions were prose. The check is in preflight rather
-than verify because only the host that owns the tools can answer it.
+binary (2026-09-01). It **WARNs** on drift and does not fail the run — preflight
+exits non-zero only on FAIL — so this is an advisory control, not a gate; it
+tells you the record is lying, it does not stop you.
+
+Six tools are compared: hermes, codex, claude, gh, uv and copier. `lefthook` is
+recorded and deliberately **not** compared, because `make setup` installs it per
+project rather than globally, so there is no host-level version to read.
+
+Three of those seven had gone stale — Hermes, Claude Code and uv — because
+`cli/model-pin-documented`'s scrape anchors on the `profiles:` line *below*
+them, so the model pins were executable claims while the tool versions above
+were prose. The check lives in preflight rather than verify because only the
+host that owns the tools can honestly answer it.
 
 ADR-0016 (2026-08-31) added the `quota/` group: default `make verify` then
 completed **323 passed / 0 failed / 5 skipped**. The rise is the 24 `quota/`
@@ -479,7 +487,7 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 
 ```
 Hermes 0.20.6 · codex-cli 0.148.0 · Claude Code 2.1.252 · gh 2.97.0
-lefthook 2.1.10 · uv 0.11.32 · copier 9.17.0
+lefthook 2.1.10 · uv 0.12.5 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
           forge-digest (deepseek-v4-flash-0731) · codex pinned gpt-5.6-sol xhigh
