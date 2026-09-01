@@ -148,6 +148,7 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `bootstrap/` | malformed graphs create nothing; root-only creates one root; full mode reuses it and attaches remaining parents atomically |
 | `commission/` | launch evidence is complete, paid only when requested, atomically published, and board-non-mutating |
 | `docs/` | the readiness ledger, staged sequence, ownership boundaries, and shared next command remain reconciled |
+| `manifest/` | `--list` names every case the suite runs — a check added without a catalogue entry is caught (full runs only) |
 
 Run it in CI, after every `hermes update`, and after every `codex`/`claude`
 upgrade. A tool version bump that changes a flag or a sandbox rule should fail a

@@ -52,6 +52,9 @@
 #   quota/      the usage-limit park: which window a run waits on, and that the
 #               lane resumes the same Codex session rather than restarting it.
 #               Fixtures and a stubbed codex only — spends nothing   (ADR-0016)
+#   manifest/   `--list` names every case the suite actually runs. Compares the
+#               catalogue against what THIS run emitted, so a check added
+#               without a catalogue entry is caught. Full runs only    (F65/F66)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -80,7 +83,7 @@ while [ $# -gt 0 ]; do
     --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate|docs|quota) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate|docs|quota|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -1133,6 +1136,9 @@ cli/permissions-are-read-only     no allowlist wildcard admits a paid or mutatin
 cli/model-pin-documented          profiles-bootstrap.sh's model pins are named in state.md (F22/F36)
 cli/codex-pin-documented          forge-lane and state.md agree without reading live config (F36)
 cli/lane-skill-management-policy  retained skills toolset is write-approval-gated (ADR-0013)
+cli/skill-description-budget              frontmatter descriptions fit the budget every session pays to list
+cli/retro-metrics                         docs/retro-metrics.md exists and carries the table /retro appends to
+cli/codex-run-flags-exist                 each flag codex-run.sh builds is in its argv AND accepted by that subcommand
 config/codex-pin-live-diagnostic-names-both-values mismatch output names live and checked-in pins
 config/codex-pin-live             ~/.codex/config.toml agrees with the checked-in model-and-effort pair
 config/terminal-timeout/<profile> >= 1800s per profile
@@ -1142,11 +1148,16 @@ config/soul-in-sync/<profile>     live ~/.hermes SOUL matches the one in git
 config/model-pin-live/<profile>   live model.default matches the pin that would republish it
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/board-default-workdir      every forge board has a worktree anchor
+config/per-profile/<assignee>             a declared assignee with no profile on disk is named, not trusted (F43)
+config/preflight-agrees-about-real-profiles  preflight resolves the same profile set, with no second implementation
 substrate/worktree-ownership      dispatcher resolves the worktree before spawning
 substrate/worktree-gitfile        .git is a file in a linked worktree; writes fail
 substrate/kanban-json-shapes      the --json shapes board-bootstrap and monitoring read are unchanged
 substrate/codex-worktree-commit   codex can commit in a worktree with --add-dir (--with-codex)
-template/stamp,setup,hooks-installed,check-green
+template/stamp                            copier stamps a project from the template into a durable path
+template/setup                            make setup builds the venv and installs the toolchain
+template/hooks-installed                  lefthook really installs its hooks into the stamped repo's .git
+template/check-green                      make check passes on the freshly stamped project
 template/gitignores-worktrees     .worktrees/ is ignored (dispatcher worktrees live in-repo)
 template/bootstrap-push-allowed   the push that CREATES main is allowed (real bare remote)
 template/main-push-blocked        every later direct push to main is refused
@@ -1207,6 +1218,10 @@ commission/requires-enforceable-gate    repository visibility never substitutes 
 commission/binds-github-to-origin       GitHub identity must exactly match the parsed origin URL
 commission/report-publication-failure-is-fatal an unpublished evidence artifact can never report success
 commission/leaves-project-and-board-unchanged only ignored evidence is written and no Hermes mutation runs
+commission/an-ungatable-product-commissions  a repo GitHub cannot gate is an answer, not a refusal (ADR-0017)
+commission/every-report-states-its-posture  every report names its posture, derived from the gate's exit alone
+commission/require-gate-restores-the-refusal  REQUIRE_GATE=1 restores the strict posture for a repo you expect gated
+commission/an-unrecognised-require-gate-is-refused  any other REQUIRE_GATE value is refused, never reinterpreted
 bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes rather than the command stub
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
@@ -1371,6 +1386,28 @@ roadmap/acceptance-matches-contract      every generated Given/When/Then step ma
 roadmap/real-source-is-planned           arbitrary declared sources map exactly to their @real-source scenarios
 roadmap/freeze-is-deterministic           sorted repo-relative paths map to the feature bytes' SHA-256 digests
 roadmap/missing-feature-is-named          freeze refuses atomically and names the chunk plus expected path
+gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
+gate/classic-protection-is-a-gate         classic protection carrying both halves is GATED (exit 0)
+gate/required-contexts-are-checked-by-name  a gate missing a named context reports missing=, not gated
+gate/checks-without-a-pr-rule-is-not-a-gate  required checks with no PR rule is PARTIAL (exit 3)
+gate/a-pr-requiring-no-checks-is-not-a-gate  a PR rule requiring nothing is PARTIAL (exit 3)
+gate/no-rule-from-either-mechanism-is-exit-4  neither mechanism present is NONE via=none (exit 4)
+gate/an-inactive-ruleset-is-not-a-gate    a ruleset that is not enforced does not gate
+gate/a-ruleset-for-another-branch-does-not-gate-main  a rule scoped to another ref leaves main ungated
+gate/an-excluded-branch-is-not-gated      main on a ruleset's exclusion list is not gated by it
+gate/an-unreadable-repo-is-exit-2         cannot ask is exit 2 and WARNs — it is not a pass (F65/F66)
+gate/unreadable-rulesets-is-exit-2-not-exit-4  a failed rulesets read is 'could not ask', never 'no rule exists'
+gate/unreadable-classic-protection-is-exit-2  the same distinction for classic protection
+gate/one-mechanism-unavailable-is-exit-2  one mechanism unreadable is exit 2 even when the other answers
+gate/a-missing-gh-warns-rather-than-vanishing  no gh binary is exit 2, not silence
+gate/a-malformed-slug-is-named-not-misreported  a bad owner/name is reported as malformed, not as ungated
+gate/an-unavailable-plan-is-exit-5-not-exit-2  a plan without protection is UNAVAILABLE (exit 5), a distinct answer (ADR-0017)
+gate/an-unavailable-repo-is-never-reported-gated  an unavailable posture can never read as gated
+gate/a-public-repo-upgrade-403-is-exit-2  a 403 on a public repo is 'could not ask', not 'plan unavailable'
+gate/a-public-repo-classic-upgrade-403-is-needs-admin  the classic-protection form of that 403 reads as needs-admin
+gate/a-needs-admin-403-is-still-exit-2    needs-admin remains exit 2 — insufficient rights is not a verdict
+gate/help-is-anchored-to-the-header-rules merge-gate.sh --help stays visible without numeric line pins
+gate/preflight-has-no-second-implementation  preflight calls merge-gate.sh instead of re-deriving the verdict
 docs/launch-ledger-reconciles-touched-findings every readiness finding names its closing chunk or remaining live proof
 docs/launch-roadmap-separates-state-and-sequence landed tracks, remaining proof and the run sequence cannot be confused
 docs/launch-slices-own-worktrees-and-manager-owned-ledger human slices never share main or become the sole audit-ledger writer
@@ -1391,7 +1428,20 @@ quota/non-quota-failure-is-not-parked   an unrelated nonzero exit blocks and cle
 quota/wait-cap-blocks-with-a-board-class  giving up prints an `env:` reason and keeps the park record
 quota/park-record-is-adopted-by-a-successor  a new run id resumes the parked session, not a fresh one
 quota/lane-invokes-the-runner           forge-lane §4 calls it through ~/.forge/repo (ADR-0003)
+quota/the-wait-is-bounded-by-the-blocked-windows  max runs over blocked windows only, never healthy ones
+quota/a-reset-in-the-past-is-stale-not-blocking  an elapsed resets_at must not block a start
+quota/an-incredible-reset-is-not-slept-on a resets_at beyond the horizon reads as wake_at=unknown, not a wait
+quota/the-horizon-is-one-number           quota-window.py and codex-run.sh agree on the horizon constant
+quota/a-stream-without-windows-is-unknown-not-clear  no rate-limit data is exit 3 unknown, never a licence to start
+quota/a-named-refusal-blocks-only-the-window-it-names  rate_limit_reached_type must not widen to healthy windows
+quota/a-fresh-snapshot-supersedes-an-earlier-refusal  a reached marker must not outlive the snapshot that described it
+quota/a-record-that-is-foreign-or-undatable-is-not-adopted  adoption refuses another workspace's record and one past its TTL
+quota/the-reactive-check-reads-the-current-attempt  a later failure is judged on that attempt's stream, not the run log
+quota/the-park-record-is-json-and-the-comment-is-prefixed  the record survives a hostile --version and §1's PARK-COMMENT marker holds
+quota/the-model-override-reaches-argv-and-a-missing-runtime-is-substrate  FORGE_CODEX_MODEL appears as -m; no runtime is exit 3
+quota/a-knob-that-reads-as-garbage-is-a-usage-error  an unparseable knob exits 2 naming itself, never silently unbounded
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
+manifest/list-matches-the-suite           every case that ran is named in this catalogue (the reverse is not asserted)
 EOF
   exit 0
 fi
@@ -6761,7 +6811,7 @@ run_manifest_group() {
   local entries="$TMPROOT/manifest.txt"
   "$0" --list | grep -E '^[a-z]+/' | awk '{print $1}' | sort -u > "$entries"
 
-  local name pat matched unlisted="" unlisted_n=0 orphan="" orphan_n=0 checked=0
+  local name pat matched unlisted="" unlisted_n=0 checked=0
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     checked=$((checked+1)); matched=0
@@ -6772,26 +6822,21 @@ run_manifest_group() {
     [ "$matched" = 1 ] || { unlisted="$unlisted $name"; unlisted_n=$((unlisted_n+1)); }
   done < <(sort -u "$emitted")
 
-  # The other direction: an entry describing a case that no longer runs is drift
-  # too, and it is the shape that makes a catalogue quietly grow fiction.
-  while IFS= read -r pat; do
-    [ -n "$pat" ] || continue
-    matched=0
-    while IFS= read -r name; do
-      # shellcheck disable=SC2254
-      case "$name" in ${pat//<*>/*}) matched=1; break;; esac
-    done < <(sort -u "$emitted")
-    [ "$matched" = 1 ] || { orphan="$orphan $pat"; orphan_n=$((orphan_n+1)); }
-  done < "$entries"
-
+  # WHAT THIS DELIBERATELY DOES NOT CHECK: the reverse direction, "an entry that
+  # matched no case in this run". It is tempting and it is wrong here, because
+  # which cases run is platform-dependent. `skip "flags-exist/$cmd"` emits only
+  # where that command is ABSENT — never on this host, always on a runner
+  # lacking it — so an entry describing it would be an orphan on macOS and a
+  # requirement on CI. A check that must be red on one of the two platforms is
+  # not a check. So a stale entry for a deleted case is NOT caught; that is
+  # stated rather than quietly hoped away, and it is the weaker half anyway:
+  # fiction in the catalogue misleads, while a case running undocumented is the
+  # failure that actually happened (all 16 of gate/, 2026-09-01).
   if [ -n "$unlisted" ]; then
     bad "list-matches-the-suite" \
         "$unlisted_n case(s) ran under names --list does not mention:$(printf '%s' "$unlisted" | cut -c1-400)"
-  elif [ -n "$orphan" ]; then
-    bad "list-matches-the-suite" \
-        "$orphan_n --list entr(y/ies) matched no case in this run:$(printf '%s' "$orphan" | cut -c1-400)"
   else
-    ok "list-matches-the-suite ($checked cases, every one documented)"
+    ok "list-matches-the-suite ($checked cases ran, every one documented)"
   fi
 }
 wants manifest  && run_manifest_group
