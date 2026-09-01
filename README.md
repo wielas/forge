@@ -144,7 +144,7 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `prejudge/` | tier 1, **run rather than read**: two **recorded** PRs of the audited run reproduce a checked-in severity map with no `gh`, no `git` and no network; a blocking check exits 1; every blocking finding carries an action a fresh worker can execute; the whole protocol routes a block to a bounce with no model spawned and moves a recorded 63 KB patch without printing a byte of it; and the `claude -p` control arm is diffed against `main` line for line |
 | `sweep/` | merged-worktree cleanup stays dry by default, bounded to the product's `.worktrees/`, and refuses unsafe or unmerged candidates |
 | `roadmap/` | chunk envelopes, graph integrity, frozen acceptance, lane resolution, and the advisory `CLEAR` report |
-| `gate/` | GitHub merge-gate interpretation against recorded API shapes and failure modes |
+| `gate/` | GitHub merge-gate interpretation against recorded API shapes and failure modes, including a repository the platform *cannot* gate (ADR-0017) |
 | `bootstrap/` | malformed graphs create nothing; root-only creates one root; full mode reuses it and attaches remaining parents atomically |
 | `commission/` | launch evidence is complete, paid only when requested, atomically published, and board-non-mutating |
 | `docs/` | the readiness ledger, staged sequence, ownership boundaries, and shared next command remain reconciled |

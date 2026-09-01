@@ -138,6 +138,7 @@ genuine run.*
 | F57 | `OPEN` | D1 — report the *widening* rather than passing on it |
 | F79 | `FIXED 2026-08-08` | closed by the merge-gate slice (D1e): `scripts/merge-gate.sh` plus verify.sh's `gate` group. The check PR #25 shipped for it was itself unexecuted and wrong four ways — see **F110** |
 | F110 | `FIXED 2026-08-08` | D1e. `scripts/merge-gate.sh` + verify.sh's `gate` group (16 cases, `gh` stubbed). The check written to close F79 was itself driven by nothing: two crashes under `set -u`, a FAIL on classic branch protection, and two false `gated` verdicts. ADR-0003 one layer up |
+| F120 | `FIXED 2026-09-01` | ADR-0017. The gate F79/F110 built refused every repository GitHub is *incapable* of gating: branch protection is a paid feature, so a private repo on a free plan 403s and read as exit 2 — which fails commissioning, so no private product could be commissioned at all. Now a fifth verdict, `UNAVAILABLE` (exit 5). Exit 2 still refuses. `gate/` 22 cases, `commission/` 11 |
 
 ### Blocked on ADR-0011 data — the run supplies it
 
@@ -223,7 +224,7 @@ is that every track owns a disjoint block and nobody mints outside their own.
 | F90–F99 | Track B — the instrument. **F90, F91, F92, F93 spent** (B1, 2026-08-07) |
 | F100–F109 | Track C — planning-time gates. **F100, F101, F102, F103 spent** (C1, 2026-08-07) |
 | F110–F119 | Track D — hygiene and the spike. **F110 spent** (D1e, 2026-08-08) |
-| F120–F129 | Track E — the staged launch |
+| F120–F129 | Track E — the staged launch. **F120 spent** (ungatable repositories, 2026-09-01) |
 | F130+ | the run itself, and anything found while reading it |
 
 Rules, because a range alone did not stop it last time:
@@ -4137,8 +4138,8 @@ while its own FAIL text, `docs/state.md` and `CLAUDE.md` all name `validate` and
 **The common cause is ADR-0003, not four coding slips.** A decision entangled
 with a live API call and a live repository cannot be asserted, so it was not,
 and CI was green through all four. The fix extracts the decision into
-`scripts/merge-gate.sh` — one primitive, four exit codes, `owner/repo` in and one
-verdict line out — and `verify.sh`'s new **`gate` group runs the real script
+`scripts/merge-gate.sh` — one primitive, four exit codes (a fifth arrived with
+F120 below), `owner/repo` in and one verdict line out — and `verify.sh`'s new **`gate` group runs the real script
 against a `gh` stub for sixteen cases**, including the two shapes the first
 version called gated. `preflight.sh` now asks the primitive from section 10,
 where `FORGE_DIR` is resolved and `--forge-dir` is honoured, and **warns rather
@@ -4157,3 +4158,67 @@ every call 404'd, and the operator was told they had a **permissions** problem;
 list was fetched twice and unpaginated, and `enforcement` was filtered *after* a
 detail round trip per ruleset rather than off the list response that already
 carries it.
+
+---
+
+## Ledger addition from the ungatable-repositories slice
+
+*Found 2026-09-01 while preparing the first genuine product runs, by pointing
+the commissioning sequence at the operator's actual repositories. Minted from
+Track E's reservation (F120–F129) — this is the staged launch failing to launch,
+not a defect in the gate's logic. See **F-number allocation** above.*
+
+### F120 — The merge gate refused every repository GitHub is incapable of gating · `FIXED 2026-09-01` · **high**
+
+F79 and F110 built a gate that asks GitHub the right question and refuses to
+guess. What neither considered is that **branch protection is a paid feature**.
+On a private repository on a free plan the answer is not a permissions problem
+and not an absent rule — it is that the mechanism does not exist:
+
+```
+$ gh api repos/wielas/JobApp                            → 200  "private": true
+$ gh api --paginate repos/wielas/JobApp/rulesets        → 403
+$ gh api repos/wielas/JobApp/branches/main/protection   → 403
+  gh: Upgrade to GitHub Pro or make this repository public to enable this
+      feature. (HTTP 403)
+$ gh api repos/wielas/forge/rulesets                    → 200  (public control)
+```
+
+`merge-gate.sh` reported both 403s as exit 2, *"a control that could not run has
+NOT passed"*. Correct for a token short of admin; wrong here. Exit 2 fails
+`commission.sh`, so **no private product could be commissioned at all** — and the
+guide said so out loud (*"a private repository without enforceable PR protection
+and required `check` status is refused"*) while the root `Makefile` told the same
+operator that `make protect` "FAILS on a private repo on a free plan — 403 — and
+then the hook is your whole gate". Two documents, opposite instructions, and the
+executable one blocked the run.
+
+**The fix is a fifth verdict, not a switch.** `UNAVAILABLE`, exit 5: the platform
+cannot gate this repository. It is never `GATED`, and never `NONE` either, since
+"no rule exists" and "no rule *can* exist" route differently. Exit 5 does not
+fail commissioning; **exit 2 still does**, because F65 governs "could not ask"
+and does not govern "cannot be asked". Rationale, the conjunction that guards it,
+and what is actually lost: **ADR-0017**.
+
+**Two of the new checks shipped green over their own defect, and mutation
+testing is the only reason that is not still true.** `a-public-repo-upgrade-403`
+asserted exit 2 for an incoherent reading — a *public* repo claiming a paid-
+feature 403. Dropping the `.private` conjunct from the rulesets arm left the
+case green, because the classic arm's generic `HTTP 403` grep refused anyway and
+the exit code cannot say which branch decided. `a-needs-admin-403` had the mirror
+of it: with the sentinel widened to match any `403`, a single-mechanism fixture
+still exited 2 through the mechanisms-disagree branch. Both were rewritten to
+assert **which arm produced the refusal**, and a sixth case was added for the
+classic arm's conjunct, which the first five could not reach at all. Seven
+mutations are now each caught by a named case.
+
+This is F65/F66 in a new place: not a check anchored to content that moved, but a
+check whose *subject* was reachable by two paths, only one of which it meant.
+
+**Proof.** `gate/` is 22 cases and `commission/` is 11, `gh` stubbed throughout;
+default `make verify` is 329/0/5 from the main checkout. Live readback:
+`wielas/JobApp` returns 5, and the public control `wielas/forge` still returns 0
+with `GATED via=rulesets pr=yes checks=validate,verify`. **Not proven:** no
+genuine `make commission` has yet run against a private product, so the
+end-to-end claim is fixture proof plus a live primitive, and `docs/state.md`
+says so.

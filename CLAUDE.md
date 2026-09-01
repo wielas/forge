@@ -58,7 +58,10 @@ relocates what a check reads can blind it without turning anything red.
   No pre-push hook is installed; the ruleset is the whole gate (audit **F79**).
   `make verify SUITES=gate` asserts the *logic* of this against a stubbed `gh`,
   and `make preflight` asks GitHub itself through `scripts/merge-gate.sh` — treat
-  a preflight FAIL here as authoritative. Neither can prove what the live ruleset
+  a preflight FAIL here as authoritative. **A product repo need not be gated:**
+  since ADR-0017 a private repo on a free plan reports `UNAVAILABLE` (exit 5),
+  which commissions and records `posture: UNGATED` rather than refusing. Exit 2
+  still refuses — "cannot be asked" is not "could not ask". Neither can prove what the live ruleset
   says today, so confirm that part rather than trusting this paragraph:
   `gh api repos/wielas/forge/rulesets`.
 - Findings carry stable `F<n>` identifiers across the audit docs. Reuse the existing

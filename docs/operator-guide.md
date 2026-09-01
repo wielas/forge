@@ -293,7 +293,8 @@ make commission PROJECT="$PROJECT" BOARD="$BOARD"
 
 It runs `make verify WITH_CODEX=1`, `make preflight`, the product roadmap check,
 the durable-path and clean-tree guards, remote resolution, and the existing
-merge-gate check. Every result and its exact output lands in
+merge-gate check, whose verdict becomes the report's `posture:` line. Every
+result and its exact output lands in
 `$PROJECT/.forge/commission-<UTC>.<unique>.md`; roadmap `WARN` text remains a
 warning. The GitHub repository is parsed from the product's exact `origin` URL,
 passed explicitly to `gh repo view`, compared with GitHub's returned identity,
@@ -306,9 +307,59 @@ the board files before and after without opening them or calling Hermes.
 Once the inputs pass the initial structural checks, expect the paid Codex probe
 to run even when another prerequisite fails: the command completes the evidence
 report instead of stopping at its first error. Any nonzero prerequisite makes
-commissioning exit nonzero. Repository visibility is never evidence of a gate;
-a private repository without enforceable PR protection and required `check`
-status is refused.
+commissioning exit nonzero, with exactly one exception — see the next section.
+
+Repository visibility is never evidence of a gate. A private repository whose
+protection could not be read, or which has protection that does not gate, is
+still refused; `private: true` has never been and is not now a reason to skip
+the check.
+
+Every report ends with a mandatory `posture:` line beside `overall:`, derived
+only from the merge gate's own exit code:
+
+```
+overall: PASS
+posture: GATED (wielas/forgeboard-report main)
+```
+
+Read that line before the PASS. A report cannot be published without it.
+
+## Products GitHub cannot gate
+
+Branch protection and rulesets are **paid** GitHub features. On a private
+repository on a free plan both API endpoints answer 403 with GitHub's own
+sentence — *"Upgrade to GitHub Pro or make this repository public to enable this
+feature."* — and `merge-gate.sh` reports `UNAVAILABLE`, exit 5.
+
+That is an answer, not a control that failed to run: no gate can exist there, so
+none was missed (ADR-0017). It does **not** fail commissioning, and the report
+says what was actually established:
+
+```
+overall: PASS
+posture: UNGATED (merge gate unavailable on this plan: wielas/JobApp)
+```
+
+`make preflight` reports the same condition as a named WARN rather than a PASS.
+
+**What you lose, and it is real.** Nothing server-side stops a human merging a
+red PR, and nothing stops a direct push to `main`. The `no-main-push` lefthook
+guard is advisory by construction — `--no-verify` and `LEFTHOOK=0` skip it — and
+its own comment says the gate that holds is off the host. On these products
+there is no such gate, so **merging is entirely a discipline question**.
+
+**What you do not lose.** GitHub Actions still run on private free-plan
+repositories, and `scripts/prejudge.sh` waits on `statusCheckRollup`, which does
+not depend on protection. Tier 1 still detects and bounces a red PR. What is
+missing is enforcement at merge time, not detection.
+
+**To refuse instead:** run `REQUIRE_GATE=1 make commission …` for a product you
+expect to be gated. Only `1` acts; any other value is refused rather than
+quietly read as the lenient default.
+
+`make protect` in a stamped product fails the same way and already names the
+cause. Where it succeeds, branch protection is the only merge gate; where it
+403s, check rather than assume — that is F79, and F120 is what it cost.
 
 ## Stage the first board card
 

@@ -3,10 +3,22 @@
 # forge commission — spend once to prove a product is ready, without launching.
 #
 # Usage: scripts/commission.sh <absolute-product-path> <board-slug>
+#   REQUIRE_GATE=1   refuse a product GitHub cannot gate (opt-in strict mode)
 #
 # Every existing launch prerequisite is recorded verbatim in a timestamped,
 # ignored report. This wrapper does not create or open a Hermes board and does
 # not invent substitutes for the gates it invokes.
+#
+# ONE PREREQUISITE IS ALLOWED TO BE NONZERO, and only one: merge-gate exit 5,
+# UNAVAILABLE. Branch protection is a paid GitHub feature, so on a private
+# repository on a free plan GitHub answers that no server-side gate can exist
+# there. That is an answer, not a control that failed to run, and treating it as
+# the latter refused every private product outright (ADR-0017, F120). Exit 2 —
+# "could not ask" — still fails, because F65 governs it and always did.
+#
+# The report therefore carries a MANDATORY `posture:` line beside `overall:`,
+# emitted on every path and derived only from the merge gate's own exit. A
+# report that says PASS for a product nothing gates has to say that too.
 # =============================================================================
 set -uo pipefail
 
@@ -32,6 +44,17 @@ case "$BOARD" in
     exit 2
     ;;
 esac
+# Only `1` acts, and any other non-empty value is REFUSED rather than
+# reinterpreted. The permissive misreading is the dangerous one here: an
+# operator who types REQUIRE_GATE=true and silently gets the lenient path has
+# been told the opposite of what they asked. Same reasoning as APPLY in the
+# root Makefile, which shipped the bug this guard is copied from.
+case "${REQUIRE_GATE:-}" in
+  ''|1) ;;
+  *) echo "commission: REQUIRE_GATE='$REQUIRE_GATE' is not understood. The only value that acts is REQUIRE_GATE=1; omit it entirely to accept a product GitHub cannot gate." >&2
+     exit 2;;
+esac
+
 [ -d "$PROJECT_INPUT" ] \
   || { echo "commission: project directory does not exist: $PROJECT_INPUT" >&2; exit 2; }
 PROJECT="$(cd "$PROJECT_INPUT" 2>/dev/null && pwd -P)" \
@@ -99,6 +122,7 @@ BOARD_BEFORE="$(board_fingerprint)" \
 FAILED=0
 REMOTE_SLUG=""
 DEFAULT_BRANCH=""
+GATE_RC=""
 
 cat > "$REPORT_TMP" <<EOF
 # Forge commissioning report
@@ -122,17 +146,31 @@ report_cat() {
     || { echo "commission: could not write evidence report" >&2; exit 2; }
 }
 
-record() { # $1=section, remaining args=command or shell function
-  local name="$1" log="$WORK/$1.log" rc
-  shift
+record() { # $1=section, $2=extra acceptable exits (comma list, or `-` for none),
+           # remaining args=command or shell function
+  local name="$1" accept="$2" log="$WORK/$1.log" rc code tolerated=0 oldifs
+  shift 2
   "$@" >"$log" 2>&1
   rc=$?
+  # The recorded exit is the REAL one. A tolerated prerequisite is not laundered
+  # into `exit: 0`; the report says 5 and the posture line says what that meant.
   report_printf '## %s\n\n' "$name"
   report_printf 'exit: %s\n\n' "$rc"
   report_printf '%s\n' '```text'
   report_cat "$log"
   report_printf '\n%s\n\n' '```'
-  [ "$rc" = 0 ] || FAILED=1
+  [ "$rc" = 0 ] && return 0
+  # EXACT MATCH, member by member. A substring test, a non-empty test, or a
+  # default-to-permissive branch here would be the root Makefile's APPLY defect
+  # on a knob whose lenient reading is the unsafe one: an empty, malformed or
+  # unrecognised list tolerates NOTHING.
+  oldifs="$IFS"; IFS=,
+  for code in $accept; do
+    [ "$code" = "$rc" ] && tolerated=1
+  done
+  IFS="$oldifs"
+  [ "$tolerated" = 1 ] || FAILED=1
+  return 0
 }
 
 durable_path() {
@@ -196,6 +234,22 @@ merge_gate() {
   [ -n "$REMOTE_SLUG" ] && [ -n "$DEFAULT_BRANCH" ] \
     || { echo "remote resolution did not produce a repository and branch"; return 2; }
   "$HERE/merge-gate.sh" "$REMOTE_SLUG" --branch "$DEFAULT_BRANCH" --require check
+  # `record` runs this in the CURRENT shell, so the assignment survives — the
+  # same mechanism resolve_remote() already relies on for REMOTE_SLUG.
+  GATE_RC=$?
+  return "$GATE_RC"
+}
+
+# ALWAYS emitted, on every path, and derived from nothing but the merge gate's
+# own exit code. There is one producer of this line so it cannot disagree with
+# itself, and no branch that can omit it.
+gate_posture() {
+  case "$GATE_RC" in
+    0)  printf 'GATED (%s %s)' "$REMOTE_SLUG" "$DEFAULT_BRANCH";;
+    5)  printf 'UNGATED (merge gate unavailable on this plan: %s)' "$REMOTE_SLUG";;
+    '') printf 'UNGATED (the merge gate never ran)';;
+    *)  printf 'UNGATED (merge gate not established: merge-gate exit %s)' "$GATE_RC";;
+  esac
 }
 
 forge_make() {
@@ -211,15 +265,23 @@ board_unchanged() {
 
 # Run every prerequisite even after one fails: the artifact is a complete
 # commissioning observation, not merely the first error encountered.
-record durable-path durable_path
-record clean-tree-before clean_tree
-record remote-resolution resolve_remote
-record merge-gate merge_gate
-record roadmap-check forge_make roadmap-check "PROJECT=$PROJECT"
-record preflight forge_make preflight
-record paid-codex-probe forge_make verify WITH_CODEX=1
-record clean-tree-after clean_tree
-record board-unchanged board_unchanged
+#
+# The second column is the ONLY exit besides 0 that section may report without
+# failing commissioning. Every section but one is `-`: nothing is tolerated.
+GATE_ACCEPT=5
+if [ "${REQUIRE_GATE:-}" = 1 ]; then
+  GATE_ACCEPT=-
+fi
+
+record durable-path      - durable_path
+record clean-tree-before - clean_tree
+record remote-resolution - resolve_remote
+record merge-gate  "$GATE_ACCEPT" merge_gate
+record roadmap-check     - forge_make roadmap-check "PROJECT=$PROJECT"
+record preflight         - forge_make preflight
+record paid-codex-probe  - forge_make verify WITH_CODEX=1
+record clean-tree-after  - clean_tree
+record board-unchanged   - board_unchanged
 
 report_printf '## result\n\n'
 if [ "$FAILED" = 0 ]; then
@@ -227,6 +289,7 @@ if [ "$FAILED" = 0 ]; then
 else
   report_printf 'overall: FAIL\n'
 fi
+report_printf 'posture: %s\n' "$(gate_posture)"
 
 mv "$REPORT_TMP" "$REPORT" \
   || { echo "commission: could not publish evidence report" >&2; exit 2; }
