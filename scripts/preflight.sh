@@ -869,6 +869,91 @@ if [ -n "$FORGE_DIR" ]; then
   ( cd "$FORGE_DIR" && make validate >/dev/null 2>&1 ) \
     && pass "make validate green" || fail "make validate failed — run it to see why"
 
+  # ---- the recorded environment IS the cause set --------------------------
+  # docs/state.md's environment line is what a later run reads to decide
+  # whether a tool upgrade belongs in the suspect set for a failure (F22).
+  # Nothing asserted it until 2026-09-01, and by then it was two versions stale
+  # on two of four tools. The reason is exact: verify.sh's env-block scrape
+  # anchors on the `profiles: forge-orchestrator` line BELOW it
+  # (cli/model-pin-documented), so the model pins were executable while the
+  # tool versions directly above them were prose. This is that repair.
+  #
+  # It lives in preflight rather than verify because only the host that owns
+  # the tools can answer it: a CI runner has different ones and the same check
+  # there would be red forever. The precedent is config/codex-pin-live, which
+  # skips when the operator's ~/.codex/config.toml is absent.
+  #
+  # Drift WARNs rather than FAILs — a stale record does not stop a run, it only
+  # makes the next failure harder to attribute. A line that cannot be parsed
+  # ALSO warns, because a control that could not run has not passed (F65/F66).
+  # BOTH tool lines of the fenced block, not just the first: the second one
+  # (lefthook · uv · copier) is part of the same record and had rotted the same
+  # way — `uv` read 0.11.32 against a live 0.12.5 on the day this was written.
+  ENVLINE="$(grep -E '^Hermes .*codex-cli .*Claude Code .*gh |^lefthook .*uv .*copier ' \
+               "$FORGE_DIR/docs/state.md" 2>/dev/null)"
+  if [ -z "$ENVLINE" ]; then
+    warn "docs/state.md has no 'Hermes … codex-cli … Claude Code … gh' line to check."
+    say  "      The recorded environment is the cause set for every later run; a"
+    say  "      check that cannot find it has not passed it."
+  else
+    # Recorded side: split the line on its separator and read the version out of
+    # the segment carrying each label. Splitting first is what keeps a greedy
+    # match on one label from reaching into another's segment.
+    _env_recorded() { # $1=label
+      printf '%s' "$ENVLINE" | tr '·' '\n' | grep -F "$1 " | head -1 \
+        | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+    }
+    _env_live() { # $1=binary -> first version-shaped token in its --version
+      "$1" --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+    }
+    # An ABSENT binary is blind, not fine. An earlier draft `continue`d past it,
+    # so with nothing on PATH every iteration skipped and the check reported
+    # "matches the host (0 tools)" — a control that compared nothing, announcing
+    # a pass. That is the exact failure this block's own comment forbids, so the
+    # tally is asserted against the number of tools we set out to check.
+    #
+    # `lefthook` is on the recorded line and is deliberately NOT here: it is
+    # installed per-project by `make setup`, never globally, so there is no
+    # host-level version to compare and preflight already WARNs about its
+    # absence. Naming the exclusion is the point — an unexplained gap in a
+    # coverage list is indistinguishable from an oversight.
+    ENVDRIFT=""; ENVBLIND=""; ENVSEEN=0; ENVWANT=0
+    for _pair in "hermes|Hermes" "codex|codex-cli" "claude|Claude Code" "gh|gh" \
+                 "uv|uv" "copier|copier"; do
+      _bin="${_pair%%|*}"; _label="${_pair##*|}"
+      ENVWANT=$((ENVWANT+1))
+      if ! command -v "$_bin" >/dev/null 2>&1; then
+        ENVBLIND="$ENVBLIND $_label(recorded, but not on PATH)"; continue
+      fi
+      _live="$(_env_live "$_bin")"; _rec="$(_env_recorded "$_label")"
+      if [ -z "$_rec" ] || [ -z "$_live" ]; then
+        ENVBLIND="$ENVBLIND $_label(unparsed on one side)"
+      elif [ "$_rec" != "$_live" ]; then
+        ENVDRIFT="$ENVDRIFT $_label(recorded $_rec, live $_live)"
+      else
+        ENVSEEN=$((ENVSEEN+1))
+      fi
+    done
+    # Both are reported. An earlier draft used `elif`, which swallowed the
+    # "could not compare" signal exactly when something else was already wrong.
+    if [ -n "$ENVDRIFT" ]; then
+      warn "docs/state.md's recorded environment has drifted:$ENVDRIFT"
+      say  "      Update it. When a run misbehaves this is what says whether a tool"
+      say  "      upgrade is in the cause set — stale, it says the wrong thing."
+    fi
+    if [ -n "$ENVBLIND" ]; then
+      warn "could not compare recorded vs live for:$ENVBLIND"
+      say  "      A control that could not run has not passed (F65/F66)."
+    fi
+    if [ -z "$ENVDRIFT" ] && [ -z "$ENVBLIND" ]; then
+      if [ "$ENVSEEN" = "$ENVWANT" ]; then
+        pass "docs/state.md's recorded environment matches the host ($ENVSEEN/$ENVWANT tools)"
+      else
+        warn "only $ENVSEEN of $ENVWANT recorded tools were actually compared"
+      fi
+    fi
+  fi
+
   # THE GATE FOR F47/F67, because `make verify` cannot be it.
   #
   # The snapshot group's headline regression — a WAL board with no `-shm`
