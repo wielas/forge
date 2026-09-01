@@ -23,8 +23,20 @@ from jsonschema.exceptions import SchemaError
 ROOT = Path(__file__).resolve().parent.parent
 RUBRICS = ROOT / "rubrics"
 CONTRACT_PATH = RUBRICS / "run-metadata-contract.json"
-CHUNK_ID = re.compile(r"^CHUNK-([0-9]+)$")
-CHUNK_BRANCH = re.compile(r"^chunk/([0-9]+)-[a-z0-9]+(?:-[a-z0-9]+)*$")
+# An id is not a decimal integer. JobApp's board runs `C6`, `C9.1` and `C10`, and
+# the digits-only pair killed those runs at the TERMINATOR — the lane's SKILL.md
+# §7 gates `kanban_complete` on this script exiting 0, so the envelope was
+# refused after the PR was open and the whole chunk paid for. CHUNK_ID is the
+# grammar hermes/board-bootstrap.sh and scripts/acceptance-freeze.sh already
+# enforce on card ids; CHUNK_BRANCH is byte-identical to the rule in
+# scripts/prejudge.sh, the template's branch-name.sh and chunk-handoff.schema.json.
+#
+# Both had to move together with the schemas. The agreement check below fires
+# only when BOTH match, so widening the schemas alone would have let `CHUNK-C10`
+# past a comparison that had silently stopped happening — measured: a C10
+# chunk_id on a C9.1 branch validated clean.
+CHUNK_ID = re.compile(r"^CHUNK-([A-Za-z0-9][A-Za-z0-9._-]*)$")
+CHUNK_BRANCH = re.compile(r"^chunk/[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*-[a-z0-9]+(?:-[a-z0-9]+)*$")
 PR_URL = re.compile(
     r"^https://github\.com/(?P<repo>[^/\s]+/[^/\s]+)/pull/(?P<number>[1-9][0-9]*)$"
 )
@@ -346,8 +358,14 @@ def semantic_errors(schema_id: str, instance: dict[str, Any]) -> list[str]:
             errors.append("scenarios.passing: cannot exceed scenarios.added")
         chunk = CHUNK_ID.fullmatch(instance["chunk_id"])
         branch = CHUNK_BRANCH.fullmatch(instance["branch"])
-        if chunk and branch and chunk.group(1) != branch.group(1):
-            errors.append("branch: numeric id does not match chunk_id")
+        # Compared as a PREFIX, not as two extracted ids. The branch separator is
+        # a hyphen, so `chunk/hello-1-greet` cannot be split back into id and
+        # slug without knowing the id -- and here we do know it. Identical to the
+        # old comparison for every numeric id, and correct for the rest.
+        if chunk and branch and not instance["branch"].startswith(
+            f"chunk/{chunk.group(1)}-"
+        ):
+            errors.append("branch: id does not match chunk_id")
 
     if schema_id == "forge.gate.v1":
         checks = instance["checks"]
@@ -375,8 +393,10 @@ def semantic_errors(schema_id: str, instance: dict[str, Any]) -> list[str]:
             branch = CHUNK_BRANCH.fullmatch(instance["branch"])
             # A gate must be able to report the malformed branch it is blocking.
             # Only compare ids when the branch itself has the canonical shape.
-            if branch and chunk and chunk.group(1) != branch.group(1):
-                errors.append("branch: numeric id does not match chunk")
+            if branch and chunk and not instance["branch"].startswith(
+                f"chunk/{chunk.group(1)}-"
+            ):
+                errors.append("branch: id does not match chunk")
     return errors
 
 
