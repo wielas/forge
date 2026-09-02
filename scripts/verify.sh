@@ -896,6 +896,24 @@ run_substrate_group() {
           "live lane setup/capture failed: $(printf '%s' "$setup_out" | tail -2 | tr '\n' ' ')"
       return
     fi
+    # The audit is filed under the key setup EMITS, never the bare run id. Since
+    # ba933ff that key carries the board (`<board>-<run-id>`, and `_noboard-…`
+    # here because HERMES_KANBAN_BOARD is unset in the suite). Consume it exactly
+    # as skills/forge-lane/SKILL.md §5 does.
+    #
+    # This probe recomputed it and drifted the moment the key changed: it is
+    # SKIPPED without --with-codex, so neither CI nor a plain `verify.sh` run
+    # could see it, and the break surfaced only in the paid commissioning gate
+    # (2026-09-02, JobApp) — after the slice that caused it had already merged.
+    # `prejudge/lane-audit-key-is-emitted` below now guards the same rule for
+    # free, so the token-spending case is no longer the only witness.
+    local live_key
+    live_key="$(printf '%s' "$setup_out" | sed -n 's/^FORGE_LANE_RUN_KEY=//p' | tail -1)"
+    if [ -z "$live_key" ]; then
+      bad "codex-worktree-commit" \
+          "lane-setup emitted no FORGE_LANE_RUN_KEY — the audit key contract is broken"
+      return
+    fi
     out=$(cd "$LABROOT/linked" && codex exec -s workspace-write \
             --ephemeral --ignore-user-config \
             --add-dir "$common" \
@@ -904,21 +922,21 @@ run_substrate_group() {
     make -C "$LABROOT/linked" check >/dev/null 2>&1 && check_ok=1
     audit_out="$(env FORGE_LANE_AUDIT_ROOT="$live_audit" \
                  $REPO_ROOT/scripts/lane-blast-radius.sh \
-                   check "$LABROOT/linked" "$live_run" 2>&1)"
+                   check "$LABROOT/linked" "$live_key" 2>&1)"
     # Assert the FILE is in HEAD, not merely that some commit exists — the lab
     # repo already has an `init` commit, so "log is non-empty" proves nothing.
     # (Do not pipe `git log` into `grep -q`: grep exits early, git takes SIGPIPE,
     # and pipefail then reports a failure that did not happen.)
     if git -C "$LABROOT/linked" cat-file -e HEAD:probe.txt 2>/dev/null \
        && [ "$check_ok" = 1 ] \
-       && [ -f "$live_audit/$live_run/check.complete" ] \
+       && [ -f "$live_audit/$live_key/check.complete" ] \
        && [ "$audit_out" = \
             "blast-radius: clean — protected Git state unchanged, task commit surfaces only" ]; then
       # The run id is the citation. `state.md` and the audit ledger record which
       # run proved the lane, and a claim naming a run nobody can identify is the
       # kind ADR-0003 exists to stop — so print it rather than making the
       # operator reconstruct it from a cleaned-up temp directory.
-      ok "codex-worktree-commit (live setup → immutable capture → Codex commit → final audit; run $live_run)"
+      ok "codex-worktree-commit (live setup → immutable capture → Codex commit → final audit; key $live_key)"
     else
       bad "codex-worktree-commit" \
           "live lane proof failed: codex=$(printf '%s' "$out" | tail -2 | tr '\n' ' ') audit=$(printf '%s' "$audit_out" | tail -2 | tr '\n' ' ')"
@@ -1187,6 +1205,7 @@ template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
 lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
 lane/scratch-is-board-scoped      run ids are board-local; scratch and audit carry the board, same-board reuse still refuses
+lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_LANE_RUN_KEY instead of recomputing it
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/terminator-set-is-closed     kanban_request_review/_changes are named forbidden, not merely unlisted
@@ -2128,6 +2147,34 @@ run_lane_group() {
   else
     bad "uv-cache-dir-is-deterministic-and-outside-worktree" \
         "lane-setup must emit FORGE_LANE_RUNTIME and FORGE_LANE_RUN_KEY and the skill must consume both — never recompute the \$TMPDIR path, and never audit under the bare run id"
+  fi
+
+  # The rule above binds the SKILL. It did not bind this suite's own live probe,
+  # and on 2026-09-02 that gap cost a paid commissioning run: `lane-setup.sh`
+  # began filing the capture under the board-scoped key while
+  # substrate/codex-worktree-commit still called `check` with the bare run id.
+  # That case is SKIPPED without --with-codex, so a full green `verify.sh` and a
+  # green CI both reported healthy while the audit pairing was broken.
+  #
+  # So the probe is pinned the same way the skill is, and for free. A rule with
+  # two callers needs two pins: pinning only the one that is cheap to test is
+  # how the first copy drifted.
+  local codex_probe
+  # awk that EXITS at the probe's closing line, not a sed range. A guard that
+  # greps its own source file is self-referential: this block quotes the very
+  # literals it pins, so any range that can re-open later swallows the guard and
+  # trips its own negative pin. Exiting at the first close keeps the window on
+  # the probe (~line 890) and can never reach this block. Both failure modes
+  # were measured while writing it, which is the argument for red-before-green.
+  codex_probe="$(awk '/live_run="verify-codex-/{f=1} f{print} f && /ok "codex-worktree-commit/{exit}' scripts/verify.sh)"
+  if printf '%s' "$codex_probe" | grep -Fq 's/^FORGE_LANE_RUN_KEY=//p' \
+     && printf '%s' "$codex_probe" | grep -Fq 'check "$LABROOT/linked" "$live_key"' \
+     && printf '%s' "$codex_probe" | grep -Fq '"$live_audit/$live_key/check.complete"' \
+     && ! printf '%s' "$codex_probe" | grep -Fq 'check "$LABROOT/linked" "$live_run"'; then
+    ok "codex-probe-audits-the-emitted-key"
+  else
+    bad "codex-probe-audits-the-emitted-key" \
+        "substrate/codex-worktree-commit must read FORGE_LANE_RUN_KEY out of lane-setup's output and audit under it — auditing under \$live_run breaks the moment the key gains a component, and only --with-codex would notice"
   fi
 
   # Codex's workaround for the missing venv was UV_CACHE_DIR + UV_OFFLINE.
