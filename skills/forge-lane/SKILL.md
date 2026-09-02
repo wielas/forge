@@ -132,14 +132,9 @@ audit could not capture. Setup-created worktree dirt is also `5`: it predates
 Codex and must not later be reported as Codex escaping its boundary. Each
 failure prints a canonical `<class>: <reason>` to pass into the block verbatim.
 
-Its last stdout line is `FORGE_LANE_RUNTIME=<path>` and the line before it is
-`FORGE_LANE_RUN_KEY=<board>-<run-id>` — export **both**, do not recompute
-either. `FORGE_LANE_RUNTIME` is the only scratch directory the lane writes to;
-`FORGE_LANE_RUN_KEY` is what §5's final audit is filed under.
-
-Run ids are **board-local** — every board's database restarts them at 1 — so
-both are scoped by the board slug. Recomputing either from
-`$HERMES_KANBAN_RUN_ID` alone rebuilds the collision that scoping removes.
+Its last two stdout lines are `FORGE_LANE_RUN_KEY=<board>-<run-id>` and
+`FORGE_LANE_RUNTIME=<path>` (the lane's only scratch directory) — export
+**both**, never recompute: ids are board-LOCAL, so recomputing rebuilds the collision.
 
 ## 4. Hand Codex the contract
 
@@ -211,9 +206,9 @@ refactors; that is a `kanban_block`, not a retry.
 
 ## 5. Verify it yourself
 
-§3 captured an immutable baseline under `~/.forge/lane-audits/<run-key>`,
-outside every Codex-writable root. Do not recapture or replay the final audit:
-each run key permits one capture and one check.
+§3 captured an immutable baseline under `~/.forge/lane-audits/<run-key>`, outside
+every Codex-writable root. Pass `$FORGE_LANE_RUN_KEY`, never the bare run id, or
+`check` finds no capture and blocks. One capture and one check per key, no replay.
 
 ```bash
 make check
@@ -234,13 +229,8 @@ After `make check`, the hostile review, and restoration of every temporary
 verification mutation, run the final fail-closed audit:
 
 ```bash
-~/.forge/repo/scripts/lane-blast-radius.sh check \
-  "$HERMES_KANBAN_WORKSPACE" "$FORGE_LANE_RUN_KEY"
+~/.forge/repo/scripts/lane-blast-radius.sh check "$HERMES_KANBAN_WORKSPACE" "$FORGE_LANE_RUN_KEY"
 ```
-
-`$FORGE_LANE_RUN_KEY`, not `$HERMES_KANBAN_RUN_ID`: §3 captured under the
-board-scoped key, and a `check` under the bare run id would find no capture
-and block every run.
 
 It holds a named set immutable: both hooks directories, local and worktree
 config, `refs/heads/main`, `objects/info/alternates`, object reachability, and a
