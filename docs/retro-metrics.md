@@ -191,8 +191,12 @@ what the existing source can see.
 ## Judge telemetry remains contextual
 
 `forge.judge.v1` carries `tokens_estimate` and a full `cost` block since
-2026-08-01 (audit F30). Neither replaces the driver-usage number above, and the
-reason is worth stating so nobody combines incomparable paths.
+2026-08-01 (audit F30). Both are STAMPED by the tier-1 harness, not demanded by
+the schema: they come off a usage envelope, and a review with no harness behind
+it — an interactive tier-2 `/judge` — has none to read. So an absent figure
+means "not measurable on that path", never zero. Neither replaces the
+driver-usage number above, and the reason is worth stating so nobody combines
+incomparable paths.
 
 **`tokens_estimate` = `input + cache_creation + output`** — tokens new to the
 model on that call. It deliberately **excludes `cache_read`**: cached re-reads

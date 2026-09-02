@@ -1,0 +1,21 @@
+{
+  "chunk_id": "chunk_hello_1",
+  "derived_verdict": "approve",
+  "findings": [],
+  "judge_model": "opus",
+  "pr": "https://github.com/wielas/hello-forge/pull/1",
+  "schema": "forge.judge.v1",
+  "scores": {
+    "spec_fidelity": 3,
+    "scenario_integrity": 3,
+    "architectural_conformance": 3,
+    "scope_discipline": 3,
+    "debt_honesty": 3,
+    "doc_reconciliation": 3
+  },
+  "session_id": "8b1f2c7e-4d3a-4a71-9d0c-2f6f0b7a1e55",
+  "spot_check_suggestion": "",
+  "verdict": "approve",
+  "verdict_divergence": false,
+  "worker_session_id": "01K4Q7Z9TQ0X3M8V5N2H6J1W4B"
+}

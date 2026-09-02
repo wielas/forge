@@ -131,9 +131,21 @@ collapses into `pass` — a check that could not run has not passed.
 ## Judge completion — `forge.judge.v1`
 Defined in `rubrics/judge-rubric.md`. Stored as the judge card's metadata — by
 tier 1's model stage when the gate cleared and the scorer ran, and by tier 2.
-Its existing machine contract is
-[`judge-verdict.schema.json`](judge-verdict.schema.json); it remains unchanged
-while ADR-0011 gathers its post-gate control-arm sample.
+Its machine contract is
+[`judge-verdict.schema.json`](judge-verdict.schema.json). Nothing ADR-0011
+measures has moved: the scorer's brief, the dimensions and the verdict logic are
+untouched, and `prejudge/scorer-is-the-control-arm` still pins the call. What
+changed on 2026-09-02 is the envelope's own shape, because the first `--hello`
+rehearsal to run end to end produced one the schema refused — see the
+`tokens_estimate` and `worker_session_id` notes in that file.
+
+**This is the one envelope the additive rule below does not cover.** It is
+`additionalProperties: false`, deliberately: the operator stamps five fields
+into it after the model has written the rest, and an undeclared key there is an
+invented one. So a sibling key that genuinely belongs — Hermes's own
+`worker_session_id` — is DECLARED rather than tolerated, and
+`prejudge/stamped-envelope-declares-every-key` fails the suite when the stamp
+writes a key the schema does not name.
 
 ## Blocked card reasons
 
