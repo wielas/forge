@@ -10,9 +10,14 @@
 # On success the LAST line of stdout is `FORGE_LANE_RUNTIME=<abs path>` — the
 # per-run scratch directory for the contract, the transcript, the PR body and
 # the UV cache. It lives in $TMPDIR because the sandbox must be able to write
-# it, which is exactly why the audit baseline may NOT live there.
+# it, which is exactly why the audit baseline may NOT live there. The line
+# BEFORE it is `FORGE_LANE_RUN_KEY=<board>-<run-id>`, the board-scoped key this
+# run's audit baseline is filed under; §5 of the lane skill passes it back to
+# `lane-blast-radius.sh check`. Emitted in that order because the last-line
+# contract above is what callers rely on.
 #
 # Usage: lane-setup.sh <workspace> <run-id>
+#        HERMES_KANBAN_BOARD scopes the per-run paths (see the block below)
 #
 # Exit: 0  ready — environment built, baseline green, audit captured
 #       2  usage
@@ -37,6 +42,57 @@ case "$RUN_ID" in
     exit 2
     ;;
 esac
+
+# RUN IDS ARE BOARD-LOCAL. Every Hermes board keeps its own database at
+# ~/.hermes/kanban/boards/<slug>/kanban.db, so run ids restart at 1 for each
+# new board. Measured 2026-09-02: boards `forge-hello-20260902` and
+# `forge-hello-20260902b` each issued run ids 1, 2, 3. A per-run path keyed on
+# the run id alone therefore collides across boards — and the collision is a
+# HARD failure, which is right inside one board and wrong between two.
+#
+# It fired for real on 2026-09-02: a fresh board's run 1 met the completed
+# leftovers of an earlier board's run 1, and the run survived only because the
+# worker improvised a quarantine directory that exists nowhere in this repo.
+# Nothing cleans these paths up, so every fresh board inherits the last one's.
+#
+# The board slug makes the key unique again. The dispatcher injects
+# HERMES_KANBAN_BOARD into every worker environment unconditionally
+# (hermes_cli/kanban_db.py, alongside the HERMES_KANBAN_BRANCH read above), so
+# this needs no new argument and no new agreement with the caller.
+#
+# What is deliberately NOT done here: auto-removing or auto-quarantining a
+# directory that already exists. Refusing reuse is what stops two LIVE runs
+# from sharing one scratch and corrupting each other's baseline and audit.
+# Scoping the key removes the FALSE collisions and keeps the real one fatal.
+BOARD="${HERMES_KANBAN_BOARD:-}"
+case "$BOARD" in
+  "")
+    # Unset degrades to a sentinel rather than an empty path component:
+    # `forge-lane--1` is both ugly and ambiguous. A leading underscore is
+    # illegal in a real Hermes slug (its own regex is
+    # ^[a-z0-9][a-z0-9-_]{0,63}$, which bans a leading `_`), so no genuine
+    # board can ever shadow this token.
+    # Note this degrades, it does not fix: two boardless runs sharing one id
+    # still collide, and still refuse loudly. That is the correct outcome.
+    BOARD=_noboard
+    ;;
+  .|..|*[!A-Za-z0-9._-]*)
+    # A slug carrying `/`, `..` or anything else that could climb out of
+    # $TMPDIR is an upstream problem. Degrading it would hide that, so refuse
+    # exactly the way an unsafe run id is refused above.
+    echo "usage: lane-setup.sh <workspace> <run-id> needs a safe HERMES_KANBAN_BOARD" >&2
+    exit 2
+    ;;
+esac
+
+# THE ONE definition of this run's scope key. lane-blast-radius.sh receives it
+# as its <run-id> argument — its own charset guard already admits the hyphen —
+# so the audit baseline is filed under exactly the same string that names the
+# scratch directory, and neither script carries its own copy of the rule above.
+# `<board>-<run-id>` is ambiguous in the abstract (board `a-1` run `2` and
+# board `a` run `1-2` build one path), but Hermes run ids are
+# `str(task.current_run_id)` — always integers — so no real pair can collide.
+SCOPE="$BOARD-$RUN_ID"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)" || {
   echo "env: lane script directory cannot be resolved"
   exit 6
@@ -125,7 +181,7 @@ baseline_status="$(git status --porcelain=v1 --untracked-files=all 2>/dev/null)"
   exit 5
 }
 
-RUNTIME_DIR="${TMPDIR:-/tmp}/forge-lane-$RUN_ID"
+RUNTIME_DIR="${TMPDIR:-/tmp}/forge-lane-$SCOPE"
 [ ! -e "$RUNTIME_DIR" ] && mkdir "$RUNTIME_DIR" 2>/dev/null || {
   echo "env: per-run scratch $RUNTIME_DIR exists or cannot be created; refusing reuse"
   exit 4
@@ -136,8 +192,8 @@ BLAST="$SCRIPT_DIR/lane-blast-radius.sh"
   echo "env: lane-blast-radius.sh is missing or not executable"
   exit 6
 }
-"$BLAST" capture "$WS_PHYS" "$RUN_ID" >/dev/null 2>&1 || {
-  echo "env: immutable blast-radius capture failed for run $RUN_ID"
+"$BLAST" capture "$WS_PHYS" "$SCOPE" >/dev/null 2>&1 || {
+  echo "env: immutable blast-radius capture failed for run $SCOPE"
   exit 6
 }
 
@@ -145,4 +201,5 @@ echo "lane-setup: ready — environment built, baseline green, audit captured"
 # THE path, emitted rather than described. The skill used to recompute this
 # string itself, so a `$TMPDIR` that differed between the driver's shell and
 # this script would silently put the contract somewhere setup never created.
+echo "FORGE_LANE_RUN_KEY=$SCOPE"
 echo "FORGE_LANE_RUNTIME=$RUNTIME_DIR"
