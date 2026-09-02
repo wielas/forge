@@ -1186,6 +1186,7 @@ template/branch-name-judges-by-argument  the CI path (branch passed in, detached
 template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
 lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
+lane/scratch-is-board-scoped      run ids are board-local; scratch and audit carry the board, same-board reuse still refuses
 lane/role-boundary-prepended      every contract states codex must not push/PR/touch the board
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/terminator-set-is-closed     kanban_request_review/_changes are named forbidden, not merely unlisted
@@ -1533,17 +1534,21 @@ run_lane_group() {
         "forge-lane §3 no longer invokes $setup — a bare relative path cannot resolve from a project worktree, so it must be the ~/.forge/repo form"
   else
     _lane_fixture true true
+    # HERMES_KANBAN_BOARD is PINNED, not inherited: lane-setup scopes its
+    # per-run paths with it, so an ambient board in the shell running verify
+    # would move the paths these cases assert.
     setup_output="$(env TMPDIR="$TMPROOT" FORGE_LANE_AUDIT_ROOT="$laudit" \
+                    HERMES_KANBAN_BOARD=vboard \
                     "$setup" "$lrepo" setup-healthy 2>&1)"
     setup_rc=$?
     [ "$setup_rc" = 0 ] \
       || { e_ok=0; detail="$detail healthy-not-0($setup_output)"; }
-    [ -f "$laudit/setup-healthy/capture.complete" ] \
+    [ -f "$laudit/vboard-setup-healthy/capture.complete" ] \
       || { e_ok=0; detail="$detail healthy-did-not-capture"; }
-    [ -d "$TMPROOT/forge-lane-setup-healthy" ] \
+    [ -d "$TMPROOT/forge-lane-vboard-setup-healthy" ] \
       || { e_ok=0; detail="$detail healthy-did-not-create-runtime"; }
     printf '%s' "$setup_output" \
-      | grep -Fq "FORGE_LANE_RUNTIME=$TMPROOT/forge-lane-setup-healthy" \
+      | grep -Fq "FORGE_LANE_RUNTIME=$TMPROOT/forge-lane-vboard-setup-healthy" \
       || { e_ok=0; detail="$detail healthy-did-not-emit-runtime-path"; }
     # F77: the worktree must own its hooks, or two lanes' `make setup` race on
     # one shared file and the audit blames Codex for the loser.
@@ -1581,13 +1586,15 @@ run_lane_group() {
     [ "$(_rc env FORGE_LANE_AUDIT_ROOT="$laudit" "$setup" "$lrepo" baseline-dirty)" = 5 ] \
       || { e_ok=0; detail="$detail dirty-baseline-not-5"; }
     _lane_fixture true true
-    mkdir -p "$TMPROOT/forge-lane-runtime-exists"
+    mkdir -p "$TMPROOT/forge-lane-vboard-runtime-exists"
     [ "$(_rc env TMPDIR="$TMPROOT" FORGE_LANE_AUDIT_ROOT="$laudit" \
+              HERMES_KANBAN_BOARD=vboard \
               "$setup" "$lrepo" runtime-exists)" = 4 ] \
       || { e_ok=0; detail="$detail runtime-reuse-not-4"; }
     _lane_fixture true true
-    mkdir -p "$laudit/capture-exists"
+    mkdir -p "$laudit/vboard-capture-exists"
     [ "$(_rc env TMPDIR="$TMPROOT" FORGE_LANE_AUDIT_ROOT="$laudit" \
+              HERMES_KANBAN_BOARD=vboard \
               "$setup" "$lrepo" capture-exists)" = 6 ] \
       || { e_ok=0; detail="$detail audit-failure-not-6"; }
     setup_line="$(grep -n '~/.forge/repo/scripts/lane-setup.sh' "$lane" | head -1 | cut -d: -f1)"
@@ -1599,6 +1606,102 @@ run_lane_group() {
     else
       bad "env-prepared-before-codex" \
           "lane-setup.sh must build the environment and report a blockable reason —$detail"
+    fi
+  fi
+
+  # RUN IDS ARE BOARD-LOCAL. Every Hermes board keeps its own database at
+  # ~/.hermes/kanban/boards/<slug>/kanban.db, so ids restart at 1 per board —
+  # measured 2026-09-02, `forge-hello-20260902` and `forge-hello-20260902b`
+  # each issued 1, 2, 3. The per-run scratch dir and the audit baseline were
+  # both keyed on the run id ALONE, nothing ever cleans either up, and
+  # lane-setup treats a collision as a hard exit 4. So every FRESH board
+  # inherited the leftovers of an earlier one. That fired live on 2026-09-02:
+  # run 1 met a completed prior session's scratch and audit, and the run only
+  # survived because the worker improvised a quarantine that appears nowhere
+  # in this repo — no trap, no sweep, no documented recovery.
+  #
+  # BOTH DIRECTIONS ARE ASSERTED. A gate that refuses everything is as broken
+  # as one that refuses nothing, so this case pins the refusal as hard as it
+  # pins the fix:
+  #   two DIFFERENT boards, both run id 1  -> both proceed
+  #   the SAME board, same run id, twice   -> STILL exit 4
+  # The boards deliberately share ONE $TMPDIR and ONE audit root. That sharing
+  # is the real-life condition; isolating either would fake the proof.
+  #
+  # Refusing reuse is what stops two LIVE runs from sharing scratch and
+  # corrupting each other's baseline and blast-radius audit, which is why the
+  # repair is to scope the key and NOT to auto-remove or quarantine a
+  # colliding directory.
+  local b_ok=1 bdetail="" bkey
+  local btmp="$TMPROOT/board-scope" baudit="$TMPROOT/board-scope-audit"
+  if [ ! -x "$setup" ]; then
+    bad "scratch-is-board-scoped" "$setup is missing or not executable"
+  else
+    rm -rf "$btmp" "$baudit"; mkdir -p "$btmp" "$baudit"
+
+    _lane_fixture true true
+    [ "$(_rc env TMPDIR="$btmp" FORGE_LANE_AUDIT_ROOT="$baudit" \
+              HERMES_KANBAN_BOARD=alpha "$setup" "$lrepo" 1)" = 0 ] \
+      || { b_ok=0; bdetail="$bdetail board-alpha-run1-not-0"; }
+    # The defect, in one line: a different board reusing run id 1.
+    _lane_fixture true true
+    [ "$(_rc env TMPDIR="$btmp" FORGE_LANE_AUDIT_ROOT="$baudit" \
+              HERMES_KANBAN_BOARD=beta "$setup" "$lrepo" 1)" = 0 ] \
+      || { b_ok=0; bdetail="$bdetail cross-board-run1-collided"; }
+    # The safety property that must SURVIVE the fix.
+    _lane_fixture true true
+    [ "$(_rc env TMPDIR="$btmp" FORGE_LANE_AUDIT_ROOT="$baudit" \
+              HERMES_KANBAN_BOARD=alpha "$setup" "$lrepo" 1)" = 4 ] \
+      || { b_ok=0; bdetail="$bdetail same-board-reuse-not-4"; }
+    # Scoped in BOTH places, or board beta dies at the audit instead: the
+    # scratch guard fires first and would otherwise mask a board-blind audit.
+    { [ -d "$btmp/forge-lane-alpha-1" ] && [ -d "$btmp/forge-lane-beta-1" ]; } \
+      || { b_ok=0; bdetail="$bdetail board-missing-from-scratch-path"; }
+    { [ -d "$baudit/alpha-1" ] && [ -d "$baudit/beta-1" ]; } \
+      || { b_ok=0; bdetail="$bdetail board-missing-from-audit-path"; }
+
+    # A user-chosen slug must not climb out of $TMPDIR. Malformed is refused,
+    # not degraded — degrading it would hide an upstream problem.
+    _lane_fixture true true
+    [ "$(_rc env TMPDIR="$btmp" FORGE_LANE_AUDIT_ROOT="$baudit" \
+              HERMES_KANBAN_BOARD=../escape "$setup" "$lrepo" 1)" = 2 ] \
+      || { b_ok=0; bdetail="$bdetail unsafe-board-not-2"; }
+    [ "$(_rc env TMPDIR="$btmp" FORGE_LANE_AUDIT_ROOT="$baudit" \
+              HERMES_KANBAN_BOARD=.. "$setup" "$lrepo" 1)" = 2 ] \
+      || { b_ok=0; bdetail="$bdetail dotdot-board-not-2"; }
+    # An UNSET board degrades to a sentinel, never to `forge-lane--7`. A
+    # leading underscore is illegal in a real Hermes slug, so no board can
+    # shadow it.
+    _lane_fixture true true
+    [ "$(_rc env TMPDIR="$btmp" FORGE_LANE_AUDIT_ROOT="$baudit" \
+              HERMES_KANBAN_BOARD= "$setup" "$lrepo" 7)" = 0 ] \
+      || { b_ok=0; bdetail="$bdetail unset-board-not-0"; }
+    { [ -d "$btmp/forge-lane-_noboard-7" ] && [ ! -e "$btmp/forge-lane--7" ]; } \
+      || { b_ok=0; bdetail="$bdetail unset-board-not-sentinel"; }
+
+    # The skill cannot find the capture unless setup EMITS the key, and the
+    # documented last-line contract must survive the extra line.
+    _lane_fixture true true
+    bkey="$(env TMPDIR="$btmp" FORGE_LANE_AUDIT_ROOT="$baudit" \
+            HERMES_KANBAN_BOARD=gamma "$setup" "$lrepo" 2 2>&1)"
+    printf '%s' "$bkey" | grep -Fq "FORGE_LANE_RUN_KEY=gamma-2" \
+      || { b_ok=0; bdetail="$bdetail did-not-emit-run-key"; }
+    # The scoping depends on a dispatcher variable, so the skill's runtime
+    # table must name it and lane-setup must actually read it. Documented-but-
+    # unread, or read-but-undocumented, are the two ways these drift apart.
+    grep -Fq 'HERMES_KANBAN_BOARD' "$setup" \
+      || { b_ok=0; bdetail="$bdetail setup-does-not-read-the-board"; }
+    grep -Fq 'HERMES_KANBAN_BOARD' "$lane" \
+      || { b_ok=0; bdetail="$bdetail skill-runtime-table-omits-the-board"; }
+    [ "$(printf '%s\n' "$bkey" | tail -1)" \
+        = "FORGE_LANE_RUNTIME=$btmp/forge-lane-gamma-2" ] \
+      || { b_ok=0; bdetail="$bdetail runtime-path-is-no-longer-the-last-line"; }
+
+    if [ "$b_ok" = 1 ]; then
+      ok "scratch-is-board-scoped (two boards share run id 1; same-board reuse still 4)"
+    else
+      bad "scratch-is-board-scoped" \
+          "run ids are board-local, so scratch AND audit must carry the board — while a genuine same-board collision must still refuse —$bdetail"
     fi
   fi
 
@@ -1815,9 +1918,13 @@ run_lane_group() {
   elif ! grep -Fq '~/.forge/repo/scripts/lane-blast-radius.sh' "$lane"; then
     bad "lane-final-worktree-is-clean" \
         "forge-lane §5 no longer invokes $blast — a bare relative path cannot resolve from a project worktree, so it must be the ~/.forge/repo form"
-  elif ! grep -Fq '"$BLAST" capture "$WS_PHYS" "$RUN_ID"' "$setup"; then
+  elif ! grep -Fq '"$BLAST" capture "$WS_PHYS" "$SCOPE"' "$setup"; then
+    # $SCOPE, not $RUN_ID: run ids are board-local, so the audit baseline is
+    # filed under lane-setup's board-scoped key. This guard is an `elif` over
+    # the whole blast subgroup — when it stops matching, twenty cases silently
+    # do not run rather than turning red, so it must track the real call.
     bad "lane-capture-is-pre-codex" \
-        "lane-setup must take the immutable capture before it can return ready"
+        "lane-setup must take the immutable capture, under the board-scoped key, before it can return ready"
   else
     _blast_fixture blast-base || bad "blast-fixture" "could not create linked-worktree fixture"
     _expect_blast "blast/missing-run-capture" 2 \
@@ -1994,20 +2101,33 @@ run_lane_group() {
   # lane-owned scratch file in one run-specific $TMPDIR, which the sandbox can
   # write without forcing the final worktree check to ignore a whole directory.
   #
-  # The path has exactly ONE definition. The skill used to recompute the same
-  # `${TMPDIR:-/tmp}/forge-lane-$RUN_ID` string that lane-setup.sh builds, so a
+  # The path has exactly ONE definition. The skill used to recompute the
+  # `${TMPDIR:-/tmp}/forge-lane-...` string that lane-setup.sh builds, so a
   # $TMPDIR differing between the driver's shell and the script would put the
-  # contract somewhere setup never created. Setup emits it; the skill consumes it.
+  # contract somewhere setup never created. Setup emits it; the skill consumes
+  # it. The same now holds for the audit key: setup emits FORGE_LANE_RUN_KEY
+  # and §5 passes it back, because a run id alone is board-local and collides.
+  # The negative pin below names the RETIRED string. Once the path became
+  # board-scoped that grep would still pass against a form nothing produces,
+  # so it is kept AND joined by pins on the current one — a stale assertion
+  # that can no longer fail is this repo's signature bug, and leaving only the
+  # old one would have committed it in the very fix for it.
+  local lane_audit_call
+  lane_audit_call="$(grep -A2 -F 'lane-blast-radius.sh check' "$lane")"
   if grep -Fq 'FORGE_LANE_RUNTIME=$RUNTIME_DIR' "$setup" \
+     && grep -Fq 'FORGE_LANE_RUN_KEY=$SCOPE' "$setup" \
      && grep -Fq 'UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache"' "$lane" \
      && grep -Fq 'UV_CACHE_DIR="$FORGE_LANE_RUNTIME/uv-cache"' scripts/codex-run.sh \
      && grep -Fq 'FORGE_LANE_RUNTIME' "$lane" \
      && ! grep -Fq 'forge-lane-$HERMES_KANBAN_RUN_ID' "$lane" \
+     && ! grep -Fq 'forge-lane-$HERMES_KANBAN_BOARD' "$lane" \
+     && printf '%s' "$lane_audit_call" | grep -Fq '"$FORGE_LANE_RUN_KEY"' \
+     && ! printf '%s' "$lane_audit_call" | grep -Fq '"$HERMES_KANBAN_RUN_ID"' \
      && ! grep -Fq '.forge/uv-cache' "$lane"; then
     ok "uv-cache-dir-is-deterministic-and-outside-worktree"
   else
     bad "uv-cache-dir-is-deterministic-and-outside-worktree" \
-        "lane-setup must emit FORGE_LANE_RUNTIME and the skill must consume it, never recompute the \$TMPDIR path itself"
+        "lane-setup must emit FORGE_LANE_RUNTIME and FORGE_LANE_RUN_KEY and the skill must consume both — never recompute the \$TMPDIR path, and never audit under the bare run id"
   fi
 
   # Codex's workaround for the missing venv was UV_CACHE_DIR + UV_OFFLINE.

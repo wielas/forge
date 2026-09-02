@@ -82,6 +82,14 @@ else
   echo "blast-radius: HOME is unset and FORGE_LANE_AUDIT_ROOT was not provided" >&2
   exit 2
 fi
+# <run-id> is the CALLER'S SCOPE KEY, not necessarily a bare Hermes run id.
+# Run ids are board-local — every board's database restarts them at 1 — so
+# lane-setup.sh passes `<board>-<run-id>` and the lane skill passes the
+# `FORGE_LANE_RUN_KEY` that setup emitted. Keying this directory on a bare run
+# id made a fresh board's run 1 collide with an earlier board's completed run 1
+# (measured 2026-09-02), and the single-use guards below then read that stale
+# capture as this run's own. Sanitising the board is deliberately NOT repeated
+# here: lane-setup owns that rule, and a second copy is how the two drift.
 STATE="$AUDIT_BASE/$RUN_ID"
 
 cd "$WS" 2>/dev/null || {

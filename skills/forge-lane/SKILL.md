@@ -29,6 +29,7 @@ Set by the dispatcher (verified, Hermes 0.20.4 `kanban-worker-lanes` contract):
 | `HERMES_KANBAN_WORKSPACE` | absolute path to *this* task's workspace |
 | `HERMES_KANBAN_BRANCH` | branch name for `worktree` tasks (may be unset) |
 | `HERMES_KANBAN_RUN_ID` | this run's id — pass as `expected_run_id` on terminators if you suspect a reclaim |
+| `HERMES_KANBAN_BOARD` | this board's slug — run ids are board-LOCAL, so §3 scopes the per-run paths with it |
 
 Use the `kanban_*` tools for every board operation. Never shell out to
 `hermes kanban <verb>` — the tools write the DB directly and work on every
@@ -131,8 +132,9 @@ audit could not capture. Setup-created worktree dirt is also `5`: it predates
 Codex and must not later be reported as Codex escaping its boundary. Each
 failure prints a canonical `<class>: <reason>` to pass into the block verbatim.
 
-Its last stdout line is `FORGE_LANE_RUNTIME=<path>` — export that value, do not
-recompute it. It is the only scratch directory the lane writes to.
+Its last two stdout lines are `FORGE_LANE_RUN_KEY=<board>-<run-id>` and
+`FORGE_LANE_RUNTIME=<path>` (the lane's only scratch directory) — export
+**both**, never recompute: ids are board-LOCAL, so recomputing rebuilds the collision.
 
 ## 4. Hand Codex the contract
 
@@ -204,9 +206,9 @@ refactors; that is a `kanban_block`, not a retry.
 
 ## 5. Verify it yourself
 
-§3 captured an immutable baseline under `~/.forge/lane-audits/<run-id>`, outside
-every Codex-writable root. Do not recapture or replay the final audit: each run
-id permits one capture and one check.
+§3 captured an immutable baseline under `~/.forge/lane-audits/<run-key>`, outside
+every Codex-writable root. Pass `$FORGE_LANE_RUN_KEY`, never the bare run id, or
+`check` finds no capture and blocks. One capture and one check per key, no replay.
 
 ```bash
 make check
@@ -227,8 +229,7 @@ After `make check`, the hostile review, and restoration of every temporary
 verification mutation, run the final fail-closed audit:
 
 ```bash
-~/.forge/repo/scripts/lane-blast-radius.sh check \
-  "$HERMES_KANBAN_WORKSPACE" "$HERMES_KANBAN_RUN_ID"
+~/.forge/repo/scripts/lane-blast-radius.sh check "$HERMES_KANBAN_WORKSPACE" "$FORGE_LANE_RUN_KEY"
 ```
 
 It holds a named set immutable: both hooks directories, local and worktree
