@@ -1075,9 +1075,22 @@ run_template_group() {
   # `main` and a detached HEAD must PASS: no-main-push owns main-branch policy
   # including its bootstrap exception, and a hook that cannot see which refs are
   # being pushed has no question to answer and must not invent one.
+  # `<id>` IS NOT A DECIMAL INTEGER, and the middle three probes are the shapes
+  # that proved it: JobApp's board runs `C6`, `C9.1` and `C10`, and the tutorial
+  # project runs `hello-1`. A rule that reads the id as a number refuses every
+  # one of them at push time, on every push of the run — F7's cost with the sign
+  # flipped, charged to correct work. Widening the ID does not loosen the SLUG:
+  # `chunk/7-Render` is still refused, and `chunk/7--foo` is here because it is
+  # the one shape where this rule and the gate's disagreed — the template's
+  # `[a-z0-9-]+` swallowed a doubled hyphen the gate rejected. Two rules that
+  # disagree is F30's defect, and it surfaces as a branch that passes locally
+  # and fails in CI.
   local bn="$dest/scripts/branch-name.sh" bn_ok=1 got
   for probe in "main:0" "chunk/7-render-report:0" "chunk/12-a-b-c:0" "HEAD:0" \
-               "chunk/8:1" "chunk/6:1" "slice/foo:1" "chunk/7-Render:1"; do
+               "chunk/C6-breadth-sources:0" "chunk/hello-1-greet:0" \
+               "chunk/C7.1-mirror-and-migration-hardening:0" \
+               "chunk/8:1" "chunk/6:1" "slice/foo:1" "chunk/7-Render:1" \
+               "chunk/7--foo:1"; do
     got=0; "$bn" "${probe%:*}" >/dev/null 2>&1 || got=1
     if [ "$got" != "${probe##*:}" ]; then
       bad "branch-name-judges-by-argument" \
@@ -1085,7 +1098,7 @@ run_template_group() {
       bn_ok=0; break
     fi
   done
-  [ "$bn_ok" = 1 ] && ok "branch-name-judges-by-argument (8 names, the CI path)"
+  [ "$bn_ok" = 1 ] && ok "branch-name-judges-by-argument (12 names, the CI path)"
 
   # `make check` is the verdict forge-lane §5 trusts in place of Codex's word,
   # so it must not be able to answer from a cache. Measured 2026-07-28: a lane
@@ -1260,6 +1273,7 @@ metadata/lane-validates-before-complete the nondeterministic lane gates the exac
 metadata/valid-by-profile               canonical chunk/judge fixtures and the recorded gate producer validate by profile
 metadata/published-examples-validate    the two JSON examples in the canonical document satisfy their own schemas
 metadata/rejects-nested-chunk            the historical $."forge.chunk.v1" envelope is not canonical
+metadata/chunk-id-is-not-digits          letter-prefixed and dotted ids validate, and mismatched ids are still caught
 metadata/rejects-reserved-nested-copy    a flat envelope cannot hide a second copy under a forge.* key
 metadata/rejects-incomplete-chunk        a chunk missing a required exhaust field cannot complete
 metadata/rejects-coverage-key-drift      check.coverage cannot silently replace check.coverage_pct
@@ -1282,6 +1296,7 @@ prejudge/steps-walker-exact       a checked-in fixture of step shapes reproduces
 prejudge/steps-walker-catches-both-cited-shapes  F14's no-assertion and render(x)==render(x) are both reported
 prejudge/steps-walker-has-no-false-positives     six legitimate Then-step shapes are not reported
 prejudge/recorded-prs-exact       two recorded PRs reproduce a checked-in severity map, offline
+prejudge/branch-name-reads-real-chunk-ids  letter-prefixed and dotted ids pass, and the repair action keeps the id
 prejudge/touches-widening-is-visible head-only Touches additions warn even when the implementation is in scope
 prejudge/touches-removal-is-not-widening paths removed from Touches do not warn as widening
 prejudge/touches-unchanged-passes unchanged contracts with in-scope implementation pass both Touches checks
@@ -3587,6 +3602,51 @@ run_metadata_group() {
     fi
   fi
 
+  # The SAME defect one layer down, and the layer that costs most. The lane's
+  # §7 gates `kanban_complete` on this validator exiting 0, so a digits-only
+  # `chunk_id`/`branch` pattern kills a JobApp run at the TERMINATOR — after the
+  # PR is open and the whole chunk is paid for. Measured on this worktree before
+  # the widening, against `chunk-valid.json` retargeted to C10:
+  #
+  #   branch: 'chunk/C10-instance-paths' does not match '^chunk/[0-9]+-…'
+  #   chunk_id: 'CHUNK-C10' does not match '^CHUNK-[0-9]+$'
+  #
+  # The MISMATCH rows are the ones that earn this case. `semantic_errors()`
+  # compares the branch id to the chunk id only when BOTH of its own regexes
+  # match, so widening the schemas alone would let `CHUNK-C10` sail past a
+  # comparison that silently stopped happening — a check switched off by the
+  # repair, which is this repo's signature bug. The digits rows are the control:
+  # nothing about the old shape may change.
+  local ids_ok=1 rc
+  for spec in \
+    "chunk:CHUNK-C10:chunk/C10-instance-paths:0" \
+    "chunk:CHUNK-C9.1:chunk/C9.1-pipeline-observability:0" \
+    "chunk:CHUNK-7:chunk/7-sync-engine:0" \
+    "chunk:CHUNK-C10:chunk/C9.1-pipeline-observability:1" \
+    "chunk:CHUNK-7:chunk/8-sync-engine:1" \
+    "gate:CHUNK-C10:chunk/C10-instance-paths:0" \
+    "gate:CHUNK-C10:chunk/C9.1-pipeline-observability:1"; do
+    local kind="${spec%%:*}" rest="${spec#*:}"
+    local cid="${rest%%:*}"; rest="${rest#*:}"
+    local br="${rest%%:*}" want_rc="${rest##*:}"
+    if [ "$kind" = chunk ]; then
+      rc="$(jq --arg c "$cid" --arg b "$br" '.chunk_id=$c | .branch=$b' \
+              "$fixtures/chunk-valid.json" \
+            | metadata_rc --profile forge-codex-lane -)"
+    else
+      rc="$(jq --arg c "$cid" --arg b "$br" '.chunk=$c | .branch=$b' \
+              "$TMPROOT/metadata-produced-gate.json" \
+            | metadata_rc --profile forge-prejudge -)"
+    fi
+    if [ "$rc" != "$want_rc" ]; then
+      bad "chunk-id-is-not-digits" \
+          "$kind envelope $cid on $br returned $rc, expected $want_rc: $(tail -2 "$validator_log" | tr '\n' ' ')"
+      ids_ok=0; break
+    fi
+  done
+  [ "$ids_ok" = 1 ] \
+    && ok "chunk-id-is-not-digits (7 envelopes: C10, C9.1 and 7 accepted, mismatched ids still refused)"
+
   if metadata_validate --profile forge-codex-lane "$fixtures/chunk-additive.json"; then
     ok "allows-additive-hermes-keys (changed_files/tests_run stay siblings)"
   else
@@ -3911,6 +3971,81 @@ run_prejudge_group() {
   # reading it, which is how a checked-in expectation stops being evidence.
   [ -z "$drift" ] && ok "recorded-prs-exact (2 PRs, 8 checks each, offline)" \
     || bad "recorded-prs-exact" "the severity map moved on:$drift — $(jq -c . "$TMPROOT/${drift## }.json" 2>/dev/null | cut -c1-200)"
+
+  # ---- the same gate, against the id shapes real products use --------------
+  # `<id>` was read as a decimal integer in four places, and the reproduction is
+  # the whole argument. `chunk/C10-instance-paths` and
+  # `chunk/C9.1-pipeline-observability` were BLOCKED with "has no <slug>" — a
+  # sentence that is false about the branch it names — because the `chunk/[0-9]*-*`
+  # arm cannot match a letter and everything fell through to the no-slug arm.
+  # branch-name blocks, so that stopped every chunk of a 15-chunk JobApp run,
+  # each one AFTER a full unattended lane run had already been paid for. That is
+  # F7's cost with the sign flipped: the rule now refuses correct work.
+  #
+  # THE ACTION IS ASSERTED, NOT JUST THE STATUS, and this is the column that
+  # matters most. The id sed was `s/^[^0-9]*([0-9]+).*/\1/`, which turns
+  # `CHUNK-C10` into `10` and `CHUNK-C9.1` into `9`, so the gate blocked and then
+  # advised `git branch -m … chunk/10-…`. A worker who obeys ends up with a
+  # branch whose id no longer matches its card, and the next run cannot pair
+  # them. A status-only matrix goes green with that sed still in place.
+  #
+  # The `.chunk` column asserts the derivation at the top of the gate, which is
+  # the fourth place and the reason the other three cannot be fixed alone: with
+  # `chunk` null there is no CONTRACT, so `scenario-count` and `touches` SKIP.
+  # Widening only the branch rule would convert a wrong block into a clear with
+  # a blocking check silently skipped, which is strictly worse.
+  #
+  # `slice/foo` carrying a `CHUNK-C10:` title must BLOCK, not skip: chunk-ness is
+  # read from the title precisely so a chunk pushed to any name at all is still
+  # judged, and `CHUNK-[0-9]*` could not see a letter id. `planning/lifecycle` is
+  # the case that scoping exists for (PR #1) and must still skip.
+  #
+  # An id containing a hyphen is not recoverable from the branch alone — the
+  # branch separator IS a hyphen — so `chunk/hello-1-greet` yields `CHUNK-hello`
+  # and its contract checks skip naming that id. The branch is still correctly
+  # named; the grammar simply reads `hello` as the id and `1-greet` as the slug.
+  #
+  # Columns: branch | PR title | status | substring the action must carry | .chunk
+  local bfx="$TMPROOT/branch-shapes" b t want_status want_act want_chunk
+  local shapes_ok=1 gotj got_status got_act got_chunk
+  while IFS='|' read -r b t want_status want_act want_chunk; do
+    [ -n "$b" ] || continue
+    rm -rf "$bfx"; mkdir -p "$bfx"
+    jq --arg b "$b" --arg t "$t" '.headRefName=$b | .title=$t' \
+       "$prs/pr-9/pr.json" > "$bfx/pr.json"
+    gotj="$("$gate" --fixture "$bfx" --json 2>/dev/null)"
+    got_status="$(printf '%s' "$gotj" | jq -r '.checks[]|select(.id=="branch-name")|.status')"
+    got_act="$(printf '%s' "$gotj" | jq -r '.checks[]|select(.id=="branch-name")|.action // ""')"
+    got_chunk="$(printf '%s' "$gotj" | jq -r '.chunk // "null"')"
+    if [ "$got_status" != "$want_status" ]; then
+      bad "branch-name-reads-real-chunk-ids" \
+          "'$b' is $got_status, expected $want_status: $(printf '%s' "$gotj" | jq -r '.checks[]|select(.id=="branch-name")|.evidence')"
+      shapes_ok=0; break
+    fi
+    case "$got_act" in
+      *"$want_act"*) ;;
+      *) bad "branch-name-reads-real-chunk-ids" \
+             "'$b' was told '${got_act:-(no action)}' — a repair a worker can obey must name $want_act, not a renumbered branch"
+         shapes_ok=0; break;;
+    esac
+    if [ "$got_chunk" != "$want_chunk" ]; then
+      bad "branch-name-reads-real-chunk-ids" \
+          "'$b' derived chunk=$got_chunk, expected $want_chunk — an unparsed id skips scenario-count and touches instead of running them"
+      shapes_ok=0; break
+    fi
+  done <<'SHAPES'
+chunk/C10-instance-paths|CHUNK-C10: instance paths and second instance|pass||CHUNK-C10
+chunk/C9.1-pipeline-observability|CHUNK-C9.1: pipeline observability|pass||CHUNK-C9.1
+chunk/hello-1-greet|CHUNK-hello-1: greet the world|pass||CHUNK-hello
+chunk/7-render-report|CHUNK-7: render the report|pass||CHUNK-7
+chunk/C10|CHUNK-C10: instance paths and second instance|block|chunk/C10-instance|CHUNK-C10
+chunk/C7.1-Mirror|CHUNK-C7.1: mirror and migration hardening|block|chunk/C7.1-mirror|CHUNK-C7.1
+chunk/8|CHUNK-8: render the report|block|chunk/8-render|CHUNK-8
+slice/foo|CHUNK-C10: instance paths and second instance|block|chunk/C10-instance|null
+planning/lifecycle|planning: the chunk lifecycle|skip||null
+SHAPES
+  [ "$shapes_ok" = 1 ] \
+    && ok "branch-name-reads-real-chunk-ids (9 shapes: verdict, repair action and derived id)"
 
   # The head contract is still the source for the ordinary `touches` check.
   # Comparing it with the recorded base contract adds a second, independent

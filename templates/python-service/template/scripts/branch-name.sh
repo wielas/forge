@@ -41,7 +41,18 @@ if [ "$branch" = "HEAD" ] || [ -z "$branch" ]; then
   exit 0
 fi
 
-if printf '%s' "$branch" | grep -Eq '^chunk/[A-Za-z0-9]+-[a-z0-9-]+$'; then
+# <id> is `[A-Za-z0-9]+` with optional dotted segments — `7`, `C6`, `C9.1`.
+# <slug> is lowercase alphanumeric words joined by SINGLE hyphens.
+#
+# Both halves were wrong here, in opposite directions. `[A-Za-z0-9]+` refused
+# every dotted id, so `chunk/C7.1-mirror-and-migration-hardening` was blocked at
+# push time; `[a-z0-9-]+` accepted `chunk/7--foo`, which scripts/prejudge.sh's
+# copy of this rule refused at review time. A branch that passes the hook and
+# fails the gate costs F7's price after the work is done, which is exactly what
+# writing the rule once was meant to prevent — so this pattern and the one in
+# `branch_name()` in scripts/prejudge.sh are now the same string, and must stay
+# that way. `make verify` probes both against the same names.
+if printf '%s' "$branch" | grep -Eq '^chunk/[A-Za-z0-9]+(\.[A-Za-z0-9]+)*-[a-z0-9]+(-[a-z0-9]+)*$'; then
   exit 0
 fi
 

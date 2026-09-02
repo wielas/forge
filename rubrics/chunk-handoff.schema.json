@@ -34,7 +34,8 @@
     },
     "chunk_id": {
       "type": "string",
-      "pattern": "^CHUNK-[0-9]+$"
+      "description": "Chunk contract id, e.g. CHUNK-7 or CHUNK-C9.1. Not a decimal integer: the same grammar hermes/board-bootstrap.sh and scripts/acceptance-freeze.sh already enforce on card ids.",
+      "pattern": "^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "project": {
       "type": "string",
@@ -42,7 +43,8 @@
     },
     "branch": {
       "type": "string",
-      "pattern": "^chunk/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$"
+      "description": "chunk/<id>-<slug>. Byte-identical to the pattern in scripts/prejudge.sh and templates/python-service/template/scripts/branch-name.sh; a fourth dialect is the defect this rule exists to prevent.",
+      "pattern": "^chunk/[A-Za-z0-9]+(\\.[A-Za-z0-9]+)*-[a-z0-9]+(-[a-z0-9]+)*$"
     },
     "pr": {
       "type": "string",
