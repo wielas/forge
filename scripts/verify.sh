@@ -1279,6 +1279,7 @@ metadata/rejects-incomplete-chunk        a chunk missing a required exhaust fiel
 metadata/rejects-coverage-key-drift      check.coverage cannot silently replace check.coverage_pct
 metadata/rejects-semantic-contradictions scenarios, identities, URLs, checks, counts and result cannot disagree
 metadata/allows-additive-hermes-keys     dashboard-native sibling keys remain compatible
+metadata/judge-envelope-as-produced      the key set a real prejudge run stored, once the harness fills nits_as_cards
 metadata/rejects-profile-schema-mismatch a valid envelope from the wrong producer is still invalid
 metadata/rejects-missing-metadata        a completed producer run cannot carry null metadata
 metadata/validator-runtime-is-locked     the shebang the lane runs pins transitive validation code, not just jsonschema
@@ -1320,7 +1321,7 @@ prejudge/review-routes-by-gate-result  a gate block bounces with no model spawne
 prejudge/review-emits-a-terminator-envelope  one forge.review.v1 object tells the model which terminator to call
 prejudge/review-never-prints-the-diff  a recorded 63 KB patch reaches the prompt file and not stdout
 prejudge/schema-hides-stamped-fields  the model is not asked for the fields the operator stamps
-prejudge/cost-is-storable         the verdict schema takes cost + session_id, optional, cache field intact
+prejudge/cost-is-storable         the verdict schema takes cost, session_id, worker_session_id and tokens_estimate — storable, never demanded, cache field intact
 prejudge/deriver-sources-without-side-effects  sourcing verdict.sh does not change the caller's shell options
 prejudge/verdict-derives-from-scores     judge-rubric.md's verdict logic, as a table of cases (F29)
 prejudge/unevidenced-score-is-not-a-verdict  a score below 3 naming no finding fails instead of deriving
@@ -1332,6 +1333,7 @@ prejudge/shadow-needs-no-writable-tmpdir  the stage does not depend on TMPDIR be
 prejudge/stamp-reports-its-own-failure    emitting nothing returns non-zero, not 0
 prejudge/shadow-preserves-the-routing-field  stamping never alters .verdict
 prejudge/stamped-envelope-declares-every-key  no key the schema does not declare (additionalProperties:false)
+prejudge/envelope-is-repaired-before-it-is-stored  an absent nits_as_cards is filled and an invented worker_session_id cannot survive
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
@@ -3653,6 +3655,38 @@ run_metadata_group() {
     bad "allows-additive-hermes-keys" "dashboard-native sibling keys were rejected"
   fi
 
+  # The same tolerance, on the one envelope that did not have it. Recorded from
+  # board forge-hello-20260902, task t_0868e3c1 run 2, 2026-09-02: the chunk
+  # envelope beside it validated and this one did not, with three errors.
+  #
+  #   $: Additional properties are not allowed ('worker_session_id' was unexpected)
+  #   $: 'nits_as_cards' is a required property
+  #   $: 'tokens_estimate' is a required property
+  #
+  # `metadata-live` exits 1 on that, which docs/staged-run-guide.md defines as
+  # "stop and repair the producer" — at the ROOT checkpoint, after the chunk had
+  # been implemented, reviewed and merged. The three dispositions, one leg each:
+  #
+  # A. `nits_as_cards` stays REQUIRED, so the recorded envelope stays refused.
+  #    It is a genuine judgement the scorer alone made, and the repair is in the
+  #    harness, which now fills the absent case with [] rather than in a schema
+  #    that stops asking for it.
+  # B. With it filled, the envelope a real run stores must VALIDATE.
+  #    `worker_session_id` is Hermes's own stamp on task_runs.metadata
+  #    (docs/hermes-field-notes.md) — the exact provenance metrics.sh joins on —
+  #    so refusing it makes every real prejudge run invalid forever, and
+  #    `tokens_estimate` is not demanded of a verdict whose harness reported no
+  #    usage. `chunk_id` is recorded as it came back, `chunk_hello_1`, because
+  #    nothing here catches that yet and pretending otherwise would hide it.
+  # C. Declaring ONE measured key is not opening the envelope. A second,
+  #    unmeasured sibling is still refused: additionalProperties:false is what
+  #    prejudge/stamped-envelope-declares-every-key rests on.
+  local live="$fixtures/judge-live-20260902.json" live_ok=1
+  [ "$(metadata_rc --profile forge-prejudge "$live")" = 1 ] || live_ok=0
+  jq '.nits_as_cards = []' "$live"     | metadata_validate --profile forge-prejudge - || live_ok=0
+  [ "$(jq '.nits_as_cards = [] | .helpfully_invented = "x"' "$live"        | metadata_rc --profile forge-prejudge -)" = 1 ] || live_ok=0
+  [ "$live_ok" = 1 ]     && ok "judge-envelope-as-produced (the recorded key set, once the harness fills nits_as_cards)"     || bad "judge-envelope-as-produced"         "the envelope forge-hello-20260902 actually stored must validate once nits_as_cards is filled, and only the substrate's own sibling key may be declared: $(tail -3 "$validator_log" | tr '\n' ' ')"
+
   if [ "$(metadata_rc --profile forge-prejudge "$fixtures/chunk-valid.json")" = 1 ]; then
     ok "rejects-profile-schema-mismatch"
   else
@@ -4571,20 +4605,37 @@ FROZEN_FEATURE
   # measure. cache_read_input_tokens is required *within* cost because without
   # it F21's cache-hostility claim, and every saving proposed against it, is
   # unfalsifiable.
+  #
+  # `tokens_estimate` USED TO BE REQUIRED HERE, and the rubric one directory up
+  # said in the same breath that it is stamped by the harness and never produced
+  # by the model. Both could not stand: it comes off the same usage envelope
+  # `cost` does, so on the paths where cost cannot be stamped — an interactive
+  # tier-2 review reports no usage at all — the required field had no permitted
+  # author. On 2026-09-02 that refused a completed, paid-for review at the root
+  # checkpoint. It is optional in the schema and stamped on every tier-1 review
+  # by scripts/prejudge-review.sh, which is where a producer obligation belongs;
+  # prejudge/scorer-is-the-control-arm still pins the line that stamps it.
+  #
+  # `worker_session_id` is the mirror image: declared so the substrate's stamp
+  # survives additionalProperties:false, and optional because a tier-2 verdict
+  # written by hand has no Hermes run behind it.
   if ! command -v jq >/dev/null 2>&1; then
     skip "cost-is-storable" "jq not on PATH"
   elif jq -e '
       (.properties.cost.required | index("cache_read_input_tokens"))
       and (.properties.cost.required | index("total_cost_usd"))
       and (.properties.session_id.type == "string")
+      and (.properties.worker_session_id.type == "string")
       and ((.required | index("cost")) == null)
       and ((.required | index("session_id")) == null)
-      and (.required | index("tokens_estimate"))
+      and ((.required | index("worker_session_id")) == null)
+      and ((.required | index("tokens_estimate")) == null)
+      and (.properties.tokens_estimate.type == "integer")
     ' rubrics/judge-verdict.schema.json >/dev/null 2>&1; then
     ok "cost-is-storable"
   else
     bad "cost-is-storable" \
-        "judge-verdict.schema.json must accept cost/session_id as OPTIONAL, keep tokens_estimate required, and require cache_read_input_tokens inside cost"
+        "judge-verdict.schema.json must accept cost/session_id/worker_session_id/tokens_estimate as OPTIONAL but storable, and require cache_read_input_tokens inside cost"
   fi
 
   # -------------------------------------------------------------------------
@@ -4789,6 +4840,39 @@ TABLE
   else
     bad "stamped-envelope-declares-every-key" \
         "the stamped envelope carries a key judge-verdict.schema.json does not declare, and the schema is additionalProperties:false"
+  fi
+
+  # The producer half of 2026-09-02's root-checkpoint refusal, EXECUTED rather
+  # than asserted (ADR-0003). The filter is lifted out of the script and run, so
+  # this cannot pass against a repair that has drifted or been deleted. Two
+  # directions, one line:
+  #   - the scorer's absent `nits_as_cards` becomes [], the only thing an
+  #     omitted array can honestly mean. It stays a model field and stays
+  #     required in the stored envelope; filling an absence is not the overwrite
+  #     STAMPED performs.
+  #   - a `worker_session_id` the scorer produced does NOT survive. The schema
+  #     declares that key for Hermes's own stamp, which also offers it to the
+  #     model, and an invented join key is worse than a missing one:
+  #     scripts/metrics.sh would join real usage onto a session that never ran.
+  local repair repaired_env
+  repair="$(sed -n "s/^ *| jq -c '\(.*\)')\"$/\1/p" "$review")"
+  if ! command -v jq >/dev/null 2>&1; then
+    skip "envelope-is-repaired-before-it-is-stored" "jq not on PATH"
+  elif [ -z "$repair" ]; then
+    bad "envelope-is-repaired-before-it-is-stored" \
+        "no envelope repair found in $review — the 2026-09-02 root-checkpoint refusal is unfixed again"
+  elif repaired_env="$(printf '%s' \
+        '{"verdict":"approve","worker_session_id":"invented-by-the-scorer"}' \
+        | jq -c "$repair" 2>/dev/null)" \
+    && printf '%s' "$repaired_env" | jq -e '
+         .nits_as_cards == []
+         and (has("worker_session_id") | not)
+         and .verdict == "approve"
+       ' >/dev/null 2>&1; then
+    ok "envelope-is-repaired-before-it-is-stored"
+  else
+    bad "envelope-is-repaired-before-it-is-stored" \
+        "the repair must fill an absent nits_as_cards, drop a model-authored worker_session_id, and touch nothing else (got '${repaired_env:-nothing}')"
   fi
 
   # The caller must use the guarded entry point, not the raw two lines.

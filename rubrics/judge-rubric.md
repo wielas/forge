@@ -77,11 +77,31 @@ Scoring: 3 exemplary · 2 acceptable · 1 deficient (fixable) · 0 disqualifying
 
 The last four fields are **stamped by the operator from the judging harness,
 never produced by the judging model** — a model cannot report its own id, and
-still less its own token consumption. `cost` and `session_id` are optional,
-because they can only be stamped where a judging harness reports usage, and an
-interactive tier-2 review has no such envelope. The scorer is never asked for
-any of them: the schema it receives has them removed, because a field a model is
-asked for is a field it will invent.
+still less its own token consumption. The scorer is never asked for any of them:
+the schema it receives has them removed, because a field a model is asked for is
+a field it will invent.
+
+**All four are therefore OPTIONAL in `judge-verdict.schema.json`, and that
+includes `tokens_estimate`.** They can only be stamped where a judging harness
+reports usage, and an interactive tier-2 review has no such envelope. This
+paragraph and the schema contradicted each other until 2026-09-02: the schema
+demanded `tokens_estimate` while this file forbade the only actor present from
+producing it, which left a required field with no permitted author on any path
+without a usage envelope. A `--hello` rehearsal on board forge-hello-20260902
+stored a verdict missing it, `metadata-live` exited 1 — "stop and repair the
+producer" — and the run stopped at its ROOT checkpoint, after the chunk had been
+implemented, reviewed and merged. A contract nobody can always satisfy does not
+make the number appear; `scripts/prejudge-review.sh` stamping it on every scored
+tier-1 review does, and that line is pinned.
+
+The stored envelope also carries **`worker_session_id`, which neither tier
+writes**: Hermes stamps the dispatched worker's session id into
+`task_runs.metadata`, and `scripts/metrics.sh` joins on exactly that to reach
+real per-model usage. `judge-verdict.schema.json` is `additionalProperties:
+false`, so it declares the key rather than tolerating it — and
+`prejudge-review.sh` deletes any the scorer produced, so the substrate stays its
+only author. It is not part of the shape a judge writes, which is why it is
+absent from the JSON above.
 
 ## Bounce contract
 Every `block`/`fix` finding's `action` must be executable by a fresh mid-weight

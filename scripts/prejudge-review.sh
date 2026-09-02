@@ -335,6 +335,43 @@ pr_url="$PR_URL"
 [ -n "${verdict:-}" ] \
   || substrate "other: judge-envelope — claude -p returned no structured verdict"
 
+# ---------------------------------------------------------------------------
+# Stage 4a — make the envelope satisfy the schema it is stored against. Two
+# one-way repairs, both OUTSIDE the pinned region above, because the stamping
+# `jq` is S5's baseline and may be moved but not modified.
+#
+# Measured 2026-09-02, board forge-hello-20260902, task t_0868e3c1 run 2: the
+# first `--hello` rehearsal to run end to end stored a verdict that
+# `metadata-live` refused — `worker_session_id` unexpected, `nits_as_cards` and
+# `tokens_estimate` missing. That is exit 1, "stop and repair the producer"
+# (docs/staged-run-guide.md), fired at the ROOT checkpoint of the run, after the
+# chunk had been implemented, reviewed and merged. The two halves the producer
+# owns are repaired here; the third was the schema refusing a key the substrate
+# writes, and is fixed in rubrics/judge-verdict.schema.json.
+#
+# `nits_as_cards //= []` FILLS AN ABSENCE; it is not the overwrite the pinned
+# region forbids. Which nits deserve a follow-up card is a judgement only the
+# scorer made, so it stays in the model-facing schema and stays required in the
+# stored one — adding it to STAMPED would ask for a field and then discard the
+# answer, which is how `claude-opus-4-8` got invented. An omitted array has
+# exactly one honest reading, so filling it asserts nothing the scorer did not.
+# Contrast `scores`, where a default would invent five numbers to say one thing:
+# that is the retired ci-red sentinel, and it is not what this line does.
+#
+# `del(.worker_session_id)` is the other direction. The schema now declares that
+# key so Hermes's own stamp survives validation, and declaring it also offers it
+# to the scorer, which must never be its author: it is the id metrics.sh joins
+# on to reach real per-model usage, and a plausible invented one is worse than a
+# missing one. Deleting it here leaves the substrate the only writer.
+#
+# Repaired through a variable, not `mv` over the file. The temp-file-and-move
+# pair truncates the verdict to zero bytes when the filter emits nothing, and
+# Stage 5 then reports a completed, paid-for review as a substrate outage —
+# already measured once, and the reason stamp_shadow_file exists.
+repaired="$(printf '%s' "$verdict" \
+            | jq -c '.nits_as_cards //= [] | del(.worker_session_id)')"
+[ -n "$repaired" ] && verdict="$repaired"
+
 printf '%s' "$verdict" > "$TMP/verdict.json"
 
 # ---------------------------------------------------------------------------

@@ -14,8 +14,7 @@
     "findings",
     "nits_as_cards",
     "spot_check_suggestion",
-    "judge_model",
-    "tokens_estimate"
+    "judge_model"
   ],
   "properties": {
     "schema": {
@@ -105,7 +104,7 @@
     "tokens_estimate": {
       "type": "integer",
       "minimum": 0,
-      "description": "Tokens NEW to the model on this call: input + cache_creation + output. Excludes cache_read, which double-counts multi-turn re-reads and would make a resumed (cheap) session score higher than a cold one — inverting the signal delta review exists to produce. Stamped by the operator from the harness usage envelope, never self-reported. SERIES BREAK 2026-08-01 (audit F45): earlier verdicts used input + output, which on claude -p measured output alone, because the prompt is billed to cache_creation_input_tokens."
+      "description": "OPTIONAL, and never model-produced. Tokens NEW to the model on this call: input + cache_creation + output. Excludes cache_read, which double-counts multi-turn re-reads and would make a resumed (cheap) session score higher than a cold one — inverting the signal delta review exists to produce. Stamped by the operator from the harness usage envelope, never self-reported. SERIES BREAK 2026-08-01 (audit F45): earlier verdicts used input + output, which on claude -p measured output alone, because the prompt is billed to cache_creation_input_tokens. NOT REQUIRED, for exactly the reason cost is not: it is computed from the same harness usage envelope and can only be stamped where one exists. rubrics/judge-rubric.md forbids asking the model for it — a field a model is asked for is a field it will invent — which leaves the operator the only actor permitted to satisfy a demand the operator cannot always meet, since an interactive tier-2 review reports no usage at all. Requiring it turned a completed, paid-for review into invalid producer metadata at the root checkpoint (measured 2026-09-02, board forge-hello-20260902). Tier 1 still stamps it on every scored review; scripts/prejudge-review.sh is where that is enforced, because a demand no producer can always meet is not enforcement."
     },
     "cost": {
       "type": "object",
@@ -135,6 +134,10 @@
     "session_id": {
       "type": "string",
       "description": "OPTIONAL, operator-stamped: the judging engine's session id. `claude -p --resume <id>` replays this review's context from cache, so a re-review pays only for the repair diff. A verdict without it is not resumable."
+    },
+    "worker_session_id": {
+      "type": "string",
+      "description": "OPTIONAL, and stamped by neither the model nor the judging harness: Hermes writes the dispatched worker's session id at the top level of task_runs.metadata (docs/hermes-field-notes.md), so it lands inside every completed run's envelope, judge verdicts included. scripts/metrics.sh joins exactly on it to reach the profile state database — the only source of real per-model usage there is. chunk-handoff.schema.json absorbs it under additionalProperties:true, which is why the chunk envelope of 2026-09-02's forge-hello-20260902 run validated and the judge envelope beside it did not; this envelope is additionalProperties:false, so it must DECLARE the key or every real forge-prejudge completion is invalid metadata. Declared rather than allowed: a key the substrate writes is provenance, a key nobody writes is an invention, and scripts/prejudge-review.sh deletes any the scorer produced so that only the substrate's can survive."
     },
     "derived_verdict": {
       "type": ["string", "null"],
