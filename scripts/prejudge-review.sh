@@ -159,10 +159,26 @@ route_bounce() {
 Repair this existing PR branch only.
 
 $findings" \
-      --parent "$CHUNK" --workspace "$ws" --skill forge-lane \
+      --parent "$CHUNK" --workspace "dir:$ws" --skill forge-lane \
       --idempotency-key "bounce-${HERMES_KANBAN_TASK:-$CHUNK}" \
       --max-runtime 900 --json | jq -er '.id')" || return 1
 
+  # `--workspace` names a KIND, optionally with a path: `scratch`, `worktree`,
+  # `worktree:<path>` or `dir:<path>`. A bare path is not one of them — Hermes
+  # exits 2 with "unknown --workspace value" before it opens the board, so the
+  # `jq -er '.id'` above reads nothing and this whole function returns 1.
+  # Measured 2026-09-02 on JobApp: EVERY bounce whose parent chunk ran in a
+  # worktree died here, the caller raised `other: handoff-integrity`, and tier
+  # 1's real verdict was destroyed with it — recoverable only by re-running the
+  # deterministic gate by hand. A bounce is the common case, not the exception.
+  #
+  # The read-back below is what makes `dir:` load-bearing rather than cosmetic:
+  # it proves the fix card will repair the rejected branch in the completed
+  # chunk's preserved worktree. `scratch` is the failure it exists to catch
+  # (docs/ladder-2026-07-28.md R3-F4 — the cheap driver cloned the repo and
+  # authored the change itself), and so is `worktree`, because asking Hermes for
+  # a worktree at an already-occupied path makes it fall back to a fresh branch
+  # off main, which is not the rejected PR (docs/hermes-field-notes.md).
   kanban show "$fix" --json | jq -e --arg ws "$ws" '
     .task.workspace_kind == "dir" and .task.workspace_path == $ws
     and (.task.skills | index("forge-lane")) != null' >/dev/null || return 1
