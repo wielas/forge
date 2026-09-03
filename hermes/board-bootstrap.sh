@@ -155,6 +155,84 @@ if ! hermes kanban assignees 2>/dev/null | grep -q "$LANE_ASSIGNEE"; then
   exit 1
 fi
 
+# The branch name a chunk card carries is not a label: it is enforced twice
+# downstream, by the stamped template's `scripts/branch-name.sh` pre-push hook
+# and by `scripts/prejudge.sh`'s `branch-name` BLOCK check, both spelling the
+# rule AGENTS.md states — `chunk/<id>-<slug>`.
+#
+# This function used to emit `chunk/${id,,}` with no slug at all: CHUNK-C10
+# became `chunk/c10`, which every one of those consumers rejects. Measured on
+# JobApp 2026-09-02: the C10 worker had to rename `chunk/c10` itself and
+# recorded it as a decision, and it only noticed because that product's CI made
+# the consequence concrete. `branch-name.sh`'s own header records the older
+# price of the same cause — six `chunk/<n>` pushes on forgeboard-report, four
+# PRs closed unmerged on the name alone, after the work was paid for.
+#
+# So the id keeps its case AND its dots (`C10`, `C9.1`, `7` are all real, and
+# the regex allows dotted segments), and the slug comes from the card title.
+branch_for() {  # $1=chunk id (CHUNK-C9.1) $2=card title -> chunk/<id>-<slug>
+  local id="$1" title="$2" bare head slug word
+
+  bare="${id#CHUNK-}"
+
+  # The card's own H3 repeats the id ("### CHUNK-C10: Resolve every …"), which
+  # would otherwise slug into `chunk/C10-chunk-c10-resolve-…` and then lose the
+  # meaningful half to truncation. Drop it only when it really is the id.
+  head="$title"
+  case "$head" in
+    "$id":*)   head="${head#"$id":}";;
+    "$bare":*) head="${head#"$bare":}";;
+  esac
+
+  # Reduce to the alphabet the <slug> half of the rule allows, with every other
+  # byte becoming a separator. LC_ALL=C so a non-ASCII title degrades bytewise
+  # rather than locale-dependently. Separating with spaces (not hyphens) leaves
+  # the join below to the shell's own word splitting, which cannot emit an
+  # empty word.
+  head="$(printf '%s' "$head" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C tr -c 'a-z0-9' ' ')"
+
+  # Join words with SINGLE hyphens and stop on a word boundary. Building the
+  # slug up rather than cutting it down is what makes a double hyphen, a
+  # leading hyphen and a truncated trailing hyphen unrepresentable — all three
+  # are names the regex refuses, and a mid-word cut is merely ugly.
+  slug=""
+  for word in $head; do
+    if [ -z "$slug" ]; then
+      slug="$word"
+    elif [ "${#slug}" -lt 40 ]; then
+      slug="$slug-$word"
+    else
+      break
+    fi
+  done
+
+  # One unbroken 200-character "word" never reaches the budget test above, so
+  # cap the whole slug too and repair the trailing hyphen a blind cut can leave
+  # — `chunk/C13-aaa-` is exactly the shape the regex refuses.
+  slug="$(printf '%s' "$slug" | cut -c1-48)"
+  slug="${slug%-}"
+
+  # A title that is entirely punctuation or entirely non-ASCII cleans to
+  # nothing. Emitting `chunk/C10-` would fail the gate, so the fallback is a
+  # literal, valid slug: the branch still identifies its chunk by id, and
+  # `untitled` says why it carries no words.
+  [ -n "$slug" ] || slug="untitled"
+
+  # The producer asks its own consumer. A stamped product carries the ONE copy
+  # of this rule at scripts/branch-name.sh; asking it here is the difference
+  # between failing now, before any card exists, and failing in that product's
+  # CI after the chunk has been implemented and paid for. Products stamped from
+  # another template have nothing to ask, and are not blocked on its absence.
+  if [ -x "$REPO_ROOT/scripts/branch-name.sh" ] \
+     && ! "$REPO_ROOT/scripts/branch-name.sh" "chunk/$bare-$slug" >/dev/null 2>&1; then
+    echo "FATAL: $id would get branch 'chunk/$bare-$slug', which" >&2
+    echo "       $REPO_ROOT/scripts/branch-name.sh rejects. No card was created." >&2
+    return 1
+  fi
+
+  printf 'chunk/%s-%s\n' "$bare" "$slug"
+}
+
 create_card() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch [extra...]
   hermes kanban --board "$BOARD" create "$1" \
     --assignee "$3" \
@@ -317,7 +395,7 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
       exit 1
     }
     title=$(head -1 "$f" | sed 's/^#* *//')
-    slug=$(printf '%s' "$id" | tr 'A-Z' 'a-z')
+    branch=$(branch_for "$id" "${title:-$id}")
     if [ "$lane" = "claude-interactive" ]; then
       if [ "$parent_count" -eq 0 ]; then
         cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id")
@@ -328,11 +406,10 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
       echo "blocked  $id -> $cid (Lane: claude-interactive — run /start-chunk yourself)"
     else
       if [ "$parent_count" -eq 0 ]; then
-        cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" \
-          "chunk/${slug#chunk-}")
+        cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" "$branch")
       else
         cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" \
-          "chunk/${slug#chunk-}" "${parent_args[@]}")
+          "$branch" "${parent_args[@]}")
       fi
       if [ -n "$deps" ]; then
         echo "todo     $id -> $cid ($lane; waiting on parents)"

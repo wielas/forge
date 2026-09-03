@@ -1248,6 +1248,7 @@ bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed de
 bootstrap/full-extends-root-idempotently full bootstrap reuses the root key and atomically attaches every remaining parent
 bootstrap/completed-interactive-root-is-reused full bootstrap extends the human-completed root without re-blocking it
 bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
+bootstrap/generated-branch-names-pass-the-branch-name-rule  the branch board-bootstrap.sh generates is accepted by branch-name.sh itself
 commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
 commission/propagates-prerequisite-failure a named nonzero prerequisite makes commissioning fail
 commission/preserves-roadmap-warn       advisory WARN remains WARN in the report
@@ -2315,6 +2316,33 @@ BOOTSTRAP_GRAPH
         printf '%s\n' '[{"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":["CHUNK 0"]}]' \
           > "$root/docs/chunks/graph.json"
         ;;
+      branch-names)
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-C10","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-C9.1","lane":"forge-codex-lane","depends_on":["CHUNK-C10"]},
+  {"id":"CHUNK-7","lane":"forge-codex-lane","depends_on":["CHUNK-C9.1"]},
+  {"id":"CHUNK-C11","lane":"forge-codex-lane","depends_on":["CHUNK-7"]}
+]
+BOOTSTRAP_GRAPH
+        # Real heading shapes, id included, because the H3 repeats it. The three
+        # id forms are the ones seen in the wild — letter-prefixed, dotted, and
+        # bare. CHUNK-C11 is the pathological title: punctuation and non-ASCII
+        # only, which cleans to an empty slug and must still name a valid branch.
+        printf '### CHUNK-C10: Resolve every instance path from its own config file\n' \
+          > "$root/docs/chunks/CHUNK-C10.md"
+        printf '### CHUNK-C9.1: Pipeline observability \xe2\x80\x94 the run, its cost and its shape\n' \
+          > "$root/docs/chunks/CHUNK-C9.1.md"
+        printf '### CHUNK-7: Render report\n' > "$root/docs/chunks/CHUNK-7.md"
+        printf '### CHUNK-C11: \xc2\xa1\xc2\xbf \xe2\x80\x94 \xe2\x98\x85 ***\n' \
+          > "$root/docs/chunks/CHUNK-C11.md"
+        # The stamped product's own copy of the rule, so the generator asks its
+        # consumer during the run and not only in the assertion below.
+        mkdir -p "$root/scripts"
+        cp "$REPO_ROOT/templates/python-service/template/scripts/branch-name.sh" \
+           "$root/scripts/branch-name.sh"
+        chmod +x "$root/scripts/branch-name.sh"
+        ;;
       *) return 1;;
     esac
 
@@ -2359,14 +2387,15 @@ case "${1:-}" in
       create)
         title="${1:-}"
         shift
-        key=""; parents=""; assignee=""; initial="todo"
+        key=""; parents=""; assignee=""; initial="todo"; branch=""
         while [ $# -gt 0 ]; do
           case "$1" in
             --idempotency-key) key="$2"; shift 2;;
             --parent) parents="${parents}${2}"$'\n'; shift 2;;
             --assignee) assignee="$2"; shift 2;;
             --initial-status) initial="$2"; shift 2;;
-            --body|--workspace|--branch|--max-retries|--skill) shift 2;;
+            --branch) branch="$2"; shift 2;;
+            --body|--workspace|--max-retries|--skill) shift 2;;
             --json) shift;;
             *) shift;;
           esac
@@ -2381,6 +2410,7 @@ case "${1:-}" in
           printf '%s' "$initial" > "$state/$cid.status"
           printf '%s' "$assignee" > "$state/$cid.assignee"
           printf '%s' "$title" > "$state/$cid.title"
+          printf '%s\n' "$branch" >> "$state/branches.txt"
           printf '%s\t%s\t%s\t%s\n' "$key" "$cid" \
             "$(printf '%s' "$parents" | paste -sd, -)" "$title" >> "$state/creates.tsv"
         fi
@@ -2531,6 +2561,38 @@ HERMES_STUB
   else
     bad "reconciliation-is-mode-scoped" \
         "empty root readback must pass root-only, while missing full-mode parent readback must fail; exits $root_rc/$full_bad_rc"
+  fi
+
+  # F7's root cause, closed at the producer. The name board-bootstrap.sh
+  # GENERATES is handed to the very validator that rejects it downstream, rather
+  # than to a second copy of the regex written here — a third copy of one rule is
+  # what this repo keeps paying for. Measured 2026-09-02: the generator emitted
+  # `chunk/c10` (lowercased id, no slug at all), JobApp's C10 worker renamed the
+  # branch by hand mid-chunk, and `branch-name.sh`'s own header records the
+  # earlier bill for the same cause on forgeboard-report.
+  local names="$TMPROOT/bootstrap-names" validator branches names_rc rejected=""
+  validator="$REPO_ROOT/templates/python-service/template/scripts/branch-name.sh"
+  _bootstrap_fixture "$names" branch-names
+  out="$(_bootstrap_run "$names" full 2>&1)"; names_rc=$?
+  branches="$(sed '/^$/d' "$names/state/branches.txt" 2>/dev/null || true)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    bash "$validator" "$line" >/dev/null 2>&1 || rejected="${rejected}${line} "
+  done <<EOF
+$branches
+EOF
+  local expected_branches
+  expected_branches="$(printf '%s\n' \
+    'chunk/7-render-report' \
+    'chunk/C10-resolve-every-instance-path-from-its-own' \
+    'chunk/C11-untitled' \
+    'chunk/C9.1-pipeline-observability-the-run-its-cost-and')"
+  if [ "$names_rc" = 0 ] && [ -z "$rejected" ] \
+     && [ "$(printf '%s\n' "$branches" | sort)" = "$expected_branches" ]; then
+    ok "generated-branch-names-pass-the-branch-name-rule (C10, C9.1, 7, empty slug)"
+  else
+    bad "generated-branch-names-pass-the-branch-name-rule" \
+        "board-bootstrap.sh must emit chunk/<id>-<slug> that branch-name.sh accepts; exit $names_rc, rejected: ${rejected:-none}, got: $(printf '%s' "$branches" | tr '\n' ' ')"
   fi
 
   if [ "$WITH_HERMES" != 1 ]; then
