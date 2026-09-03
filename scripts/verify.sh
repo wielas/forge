@@ -1355,6 +1355,7 @@ prejudge/stamp-reports-its-own-failure    emitting nothing returns non-zero, not
 prejudge/shadow-preserves-the-routing-field  stamping never alters .verdict
 prejudge/stamped-envelope-declares-every-key  no key the schema does not declare (additionalProperties:false)
 prejudge/envelope-is-repaired-before-it-is-stored  an absent nits_as_cards is filled and an invented worker_session_id cannot survive
+prejudge/bounce-card-lands-in-the-rejected-worktree  route_bounce's own flags make a card Hermes accepts, in the rejected worktree
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
@@ -5102,6 +5103,59 @@ TABLE
   else
     bad "envelope-is-repaired-before-it-is-stored" \
         "the repair must fill an absent nits_as_cards, drop a model-authored worker_session_id, and touch nothing else (got '${repaired_env:-nothing}')"
+  fi
+
+  # A BOUNCE IS THE COMMON CASE, and it had never been executed. route_bounce is
+  # LIFTED OUT of the script and RUN against real Hermes in an isolated home,
+  # because the only consumer that can say whether its `--workspace` argument is
+  # legal is the CLI that parses it — asserting the argument's shape here would
+  # just be a second opinion about a rule Hermes owns.
+  #
+  # Measured 2026-09-02 on JobApp: route_bounce passed a BARE PATH. `--workspace`
+  # names a kind (`scratch`, `worktree`, `worktree:<path>`, `dir:<path>`), so
+  # Hermes exited 2 with "unknown --workspace value" before it opened the board,
+  # the create emitted no id, route_bounce returned 1, and the caller raised
+  # `other: handoff-integrity` — which destroyed a real tier-1 verdict, recovered
+  # only by re-running the deterministic gate by hand. Every bounce whose parent
+  # chunk ran in a worktree failed exactly this way.
+  local bounce_home="$TMPROOT/bounce-home" bounce_ws="$TMPROOT/bounce-ws"
+  local bounce_fix bounce_rc
+  if ! command -v hermes >/dev/null 2>&1; then
+    skip "bounce-card-lands-in-the-rejected-worktree" "hermes not on PATH"
+  else
+    mkdir -p "$bounce_home" "$bounce_ws"
+    git -C "$bounce_ws" init -q 2>/dev/null
+    bounce_fix="$(
+      export HERMES_HOME="$bounce_home" HERMES_KANBAN_BOARD=bouncelab
+      hermes kanban init >/dev/null 2>&1 || true
+      hermes kanban boards create bouncelab >/dev/null 2>&1 || true
+      BOARD=bouncelab
+      PR_URL="https://example.invalid/pull/1"
+      HERMES_KANBAN_TASK=bounce-probe
+      CREATED=()
+      kanban() { hermes kanban --board "$BOARD" "$@"; }
+      board_live() { return 0; }
+      substrate() { printf 'substrate: %s\n' "$1" >&2; return 1; }
+      # The completed chunk, in the worktree its rejected PR branch sits in.
+      CHUNK="$(kanban create "chunk under review" --assignee forge-codex-lane \
+                 --workspace "dir:$bounce_ws" --idempotency-key chunk-probe \
+                 --json 2>/dev/null | jq -r '.id')"
+      [ -n "$CHUNK" ] && [ "$CHUNK" != null ] || exit 1
+      eval "$(sed -n '/^route_bounce() {/,/^}$/p' "$review")"
+      route_bounce "- **branch-name** — evidence" "gate blocked: branch-name" || exit 1
+      printf '%s\n' "${CREATED[0]:-}"
+    )"; bounce_rc=$?
+    if [ "$bounce_rc" = 0 ] && [ -n "$bounce_fix" ] \
+       && HERMES_HOME="$bounce_home" hermes kanban --board bouncelab \
+            show "$bounce_fix" --json 2>/dev/null \
+          | jq -e --arg ws "$bounce_ws" '
+              .task.workspace_kind == "dir" and .task.workspace_path == $ws
+              and (.task.skills | index("forge-lane")) != null' >/dev/null 2>&1; then
+      ok "bounce-card-lands-in-the-rejected-worktree (real Hermes, isolated home)"
+    else
+      bad "bounce-card-lands-in-the-rejected-worktree" \
+          "route_bounce must create a fix card Hermes accepts and reads back as dir@<chunk worktree> with forge-lane; rc $bounce_rc, card '${bounce_fix:-none}'"
+    fi
   fi
 
   # The caller must use the guarded entry point, not the raw two lines.
