@@ -315,3 +315,41 @@ run against a private product, so the end-to-end claim is fixture proof plus a
 live primitive. `docs/state.md` and ADR-0017 both say so; the first real private
 product run settles it.
 
+
+2026-09-03 slice/interactive-cards-are-really-parked: `create_interactive_card`
+passed `--initial-status running` and then `case`d on running|blocked|done. The
+kernel has no `running` outcome for `create` — `kanban_db.py:3441-3462` returns
+`blocked` for `--initial-status blocked`, `triage` for `--triage`, otherwise
+`ready` degraded to `todo` when any parent is not `done`. So every
+`claude-interactive` chunk fell to the `*)` arm and `exit 1` killed the whole
+bootstrap under `set -e`, non-resumably, on every run. Measured on JobApp
+2026-09-03: `FATAL: existing interactive card t_183943a1 has unsafe status
+'ready'` at CHUNK-C14, with C15–C24 never created. `todo` was the ordinary case,
+not the edge: a mid-graph human chunk is created while its parents are open.
+The fix is not new — `docs/hermes-field-notes.md` already prescribed it and
+`scripts/prejudge-review.sh` already ran it (route_tier2): create on the
+non-spawnable sentinel, `block --kind needs_input`, `assign none`, read back all
+three facts. Bootstrap needed one addition route_tier2 does not: create with NO
+`--parent`, because `block` only fires `WHERE status IN ('running','ready')` and
+any open parent forces `todo` — then attach edges with `link`, which demotes only
+`WHERE status = 'ready'` and leaves a blocked card blocked. Block before link, or
+the demotion silently un-parks the chunk.
+
+2026-09-03 slice/interactive-cards-are-really-parked, the part worth keeping: the
+suite was GREEN over this the whole time, 7/7, because the fake `hermes` in
+`scripts/verify.sh` stored whatever `--initial-status` it was handed and echoed
+it back — a double implementing a kernel that does not exist can only confirm its
+caller. It then did it a SECOND time, one fix later: the stub swallowed
+`--workspace` unread and accepted a lone `--branch`, so adding `--branch` to the
+interactive card passed 8/8 here and failed on its first real invocation with
+`kanban: --branch is only valid with --workspace worktree`. Both lies are now
+closed at the double — `create` derives status the way the kernel does, `block`
+refuses from anything but running/ready, `link` demotes only a ready child, and a
+lone `--branch` is rejected. Proof: re-introducing the `--branch` defect
+deliberately now yields 6 passed / 2 failed where it previously passed 8/8. Also
+fixed one line up: the `$LANE_ASSIGNEE` guard was an unanchored `grep -q` over
+the formatted `assignees` listing, which lists names with `ON DISK: no` — it
+matched `forge-operator-handoff`, the sentinel that by design has no profile. It
+now reads `assignees --json` and requires `.on_disk`. Still owed: a `substrate/`
+probe pinning these CLI semantics against real Hermes. The stub is honest today
+because it was corrected twice by hand; nothing yet catches the next drift.

@@ -149,7 +149,21 @@ fi
 echo "board '$BOARD' default_workdir = $readback"
 
 # Fail loudly HERE rather than stranding a card an hour from now.
-if ! hermes kanban assignees 2>/dev/null | grep -q "$LANE_ASSIGNEE"; then
+#
+# Read the JSON, not the table, and require `.on_disk`. `kanban assignees`
+# lists every name that has EVER appeared on a card and marks each one for
+# whether a profile exists for it, so the old unanchored `grep -q` over the
+# formatted listing passed for names that cannot receive a card at all —
+# verified: it matches `forge-operator-handoff`, the tier-2 sentinel, which by
+# design has NO profile on disk. It also matched on substrings and on the
+# table's own header words. Both failures are silent in exactly the way this
+# check exists to prevent: the dispatcher drops a card on an unspawnable
+# assignee, it sits in `ready` with a `skipped_nonspawnable` event, and nothing
+# surfaces it for half an hour. `scripts/preflight.sh` (audit F43) and
+# `scripts/roadmap-check.sh` already answer "which profiles are real" this way.
+if ! hermes kanban assignees --json 2>/dev/null \
+     | jq -e --arg a "$LANE_ASSIGNEE" 'any(.[]; .name == $a and .on_disk)' \
+       >/dev/null 2>&1; then
   echo "FATAL: '$LANE_ASSIGNEE' is not a known assignee. Run" >&2
   echo "       ./hermes/profiles-bootstrap.sh first, then re-run this." >&2
   exit 1
@@ -256,56 +270,104 @@ create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=bra
 # A chunk a human drives. It gets a REAL card, blocked so the dispatcher cannot
 # pick it up, because a skipped chunk is invisible to the graph — and its
 # dependents would then have no unmet prerequisite and auto-promote to ready.
-create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [parent args...]
-  local cid state status
+#
+# THREE kernel rules dictate the order below. They are measured, not inferred:
+# docs/hermes-field-notes.md records the probes, and scripts/prejudge-review.sh
+# runs the same sequence (route_tier2) for the tier-2 hand-off card.
+#
+#   1. `create` has no `running` outcome. The kernel COMPUTES the status: with
+#      `--initial-status blocked` it is `blocked`, with `--triage` it is
+#      `triage`, otherwise `ready`, downgraded to `todo` when ANY parent is not
+#      `done`. This function used to pass `--initial-status running` and then
+#      `case` on running|blocked|done, so the card came back `ready` or `todo`,
+#      fell to the `*)` arm, and `exit 1` killed the whole bootstrap under
+#      `set -e` — for EVERY claude-interactive chunk, every run. `todo` was the
+#      common case, because a mid-graph chunk's parents are rarely done yet.
+#   2. `block` only fires `WHERE status IN ('running','ready')`. From `todo` it
+#      is a silent no-op that returns False. So the card has to be created with
+#      NO `--parent` — that is the only way it reliably lands in `ready` — and
+#      the edges attached AFTERWARDS. `link` demotes `ready`->`todo`, so
+#      blocking after linking would silently leave the card dispatchable.
+#      (route_tier2 can pass `--parent` only because a judge card's parent is
+#      always already `done`.)
+#   3. Stickiness is the blocked EVENT, not the status. `--initial-status
+#      blocked` writes only a `created` event whose payload says blocked, and
+#      `recompute_ready()` re-promotes the card: measured 2026-07-28, such a
+#      probe was promoted on the next tick, assigned to
+#      `kanban.default_assignee`, and dispatched. Only a real `block` call
+#      makes it stick; `link`'s `linked` event does not clear it.
+#
+# `--assignee forge-operator-handoff` is load-bearing and deliberately NOT a
+# real profile (scripts/preflight.sh asserts it never becomes one). It holds
+# the card through the window between create and block: this host sets
+# `kanban.default_assignee = builder`, so an *unassigned* `ready` card would be
+# auto-assigned and spawned before the block landed. The read-back then asserts
+# `assignee == null`, after `assign none` has taken the sentinel back off.
+# NO --branch / --workspace here, deliberately. `kanban create` rejects
+# `--branch` unless `--workspace worktree` rides with it ("--branch is only
+# valid with --workspace worktree"), and a worktree workspace on a card the
+# dispatcher never claims would record a checkout that is never created. The
+# human who runs /start-chunk makes the branch themselves, to the same
+# AGENTS.md rule branch_for() encodes. Measured 2026-09-03: passing --branch
+# alone here failed every interactive card at create.
+create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [--parent <id> ...]
+  local cid state status title="$1"
   cid=$(hermes kanban --board "$BOARD" create "$1" \
     --body "$(cat "$2")" \
     --assignee forge-operator-handoff \
-    --initial-status running \
     --idempotency-key "$3" \
-    "${@:4}" \
     --json | jq -r '.id')
   state=$(hermes kanban --board "$BOARD" show "$cid" --json)
-  printf '%s' "$state" | jq -e --arg id "$cid" --arg title "$1" '
+  printf '%s' "$state" | jq -e --arg id "$cid" --arg title "$title" '
     .task.id == $id and .task.title == $title
   ' >/dev/null || {
     echo "FATAL: interactive idempotency key mapped to the wrong card identity" >&2
     exit 1
   }
   status=$(printf '%s' "$state" | jq -r '.task.status // empty')
-  case "$status" in
-    running)
+  if [ "$status" = done ]; then
+    # Full bootstrap follows the documented human checkpoint. Reuse the
+    # terminal root as the same dependency card; never re-block completed work
+    # — a second `block` of the same kind trips BLOCK_RECURRENCE_LIMIT and
+    # routes the card to `triage`, where it can never be completed — and never
+    # erase its human assignee. Its parent edges are still attached below.
+    :
+  else
+    # One idiom for both the fresh card and the already-blocked one, and one
+    # unconditional read-back that fails closed on all three substrate facts.
+    [ "$status" = blocked ] || \
       hermes kanban --board "$BOARD" block --kind needs_input "$cid" \
         "interactive chunk: human implementation required" >/dev/null
-      hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
-      state=$(hermes kanban --board "$BOARD" show "$cid" --json)
-      printf '%s' "$state" | jq -e '
-        .task.status == "blocked"
-        and .task.assignee == null
-        and any(.events[]; .kind == "blocked")
-      ' >/dev/null || {
-        echo "FATAL: interactive card $cid is not sticky-blocked and unassigned" >&2
-        exit 1
-      }
-      ;;
-    blocked)
-      printf '%s' "$state" | jq -e '
-        .task.assignee == null and any(.events[]; .kind == "blocked")
-      ' >/dev/null || {
-        echo "FATAL: existing interactive card $cid lost its sticky block" >&2
-        exit 1
-      }
-      ;;
-    done)
-      # Full bootstrap follows the documented human checkpoint. Reuse the
-      # terminal root as the same dependency card; never re-block completed
-      # work or erase its human assignee. Parent identity is read back below.
-      ;;
-    *)
-      echo "FATAL: existing interactive card $cid has unsafe status '${status:-missing}'" >&2
+    hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
+    hermes kanban --board "$BOARD" show "$cid" --json | jq -e '
+      .task.status == "blocked"
+      and .task.assignee == null
+      and any(.events[]; .kind == "blocked")
+    ' >/dev/null || {
+      echo "FATAL: interactive card $cid is not sticky-blocked and unassigned" >&2
       exit 1
-      ;;
-  esac
+    }
+  fi
+
+  # Edges LAST — see rule 2. The caller hands them as `--parent <id>` pairs,
+  # which `create` above deliberately did not receive.
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --parent)
+        [ -n "${2:-}" ] || {
+          echo "FATAL: --parent given to $cid with no card id" >&2
+          exit 1
+        }
+        hermes kanban --board "$BOARD" link "$2" "$cid" >/dev/null
+        shift 2
+        ;;
+      *)
+        echo "FATAL: unexpected argument '$1' for interactive card $cid" >&2
+        exit 1
+        ;;
+    esac
+  done
   printf '%s\n' "$cid"
 }
 
@@ -397,6 +459,9 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
     title=$(head -1 "$f" | sed 's/^#* *//')
     branch=$(branch_for "$id" "${title:-$id}")
     if [ "$lane" = "claude-interactive" ]; then
+      # The empty-array guard stays: `"${parent_args[@]}"` on an empty array is
+      # an unbound-variable error under `set -u` in bash 3.2, which is what the
+      # Mac mini runs.
       if [ "$parent_count" -eq 0 ]; then
         cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id")
       else

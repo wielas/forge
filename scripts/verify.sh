@@ -1247,6 +1247,7 @@ bootstrap/multiple-roots-mutate-nothing invalid staged graphs refuse before the 
 bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed dependency ids invoke no Hermes command
 bootstrap/full-extends-root-idempotently full bootstrap reuses the root key and atomically attaches every remaining parent
 bootstrap/completed-interactive-root-is-reused full bootstrap extends the human-completed root without re-blocking it
+bootstrap/parented-interactive-chunk-is-blocked-then-linked an interactive chunk whose parent is not done is created parentless, sticky-blocked, unassigned, then linked
 bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
 bootstrap/generated-branch-names-pass-the-branch-name-rule  the branch board-bootstrap.sh generates is accepted by branch-name.sh itself
 commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
@@ -2301,6 +2302,17 @@ BOOTSTRAP_GRAPH
 ]
 BOOTSTRAP_GRAPH
         ;;
+      interactive-child)
+        # The shape the parentless `interactive` fixture above cannot reach: an
+        # interactive chunk with a parent that is NOT done, which is what every
+        # mid-graph human chunk looks like on a first `full` run.
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"claude-interactive","depends_on":["CHUNK-1"]}
+]
+BOOTSTRAP_GRAPH
+        ;;
       bad-space)
         printf '%s\n' '[{"id":"CHUNK 1","lane":"forge-codex-lane","depends_on":[]}]' \
           > "$root/docs/chunks/graph.json"
@@ -2361,7 +2373,24 @@ printf '%s\n' "$*" >> "$state/commands.log"
 
 case "${1:-}" in
   init) exit 0;;
-  assignees) printf 'forge-codex-lane\n'; exit 0;;
+  assignees)
+    # Two shapes, and board-bootstrap.sh reads the JSON one. The TABLE lists
+    # every name a card has ever carried and marks each yes/no for whether a
+    # profile exists on disk, so an unanchored grep over it clears names that
+    # cannot receive a card. forge-operator-handoff is in both listings, with
+    # no profile, precisely so a substring match here would be a false pass.
+    for arg in "$@"; do
+      [ "$arg" = --json ] || continue
+      printf '[{"name":"forge-codex-lane","on_disk":true,"counts":{}},\n'
+      printf ' {"name":"forge-operator-handoff","on_disk":false,"counts":{}}]\n'
+      exit 0
+    done
+    # ONE write: `grep -q` closes the pipe on its first match, and a second
+    # printf into a closed pipe would make this stub exit non-zero under the
+    # caller's `pipefail` — a race, not a finding.
+    printf 'NAME                    ON DISK   COUNTS\nforge-codex-lane        yes\nforge-operator-handoff  no\n'
+    exit 0
+    ;;
   boards)
     shift
     case "${1:-}" in
@@ -2388,7 +2417,8 @@ case "${1:-}" in
       create)
         title="${1:-}"
         shift
-        key=""; parents=""; assignee=""; initial="todo"; branch=""
+        key=""; parents=""; assignee=""; initial=""; branch=""; triage=0
+        workspace=""
         while [ $# -gt 0 ]; do
           case "$1" in
             --idempotency-key) key="$2"; shift 2;;
@@ -2396,19 +2426,51 @@ case "${1:-}" in
             --assignee) assignee="$2"; shift 2;;
             --initial-status) initial="$2"; shift 2;;
             --branch) branch="$2"; shift 2;;
-            --body|--workspace|--max-retries|--skill) shift 2;;
+            --workspace) workspace="$2"; shift 2;;
+            --triage) triage=1; shift;;
+            --body|--max-retries|--skill) shift 2;;
             --json) shift;;
             *) shift;;
           esac
         done
         [ -n "$key" ] || exit 65
+        # The CLI couples these two flags and refuses the pair outright:
+        #   kanban: --branch is only valid with --workspace worktree
+        # Measured 2026-09-03: this stub used to swallow --workspace and accept
+        # a lone --branch, so a change that added --branch to the interactive
+        # card passed 8/8 here and then failed on its FIRST real invocation —
+        # the same class of lie as the --initial-status echo above, one fix
+        # later. A double that accepts arguments the real CLI rejects can only
+        # ever confirm the caller.
+        if [ -n "$branch" ] && [ "$workspace" != worktree ]; then
+          printf 'kanban: --branch is only valid with --workspace worktree\n' >&2
+          exit 2
+        fi
         touch "$state/keys.tsv" "$state/creates.tsv"
         cid="$(awk -F '\t' -v key="$key" '$1==key{print $2; exit}' "$state/keys.tsv")"
         if [ -z "$cid" ]; then
           cid="card-$(( $(wc -l < "$state/keys.tsv" | tr -d ' ') + 1 ))"
           printf '%s\t%s\n' "$key" "$cid" >> "$state/keys.tsv"
           printf '%s' "$parents" > "$state/$cid.parents"
-          printf '%s' "$initial" > "$state/$cid.status"
+          # The kernel COMPUTES the initial status; it never echoes back the
+          # one it was handed, and it has no `running` outcome at all
+          # (kanban_db.py 3441-3462): --initial-status blocked -> blocked,
+          # --triage -> triage, otherwise ready, downgraded to todo when ANY
+          # parent is not done. This stub used to store the passed value, so it
+          # modelled a kernel that does not exist and every caller that read
+          # `running` back from create was green here and fatal in production.
+          if [ "$initial" = blocked ]; then
+            status=blocked
+          elif [ "$triage" = 1 ]; then
+            status=triage
+          else
+            status=ready
+            for parent in $parents; do
+              [ "$(cat "$state/$parent.status" 2>/dev/null || true)" = done ] \
+                || { status=todo; break; }
+            done
+          fi
+          printf '%s' "$status" > "$state/$cid.status"
           printf '%s' "$assignee" > "$state/$cid.assignee"
           printf '%s' "$title" > "$state/$cid.title"
           printf '%s\n' "$branch" >> "$state/branches.txt"
@@ -2445,7 +2507,21 @@ case "${1:-}" in
         cid=""
         for arg in "$@"; do case "$arg" in card-*) cid="$arg";; esac; done
         [ -n "$cid" ] || exit 65
+        # block_task updates `WHERE status IN ('running','ready')`. From any
+        # other status it changes nothing and returns False, so a caller that
+        # blocks a `todo` card gets a card that is still dispatchable.
+        current="$(cat "$state/$cid.status" 2>/dev/null || true)"
+        case "$current" in
+          running|ready) ;;
+          *)
+            printf 'block refused: %s is %s, not running/ready\n' \
+              "$cid" "${current:-missing}" >&2
+            exit 66
+            ;;
+        esac
         printf blocked > "$state/$cid.status"
+        # Stickiness is the EVENT, not the status: only a real block call
+        # writes it, and recompute_ready re-promotes a card that lacks it.
         : > "$state/$cid.blocked"
         exit 0
         ;;
@@ -2453,6 +2529,19 @@ case "${1:-}" in
         cid="${1:?}"
         [ "${2:-}" = none ] || exit 65
         : > "$state/$cid.assignee"
+        exit 0
+        ;;
+      link)
+        parent="${1:?}"; cid="${2:?}"
+        touch "$state/$cid.parents"
+        grep -qx "$parent" "$state/$cid.parents" \
+          || printf '%s\n' "$parent" >> "$state/$cid.parents"
+        # link_tasks demotes `WHERE status = 'ready'` only. A blocked child
+        # survives being linked, which is what makes block-before-link the
+        # only safe order; the `linked` event does not clear stickiness.
+        if [ "$(cat "$state/$cid.status" 2>/dev/null || true)" = ready ]; then
+          printf todo > "$state/$cid.status"
+        fi
         exit 0
         ;;
     esac
@@ -2551,6 +2640,29 @@ HERMES_STUB
   else
     bad "completed-interactive-root-is-reused" \
         "full bootstrap must reuse a completed interactive root without re-blocking it; exits $rc/$full_rc, cards ${final_count:-0}: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
+  fi
+
+  # The parentless root above is the ONE shape this bug does not take. A human
+  # chunk in the middle of a graph is created while its parents are still open,
+  # so the kernel hands back `todo` — never `running`, which the old code
+  # `case`d on, and never `ready` either. `block` then refuses from `todo`, and
+  # the fix has to create parentless, block, and attach the edges afterwards.
+  local ichild="$TMPROOT/bootstrap-interactive-child" ic_rc ic_root ic_card
+  _bootstrap_fixture "$ichild" interactive-child
+  out="$(_bootstrap_run "$ichild" full 2>&1)"; ic_rc=$?
+  ic_root="$(awk -F '\t' '$1=="stage-CHUNK-1"{print $2}' \
+              "$ichild/state/keys.tsv" 2>/dev/null)"
+  ic_card="$(awk -F '\t' '$1=="stage-CHUNK-2"{print $2}' \
+              "$ichild/state/keys.tsv" 2>/dev/null)"
+  if [ "$ic_rc" = 0 ] && [ -n "$ic_root" ] && [ -n "$ic_card" ] \
+     && [ "$(cat "$ichild/state/$ic_card.status" 2>/dev/null)" = blocked ] \
+     && [ -z "$(cat "$ichild/state/$ic_card.assignee" 2>/dev/null)" ] \
+     && [ -f "$ichild/state/$ic_card.blocked" ] \
+     && [ "$(cat "$ichild/state/$ic_card.parents" 2>/dev/null)" = "$ic_root" ]; then
+    ok "parented-interactive-chunk-is-blocked-then-linked"
+  else
+    bad "parented-interactive-chunk-is-blocked-then-linked" \
+        "an interactive chunk whose parent is not done must end blocked, unassigned, with a sticky blocked event and its parent edge; exit $ic_rc, status '$(cat "$ichild/state/$ic_card.status" 2>/dev/null)', assignee '$(cat "$ichild/state/$ic_card.assignee" 2>/dev/null)', parents '$(cat "$ichild/state/$ic_card.parents" 2>/dev/null | tr '\n' ' ')': $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
   fi
 
   local scoped="$TMPROOT/bootstrap-scoped" root_rc full_bad_rc
