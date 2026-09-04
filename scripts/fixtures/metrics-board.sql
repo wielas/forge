@@ -73,7 +73,7 @@ INSERT INTO tasks (id, title, status, created_at, completed_at) VALUES
   ('t_j3', 'judge: CHUNK-2',                    'done', 1785200220, 1785200230),
   ('t_j4', 'judge: orphan, linked to nothing',  'done', 1785200240, 1785200250),
   ('t_g1', 'prejudge: CHUNK-1 (gate, blocked)', 'done', 1785200500, 1785200505),
-  ('t_g2', 'prejudge: CHUNK-2 (gate, clear)',   'done', 1785200510, 1785200515),
+  ('t_g2', 'prejudge: CHUNK-2 (gate clear, scored)', 'done', 1785200510, 1785200515),
   ('t_b1', 'blocked card',                      'blocked', 1785200400, NULL);
 
 -- t_j2 hangs off the TIER-1 card, not the chunk card. That really happens on
@@ -125,11 +125,31 @@ INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, 
 -- after a full review, and a single averaged bounce rate would say it was.
 -- The verdict rows above stay: they are the pre-ADR-0009 series, and the break
 -- between the two is a fact about the log, not a mess to normalize away.
+--
+-- t_g1 and t_g2 deliberately no longer share a shape, because the real driver
+-- never let them. A BLOCK stops before any scorer runs, so a standalone
+-- `forge.gate.v1` row is the only envelope a block ever produces — t_g1 stays
+-- exactly that. A CLEAR result, before 2026-09-04, was never stored at all
+-- (folded into card-body prose only — docs/retro-metrics.md §0's "gate n/a —
+-- 0 gate runs" finding); the standalone clear row this fixture used to carry
+-- here was fiction nothing on the real driver ever emitted. What the driver
+-- actually emits now (scripts/prejudge-review.sh Stage 4c) is a `forge.judge.v1`
+-- row from the scorer that ran AFTER the clear gate, with the gate's own result
+-- nested unmodified under `$.gate_result` — so t_g2 is that shape instead.
+-- It keeps its existing `t_c2` parent rather than gaining a new chunk card: a
+-- second, later review attempt landing on a chunk that already bounced once
+-- (t_p2) is exactly the re-review pattern t_j1/t_j2 already model for t_c1,
+-- and it leaves `chunk_cards`/`chunks_judged`/`chunks_bounced` — the
+-- denominators `detects-noncanonical-envelope` (scripts/verify.sh) separately
+-- asserts as [.., 3] — untouched. Tier 1's verdict COUNT and mean_d13 DO move,
+-- correctly: t_g2 is now a real, previously-invisible scored verdict, and
+-- "across every verdict in the period" (docs/retro-metrics.md #2) means it
+-- must be counted like any other.
 INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, metadata) VALUES
   ('t_g1','forge-prejudge','done',1785200500,1785200505,'completed',
    '{"schema":"forge.gate.v1","gate":"forge-prejudge-gate","result":"block","number":8,"blocks":["branch-name","scenario-count"],"counts":{"pass":2,"block":2,"warn":2,"skip":1}}'),
   ('t_g2','forge-prejudge','done',1785200510,1785200515,'completed',
-   '{"schema":"forge.gate.v1","gate":"forge-prejudge-gate","result":"clear","number":9,"blocks":[],"counts":{"pass":4,"block":0,"warn":2,"skip":1}}');
+   '{"schema":"forge.judge.v1","verdict":"approve","scores":{"spec_fidelity":3,"scenario_integrity":3,"architectural_conformance":2,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3},"gate_result":{"schema":"forge.gate.v1","gate":"forge-prejudge-gate","result":"clear","number":9,"blocks":[],"counts":{"pass":4,"block":0,"warn":2,"skip":1}}}');
 
 -- forge.block.v1 is absent because it cannot exist: kanban_block takes no
 -- metadata parameter (audit F26). The class is the leading token of the

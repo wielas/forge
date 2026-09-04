@@ -412,7 +412,13 @@ run_cli_group() {
   # So: two budgets, both met, both enforced. The lane's headroom is deliberately
   # thin so the next addition forces a decision instead of drifting again.
   # (README "A limit nothing meets is not a rule" — this is its mirror image.)
-  local cer_limit=150 lane_limit=300 body_over=0 lines base
+  # 2026-09-04: +1, for the same reason as the last bump — a measured failure,
+  # not prose. §7's `kanban_create` child now reads its own body back before
+  # completing (jobapp-second-instance: a prejudge child created with an empty
+  # body and the PR posted as a `kanban_comment` instead tripped Hermes'
+  # `active_pr` respawn guard 173 times over ~2h52m with no clean recovery —
+  # see docs/hermes-field-notes.md).
+  local cer_limit=150 lane_limit=301 body_over=0 lines base
   for f in skills/*/SKILL.md; do
     lines=$(wc -l < "$f" | tr -d ' ')
     base=$(basename "$(dirname "$f")")
@@ -1416,7 +1422,7 @@ cli/flags-exist/<command>         one tracked command could not be judged: absen
 cli/verify-help-grows-with-the-group-header  appended groups remain visible without numeric line pins
 cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
-cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 300
+cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 301
 cli/skill-section-references-resolve every named numeric skill section exists
 cli/skill-section-reference-rename-is-named a renamed target reports source and missing heading
 cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not protocol)
@@ -3499,7 +3505,13 @@ METRICS_STATE_SQL
                               | select(.reason == "profile-state-unavailable")
                               | .task_id] | first)]' \
                       "$TMPROOT/metrics.json" 2>/dev/null)"
-  if [ "$driver_profile" = '[6,0,"t_c2"]' ]; then
+  # 7, not 6: t_g2 is now a forge.judge.v1 row (2026-09-04, gate_result nested
+  # on a clear-gate scorer verdict — see scripts/fixtures/metrics-board.sql),
+  # so it joins `v` on schema alone and is a seventh real verdict in the
+  # fixture. This value only pins that the total survived the missing-profile
+  # path unperturbed; the count itself is fixture-derived, same as
+  # scripts/fixtures/metrics-expected.json's .verdicts.total.
+  if [ "$driver_profile" = '[7,0,"t_c2"]' ]; then
     ok "driver-usage-missing-profile-is-explicit"
   else
     bad "driver-usage-missing-profile-is-explicit" \

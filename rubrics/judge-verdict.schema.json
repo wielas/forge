@@ -13,8 +13,7 @@
     "scores",
     "findings",
     "nits_as_cards",
-    "spot_check_suggestion",
-    "judge_model"
+    "spot_check_suggestion"
   ],
   "properties": {
     "schema": {
@@ -99,7 +98,7 @@
     },
     "judge_model": {
       "type": "string",
-      "description": "Model id that produced this verdict. Operator-stamped from the observed --model argument; a model cannot reliably report its own id."
+      "description": "OPTIONAL, and never model-produced: model id that produced this verdict, operator-stamped from the observed --model argument (a model cannot reliably report its own id). Absent on any path with no judging harness behind it, exactly like tokens_estimate/cost/session_id below — an interactive tier-2 /judge has none to stamp. judge-rubric.md has always documented all four operator-stamped fields as optional; this one stayed REQUIRED here until 2026-09-04, the same contradiction tokens_estimate carried until 2026-09-02 (see that field's note) and by the same mechanism: a model-authored envelope cannot supply a field the rubric forbids asking it for, so storing one produced by a harness-less path failed validation with no permitted author on any path without a usage envelope."
     },
     "tokens_estimate": {
       "type": "integer",
@@ -151,6 +150,11 @@
     "verdict_derivation_error": {
       "type": "string",
       "description": "OPTIONAL, operator-stamped: why derivation produced no value. Present only when derived_verdict is null. A derivation failure is not a review failure — the scorer's verdict still routes — so this records the gap rather than hiding it."
+    },
+    "gate_result": {
+      "type": "object",
+      "description": "OPTIONAL, and never model-produced: the deterministic gate's own forge.gate.v1 result (gate-result.schema.json), nested unmodified by scripts/prejudge-review.sh whenever the gate ran clear and a scorer verdict followed. Named gate_result rather than gate to avoid colliding with forge.gate.v1's OWN `gate` field — the constant string \"forge-prejudge-gate\" — which a plain `.gate` key here would have shadowed with an object, breaking that field's own contract wherever both are read together. Before 2026-09-04 a CLEAR gate's result was folded into this envelope's summary and card-body prose only, never stored — so scripts/metrics.sh's gate CTE, which already reads a standalone forge.gate.v1 row for either result (see scripts/fixtures/metrics-board.sql), saw zero gate runs on every period where nothing blocked. This field lets a clear run be counted from the SAME row a scored verdict already occupies, without requiring a second task_runs completion. additionalProperties is intentionally not restricted here — it is gate-result.schema.json's own shape, validated by that schema when present, not retyped by this one.",
+      "additionalProperties": true
     }
   }
 }

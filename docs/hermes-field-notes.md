@@ -349,6 +349,46 @@ chunk size for good reasons — not to dodge a timeout.
 on `blocker_auth` (quota/auth), `recent_success` and `active_pr`. Use
 `--max-retries` per card; do not invent a bounce loop.
 
+**A prejudge card's PR-URL comment is a life sentence.** `check_respawn_guard`
+skips `active_pr` entirely when `lane == "review"` — a PR-URL comment there is
+the review handoff's *precondition*, not evidence of duplicate work (see the
+contract-4 note above and `scripts/respawn-guard-probe.py`). A prejudge card
+dispatches in the `ready` lane instead, so it gets no such exemption: any
+comment matching a GitHub PR URL, posted on THAT card, inside the 24h
+`_RESPAWN_GUARD_PR_WINDOW`, defers its own respawn every tick, indefinitely.
+`skills/forge-lane` §7 always meant the PR URL to travel as the child's
+`kanban_create(body=...)` — `task.body` is never read by the guard, only
+`task_comments` is — but nothing enforced that until this note. Measured live
+on `jobapp-second-instance`, 2026-09-04: CHUNK-C20's prejudge child
+(`t_3e676b10`) was created with an EMPTY body and the PR summary posted as a
+separate `kanban_comment` 5 seconds later, 8 seconds before the card
+auto-promoted to `ready`. It logged `respawn_guarded: active_pr` on every
+~60s dispatcher tick from 10:22:22 to 13:14:48 — 173 consecutive events,
+~2h52m, zero spawns, `last_failure_error` NULL and no run on record the whole
+time. (CHUNK-C10/C13/C19's prejudge children never comment their own card at
+all — the PR URL lives only in `body`, per protocol, and none of the three
+ever guarded. This is not a promotion-vs-comment race: only the deviating card
+ever carried a comment to race against.)
+
+**There is no clean operator recovery once this fires**, because every event
+that clears `active_pr` requires the card to already be `blocked`:
+`hermes kanban promote` refuses a task whose `status` is not `todo`/`blocked`
+(`promote_task`, kanban_db.py ~6797) — and a prejudge card is `ready` the
+instant it is created, since its sole parent (the chunk it reviews) is already
+`done`. The only path is `kanban block --kind needs_input <id> "<reason>"`
+then `kanban unblock <id>` — which burns a `block_recurrences` slot toward the
+triage cutoff and is not offered anywhere in `skills/forge-lane` or
+`skills/prejudge`. The live incident above was resolved by running
+`scripts/prejudge.sh` by hand and completing the card from that output
+directly — an out-of-band workaround, not a supported recovery path, and
+consistent with what the run row shows: `started_at == ended_at`, no
+`claim_lock`, no `worker_pid`, no `spawned` event, `metadata` NULL.
+`kanban_db.py` is Hermes's, not Forge's, so the `lane` classification a
+prejudge dispatch gets is not ours to change; what Forge owns is making sure
+`forge-lane` never hands the guard the evidence in the first place (§7's
+read-back, added 2026-09-04) and documenting the block→unblock recovery here
+for the case where it does.
+
 **A prejudge scratch workspace has no GitHub repository context.** Numeric
 commands such as `gh pr checks 10` fail there. On the first CI-red probe the
 worker spent a minute searching unrelated board workspaces for a clone before

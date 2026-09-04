@@ -439,7 +439,7 @@ EOF
   [ -n "$nolist" ] && { ev="$ev no parseable Touches list in:${nolist%,};"; \
     act="$act Add a comma-separated Touches list to each of those contracts; without one nothing at plan time or review time can tell scope from drift."; }
   [ -n "$over" ] && { ev="$ev over the $TOUCHES_MAX-file budget:${over%,};"; \
-    act="$act Split each of those so no chunk declares more than $TOUCHES_MAX paths. Process docs (docs/decision-log.md, docs/ROADMAP.md, docs/chunks/*) are already excluded, so every path counted is real implementation surface."; }
+    act="$act Split each of those so no chunk declares more than $TOUCHES_MAX paths. Process docs (docs/decision-log.md, ROADMAP.md at docs/ or repo root, docs/chunks/*) are already excluded, so every path counted is real implementation surface."; }
   ev="${ev# }"; emit touches warn "${ev%;}" "${act# }"
 }
 

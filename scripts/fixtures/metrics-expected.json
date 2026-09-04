@@ -4,19 +4,19 @@
   "until": null,
   "chunk_cards": 3,
   "verdicts": {
-    "total": 6,
+    "total": 7,
     "unattributed": 1,
     "by_verdict": {
-      "approve": 2,
+      "approve": 3,
       "bounce": 4
     }
   },
   "tiers": [
     {
       "tier": 1,
-      "verdicts": 2,
+      "verdicts": 3,
       "bounce_verdicts": 1,
-      "mean_d13": "2.17",
+      "mean_d13": "2.33",
       "chunks_judged": 2,
       "chunks_bounced": 1,
       "bounce_rate": "0.50"
@@ -31,7 +31,7 @@
       "bounce_rate": "1.00"
     }
   ],
-  "mean_d13_all": "1.67",
+  "mean_d13_all": "1.81",
   "gate": {
     "runs": 2,
     "blocked": 1,
