@@ -868,10 +868,261 @@ run_substrate_group() {
           || shape_err="${shape_err:+$shape_err; }show --json no longer nests the card under .task"
       fi
     fi
+    # board-bootstrap.sh now reads `.on_disk` per assignee to decide whether a
+    # lane assignee really exists. The predecessor check was an unanchored
+    # `grep` over the human-readable listing, which matched a profile shown
+    # as `ON DISK: no` just as happily as one shown `ON DISK: yes` — it
+    # passed for exactly the nonexistent profile it existed to catch. This
+    # is a SHAPE claim only (the field is present and boolean); whether the
+    # value is trustworthy for any one profile is a semantics question for
+    # config/, not here.
+    if ! hermes kanban assignees --json 2>/dev/null \
+        | jq -e 'type=="array" and length>0 and all(.[]; has("on_disk") and (.on_disk|type)=="boolean")' \
+        >/dev/null 2>&1; then
+      shape_err="${shape_err:+$shape_err; }assignees --json no longer carries a boolean .on_disk per entry"
+    fi
     if [ -z "$shape_err" ]; then
-      ok "kanban-json-shapes (boards list = array; show = nested under .task)"
+      ok "kanban-json-shapes (boards list = array; show = nested under .task; assignees carries .on_disk)"
     else
       bad "kanban-json-shapes" "$shape_err"
+    fi
+  fi
+
+  # kanban-card-parking-semantics: the outage kanban-json-shapes cannot see.
+  # 855e03d's fake `hermes` echoed back whatever --initial-status it was
+  # passed, so `--initial-status running` produced a card reporting running
+  # and the bootstrap suite went green while the real kernel can never
+  # return that status — it fired on every interactive chunk, on every
+  # board, every time (PR #56). kanban-json-shapes pins the SHAPE of these
+  # JSON replies; nothing pinned their SEMANTICS. This does, against the
+  # real installed `hermes` (never a stub), in an isolated HERMES_HOME so
+  # nothing here can touch the operator's real boards — including the one a
+  # live gateway is dispatching against right now. Every card carries an
+  # explicit --assignee so kanban.default_assignee (which resolves globally
+  # and IS `builder` on this host) can never auto-adopt one of ours; the
+  # sentinel `forge-operator-handoff` is the one `scripts/preflight.sh`
+  # asserts never resolves to a real profile, so even a card that reaches
+  # ready is inert.
+  #
+  # Three assertions, each with a positive control an assertion with only a
+  # negative case is worthless — a nonzero exit from a typo'd id looks
+  # identical to a guard working, so every refusal below is paired with a
+  # call of the same shape that must succeed.
+  if [ "$WITH_HERMES" != 1 ]; then
+    skip "kanban-card-parking-semantics/create-never-yields-running" \
+         "needs --with-hermes (creates/blocks/dispatches a real, disposable board)"
+    skip "kanban-card-parking-semantics/block-refuses-from-todo" \
+         "needs --with-hermes (creates/blocks/dispatches a real, disposable board)"
+    skip "kanban-card-parking-semantics/stickiness-is-the-event-not-the-status" \
+         "needs --with-hermes (creates/blocks/dispatches a real, disposable board)"
+  elif ! command -v hermes >/dev/null 2>&1; then
+    skip "kanban-card-parking-semantics/create-never-yields-running" "hermes not on PATH"
+    skip "kanban-card-parking-semantics/block-refuses-from-todo" "hermes not on PATH"
+    skip "kanban-card-parking-semantics/stickiness-is-the-event-not-the-status" "hermes not on PATH"
+  elif ! command -v jq >/dev/null 2>&1; then
+    skip "kanban-card-parking-semantics/create-never-yields-running" "jq not on PATH"
+    skip "kanban-card-parking-semantics/block-refuses-from-todo" "jq not on PATH"
+    skip "kanban-card-parking-semantics/stickiness-is-the-event-not-the-status" "jq not on PATH"
+  else
+    # An isolated root, not the operator's ~/.hermes: get_default_hermes_root()
+    # (hermes_constants.py) only redirects when HERMES_HOME resolves OUTSIDE
+    # the platform native home and is not a `.../profiles/<name>` leaf — both
+    # true for a path under $TMPROOT — so every kanban_db.py path (including
+    # dispatch's) reads and writes only this throwaway root. Confirmed by
+    # reading that function and by running create/dispatch against a scratch
+    # HERMES_HOME while authoring this case; a stray board here cannot reach
+    # a real gateway. The slug still carries a timestamp+pid and is still
+    # hard-deleted below: this case pins `boards create`/`boards rm --delete`
+    # too, and the same silent-leak failure would matter for real on a
+    # long-lived install.
+    local park_home="$TMPROOT/parking-home"
+    local park_board="verify-park-$(date +%s)-$$"
+    mkdir -p "$park_home"
+    local create_board_out create_board_rc board_setup_err=""
+    create_board_out="$(HERMES_HOME="$park_home" hermes kanban boards create "$park_board" 2>&1)"
+    create_board_rc=$?
+    [ "$create_board_rc" = 0 ] || board_setup_err=" (board create rc=$create_board_rc: $(printf '%s' "$create_board_out" | tail -2 | tr '\n' ' '))"
+    _pk() { HERMES_HOME="$park_home" hermes kanban --board "$park_board" "$@"; }
+
+    # --- 1: create never yields running ---------------------------------
+    # create_task only special-cases initial_status=='blocked' (kanban_db.py
+    # ~3444); every other value, INCLUDING 'running', falls straight through
+    # to the ordinary ready/todo derivation (~3450-3465) — there is no code
+    # path in create_task that ever writes status='running'. Prove the field
+    # is real, not hardcoded, on two parent shapes at once: a genuine
+    # derivation differs between them (ready vs todo); a stub that merely
+    # refuses 'running' by returning one fixed status would not.
+    local a1_ok=1 a1_msg=""
+    local park_parent park_noparent park_withparent
+    park_parent="$(_pk create "parking-semantics: parent for #1" \
+                     --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.id // empty')"
+    park_noparent="$(_pk create "parking-semantics: initial-status running, no parent" \
+                       --initial-status running --assignee forge-operator-handoff --json 2>/dev/null \
+                       | jq -r '.status // empty')"
+    park_withparent="$(_pk create "parking-semantics: initial-status running, live parent" \
+                         --initial-status running --parent "$park_parent" \
+                         --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.status // empty')"
+    if [ -z "$park_parent" ]; then
+      a1_ok=0; a1_msg="setup failed: could not create the parent card${board_setup_err}"
+    elif [ "$park_noparent" = running ] || [ "$park_withparent" = running ]; then
+      a1_ok=0
+      a1_msg="--initial-status running produced status=running (noparent=$park_noparent withparent=$park_withparent) — the exact outage 855e03d fixed the STUB for; create_task has no 'running' outcome (kanban_db.py ~3440-3465)"
+    elif [ "$park_noparent" = ready ] && [ "$park_withparent" = todo ]; then
+      a1_msg="no parent -> ready, live (non-done) parent -> todo, neither ever running"
+    else
+      a1_ok=0
+      a1_msg="expected ready (no parent) / todo (live parent), got noparent=$park_noparent withparent=$park_withparent — the positive control failed, so the refusal of 'running' above proves nothing"
+    fi
+
+    # --- 2: block refuses from todo --------------------------------------
+    # block_task guards every UPDATE that reaches 'blocked' with
+    # `AND status IN ('running','ready')` (kanban_db.py ~6320, ~6378,
+    # ~6417/6432). A todo card matches neither and block_task returns False
+    # without writing anything. Positive control: the identical call against
+    # a ready card must succeed AND leave a 'blocked' EVENT behind —
+    # assertion #3 below depends on that event existing, not just on the
+    # status column moving.
+    local a2_ok=1 a2_msg=""
+    local blk_parent blk_todo blk_ready
+    blk_parent="$(_pk create "parking-semantics: parent for #2" \
+                    --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.id // empty')"
+    blk_todo="$(_pk create "parking-semantics: todo card, block must refuse" \
+                  --parent "$blk_parent" --assignee forge-operator-handoff --json 2>/dev/null \
+                  | jq -r '.id // empty')"
+    blk_ready="$(_pk create "parking-semantics: ready card, block must succeed" \
+                   --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.id // empty')"
+    local blk_todo_out blk_todo_rc blk_todo_status
+    blk_todo_out="$(_pk block "$blk_todo" "must be refused: card is todo" 2>&1)"
+    blk_todo_rc=$?
+    blk_todo_status="$(_pk show "$blk_todo" --json 2>/dev/null | jq -r '.task.status // empty')"
+    local blk_ready_out blk_ready_rc blk_ready_status blk_ready_events
+    blk_ready_out="$(_pk block "$blk_ready" "must succeed: card is ready" --kind needs_input 2>&1)"
+    blk_ready_rc=$?
+    blk_ready_status="$(_pk show "$blk_ready" --json 2>/dev/null | jq -r '.task.status // empty')"
+    blk_ready_events="$(_pk show "$blk_ready" --json 2>/dev/null | jq -r '[.events[]?.kind] | join(",")')"
+    if [ -z "$blk_parent" ] || [ -z "$blk_todo" ] || [ -z "$blk_ready" ]; then
+      a2_ok=0; a2_msg="setup failed: could not create the parent/todo/ready cards${board_setup_err}"
+    elif [ "$blk_todo_rc" = 0 ]; then
+      a2_ok=0
+      a2_msg="block against a todo card exited 0 — the status IN ('running','ready') guard is gone: $blk_todo_out"
+    elif [ "$blk_todo_status" != todo ]; then
+      a2_ok=0
+      a2_msg="block on a todo card was refused (rc=$blk_todo_rc) but still left status=$blk_todo_status — a refusal must be side-effect free"
+    elif [ "$blk_ready_rc" != 0 ]; then
+      a2_ok=0
+      a2_msg="block on a ready card was refused too (rc=$blk_ready_rc) — the positive control failed, so the todo refusal above proves nothing: $blk_ready_out"
+    elif [ "$blk_ready_status" != blocked ] || ! printf '%s' "$blk_ready_events" | grep -q 'blocked'; then
+      a2_ok=0
+      a2_msg="block on a ready card did not land on status=blocked with a blocked event: status=$blk_ready_status events=$blk_ready_events"
+    else
+      a2_msg="todo refused with status unchanged (rc=$blk_todo_rc); ready blocked to status=blocked with a blocked event"
+    fi
+
+    # --- 3: stickiness is the EVENT, not the status column ---------------
+    # THE CROWN JEWEL. _has_sticky_block (kanban_db.py ~4443-4478) reads the
+    # most recent blocked/unblocked EVENT row, not the status column, and
+    # recompute_ready (~4510-4599) skips exactly the cards where that read
+    # says 'blocked'. Card A is blocked through kanban_block, so it carries
+    # that event. Card B is parked with --initial-status blocked at CREATE
+    # time: create_task (~3444, INSERT + _append_event around ~3491-3552)
+    # writes status='blocked' and appends only a 'created' event — reading
+    # both call sites end to end, nothing there ever appends a
+    # 'blocked'/'unblocked' event for a create-time park. So recompute_ready
+    # must promote B once its parent is done, and must leave A alone.
+    #
+    # complete_task calls recompute_ready synchronously in the SAME call
+    # (kanban_db.py:5579, "Recompute ready status for dependents"), so B is
+    # normally already promoted by the time `complete` returns, before any
+    # dispatch. That is still real coverage, not a shortcut: this tier
+    # exists to catch Hermes drift, and either recompute_ready call site
+    # regressing — complete's inline one or the dispatcher's — must turn
+    # this assertion red. The case also forces one explicit dispatch tick,
+    # both because that is the mechanism asked for and because it proves the
+    # dispatcher's own path is idempotent (does not un-stick A):
+    # `dispatch --dry-run --max 0` still runs the sweep —
+    # `_dispatch_once_locked` calls `recompute_ready(conn, ...)`
+    # unconditionally at kanban_db.py:10004, before the first `if not
+    # dry_run:` gate (line 10165) and before the `max_spawn` early-return
+    # (~10021-10024) that `--max 0` triggers on the very next tick. Those
+    # later gates withhold only the default-assignee persist and the spawn
+    # itself, never the promotion — confirmed by reading
+    # `_dispatch_once_locked` end to end, not by running dispatch against a
+    # live board. `--max 0` is kept anyway so the tick returns before even
+    # looking at a ready row: result.spawned and result.skipped_nonspawnable
+    # are therefore always empty here and are deliberately not asserted on
+    # — a check that can never fire is exactly this bug's class.
+    local a3_ok=1 a3_msg=""
+    local sk_parent sk_a sk_b sk_b_events
+    sk_parent="$(_pk create "parking-semantics: parent for #3" \
+                   --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.id // empty')"
+    sk_a="$(_pk create "parking-semantics: card A, event-blocked" \
+              --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.id // empty')"
+    _pk block "$sk_a" "sticky: worker/operator block" --kind needs_input >/dev/null 2>&1
+    sk_b="$(_pk create "parking-semantics: card B, status-only blocked" \
+              --initial-status blocked --assignee forge-operator-handoff --json 2>/dev/null \
+              | jq -r '.id // empty')"
+    sk_b_events="$(_pk show "$sk_b" --json 2>/dev/null | jq -r '[.events[]?.kind] | join(",")')"
+    _pk link "$sk_parent" "$sk_a" >/dev/null 2>&1
+    _pk link "$sk_parent" "$sk_b" >/dev/null 2>&1
+    _pk complete "$sk_parent" --result "parking-semantics probe" >/dev/null 2>&1
+    _pk dispatch --dry-run --max 0 --json >"$TMPROOT/parking-dispatch.json" 2>&1
+    local sk_a_status sk_b_status
+    sk_a_status="$(_pk show "$sk_a" --json 2>/dev/null | jq -r '.task.status // empty')"
+    sk_b_status="$(_pk show "$sk_b" --json 2>/dev/null | jq -r '.task.status // empty')"
+    if [ -z "$sk_parent" ] || [ -z "$sk_a" ] || [ -z "$sk_b" ]; then
+      a3_ok=0; a3_msg="setup failed: could not create the parent/A/B cards${board_setup_err}"
+    elif printf '%s' "$sk_b_events" | grep -q 'blocked'; then
+      a3_ok=0
+      a3_msg="setup is void: card B (--initial-status blocked) carries a blocked/unblocked EVENT (events=$sk_b_events) — create_task now emits one, so this run cannot distinguish event-blocked from status-only-blocked"
+    elif [ "$sk_a_status" = "$sk_b_status" ] && [ "$sk_a_status" = blocked ]; then
+      a3_ok=0
+      a3_msg="both A and B are STILL blocked after complete+dispatch — the promotion sweep did not run (recompute_ready was not reached by complete_task:5579 or dispatch:10004); without this exact message this case would pass forever while detecting nothing, which is the vacuity it exists to prevent (dispatch said: $(tr '\n' ' ' < "$TMPROOT/parking-dispatch.json" | cut -c1-300))"
+    elif [ "$sk_a_status" != blocked ]; then
+      a3_ok=0
+      a3_msg="card A (blocked via a real kanban_block EVENT) was promoted anyway to $sk_a_status — the #28712 sticky-block guard (_has_sticky_block, kanban_db.py ~4443-4478) no longer distinguishes an event-blocked card from a status-only one"
+    elif [ "$sk_b_status" != ready ]; then
+      a3_ok=0
+      a3_msg="card B (status-only blocked, no event) was not promoted (status=$sk_b_status) even though A correctly stayed blocked — the positive control failed, so A staying blocked proves nothing"
+    else
+      a3_msg="A (real blocked event) stayed blocked; B (status column only, no event) was promoted to ready"
+    fi
+
+    # --- cleanup: the throwaway board must not survive this run ----------
+    # The isolated HERMES_HOME above is removed by the top-level
+    # `trap cleanup EXIT` regardless of what happens below, so nothing here
+    # can leak into a real installation — but the delete is still asserted
+    # explicitly, on every path including failure, because a silent failure
+    # here would be exactly as silent against a real long-lived Hermes
+    # install, where a leftover board is one a live gateway dispatcher ticks
+    # forever.
+    local cleanup_ok=1 cleanup_msg="" del_out del_rc still_there
+    del_out="$(HERMES_HOME="$park_home" hermes kanban boards rm --delete "$park_board" 2>&1)"
+    del_rc=$?
+    still_there="$(HERMES_HOME="$park_home" hermes kanban boards list --all --json 2>/dev/null \
+                    | jq -e --arg s "$park_board" 'any(.[]?; .slug == $s)' 2>/dev/null)"
+    if [ "$del_rc" != 0 ] || [ "$still_there" = "true" ]; then
+      cleanup_ok=0
+      cleanup_msg="board $park_board was not fully deleted (rc=$del_rc, still listed=${still_there:-unknown}): $(printf '%s' "$del_out" | tail -2 | tr '\n' ' ')"
+    fi
+    unset -f _pk
+
+    local park_note=""
+    [ "$cleanup_ok" = 1 ] || park_note="; ALSO: $cleanup_msg"
+
+    if [ "$a1_ok" = 1 ] && [ "$cleanup_ok" = 1 ]; then
+      ok "kanban-card-parking-semantics/create-never-yields-running ($a1_msg)"
+    else
+      bad "kanban-card-parking-semantics/create-never-yields-running" "${a1_msg}${park_note}"
+    fi
+    if [ "$a2_ok" = 1 ] && [ "$cleanup_ok" = 1 ]; then
+      ok "kanban-card-parking-semantics/block-refuses-from-todo ($a2_msg)"
+    else
+      bad "kanban-card-parking-semantics/block-refuses-from-todo" "${a2_msg}${park_note}"
+    fi
+    if [ "$a3_ok" = 1 ] && [ "$cleanup_ok" = 1 ]; then
+      ok "kanban-card-parking-semantics/stickiness-is-the-event-not-the-status ($a3_msg)"
+    else
+      bad "kanban-card-parking-semantics/stickiness-is-the-event-not-the-status" "${a3_msg}${park_note}"
     fi
   fi
 
@@ -1186,6 +1437,7 @@ config/preflight-agrees-about-real-profiles  preflight's profile source carries 
 substrate/worktree-ownership      dispatcher resolves the worktree before spawning
 substrate/worktree-gitfile        .git is a file in a linked worktree; writes fail
 substrate/kanban-json-shapes      the --json shapes board-bootstrap and monitoring read are unchanged
+substrate/kanban-card-parking-semantics/<assertion>  create never yields running, block refuses from todo, and stickiness is the blocked EVENT, not the status column (--with-hermes)
 substrate/codex-worktree-commit   codex can commit in a worktree with --add-dir (--with-codex)
 template/stamp                            copier stamps a project from the template into a durable path
 template/stamp-setup-check                the stamp/setup/check probe could not run (uvx absent)
