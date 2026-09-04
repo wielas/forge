@@ -139,3 +139,39 @@ is correct, and the run cost 4 minutes.
 Caveat worth keeping: this was a six-line function. The protocol held; whether
 the *judgement* holds on a chunk with real ambiguity is a different question,
 and `docs/retro-metrics.md` is where it gets answered.
+
+**One `Touches` field, two parsers, two answers.** The plan-time and PR-time
+gates disagree about what the contract's `Touches:` line says.
+`scripts/roadmap-check.sh:412` strips backticks and then splits on **every
+comma in the line**:
+
+```sh
+path_list() { printf '%s' "$1" | tr -d '`' | tr ',' '\n' \
+                | sed 's/^[ \t]*//; s/[ \t]*$//' | grep . || true; }
+```
+
+`scripts/prejudge.sh:375` reads only the backtick-delimited tokens, so commas
+outside them are invisible:
+
+```sh
+contract_touches() {
+  grep -m1 -- '- \*\*Touches:\*\*' "$1" | grep -oE '`[^`]+`' | tr -d '`' | sort -u
+}
+```
+
+So a `Touches` line carrying an inline parenthetical — ``` `profile.md` (identity
+lives in the steering file, not the package) ``` — declares six paths to
+`prejudge` and seven to `roadmap-check`, and a chunk at `TOUCHES_MAX=6` gets a
+false over-budget warning at plan time that never reproduces at review time.
+Measured on JobApp's CHUNK-C11 2026-09-04, before the rationale was moved into
+`Contract notes` and the list left as bare tokens.
+
+Neither parser is obviously the right one: `roadmap-check`'s is more forgiving
+of a contract written without backticks, `prejudge`'s is unambiguous. What is
+wrong is that both exist. Whichever wins, the loser should call it rather than
+reimplement it — this is the same producer/consumer split PR #55 fixed for
+branch names.
+
+*Settled by:* picking one parser, extracting it to a shared helper both scripts
+source, and adding a `verify.sh` case that feeds a `Touches` line with a
+comma-bearing parenthetical to both and asserts they agree.
