@@ -1047,10 +1047,13 @@ run_substrate_group() {
     # later gates withhold only the default-assignee persist and the spawn
     # itself, never the promotion — confirmed by reading
     # `_dispatch_once_locked` end to end, not by running dispatch against a
-    # live board. `--max 0` is kept anyway so the tick returns before even
-    # looking at a ready row: result.spawned and result.skipped_nonspawnable
-    # are therefore always empty here and are deliberately not asserted on
-    # — a check that can never fire is exactly this bug's class.
+    # live board. `--max 0` is kept anyway: at ~10021-10024,
+    # `max_spawn is not None and running_count >= max_spawn` is true for
+    # any running_count once max_spawn=0, so the tick returns right after
+    # computing it — before the ready-row loop even starts. result.spawned
+    # and result.skipped_nonspawnable are therefore always empty here and
+    # are deliberately not asserted on — a check that can never fire is
+    # exactly this bug's class.
     local a3_ok=1 a3_msg=""
     local sk_parent sk_a sk_b sk_b_events
     sk_parent="$(_pk create "parking-semantics: parent for #3" \
@@ -1106,24 +1109,27 @@ run_substrate_group() {
     fi
     unset -f _pk
 
-    local park_note=""
-    [ "$cleanup_ok" = 1 ] || park_note="; ALSO: $cleanup_msg"
-
-    if [ "$a1_ok" = 1 ] && [ "$cleanup_ok" = 1 ]; then
-      ok "kanban-card-parking-semantics/create-never-yields-running ($a1_msg)"
-    else
-      bad "kanban-card-parking-semantics/create-never-yields-running" "${a1_msg}${park_note}"
-    fi
-    if [ "$a2_ok" = 1 ] && [ "$cleanup_ok" = 1 ]; then
-      ok "kanban-card-parking-semantics/block-refuses-from-todo ($a2_msg)"
-    else
-      bad "kanban-card-parking-semantics/block-refuses-from-todo" "${a2_msg}${park_note}"
-    fi
-    if [ "$a3_ok" = 1 ] && [ "$cleanup_ok" = 1 ]; then
-      ok "kanban-card-parking-semantics/stickiness-is-the-event-not-the-status ($a3_msg)"
-    else
-      bad "kanban-card-parking-semantics/stickiness-is-the-event-not-the-status" "${a3_msg}${park_note}"
-    fi
+    # A failed message must never read as if a passing assertion's own text
+    # were the reason for failure — an operator reading this at 2am should
+    # see immediately that the KERNEL held and the FIXTURE leaked, not have
+    # to parse a success sentence sitting in front of "ALSO:".
+    _park_report() {
+      local name="$1" this_ok="$2" this_msg="$3"
+      if [ "$this_ok" = 1 ] && [ "$cleanup_ok" = 1 ]; then
+        ok "kanban-card-parking-semantics/$name ($this_msg)"
+      elif [ "$this_ok" = 1 ]; then
+        bad "kanban-card-parking-semantics/$name" \
+            "kernel semantics held (${this_msg}) but cleanup failed: $cleanup_msg"
+      elif [ "$cleanup_ok" = 1 ]; then
+        bad "kanban-card-parking-semantics/$name" "$this_msg"
+      else
+        bad "kanban-card-parking-semantics/$name" "${this_msg}; ALSO cleanup failed: $cleanup_msg"
+      fi
+    }
+    _park_report create-never-yields-running "$a1_ok" "$a1_msg"
+    _park_report block-refuses-from-todo "$a2_ok" "$a2_msg"
+    _park_report stickiness-is-the-event-not-the-status "$a3_ok" "$a3_msg"
+    unset -f _park_report
   fi
 
   # F15: codex `workspace-write` cannot commit inside a worktree without
