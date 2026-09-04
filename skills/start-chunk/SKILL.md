@@ -23,6 +23,17 @@ DONE condition. Compare against current code — if the chunk spec is stale
 log and adapt; contradiction → STOP, block the card with the reason
 (unattended lane) or ask the human (interactive).
 
+**A `Depends on:` chunk releases when its parent CARD is `done`, not when the
+parent's code is merged into `main`.** Before branching, for every declared
+dependency check that its handoff PR is actually merged:
+`gh pr view <parent PR> --json state,mergedAt`. A non-null `mergedAt` on every
+one clears this step; an open parent PR means you would be building on code
+that is not in `main` yet — stop and say so (block, unattended; tell the human,
+interactive) rather than branching. `forge-lane` §1a is the unattended lane's
+identical check, including the narrow bounce-remediation exception for
+repairing an already-rejected PR on the same branch — read it there rather
+than re-deriving the exception here.
+
 ## 3. Mark in progress & branch
 Branch only if you are not already on the chunk branch. In a Hermes worktree the
 dispatcher created the workspace and checked out the branch **before** the worker

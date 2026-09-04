@@ -16,5 +16,18 @@
 # A second copy that disagrees the first time one is edited is F30's defect
 # class. `make verify`'s roadmap/touches-exemption-has-one-definition fails if a
 # second `TOUCHES_EXEMPT=` assignment appears anywhere in the repo.
-# =============================================================================
-TOUCHES_EXEMPT='^docs/decision-log\.md$|^docs/ROADMAP\.md$|^docs/chunks/'
+#
+# ROADMAP.md matches at either `docs/ROADMAP.md` (the location `skills/roadmap`
+# and `skills/architect` both write) or a bare repo-root `ROADMAP.md`. The
+# METHODOLOGY obligation this list exists for — every chunk ticks its roadmap
+# checkbox — does not depend on which of the two a given project chose, and a
+# project that keeps it at root is not exempt from being exempt. Measured on
+# JobApp (`jobapp-second-instance`, 2026-09-04, CHUNK-C14 and CHUNK-C18 the
+# same day): the anchored `^docs/ROADMAP\.md$` never matched that project's
+# root-level file, so `touches` warned on every single PR regardless of what
+# any card declared, and the two chunks recorded opposite workarounds — one
+# widened `Touches` past `roadmap-check.sh`'s own `TOUCHES_MAX` to silence it,
+# the other declined and left the warn structurally unfixable. `docs/chunks/`
+# is left `docs/`-anchored: `skills/roadmap` always writes chunk contracts
+# there and no project run has ever moved it.
+TOUCHES_EXEMPT='^docs/decision-log\.md$|^(docs/)?ROADMAP\.md$|^docs/chunks/'

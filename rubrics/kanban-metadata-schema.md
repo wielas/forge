@@ -88,9 +88,24 @@ alongside the forge keys; the dashboard renders them for free.
 
 ## Tier-1 gate result — `forge.gate.v1`
 
-Emitted by `scripts/prejudge.sh --json` and stored **unmodified** as the
-prejudge card's metadata when the gate blocks (ADR-0009 D9.4).
-Defined by [`gate-result.schema.json`](gate-result.schema.json).
+Emitted by `scripts/prejudge.sh --json` (ADR-0009 D9.4). Defined by
+[`gate-result.schema.json`](gate-result.schema.json). Stored two ways,
+depending on what the gate found:
+
+- **The gate blocked.** No scorer runs, so this is the whole terminal
+  envelope: stored **unmodified**, standalone, as the prejudge card's metadata.
+- **The gate cleared.** The scorer runs next and its `forge.judge.v1` becomes
+  the terminal envelope instead — but this object is not discarded. It is
+  nested, unmodified, under that envelope's `gate_result` key
+  (`scripts/prejudge-review.sh` Stage 4c, added 2026-09-04) — named
+  `gate_result` rather than `gate` because `forge.gate.v1` already has a `gate`
+  field of its own, the constant `"forge-prejudge-gate"`; a same-named nested
+  key would shadow it with an object wherever a consumer read both shapes
+  through one path. Before 2026-09-04 a clear result was folded into
+  card-body prose only and never stored anywhere `scripts/metrics.sh` could
+  query — every period with zero blocks read "0 gate runs" regardless of how
+  many times the gate actually ran clear. `scripts/metrics.sh`'s gate CTE reads
+  both shapes; see `.gate_result.result` there for the query.
 
 ```json
 {
@@ -131,6 +146,8 @@ collapses into `pass` — a check that could not run has not passed.
 ## Judge completion — `forge.judge.v1`
 Defined in `rubrics/judge-rubric.md`. Stored as the judge card's metadata — by
 tier 1's model stage when the gate cleared and the scorer ran, and by tier 2.
+When tier 1 stores it, it carries the clearing `gate_result` object described
+above — tier 2 has no gate stage of its own, so that key is absent there.
 Its machine contract is
 [`judge-verdict.schema.json`](judge-verdict.schema.json). Nothing ADR-0011
 measures has moved: the scorer's brief, the dimensions and the verdict logic are

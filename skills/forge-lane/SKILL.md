@@ -268,6 +268,7 @@ Only exit 0 may proceed. Create the tier-1 review card, then complete.
 ```python
 child = kanban_create(title="prejudge: <chunk id>", assignee="forge-prejudge",
                       parents=[HERMES_KANBAN_TASK], body="<PR url> + what to check")
+assert kanban_show(child)["task"]["body"]  # never kanban_comment it here instead (field notes)
 kanban_complete(summary="<one sentence landed, one sentence to watch>",
                 metadata=<the validated file's exact object>,
                 created_cards=[child_id])

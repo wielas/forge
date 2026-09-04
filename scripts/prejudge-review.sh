@@ -348,8 +348,28 @@ pr_url="$PR_URL"
      | .session_id = $env.session_id
    ')"
 # --- end pinned region ------------------------------------------------------
-[ -n "${verdict:-}" ] \
-  || substrate "other: judge-envelope — claude -p returned no structured verdict"
+#
+# The pinned jq above collapses three distinct failures into one empty
+# `$verdict` and discards which one fired: `.is_error`, `.api_error_status`,
+# and a non-object `.structured_output` are FAIL CLOSED together by design
+# (the comment above the pinned region says so), but that means every one of
+# them reached `kanban_block` as the same `other: judge-envelope — claude -p
+# returned no structured verdict` string — an API-level failure (quota, auth,
+# a rate limit) filed identically to the model returning malformed output.
+# `reason_class`'s own vocabulary (rubrics/run-metadata-contract.json) already
+# has `env:` for a substrate fact distinct from a work judgement; this was
+# never routed there because nothing after the pinned block re-read `$raw` to
+# find out which arm fired. `$raw` is untouched by the pinned region — reading
+# it again here does not move the control arm's pinned bytes, only what a
+# caller does after they already decided nothing usable came back.
+[ -n "${verdict:-}" ] || {
+  reason="$(printf '%s' "$raw" | jq -r '
+      if .is_error == true or .api_error_status != null
+      then "env: judge-envelope — claude -p reported an API failure before returning a verdict (is_error=\(.is_error // false), api_error_status=\(.api_error_status // "n/a"))"
+      else "other: judge-envelope — claude -p returned no structured verdict"
+      end' 2>/dev/null)"
+  substrate "${reason:-other: judge-envelope — claude -p returned no structured verdict}"
+}
 
 # ---------------------------------------------------------------------------
 # Stage 4a — make the envelope satisfy the schema it is stored against. Two
@@ -467,6 +487,33 @@ SUMMARY="$(jq -r '
     + (if .verdict_divergence == true then " (derived; the scorer asserted \(.verdict))"
        elif .derived_verdict == null then " (the scorer asserted this; derivation was unavailable)"
        else "" end)' "$TMP/verdict.json")"
+
+# ---------------------------------------------------------------------------
+# Stage 4c — fold the gate's own result into the SAME terminal envelope.
+#
+# Storage is one blob per run (the SOUL terminates exactly once), and before
+# this only the BLOCK path (`gate_rc = 1`, above) got a standalone
+# `forge.gate.v1` row. A CLEAR gate's result — reached on every PR that gets
+# this far — lived only as prose in the tier-2 card body (`tier-1 gate: clear
+# — …` below), never as metadata anything can query. `scripts/metrics.sh`'s
+# gate CTE (`WHERE json_extract(r.metadata,'$.schema') = 'forge.gate.v1'`) and
+# its own fixture (`scripts/fixtures/metrics-board.sql`, one block row and one
+# CLEAR row, both standalone) already expect a clear run to be countable — the
+# real driver just never produced one. Measured on jobapp-second-instance,
+# 2026-09-02..09-04: 4 real prejudge runs, at least 2 with a clear gate that
+# reached a scorer verdict, 0 stored `forge.gate.v1` rows of either result —
+# `make metrics` read "gate n/a — 0 gate runs in period" for a period that ran
+# the gate 4 times.
+#
+# `$GATE` is already schema `forge.gate.v1` (prejudge.sh) and already fully
+# computed; nest it unmodified rather than re-deriving a summary. This is
+# additive — `gate_result` is a new optional key (named to avoid colliding
+# with `forge.gate.v1`'s OWN `gate` field, the constant "forge-prejudge-gate"
+# — `.gate` would have made every clear run's nested value that string, not
+# the object), `judge-verdict.schema.json` is updated to declare it, and
+# nothing that reads `.verdict`/`.scores`/`.findings` changes shape.
+gated="$(jq -c --slurpfile gate "$GATE" '.gate_result = $gate[0]' "$TMP/verdict.json")"
+[ -n "$gated" ] && printf '%s' "$gated" > "$TMP/verdict.json"
 
 # ---------------------------------------------------------------------------
 # Stage 5 — route the result to a card something alive will read.

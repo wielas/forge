@@ -425,10 +425,34 @@ tiers AS (
 -- single blended rate this file already refuses (F3). It would also make the
 -- experiment ADR-0009 D9.5 sets up unreadable: if a gate block and a model
 -- bounce are one number, no later period can show which stage did the filtering.
+-- A CLEAR gate result is reachable two ways: its own standalone `forge.gate.v1`
+-- row (the only shape that existed before 2026-09-04, and the only one a BLOCK
+-- ever produces — a block stops before any scorer runs, so there is nothing
+-- else to nest it in), or nested under `gate_result` on the `forge.judge.v1`
+-- row a scored review produces (scripts/prejudge-review.sh Stage 4c, added
+-- 2026-09-04). Before that date a clear gate's result was never stored at all
+-- — folded into card-body prose only — so this CTE, and the fixture it is
+-- tested against (scripts/fixtures/metrics-board.sql, one block row and one
+-- standalone clear row), undercounted every period with zero blocks: measured
+-- on jobapp-second-instance, 4 real prejudge runs and "gate n/a — 0 gate runs".
+-- The second arm is additive and reads the same two facts from the nested
+-- object. It is deliberately NOT named `.gate` — a genuine `forge.gate.v1` row
+-- already has a `gate` field of its own, the constant string
+-- "forge-prejudge-gate", and `json_extract(...,'$.gate')` on THAT row returns
+-- the bare string, not an object; feeding it to `json_each(...,'$.blocks')`
+-- below throws "malformed JSON" instead of matching zero rows. `gate_result`
+-- cannot collide with it, so a genuine block row can never be pulled into the
+-- second arm no matter what future fields forge.gate.v1 grows.
 g AS (
   SELECT json_extract(r.metadata,'$.result') AS result, r.metadata AS md
     FROM task_runs r
    WHERE json_extract(r.metadata,'$.schema') = 'forge.gate.v1'
+     AND r.started_at >= :since AND r.started_at < :until
+   UNION ALL
+  SELECT json_extract(r.metadata,'$.gate_result.result') AS result,
+         json_extract(r.metadata,'$.gate_result') AS md
+    FROM task_runs r
+   WHERE json_extract(r.metadata,'$.gate_result') IS NOT NULL
      AND r.started_at >= :since AND r.started_at < :until
 ),
 -- Which check did the blocking. A gate whose blocks are all one check is a gate

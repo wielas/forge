@@ -36,7 +36,24 @@ separately. It is *not* a bounce rate and must never be averaged into one.
 
 **Source:** `forge.gate.v1` results on `task_runs` — `$.result` for the rate,
 `$.blocks[]` for the per-check distribution. Emitted by `scripts/prejudge.sh`
-and stored unmodified by the `forge-prejudge` driver (ADR-0009 D9.4).
+and stored unmodified by the `forge-prejudge` driver (ADR-0009 D9.4), either
+standalone (the gate blocked, no scorer ran) or nested under `$.gate_result`
+on the `forge.judge.v1` row a clear gate's scorer produces — not `$.gate`,
+which `forge.gate.v1` already uses for its own constant `"forge-prejudge-gate"`
+label.
+
+**Series break 2026-09-04.** Before this date only a BLOCKED gate was ever
+stored — a clear result lived in card-body prose only, nowhere `task_runs`
+could be queried. Every period with zero blocks therefore read "gate n/a — 0
+gate runs", indistinguishable from a period where the gate never ran at all.
+Measured on `jobapp-second-instance`, 2026-09-02..09-04: 4 real prejudge runs,
+at least 2 with a clear gate that reached a scored verdict, 0 stored
+`forge.gate.v1` results of either kind. `scripts/prejudge-review.sh` Stage 4c
+now nests the clear result under the judge envelope's `gate_result` key so this
+denominator is observable in the common case (a clear gate) as well as the rare
+one. Rows before this date cannot be backfilled — the exhaust is gone — so a
+"0 gate runs" period from before 2026-09-04 must be read as "gate producer was
+blind to clears," not as "the gate did not run."
 
 **Why it is its own number.** A gate block costs **zero model tokens and zero
 scorer latency**, because it lands before anything is spawned; a bounce costs a
@@ -250,6 +267,13 @@ One row per retro. Newest last.
 the last two columns are written by a human.*
 
 | 2026-07-30 | forge-ladder, 2026-07-29..2026-07-30 | t1 0.00 (0/7) · t2 0.71 (12/17) | 2.19 (24 verdicts) | `(unclassified)` ×20, `failing-prereq` ×8, `review-required` ×1 | 9 | driver 0.88 (15/17) · 14 unique sessions · estimated $1.452335808 · actual n/a | `make metrics` (F27): the three numbers become a program | **cannot tell** — no CI-red bounce occurred, so last period's canonical CI-red verdict was never exercised |
+| 2026-09-04 | jobapp-second-instance, 2026-09-02..2026-09-04 | gate n/a — 0 gate runs in period · t1 0.00 (0/2) · t2 n/a — 0 verdicts in period | 2.67 (2 verdicts) | `(unclassified)` ×6, `other` ×5, `blast-radius` ×1, `failing-prereq` ×1 | 20 | driver 1.00 (4/4) · estimated $0.290513886 · actual n/a | gate CTE reads a `gate_result` nested on `forge.judge.v1` (Stage 4c); `judge_model` no longer required; `touches-exempt.sh` matches root-level `ROADMAP.md`; `forge-lane` §7 reads its own child back; `start-chunk` gates on parent `mergedAt`; `prejudge-review.sh` splits `env:` from `other:` on a scorer API failure | n/a — first row for this board |
+
+**First row for `jobapp-second-instance` — first retro on this board, no prior period to compare.** The dominant finding is the gate cell itself:
+**`gate n/a — 0 gate runs in period` is wrong, not empty.** Four prejudge runs executed in this window (C10, C13, C19, C20) and at least two (C19, and C20's out-of-band completion) had a CLEAR gate that reached a scorer or a hand-completed summary — `run 25`'s own stored `summary` is a verbatim PASS/WARN/SKIP gate report. Zero of the four ever stored `forge.gate.v1`, because that schema was only ever written on the BLOCK path (`prejudge-review.sh`'s own comment: "a gate block produces a `forge.gate.v1` object and no verdict") — a CLEAR run's result lived in card-body prose only, and `scripts/fixtures/metrics-board.sql` already modeled a clear run as a countable, standalone row that the real driver never produced. This retro's PR nests the gate's own object under a new `gate_result` key on the `forge.judge.v1` row a clear gate's scorer produces, and widens the CTE to read both shapes. **This row still reads `gate n/a`** — the fix only changes what future runs store, and nothing here backfills exhaust that is already gone; the next retro on this board is the first one this cell can actually answer.
+**Bounce rate and mean score are thin (n=2) and should not be read as a trend.** The denominator is 2 chunk cards, not 4: only C10 and C19 ever produced a canonical `forge.judge.v1`. C13's scorer returned no structured verdict at all (substrate block) and C20's prejudge never reached the scorer (see below) — both correctly excluded per this file's denominator-honesty rule, not silently folded into a 0.00 rate over 4. C19's verdict carried `verdict_divergence: true` (asserted `approve-with-nits`, derived `approve` from its own scores, 8605 output tokens — a self-consistency defect, not truncation).
+**`reason_class`: `blast-radius` ×1 and `(unclassified)` ×6 are the two buckets worth a second look.** `blast-radius` is not in the documented vocabulary (`stale-spec`, `failing-prereq`, `env`, `ci-red`, `judge-bounce`, `gate-misrouted`, `gate-unrunnable`, `other`) and is left uncounted rather than folded into `other` — this retro did not resolve whether `lane-blast-radius.sh` is a genuine parallel-worktree hazard or a one-off; see the PR body. `(unclassified)` ×6 includes the tier-2 operator-review-required sentinel (F26's `forge.block.v1` still does not exist) and is not new.
+**Operator touches: 20 (18 comments + 2 unblocks) on a board with 4 merged chunks in under three days** is a floor, not a full account of the hours a stuck `active_pr` guard (item below) and a manual gate re-run cost off-board.
 
 The two observability cells in the 2026-07-30 generated row were replayed from
 the live board and profile-state snapshots on 2026-08-10, then corrected on
