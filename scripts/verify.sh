@@ -3247,7 +3247,13 @@ METRICS_STATE_SQL
                               | select(.reason == "profile-state-unavailable")
                               | .task_id] | first)]' \
                       "$TMPROOT/metrics.json" 2>/dev/null)"
-  if [ "$driver_profile" = '[6,0,"t_c2"]' ]; then
+  # 7, not 6: t_g2 is now a forge.judge.v1 row (2026-09-04, gate_result nested
+  # on a clear-gate scorer verdict — see scripts/fixtures/metrics-board.sql),
+  # so it joins `v` on schema alone and is a seventh real verdict in the
+  # fixture. This value only pins that the total survived the missing-profile
+  # path unperturbed; the count itself is fixture-derived, same as
+  # scripts/fixtures/metrics-expected.json's .verdicts.total.
+  if [ "$driver_profile" = '[7,0,"t_c2"]' ]; then
     ok "driver-usage-missing-profile-is-explicit"
   else
     bad "driver-usage-missing-profile-is-explicit" \
