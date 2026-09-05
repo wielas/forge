@@ -1621,6 +1621,8 @@ prejudge/shadow-preserves-the-routing-field  stamping never alters .verdict
 prejudge/stamped-envelope-declares-every-key  no key the schema does not declare (additionalProperties:false)
 prejudge/envelope-is-repaired-before-it-is-stored  an absent nits_as_cards is filled and an invented worker_session_id cannot survive
 prejudge/bounce-card-lands-in-the-rejected-worktree  route_bounce's own flags make a card Hermes accepts, in the rejected worktree
+prejudge/tier2-handoff-survives-a-live-parent  route_tier2 creates parentless, blocks, then links — a live (non-done) parent no longer breaks the handoff
+prejudge/chunk-cannot-be-its-own-running-task  --chunk equal to the running task is refused by substrate before Stage 1 runs
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
@@ -5538,6 +5540,108 @@ TABLE
       bad "bounce-card-lands-in-the-rejected-worktree" \
           "route_bounce must create a fix card Hermes accepts and reads back as dir@<chunk worktree> with forge-lane; rc $bounce_rc, card '${bounce_fix:-none}'"
     fi
+  fi
+
+  # HANDOFF-INTEGRITY, live 2026-09-04: t_6d8ecc10 (a running forge-prejudge
+  # task) passed ITS OWN id as --chunk. route_tier2 parented the tier-2 card on
+  # `--parent "$CHUNK"` at create time, kanban_db.py's create_task derived
+  # `todo` because the misparented CHUNK was still `running` (3441-3462: no
+  # parent -> ready, any parent not done -> todo), block_task's
+  # `WHERE status IN ('running','ready')` guard (6417, 6432; 6378 for the
+  # `dependency` kind, 6320 inside the recurrence-limit arm) then refused the
+  # block from `todo`, and the read-back's `.task.status == "blocked"` failed
+  # closed into `other: handoff-integrity`. route_tier2 had only ever been
+  # exercised with a CORRECTLY-passed chunk card, which is always `done` by
+  # the time tier-1 runs — so this parent-terminality dependency was latent
+  # and untested.
+  #
+  # PART 1 is the same fix board-bootstrap.sh's create_interactive_card already
+  # carries for the identical bug: create with NO --parent (lands `ready`
+  # regardless of the graph), `block --kind needs_input` (works from `ready`,
+  # and is the only thing that writes the sticky `blocked` EVENT —
+  # `_has_sticky_block` reads the latest blocked/unblocked event, not the
+  # status column), `assign none`, and only THEN `kanban link <chunk> <review>`
+  # (`link_tasks` demotes a child `WHERE status = 'ready'` ONLY — 3850 — so a
+  # `blocked` child survives, and its `linked` event does not clear
+  # stickiness). Linking first would demote the fresh `ready` card to `todo`
+  # before block ever ran, reproducing this exact bug one line later.
+  #
+  # Proven against REAL Hermes, not the board-bootstrap stub: a stub can only
+  # ever confirm what its author already believed, and this file's own history
+  # is two stubs that lied about kernel behaviour and went green anyway
+  # (855e03d's `--initial-status running` echo; the `--branch` without
+  # `--workspace worktree` pairing). route_tier2 is LIFTED OUT and run for
+  # real, in an isolated HERMES_HOME, exactly like route_bounce above.
+  local tier2_home="$TMPROOT/tier2-home"
+  local tier2_out tier2_rc tier2_chunk tier2_review
+  if ! command -v hermes >/dev/null 2>&1; then
+    skip "tier2-handoff-survives-a-live-parent" "hermes not on PATH"
+  else
+    mkdir -p "$tier2_home"
+    tier2_out="$(
+      export HERMES_HOME="$tier2_home" HERMES_KANBAN_BOARD=tier2lab
+      hermes kanban init >/dev/null 2>&1 || true
+      hermes kanban boards create tier2lab >/dev/null 2>&1 || true
+      BOARD=tier2lab
+      PR_URL="https://example.invalid/pull/1"
+      HERMES_KANBAN_TASK=tier2-probe
+      CREATED=()
+      kanban() { hermes kanban --board "$BOARD" "$@"; }
+      board_live() { return 0; }
+      substrate() { printf 'substrate: %s\n' "$1" >&2; return 1; }
+      # The LIVE parent: freshly created, explicit assignee (kanban.default_assignee
+      # is `builder` on this host and would otherwise adopt an unassigned ready
+      # card — verify.sh:906-911), deliberately never completed. This is the
+      # shape a misrouted --chunk hands route_tier2, and also the shape ANY
+      # --chunk is in in between its own creation and its own completion.
+      CHUNK="$(kanban create "CHUNK-tier2probe: live parent" \
+                 --assignee forge-operator-handoff \
+                 --idempotency-key chunk-tier2-probe \
+                 --json 2>/dev/null | jq -r '.id')"
+      [ -n "$CHUNK" ] && [ "$CHUNK" != null ] || exit 1
+      [ "$(kanban show "$CHUNK" --json 2>/dev/null | jq -r '.task.status')" != done ] \
+        || exit 1
+      eval "$(sed -n '/^route_tier2() {/,/^}$/p' "$review")"
+      route_tier2 "$PR_URL" || exit 1
+      printf '%s\t%s\n' "$CHUNK" "${CREATED[0]:-}"
+    )"; tier2_rc=$?
+    tier2_chunk="${tier2_out%%$'\t'*}"
+    tier2_review="${tier2_out#*$'\t'}"
+    if [ "$tier2_rc" = 0 ] && [ -n "$tier2_review" ] && [ "$tier2_review" != "$tier2_out" ] \
+       && HERMES_HOME="$tier2_home" hermes kanban --board tier2lab \
+            show "$tier2_review" --json 2>/dev/null \
+          | jq -e --arg chunk "$tier2_chunk" '
+              .task.assignee == null and .task.status == "blocked"
+              and any(.events[]; .kind == "blocked")
+              and (.parents // [] | index($chunk)) != null' >/dev/null 2>&1; then
+      ok "tier2-handoff-survives-a-live-parent (real Hermes, isolated home)"
+    else
+      bad "tier2-handoff-survives-a-live-parent" \
+          "route_tier2 must create a blocked, unassigned tier-2 card LINKED to its chunk even when \$CHUNK is not done; rc $tier2_rc, chunk '${tier2_chunk:-none}', card '${tier2_review:-none}'"
+    fi
+  fi
+
+  # PART 2: a model deriving --chunk from prose (forge-prejudge.SOUL.md step 1:
+  # "take ... your parent chunk card's id into chunk") will get it wrong again.
+  # This is the one shape of that mistake --chunk-identity can ALWAYS catch,
+  # with no board and no hermes at all: the exact live failure above, where
+  # --chunk equalled the running task itself. It must be refused before Stage 1
+  # (the gate) ever runs — no gate, no model, no card, exit 3 — never exit 1 or
+  # 2, which a caller under a different contract could read as a crash or a
+  # routed bounce.
+  local self_out self_rc
+  self_out="$(printf '%s' "$contract" | HERMES_KANBAN_TASK=t_self "$review" \
+        https://example.invalid/pull/9 \
+        --chunk t_self --fixture "$prs/pr-9" --dry-run 2>/dev/null)"
+  self_rc=$?
+  if [ "$self_rc" = 3 ] && printf '%s' "$self_out" | jq -e '
+        .action == "substrate-block"
+        and (.reason | test("^env: chunk-identity"))
+        and .created_cards == []' >/dev/null 2>&1; then
+    ok "chunk-cannot-be-its-own-running-task"
+  else
+    bad "chunk-cannot-be-its-own-running-task" \
+        "--chunk equal to \$HERMES_KANBAN_TASK must be refused by substrate before Stage 1 runs; rc=$self_rc out='$(printf '%s' "$self_out" | tr '\n' ' ')'"
   fi
 
   # The caller must use the guarded entry point, not the raw two lines.
