@@ -104,34 +104,96 @@ substrate() { envelope substrate-block "" null "$1" 3; }
 kanban() { hermes kanban --board "$BOARD" "$@"; }
 board_live() { [ -n "$BOARD" ] && command -v hermes >/dev/null; }
 
+# ---------------------------------------------------------------------------
+# --chunk is derived by a MODEL reading prose out of forge-prejudge.SOUL.md
+# step 1 ("take ... your parent chunk card's id into `chunk`"), and a model
+# reading an id out of prose will get it wrong again — it already did, live,
+# 2026-09-04: a running prejudge task passed ITS OWN id as --chunk, route_tier2
+# parented the tier-2 card under itself, and the misparented chunk (still
+# `running`) drove the card into `todo`, where `block` silently refuses it
+# (see route_tier2 below). Catch what is mechanically catchable BEFORE any
+# card exists, rather than discover it from a failed read-back afterward.
+#
+# Two shapes, both fail-closed via `substrate` (exit 3, `kanban_block` — a bad
+# hand-off is a fact about how this run was invoked, not a work judgement, so
+# it routes exactly like `env: jq missing` and every other precondition fault
+# in this file, never like a usage error a caller under `set -e` could crash
+# on):
+#
+#   1. --chunk IS the running task. A card cannot be its own parent chunk, and
+#      this needs no board access at all — it is why it runs unconditionally,
+#      before board_live is even asked.
+#   2. --chunk's card does not look like a chunk card. The board's convention
+#      (scripts/prejudge.sh's `branch_name` check) is `CHUNK-<id>: <title>`;
+#      anything else — another prejudge card, a bounce fix card, a typo'd id —
+#      is refused by the same `CHUNK-[A-Za-z0-9]*` shape that check uses. This
+#      needs a live board, so it only runs when one is configured.
+# ---------------------------------------------------------------------------
+[ -z "${HERMES_KANBAN_TASK:-}" ] || [ "$CHUNK" != "$HERMES_KANBAN_TASK" ] || \
+  substrate "env: chunk-identity — --chunk ($CHUNK) is the running task; a card cannot be its own parent chunk"
+
+if board_live; then
+  chunk_title="$(kanban show "$CHUNK" --json 2>/dev/null | jq -r '.task.title // empty' 2>/dev/null)"
+  case "$chunk_title" in
+    CHUNK-[A-Za-z0-9]*) ;;
+    *) substrate "env: chunk-identity — --chunk ($CHUNK) does not look like a chunk card (title '${chunk_title:-<unreadable>}', want CHUNK-<id>: <title>)";;
+  esac
+fi
+
 # An approval is a hand-off to the operator, not an ending. Completing without
 # creating anything strands the PR: both cards go `done`, the PR sits at
 # REVIEW_REQUIRED, and nothing on the board says a human still owes it a look
 # (measured 2026-07-28, first real chunk). The `kanban_create` MCP tool cannot
 # express this hand-off — its runtime rejects a missing assignee. The CLI can.
+#
+# CREATE PARENTLESS. This used to `create --parent "$CHUNK"` directly, on the
+# assumption that a chunk card is always `done` by the time tier-1 runs. A
+# misrouted --chunk breaks that assumption (handoff-integrity, live
+# 2026-09-04: a running prejudge task's OWN id was passed as --chunk), and
+# create_task derives the new card's status from ITS PARENTS' status
+# (kanban_db.py:3441-3462) — no parent -> `ready`, any parent not `done` ->
+# `todo`. `block_task` only ever succeeds `FROM 'running'/'ready'`
+# (:6378/:6417/:6432; :6320 is the `dependency`-kind arm), so a `todo` card
+# silently fails to block and the read-back below fails closed into
+# `other: handoff-integrity` — exactly what was observed. This is the SAME bug
+# `hermes/board-bootstrap.sh`'s `create_interactive_card` hit and fixed the
+# same way; converge on that shape rather than inventing a second one.
+#
+# `--initial-status blocked` writes no sticky `blocked` event, so the next
+# dispatcher sweep promotes the card and `kanban.default_assignee` routes it
+# to a real profile — observed twice, once back to the very model that had
+# just approved it. Start on a deliberately non-existent sentinel assignee,
+# block it through the real state transition, then unassign. THEN, and only
+# then, attach the parent with `kanban link`: `link_tasks` demotes a child
+# `WHERE status = 'ready'` ONLY (kanban_db.py:3850), so a card already
+# `blocked` survives being linked, and the `linked` event it writes is not
+# `unblocked`, so `_has_sticky_block` (which reads the latest blocked/unblocked
+# event, not the status column) still reports sticky. Linking BEFORE blocking
+# would demote the fresh `ready` card to `todo` first and reproduce this exact
+# bug one line later — the ordering here is load-bearing, not stylistic.
+# `INSERT OR IGNORE INTO task_links` makes the link idempotent, so calling it
+# unconditionally (even when idempotency-key resolved to an already-blocked
+# card) is safe. The read-back fails closed if any of those substrate facts —
+# including the link itself — did not take.
 route_tier2() {
   local body="$1" review
   board_live || return 0
   review="$(kanban create "judge: $CHUNK" \
       --assignee forge-operator-handoff \
       --created-by "${HERMES_KANBAN_TASK:-prejudge-review}" \
-      --body "$body" --parent "$CHUNK" \
+      --body "$body" \
       --idempotency-key "tier2-${HERMES_KANBAN_TASK:-$CHUNK}" \
       --json | jq -er '.id')" || return 1
 
-  # `--initial-status blocked` writes no sticky `blocked` event, so the next
-  # dispatcher sweep promotes the card and `kanban.default_assignee` routes it
-  # to a real profile — observed twice, once back to the very model that had
-  # just approved it. Start on a deliberately non-existent sentinel assignee,
-  # block it through the real state transition, then unassign. The read-back
-  # fails closed if any of those substrate facts change.
   [ "$(kanban show "$review" --json | jq -r '.task.status')" = "blocked" ] || \
     kanban block --kind needs_input "$review" \
       "other: tier-2 operator review required — run /judge, then merge or bounce" >/dev/null
   kanban assign "$review" none >/dev/null
-  kanban show "$review" --json | jq -e '
+  kanban link "$CHUNK" "$review" >/dev/null
+  kanban show "$review" --json | jq -e --arg chunk "$CHUNK" '
     .task.assignee == null and .task.status == "blocked"
-    and any(.events[]; .kind == "blocked")' >/dev/null || return 1
+    and any(.events[]; .kind == "blocked")
+    and (.parents // [] | index($chunk)) != null' >/dev/null || return 1
   CREATED+=("$review")
 }
 
