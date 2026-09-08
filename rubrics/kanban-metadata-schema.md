@@ -76,9 +76,34 @@ historical nested envelopes rather than normalizing them into the contract.
   "card_proposals": ["CARD?: extract shared retry helper"],
   "docs_reconciled": ["ROADMAP.md", "adr/0007 (updated: consequence note)"],
   "duration_min": 23,
-  "worker": "codex/gpt-5.6-sol xhigh"
+  "worker": "codex/gpt-6-astra xhigh",
+  "codex_model": "gpt-6-astra",
+  "codex_reasoning_effort": "xhigh",
+  "codex_model_source": "rollout",
+  "codex_model_requested": "gpt-5.6-luna"
 }
 ```
+
+The four `codex_*` keys are **declared but not required**, and both halves of
+that are deliberate. Declared, because the 2026-07-30 audit classed the
+`model`/`reasoning_effort` keys real runs were already emitting as "invented,
+not in schema" — a key a consumer may rely on has to be named somewhere, and
+ADR-0015 D15.6 is the precedent for adding one to `forge.chunk.v1`. Not
+required, because `lane` includes `claude-interactive`, which has no Codex
+model at all; because the Rules below say changing a required field needs a
+`.v2` schema id, so requiring one retroactively invalidates rows that were
+valid when written; and because `metadata-live.sh` judges real board rows since
+a cutoff, which a new required field would force forward.
+
+`codex_model_source` is the load-bearing one. `rollout` means Codex's own
+session rollout said so; `requested` means the rollout could not be read and
+this is merely the pin that was asked for. F22 is what happens without that
+distinction: the desktop app rewrote `~/.codex/config.toml` mid-lane on
+2026-09-08, the chunk authored afterwards recorded only a `worker_session_id`,
+and it was approved with nothing naming the model that wrote the diff.
+`scripts/codex-run.sh` writes all four to `$FORGE_LANE_RUNTIME/codex-model` and
+forge-lane §7 copies them across; a failed read is never fatal to the run, so
+without the marker the fix would degrade to intent silently.
 
 `summary` (the human-readable sibling): one sentence of what landed + one of what
 to watch. The lane worker passes this JSON directly to

@@ -119,6 +119,26 @@
     "worker": {
       "type": "string",
       "minLength": 1
+    },
+    "codex_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The model Codex's own session rollout says authored the diff, NOT the pin that was requested. Optional and never required: `lane` includes claude-interactive, which has no Codex model at all, and a required field would retroactively invalidate every row valid when written (see the additive rule in kanban-metadata-schema.md)."
+    },
+    "codex_reasoning_effort": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The `effort` on the same rollout turn_context as codex_model."
+    },
+    "codex_model_source": {
+      "type": "string",
+      "enum": ["rollout", "requested"],
+      "description": "Where codex_model came from. `rollout` is evidence — Codex said so. `requested` is intent — the rollout could not be read, so this is only what was asked for. Without this marker a failed read degrades provenance to intent silently, which is F22 wearing the fix's clothes."
+    },
+    "codex_model_requested": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The requested pin, present only when it differs from codex_model. That difference is F22 itself: the operator's ~/.codex/config.toml was rewritten under a running lane."
     }
   },
   "$defs": {
