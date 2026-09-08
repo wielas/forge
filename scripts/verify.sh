@@ -224,6 +224,33 @@ codex_live_pin_diagnostic() { # $1=config.toml; checked-in pins already loaded
   return 1
 }
 
+# The two hardcoded lists of check-group names in this file must name the same
+# set. The arg-allowlist `case` arm is the registry — what `verify.sh <group>`
+# accepts — and DEFAULT_SUITES is what a bare `make verify`, and therefore CI,
+# actually runs. Nothing compared them. A group added to the registry and to
+# --help but left out of DEFAULT_SUITES runs nowhere, and
+# manifest/list-matches-the-suite is structurally unable to notice: it asserts
+# ran ⊆ catalogue only, and says so in its own comment. F65's exact shape.
+#
+# $1=verify.sh-shaped file -> prints a diagnostic naming both sets, returns 1
+# on a mismatch in EITHER direction, and on an unreadable list.
+suite_registry_diff() {
+  local f="$1" registry default missing extra
+  registry="$(sed -n 's/^[[:space:]]*\([^)]*\)) SUITES=.*/\1/p' "$f" \
+              | tr '|' '\n' | sed '/^[[:space:]]*$/d' | sort -u)"
+  default="$(sed -n 's/^DEFAULT_SUITES="\(.*\)"[[:space:]]*$/\1/p' "$f" \
+             | tr ' ' '\n' | sed '/^[[:space:]]*$/d' | sort -u)"
+  if [ -z "$registry" ] || [ -z "$default" ]; then
+    echo "expected both group lists in $f; read $(printf '%s\n' "$registry" | grep -c .) name(s) out of the case-arm registry and $(printf '%s\n' "$default" | grep -c .) out of DEFAULT_SUITES — the check went blind, which is not a pass (F65)"
+    return 1
+  fi
+  missing="$(comm -23 <(printf '%s\n' "$registry") <(printf '%s\n' "$default") | tr '\n' ' ')"
+  extra="$(comm -13 <(printf '%s\n' "$registry") <(printf '%s\n' "$default") | tr '\n' ' ')"
+  [ -z "$missing$extra" ] && return 0
+  echo "the case-arm registry accepts [$(printf '%s' "$registry" | tr '\n' ' ')] but DEFAULT_SUITES runs [$(printf '%s' "$default" | tr '\n' ' ')]; registered yet never run by default: ${missing:-none}; run by default yet not accepted as an argument: ${extra:-none}"
+  return 1
+}
+
 run_cli_group() {
   group cli
   # Help is a contract header, not a line interval. Grow each header before
@@ -248,6 +275,50 @@ run_cli_group() {
   else
     bad "verify-help-grows-with-the-group-header" \
         "verify.sh --help lost an accepted/appended group or is pinned to a numeric sed range"
+  fi
+
+  # Which groups RUN is decided by two hardcoded lists that nothing compared.
+  # Drive a file carrying both defects at once through the same helper first —
+  # a group registered but not defaulted, and one defaulted but not registered
+  # — so a green run proves the comparison is load-bearing in both directions
+  # rather than merely agreeing with today's values. The third fixture strips
+  # both lines: a check for blindness that can itself go blind is worthless.
+  #
+  # The fixtures are built with awk, not grep/sed: a pattern spelling the case
+  # arm's own tail out literally would itself be picked up by the extractor
+  # above as a seventeenth group, quietly corrupting this case and the one
+  # before it. Bracket the punctuation instead.
+  local registry_mutant="$TMPROOT/registry-mutation.sh"
+  local registry_blind="$TMPROOT/registry-blind.sh"
+  awk '
+    /^[[:space:]]*cli[|]config[|]/ { sub(/[)] SUITES=/, "|appended) SUITES=") }
+    /^DEFAULT_SUITES=/             { sub(/"$/, " phantom\"") }
+    { print }
+  ' scripts/verify.sh > "$registry_mutant"
+  awk '
+    /^[[:space:]]*cli[|]config[|]/ { next }
+    /^DEFAULT_SUITES=/             { next }
+    { print }
+  ' scripts/verify.sh > "$registry_blind"
+  local mutant_diag mutant_rc blind_diag blind_rc
+  mutant_diag="$(suite_registry_diff "$registry_mutant" 2>&1)"; mutant_rc=$?
+  blind_diag="$(suite_registry_diff "$registry_blind" 2>&1)"; blind_rc=$?
+  if [ "$mutant_rc" -ne 0 ] \
+     && printf '%s' "$mutant_diag" | grep -Fq 'never run by default: appended' \
+     && printf '%s' "$mutant_diag" | grep -Fq 'not accepted as an argument: phantom' \
+     && [ "$blind_rc" -ne 0 ] \
+     && printf '%s' "$blind_diag" | grep -Fq 'the check went blind, which is not a pass (F65)'; then
+    ok "default-suites-mutation-is-caught"
+  else
+    bad "default-suites-mutation-is-caught" \
+        "expected a mismatch naming both 'appended' (registered, never defaulted) and 'phantom' (defaulted, never registered), plus the F65 blind refusal on a copy with neither list; got rc=$mutant_rc '${mutant_diag:-no diagnostic}' and rc=$blind_rc '${blind_diag:-no diagnostic}'"
+  fi
+
+  local suite_diag
+  if suite_diag="$(suite_registry_diff scripts/verify.sh 2>&1)"; then
+    ok "default-suites-names-every-registered-group ($(sed -n 's/^DEFAULT_SUITES="\(.*\)"[[:space:]]*$/\1/p' scripts/verify.sh | wc -w | tr -d ' ') groups)"
+  else
+    bad "default-suites-names-every-registered-group" "$suite_diag"
   fi
 
   local preflight_help_fixture="$TMPROOT/preflight-help.sh" preflight_help
@@ -1420,6 +1491,8 @@ if [ "$LIST_ONLY" = 1 ]; then
 cli/flags-exist                   every long flag named beside a tracked command exists in its --help
 cli/flags-exist/<command>         one tracked command could not be judged: absent, or its --help lists no flags
 cli/verify-help-grows-with-the-group-header  appended groups remain visible without numeric line pins
+cli/default-suites-mutation-is-caught  a group registered but not defaulted, and one defaulted but not registered, both report
+cli/default-suites-names-every-registered-group  the case-arm registry and DEFAULT_SUITES name the same groups (F65)
 cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 301
