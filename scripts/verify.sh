@@ -206,6 +206,74 @@ load_checked_in_codex_pins() {
     && [ -n "$CHECKED_STATE_MODEL" ] && [ -n "$CHECKED_STATE_EFFORT" ]
 }
 
+# The model pins have ONE source: scripts/model-pins.sh (ADR-0018), and
+# `source` is its only parser. A `sed` here would be four shapes reduced to one
+# file read two ways — the same defect one layer down. The `.` runs inside a
+# command substitution so the suite's own environment is never mutated by the
+# file it is judging, and the four names are unset first so a value leaking in
+# from the environment cannot mask a pin the file fails to define.
+PIN_FILE="scripts/model-pins.sh"
+PIN_ROUTER=""; PIN_DRIVER=""; PIN_CODEX_MODEL=""; PIN_CODEX_EFFORT=""
+load_model_pins() { # $1=pin file (default $PIN_FILE); 0 iff all four are defined
+  local file="${1:-$PIN_FILE}" out
+  PIN_ROUTER=""; PIN_DRIVER=""; PIN_CODEX_MODEL=""; PIN_CODEX_EFFORT=""
+  [ -r "$file" ] || return 1
+  out="$(
+    unset FORGE_PIN_ROUTER FORGE_PIN_DRIVER FORGE_PIN_CODEX_MODEL FORGE_PIN_CODEX_EFFORT
+    # shellcheck disable=SC1090
+    . "$file" >/dev/null 2>&1 || exit 1
+    printf '%s\n%s\n%s\n%s\n' "${FORGE_PIN_ROUTER:-}" "${FORGE_PIN_DRIVER:-}" \
+                              "${FORGE_PIN_CODEX_MODEL:-}" "${FORGE_PIN_CODEX_EFFORT:-}"
+  )" || return 1
+  { read -r PIN_ROUTER; read -r PIN_DRIVER
+    read -r PIN_CODEX_MODEL; read -r PIN_CODEX_EFFORT; } <<< "$out"
+  [ -n "$PIN_ROUTER" ] && [ -n "$PIN_DRIVER" ] \
+    && [ -n "$PIN_CODEX_MODEL" ] && [ -n "$PIN_CODEX_EFFORT" ]
+}
+
+model_pin_file_data_diagnostic() { # $1=pin file; diagnostics on stdout, 1 if not pure data
+  local file="$1" offenders missing="" name
+  if [ ! -r "$file" ]; then
+    echo "$file is missing or unreadable — the check went blind, which is not a pass (F65)"
+    return 1
+  fi
+  offenders="$(grep -vE '^[[:space:]]*(#|$)' "$file" \
+             | grep -vE '^FORGE_PIN_[A-Z_]+="[^"$`\\]*"$' || true)"
+  if [ -n "$offenders" ]; then
+    echo "$file carries lines that are not plain data, so sourcing it would execute them: $(printf '%s' "$offenders" | tr '\n' ' ')"
+    return 1
+  fi
+  # "no offending lines" is also true of an empty file, and a check that passes
+  # on a file with nothing in it has gone blind (F65). Require all four names.
+  for name in FORGE_PIN_ROUTER FORGE_PIN_DRIVER FORGE_PIN_CODEX_MODEL FORGE_PIN_CODEX_EFFORT; do
+    grep -q "^$name=" "$file" || missing="$missing $name"
+  done
+  if [ -n "$missing" ]; then
+    echo "$file defines no data line for:$missing — the check went blind, which is not a pass (F65)"
+    return 1
+  fi
+  return 0
+}
+
+codex_pin_agreement_diagnostic() { # $1=pin file; the pin file vs forge-lane §4 vs state.md
+  local file="$1" pinned
+  if ! load_model_pins "$file"; then
+    echo "could not source $file for FORGE_PIN_CODEX_MODEL/FORGE_PIN_CODEX_EFFORT — the check went blind, which is not a pass (F65)"
+    return 1
+  fi
+  if ! load_checked_in_codex_pins; then
+    echo "could not parse the model-and-effort pair from forge-lane §4 and docs/state.md — the check went blind, which is not a pass (F65)"
+    return 1
+  fi
+  pinned="$PIN_CODEX_MODEL/$PIN_CODEX_EFFORT"
+  if [ "$pinned" != "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT" ] \
+     || [ "$pinned" != "$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT" ]; then
+    echo "$file pins '$pinned'; forge-lane §4 pins '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT'; docs/state.md pins '$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT'"
+    return 1
+  fi
+  return 0
+}
+
 codex_live_pin_diagnostic() { # $1=config.toml; checked-in pins already loaded
   local config="$1" live_model live_effort
   if [ ! -r "$config" ]; then
@@ -621,19 +689,91 @@ run_cli_group() {
     fi
   fi
 
-  # The Codex pin has two checked-in statements: the lane contract and the
-  # environment record. This half deliberately never reads $HOME, so CI can
-  # catch drift without an operator config. config/codex-pin-live is the live
-  # half and prints both pairs when they differ.
-  if ! load_checked_in_codex_pins; then
-    bad "codex-pin-documented" \
-        "could not parse the model-and-effort pair from forge-lane and docs/state.md"
-  elif [ "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT" \
-       = "$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT" ]; then
-    ok "codex-pin-documented ($CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT; offline)"
+  # ---- the model pins: one file, sourced, never parsed (ADR-0018) ---------
+  # `source` is only safe on a file that is data, so assert that first, then
+  # the agreement checks that source it. Each is preceded by its own mutation
+  # driven through the SAME helper, so a green run proves the check can still
+  # fail rather than only that today happens to agree — the shape
+  # config/codex-pin-live-diagnostic-names-both-values established.
+  local pin_fixture="$TMPROOT/model-pins-fixtures"
+  local pin_diag pin_rc
+  mkdir -p "$pin_fixture"
+
+  # Two mutations, one case, because they are the two ways this check can lie.
+  # First: a pin line that is code, not data. `source` would execute it.
+  local pin_code_diag pin_code_rc pin_short_diag pin_short_rc
+  printf 'FORGE_PIN_ROUTER="$(id)"\n' > "$pin_fixture/code.sh"
+  pin_code_diag="$(model_pin_file_data_diagnostic "$pin_fixture/code.sh" 2>&1)"; pin_code_rc=$?
+  # Second: a file with no offending line at all — and one pin missing. "No
+  # offenders" is trivially true of an empty file, so without the
+  # all-four-are-present arm this check passes on a truncated pin file, which
+  # is the vacuous pass it exists to prevent (F65).
+  printf 'FORGE_PIN_ROUTER="fixture/router"\nFORGE_PIN_DRIVER="fixture/driver"\n' \
+    > "$pin_fixture/truncated.sh"
+  printf 'FORGE_PIN_CODEX_MODEL="fixture-model"\n' >> "$pin_fixture/truncated.sh"
+  pin_short_diag="$(model_pin_file_data_diagnostic "$pin_fixture/truncated.sh" 2>&1)"; pin_short_rc=$?
+  if [ "$pin_code_rc" -ne 0 ] \
+     && printf '%s' "$pin_code_diag" | grep -Fq 'FORGE_PIN_ROUTER="$(id)"' \
+     && [ "$pin_short_rc" -ne 0 ] \
+     && printf '%s' "$pin_short_diag" | grep -Fq 'FORGE_PIN_CODEX_EFFORT' \
+     && printf '%s' "$pin_short_diag" | grep -Fq 'the check went blind, which is not a pass (F65)'; then
+    ok "model-pin-file-data-not-code-mutation-is-caught"
   else
-    bad "codex-pin-documented" \
-        "forge-lane pins '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT'; docs/state.md pins '$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT'"
+    bad "model-pin-file-data-not-code-mutation-is-caught" \
+        "a \$(...) pin line must be named as executable content and a truncated file must name the missing pin (got: ${pin_code_diag:-no diagnostic} / ${pin_short_diag:-no diagnostic})"
+  fi
+
+  pin_diag="$(model_pin_file_data_diagnostic "$PIN_FILE" 2>&1)"; pin_rc=$?
+  if [ "$pin_rc" -eq 0 ]; then
+    ok "model-pin-file-is-data-not-code ($(grep -cvE '^[[:space:]]*(#|$)' "$PIN_FILE") assignments)"
+  else
+    bad "model-pin-file-is-data-not-code" "$pin_diag"
+  fi
+
+  # A pin file that cannot be read is this check's own source of truth going
+  # missing. That is `bad`, never `skip` — and the path must be named.
+  pin_diag="$(codex_pin_agreement_diagnostic "$pin_fixture/absent.sh" 2>&1)"; pin_rc=$?
+  if [ "$pin_rc" -ne 0 ] \
+     && printf '%s' "$pin_diag" | grep -Fq 'the check went blind, which is not a pass (F65)' \
+     && printf '%s' "$pin_diag" | grep -Fq "$pin_fixture/absent.sh"; then
+    ok "model-pin-file-unreadable-mutation-is-caught"
+  else
+    bad "model-pin-file-unreadable-mutation-is-caught" \
+        "a missing pin file must be named and reported blind-not-passed (got: ${pin_diag:-no diagnostic})"
+  fi
+
+  # The Codex pin has three checked-in statements now: the pin file, the lane
+  # contract and the environment record. This half deliberately never reads
+  # $HOME, so CI can catch drift without an operator config.
+  # config/codex-pin-live is the live half.
+  #
+  # Load the prose pair in THIS shell first. The diagnostic helper is called
+  # inside a command substitution, so every global it sets lands in a subshell
+  # and is gone by the time the assertion reads it — which is how the first
+  # draft of this case reported `codex-pin-documented (/; offline)` and still
+  # said ok. An empty expectation makes `grep -Fq` match anything, so the
+  # emptiness guard below is load-bearing, not defensive.
+  load_checked_in_codex_pins || true
+  printf 'FORGE_PIN_ROUTER="fixture/router"\nFORGE_PIN_DRIVER="fixture/driver"\n' \
+    > "$pin_fixture/codex-drift.sh"
+  printf 'FORGE_PIN_CODEX_MODEL="fixture-wrong"\nFORGE_PIN_CODEX_EFFORT="low"\n' \
+    >> "$pin_fixture/codex-drift.sh"
+  pin_diag="$(codex_pin_agreement_diagnostic "$pin_fixture/codex-drift.sh" 2>&1)"; pin_rc=$?
+  if [ "$pin_rc" -ne 0 ] && [ -n "$CHECKED_LANE_MODEL" ] \
+     && printf '%s' "$pin_diag" | grep -Fq "fixture-wrong/low" \
+     && printf '%s' "$pin_diag" | grep -Fq "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT"; then
+    ok "codex-pin-mutation-is-caught"
+  else
+    bad "codex-pin-mutation-is-caught" \
+        "a pin file disagreeing with the prose did not print both values (got: ${pin_diag:-no diagnostic})"
+  fi
+
+  load_model_pins || true
+  pin_diag="$(codex_pin_agreement_diagnostic "$PIN_FILE" 2>&1)"; pin_rc=$?
+  if [ "$pin_rc" -eq 0 ]; then
+    ok "codex-pin-documented ($PIN_CODEX_MODEL/$PIN_CODEX_EFFORT; offline)"
+  else
+    bad "codex-pin-documented" "$pin_diag"
   fi
 
   # ADR-0013 keeps the built-in skills toolset because the lane needs it to
@@ -682,24 +822,32 @@ run_cli_group() {
   # live comparison stays in config/ as model-pin-live/<profile>.
   #
   # state.md names the bare model without its vendor prefix, so compare on that.
-  local pin_drv pin_rtr env_block
-  pin_drv="$(sed -n 's/^MODEL_DRIVER="\${FORGE_MODEL_DRIVER:-\([^}"]*\)}".*/\1/p' \
-               hermes/profiles-bootstrap.sh | head -1)"
-  pin_rtr="$(sed -n 's/^MODEL_ROUTER="\${FORGE_MODEL_ROUTER:-\([^}"]*\)}".*/\1/p' \
-               hermes/profiles-bootstrap.sh | head -1)"
+  # Since ADR-0018 the value is SOURCED out of scripts/model-pins.sh rather than
+  # sed out of profiles-bootstrap.sh. This case therefore also asserts that the
+  # bootstrap script still composes its defaults from that file and names no pin
+  # literally: re-hardcoding today's value at `MODEL_ROUTER=` would leave the pin
+  # file, state.md and every live profile agreeing while the source of truth had
+  # silently forked back into two.
+  local env_block bootstrap=hermes/profiles-bootstrap.sh
   env_block="$(sed -n '/^profiles: forge-orchestrator/,/codex pinned/p' docs/state.md)"
-  if [ -z "$pin_drv" ] || [ -z "$pin_rtr" ]; then
+  if ! load_model_pins; then
     bad "model-pin-documented" \
-        "could not read MODEL_DRIVER/MODEL_ROUTER out of hermes/profiles-bootstrap.sh — the check went blind, which is not a pass (F65)"
+        "could not source $PIN_FILE for FORGE_PIN_ROUTER/FORGE_PIN_DRIVER — the check went blind, which is not a pass (F65)"
   elif [ -z "$env_block" ]; then
     bad "model-pin-documented" \
         "docs/state.md has no 'profiles: forge-orchestrator … codex pinned' environment block to compare against"
-  elif printf '%s' "$env_block" | grep -Fq "${pin_drv#*/}" \
-    && printf '%s' "$env_block" | grep -Fq "${pin_rtr#*/}"; then
-    ok "model-pin-documented ($pin_drv)"
+  elif ! grep -Fq 'FORGE_PIN_ROUTER' "$bootstrap" || ! grep -Fq 'FORGE_PIN_DRIVER' "$bootstrap"; then
+    bad "model-pin-documented" \
+        "$bootstrap does not compose its defaults from \$FORGE_PIN_ROUTER/\$FORGE_PIN_DRIVER, so $PIN_FILE is decorative (ADR-0018 D18.2)"
+  elif grep -Fq "$PIN_ROUTER" "$bootstrap" || grep -Fq "$PIN_DRIVER" "$bootstrap"; then
+    bad "model-pin-documented" \
+        "$bootstrap names a pin value literally ('$PIN_ROUTER' / '$PIN_DRIVER'); one source of truth means it appears only in $PIN_FILE"
+  elif printf '%s' "$env_block" | grep -Fq "${PIN_DRIVER#*/}" \
+    && printf '%s' "$env_block" | grep -Fq "${PIN_ROUTER#*/}"; then
+    ok "model-pin-documented ($PIN_DRIVER)"
   else
     bad "model-pin-documented" \
-        "profiles-bootstrap.sh pins '$pin_drv' / '$pin_rtr'; docs/state.md's environment block does not name both"
+        "$PIN_FILE pins '$PIN_ROUTER' / '$PIN_DRIVER'; docs/state.md's environment block does not name both"
   fi
 }
 
@@ -789,11 +937,9 @@ run_config_group() {
   # The live half of the driver pin; the offline half is cli/model-pin-documented,
   # which lives in the cli group deliberately — this group skips wholesale
   # without hermes, so an offline assertion placed here would never run in CI.
-  local pin_drv pin_rtr
-  pin_drv="$(sed -n 's/^MODEL_DRIVER="\${FORGE_MODEL_DRIVER:-\([^}"]*\)}".*/\1/p' \
-               hermes/profiles-bootstrap.sh | head -1)"
-  pin_rtr="$(sed -n 's/^MODEL_ROUTER="\${FORGE_MODEL_ROUTER:-\([^}"]*\)}".*/\1/p' \
-               hermes/profiles-bootstrap.sh | head -1)"
+  # Both halves read the same sourced file (ADR-0018); neither parses it.
+  local pin_drv="" pin_rtr=""
+  if load_model_pins; then pin_drv="$PIN_DRIVER"; pin_rtr="$PIN_ROUTER"; fi
 
   local p v
   for p in $profs; do
@@ -843,7 +989,12 @@ run_config_group() {
     # closes the gap. Reported as a WARN-equivalent skip rather than a failure
     # when the pin is merely un-republished would be wrong — an unattended run
     # uses the LIVE value, so a divergence is a real defect, not a caveat.
-    if [ -n "$pin_drv" ] && [ -n "$pin_rtr" ]; then
+    if [ -z "$pin_drv" ] || [ -z "$pin_rtr" ]; then
+      # An unsourceable pin file used to make this whole arm evaporate: no case
+      # emitted, nothing red, four profiles unjudged. That is F65.
+      bad "model-pin-live/$p" \
+          "could not source $PIN_FILE for the checked-in pins — the check went blind, which is not a pass (F65)"
+    else
       local want live
       case "$p" in forge-orchestrator) want="$pin_rtr";; *) want="$pin_drv";; esac
       live="$(hermes -p "$p" config get model.default 2>/dev/null | tail -1)"
@@ -853,7 +1004,7 @@ run_config_group() {
         ok "model-pin-live/$p"
       else
         bad "model-pin-live/$p" \
-            "live model.default is '$live', profiles-bootstrap.sh pins '$want' — run ./hermes/profiles-bootstrap.sh"
+            "live model.default is '$live', $PIN_FILE pins '$want' — run ./hermes/profiles-bootstrap.sh"
       fi
     fi
   done
@@ -1509,8 +1660,12 @@ cli/skill-section-reference-rename-is-named a renamed target reports source and 
 cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not protocol)
 cli/no-programs-in-souls          no fenced block in a SOUL exceeds 6 lines
 cli/permissions-are-read-only     no allowlist wildcard admits a paid or mutating command
-cli/model-pin-documented          profiles-bootstrap.sh's model pins are named in state.md (F22/F36)
-cli/codex-pin-documented          forge-lane and state.md agree without reading live config (F36)
+cli/model-pin-documented          the sourced pin file, profiles-bootstrap.sh and state.md agree (F22/F36, ADR-0018)
+cli/model-pin-file-is-data-not-code  every pin line is a plain quoted assignment, so sourcing it executes nothing
+cli/model-pin-file-data-not-code-mutation-is-caught  a command-substitution pin line, and a truncated file, are both reported
+cli/model-pin-file-unreadable-mutation-is-caught  a pin file that cannot be read is bad, never skip (F65)
+cli/codex-pin-mutation-is-caught   a pin file disagreeing with the prose names both values
+cli/codex-pin-documented          the pin file, forge-lane §4 and state.md agree without reading live config (F36)
 cli/lane-skill-management-policy  retained skills toolset is write-approval-gated (ADR-0013)
 cli/skill-description-budget              frontmatter descriptions fit the budget every session pays to list
 cli/retro-metrics                         docs/retro-metrics.md exists and carries the table /retro appends to
