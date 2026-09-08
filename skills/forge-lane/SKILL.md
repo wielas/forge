@@ -184,7 +184,7 @@ cannot read, `3` substrate, `4` Codex failed for a reason that is not a usage
 limit, `5` the wait passed `FORGE_QUOTA_MAX_WAIT`. Each prints a canonical
 `<class>: <reason>`.
 
-- Model: the pin lives in `~/.codex/config.toml` (`gpt-5.6-sol`, reasoning
+- Model: the pin lives in `~/.codex/config.toml` (`gpt-5.6-luna`, reasoning
   `xhigh`). Override per card with `FORGE_CODEX_MODEL`; record whichever you
   used in the completion metadata.
 

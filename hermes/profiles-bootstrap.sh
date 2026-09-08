@@ -50,9 +50,11 @@ run() {
 # the reasoning happens inside Codex — so cheap and fast is correct, not a
 # compromise. These defaults are the live values as of 2026-07-27; they are
 # checked in precisely so a rebuild reproduces the running system. Confirm ids
-# against `hermes model` / OpenRouter before bumping them.
-MODEL_ROUTER="${FORGE_MODEL_ROUTER:-z-ai/glm-5.2}"        # orchestrator: decomposition quality matters
-MODEL_DRIVER="${FORGE_MODEL_DRIVER:-deepseek/deepseek-v4-flash-0731}"  # lane + prejudge + digest: shell driver only
+# against `hermes model` / OpenRouter before bumping them. Bumped 2026-09-08:
+# both roles moved to `z-ai/glm-5.3-flash`, confirmed present in the live
+# OpenRouter catalogue before this line was written.
+MODEL_ROUTER="${FORGE_MODEL_ROUTER:-z-ai/glm-5.3-flash}"  # orchestrator: decomposition quality matters
+MODEL_DRIVER="${FORGE_MODEL_DRIVER:-z-ai/glm-5.3-flash}"  # lane + prejudge + digest: shell driver only
 
 # `codex exec` and `make check` run SYNCHRONOUSLY inside a worker. The 180s
 # stock default kills the lane at `make check` — after the code is written and
