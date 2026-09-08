@@ -255,6 +255,13 @@ Never push to `main`.
 
 ## 7. Terminate — exactly once
 
+`$FORGE_LANE_RUNTIME/codex-model` holds what codex-run.sh observed —
+`FORGE_CODEX_MODEL_RAN`, `FORGE_CODEX_REASONING_EFFORT`,
+`FORGE_CODEX_MODEL_SOURCE`, and `FORGE_CODEX_MODEL_REQUESTED` only when they
+differ. Copy every line present into the object below as `codex_model`,
+`codex_reasoning_effort`, `codex_model_source`, `codex_model_requested`: a
+chunk not naming the model that wrote its diff cannot be judged (F22).
+
 Success path: write the complete flat object to
 `$FORGE_LANE_RUNTIME/chunk-metadata.json`, then gate it before creating a card:
 

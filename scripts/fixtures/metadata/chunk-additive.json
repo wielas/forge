@@ -22,6 +22,10 @@
   "docs_reconciled": ["ROADMAP.md"],
   "duration_min": 23,
   "worker": "codex/gpt-5.6-sol xhigh",
+  "codex_model": "gpt-5.6-sol",
+  "codex_reasoning_effort": "xhigh",
+  "codex_model_source": "rollout",
+  "codex_model_requested": "gpt-5.6-luna",
   "changed_files": ["src/sync.py", "tests/test_sync.py"],
   "tests_run": 44
 }

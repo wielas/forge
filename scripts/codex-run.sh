@@ -18,6 +18,12 @@
 # Requires FORGE_LANE_RUNTIME in the environment -- the value lane-setup.sh
 # printed as its last line. Recomputing it would invent a second scratch dir.
 #
+# Writes $FORGE_LANE_RUNTIME/codex-model on the way out: KEY=VALUE lines naming
+# the model Codex's own session rollout says ran, its reasoning effort, and
+# FORGE_CODEX_MODEL_SOURCE=rollout|requested. forge-lane §7 copies those into
+# the chunk envelope. Read the block above record_codex_model() for why the
+# source marker is the load-bearing half (audit F22).
+#
 # Exit: 0  Codex finished of its own accord
 #       2  usage
 #       3  substrate — no codex, no runtime dir, no contract
@@ -144,6 +150,7 @@ CONTRACT="$RUNTIME/contract.md"
 EVENTS="$RUNTIME/codex-events.jsonl"
 CURRENT="$RUNTIME/codex-events.current.jsonl"
 SESSION_FILE="$RUNTIME/codex-session-id"
+MODEL_FILE="$RUNTIME/codex-model"
 LAST_MESSAGE="$RUNTIME/codex-last.md"
 
 cd "$WS" 2>/dev/null || { echo "env: workspace $WS does not exist"; exit 3; }
@@ -184,6 +191,116 @@ jesc() {
 # One numeric or string field out of the park record, first occurrence only.
 park_field() { # file key pattern
   sed -n "s/.*\"$2\":[[:space:]]*$3.*/\\1/p" "$1" 2>/dev/null | head -1
+}
+
+# ---------------------------------------------------------------------------
+# WHICH MODEL ACTUALLY RAN (audit F22, third recurrence).
+#
+# The Codex desktop app rewrites ~/.codex/config.toml under a running lane. It
+# did so on 2026-09-08 at 10:08:47, swapping the pin; the chunk authored three
+# hours later recorded only a worker_session_id, and it was reviewed and
+# approved with nothing on the card naming the model that wrote the diff.
+# scripts/metrics.sh cannot fill that gap -- its model column comes from Hermes
+# `sessions`/`session_model_usage`, which is the cheap DRIVER's model, never
+# Codex's. The rollout Codex writes for its own session is the only place on
+# this machine where the fact exists, so this is where it gets read.
+#
+# FORGE_CODEX_MODEL is what was ASKED for. It is intent, not evidence: the
+# whole finding is that the request and the run can differ mid-flight. So the
+# request is recorded only as a FALLBACK, and the fallback SAYS SO --
+# provenance quietly degrading to intent is F22 wearing the fix's clothes, and
+# FORGE_CODEX_MODEL_SOURCE is the only thing that tells the two apart.
+#
+# Deliberately NOT fatal. By the time this runs the chunk is already paid for;
+# losing the provenance must not lose the diff. It is not silent either.
+#
+# python3, not jq: quota-window.py and codex-progress.py are both python3 and
+# both asserted executable above, so a lane run already cannot proceed without
+# python3, while jq is optional in every script in this repo and this is the
+# lane's hot path. The line also cannot be scraped safely -- a turn_context
+# carries `"model"` TWICE, once at payload level and once nested under
+# `collaboration_mode.settings`, so a greedy sed reads the wrong one the day
+# they disagree, which is precisely the day this matters.
+# ---------------------------------------------------------------------------
+CODEX_MODEL=""
+CODEX_EFFORT=""
+CODEX_MODEL_SOURCE=""
+
+rollout_model() { # <rollout path> -> "<model>\n<effort>", or nothing
+  python3 - "$1" <<'PY' 2>/dev/null
+import json
+import sys
+
+last_root = last_any = None
+try:
+    with open(sys.argv[1], "r", errors="replace") as handle:
+        for line in handle:
+            if '"turn_context"' not in line:
+                continue
+            try:
+                payload = json.loads(line).get("payload") or {}
+            except ValueError:
+                continue
+            model = payload.get("model")
+            if not isinstance(model, str) or not model:
+                continue
+            effort = payload.get("effort")
+            candidate = (model, effort if isinstance(effort, str) else "")
+            # A ROOT turn wins over any sub-turn. Codex's own auto-review runs
+            # as a sub-turn under a different, cheaper model (`codex-auto-review
+            # low`, measured 2026-09-08), and recording THAT as the author is
+            # F22 with a new hat. Today those land in a sibling rollout whose
+            # filename carries the sub-turn's id, so matching the filename on
+            # the session id already separates them; this survives a future
+            # codex writing both into one file.
+            if payload.get("turn_id") == payload.get("root_turn_id"):
+                last_root = candidate
+            last_any = candidate
+except OSError:
+    pass
+chosen = last_root or last_any
+if chosen:
+    print(chosen[0])
+    print(chosen[1])
+PY
+}
+
+record_codex_model() {
+  local rollout="" parsed
+  CODEX_MODEL="${FORGE_CODEX_MODEL:-}"
+  CODEX_EFFORT=""
+  CODEX_MODEL_SOURCE=requested
+  # Matched on the FILENAME, which ends in the session id. `sort | tail -1` for
+  # the same reason quota_verdict() sorts: the layout is
+  # <YYYY>/<MM>/<DD>/rollout-<ISO-8601>-<uuid>.jsonl, so lexicographic order is
+  # chronological, and `ls -t` past ARG_MAX silently sorts batch by batch.
+  [ -n "${SESSION_ID:-}" ] && rollout="$(find "${CODEX_HOME:-$HOME/.codex}/sessions" \
+      -name "*-$SESSION_ID.jsonl" -type f 2>/dev/null | sort | tail -1)"
+  if [ -n "$rollout" ]; then
+    parsed="$(rollout_model "$rollout")"
+    if [ -n "$parsed" ]; then
+      CODEX_MODEL="$(printf '%s\n' "$parsed" | sed -n 1p | tr -d '[:cntrl:]')"
+      CODEX_EFFORT="$(printf '%s\n' "$parsed" | sed -n 2p | tr -d '[:cntrl:]')"
+      CODEX_MODEL_SOURCE=rollout
+    fi
+  fi
+  if [ "$CODEX_MODEL_SOURCE" = requested ]; then
+    say "WARNING: no readable turn_context for session '${SESSION_ID:-none}';" \
+        "recording the REQUESTED model '${CODEX_MODEL:-unset}' as" \
+        "FORGE_CODEX_MODEL_SOURCE=requested" >&2
+  fi
+  # KEY=VALUE lines beside codex-session-id, and deliberately NOT re-declaring
+  # FORGE_CODEX_MODEL: this file is a sourceable shape, and a file that sets the
+  # input knob turns one `source` into "what ran" becoming "what to run next".
+  {
+    printf 'FORGE_CODEX_MODEL_RAN=%s\n' "$CODEX_MODEL"
+    printf 'FORGE_CODEX_REASONING_EFFORT=%s\n' "$CODEX_EFFORT"
+    printf 'FORGE_CODEX_MODEL_SOURCE=%s\n' "$CODEX_MODEL_SOURCE"
+    if [ -n "${FORGE_CODEX_MODEL:-}" ] && [ "$FORGE_CODEX_MODEL" != "$CODEX_MODEL" ]; then
+      printf 'FORGE_CODEX_MODEL_REQUESTED=%s\n' "$FORGE_CODEX_MODEL"
+    fi
+  } > "$MODEL_FILE" || say "WARNING: $MODEL_FILE could not be written" >&2
+  return 0
 }
 
 TOTAL_WAITED=0
@@ -277,6 +394,11 @@ park_until() {
 
 write_park_record() {
   local wake="$1" windows="$2" target="$3"
+  # Refreshed here, not merely carried: a park is precisely the window in which
+  # the operator's Codex desktop app rewrites the pin, and the record is what a
+  # successor resumes from. It already carries codex_version for the same
+  # reason (F22).
+  record_codex_model
   # Keyed by TASK, not run id: a run that dies during a multi-hour park is
   # exactly the case this record exists for, and its successor has a new run
   # id. Kept outside the worktree and outside $TMPDIR for the same reason the
@@ -297,6 +419,9 @@ write_park_record() {
   "branch": "$(jesc "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)")",
   "codex_session_id": "$(jesc "${SESSION_ID:-}")",
   "codex_version": "$(jesc "$("$CODEX_BIN" --version 2>/dev/null | head -1)")",
+  "codex_model": "$(jesc "$CODEX_MODEL")",
+  "codex_reasoning_effort": "$(jesc "$CODEX_EFFORT")",
+  "codex_model_source": "$(jesc "$CODEX_MODEL_SOURCE")",
   "blocked_windows": "$(jesc "$windows")",
   "resets_at": "$(jesc "$wake")",
   "wake_at": $target,
@@ -460,6 +585,11 @@ while :; do
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "codex finished cleanly after $ATTEMPT attempt(s), ${TOTAL_WAITED}s waited"
+    # Before anything is cleaned up, and never fatal: forge-lane §7 copies this
+    # file's values into the chunk envelope, and a run whose provenance could
+    # not be read is still a run whose diff must reach a PR.
+    record_codex_model
+    say "codex model: ${CODEX_MODEL:-unset} ${CODEX_EFFORT:-} (source: $CODEX_MODEL_SOURCE)"
     # Unconditionally, not `[ "$PARKS" -gt 0 ]`. A run that ADOPTED a record
     # never parks itself, so the guarded form left the record on disk after a
     # clean finish -- and the next run on that card would adopt a session that

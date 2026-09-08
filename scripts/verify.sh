@@ -489,7 +489,15 @@ run_cli_group() {
   # body and the PR posted as a `kanban_comment` instead tripped Hermes'
   # `active_pr` respawn guard 173 times over ~2h52m with no clean recovery —
   # see docs/hermes-field-notes.md).
-  local cer_limit=150 lane_limit=301 body_over=0 lines base
+  # 2026-09-08: +7, and again a measured failure rather than prose. F22
+  # recurred a THIRD time — the Codex desktop app rewrote ~/.codex/config.toml
+  # under a running lane at 10:08:47, the chunk authored three hours later
+  # recorded only a worker_session_id, and it was approved with nothing naming
+  # the model that wrote the diff. §7 now copies the four values
+  # scripts/codex-run.sh records in $FORGE_LANE_RUNTIME/codex-model into the
+  # envelope; lane/codex-model-reaches-the-envelope executes that claim, and
+  # quota/codex-model-is-recorded executes the producer's half.
+  local cer_limit=150 lane_limit=308 body_over=0 lines base
   for f in skills/*/SKILL.md; do
     lines=$(wc -l < "$f" | tr -d ' ')
     base=$(basename "$(dirname "$f")")
@@ -1495,7 +1503,7 @@ cli/default-suites-mutation-is-caught  a group registered but not defaulted, and
 cli/default-suites-names-every-registered-group  the case-arm registry and DEFAULT_SUITES name the same groups (F65)
 cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
-cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 301
+cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 308
 cli/skill-section-references-resolve every named numeric skill section exists
 cli/skill-section-reference-rename-is-named a renamed target reports source and missing heading
 cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not protocol)
@@ -1579,6 +1587,7 @@ lane/prejudge-delegates-its-protocol    the SOUL names the script and the script
 lane/prejudge-terminator-mapping        rc 0 -> kanban_complete, rc 3 -> kanban_block; an outage is not a rejection
 lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
 lane/prejudge-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
+lane/codex-model-reaches-the-envelope   §7 copies the runner's recorded Codex model into the chunk envelope (F22)
 bootstrap/root-only-creates-one-card    a valid graph creates only its unique root
 bootstrap/multiple-roots-mutate-nothing invalid staged graphs refuse before the first Hermes command
 bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed dependency ids invoke no Hermes command
@@ -1638,6 +1647,8 @@ metadata/rejects-incomplete-chunk        a chunk missing a required exhaust fiel
 metadata/rejects-coverage-key-drift      check.coverage cannot silently replace check.coverage_pct
 metadata/rejects-semantic-contradictions scenarios, identities, URLs, checks, counts and result cannot disagree
 metadata/allows-additive-hermes-keys     dashboard-native sibling keys remain compatible
+metadata/codex-provenance-shape          the codex_* keys are declared, optional, and absent from required (F22)
+metadata/codex-provenance-mutation-is-caught  an invented codex_model_source, or a non-string model, is refused
 metadata/judge-envelope-as-produced      the key set a real prejudge run stored, once the harness fills nits_as_cards
 metadata/rejects-profile-schema-mismatch a valid envelope from the wrong producer is still invalid
 metadata/rejects-missing-metadata        a completed producer run cannot carry null metadata
@@ -1816,6 +1827,8 @@ quota/the-wait-is-bounded-by-the-blocked-windows  max runs over blocked windows 
 quota/a-reset-in-the-past-is-stale-not-blocking  an elapsed resets_at must not block a start
 quota/an-incredible-reset-is-not-slept-on a resets_at beyond the horizon reads as wake_at=unknown, not a wait
 quota/the-horizon-is-one-number           quota-window.py and codex-run.sh agree on the horizon constant
+quota/codex-model-is-recorded             the runner records the model the ROLLOUT says ran, and says so when it could not
+quota/codex-model-mutation-is-caught      a runner that loses the rollout, reads a sub-turn, or lies about its source is caught
 quota/a-stream-without-windows-is-unknown-not-clear  no rate-limit data is exit 3 unknown, never a licence to start
 quota/a-named-refusal-blocks-only-the-window-it-names  rate_limit_reached_type must not widen to healthy windows
 quota/a-fresh-snapshot-supersedes-an-earlier-refusal  a reached marker must not outlive the snapshot that described it
@@ -2596,6 +2609,38 @@ run_lane_group() {
   else
     bad "prejudge-stores-what-happened" \
         "tier 1 must store forge.gate.v1 on a gate block and forge.judge.v1 on a scored review, and the ci-red zeroed-score sentinel must be gone (ADR-0009 D9.4)"
+  fi
+
+  # F22's other half. quota/codex-model-is-recorded proves codex-run.sh writes
+  # the provenance; a file no terminator reads is dead exhaust, which is this
+  # group's opening argument — "a behavioural test of a script nothing calls is
+  # green and worthless". §7 is the only place the value can enter the envelope,
+  # because the envelope is written by the model, once, at the terminator.
+  #
+  # The PATH is asserted against codex-run.sh's own declaration rather than
+  # written out twice: two literals that must agree are two literals that can
+  # drift, and the drift would be silent on both sides.
+  local sec7_prov prov_ok=1 prov_detail="" prov_key bt='`'
+  sec7_prov="$(sed -n '/^## 7\./,/^## Hard rules/p' "$lane" | tr '\n' ' ' | tr -s ' ')"
+  [ -n "$sec7_prov" ] || { prov_ok=0; prov_detail="$prov_detail no-section-7"; }
+  grep -Fq 'MODEL_FILE="$RUNTIME/codex-model"' scripts/codex-run.sh \
+    || { prov_ok=0; prov_detail="$prov_detail producer-writes-elsewhere"; }
+  printf '%s' "$sec7_prov" | grep -Fq '$FORGE_LANE_RUNTIME/codex-model' \
+    || { prov_ok=0; prov_detail="$prov_detail file-unnamed"; }
+  printf '%s' "$sec7_prov" | grep -Fq 'FORGE_CODEX_MODEL_SOURCE' \
+    || { prov_ok=0; prov_detail="$prov_detail source-marker-unnamed"; }
+  # Backticked, because codex_model is a PREFIX of two of the others: a bare
+  # substring match would let one key stand in for all four.
+  for prov_key in codex_model codex_reasoning_effort codex_model_source \
+                  codex_model_requested; do
+    printf '%s' "$sec7_prov" | grep -Fq "$bt$prov_key$bt" \
+      || { prov_ok=0; prov_detail="$prov_detail $prov_key-not-copied"; }
+  done
+  if [ "$prov_ok" = 1 ]; then
+    ok "codex-model-reaches-the-envelope (4 keys, named source marker)"
+  else
+    bad "codex-model-reaches-the-envelope" \
+        "forge-lane §7 must read \$FORGE_LANE_RUNTIME/codex-model and copy all four codex_* keys into the envelope (F22) —$prov_detail"
   fi
 }
 wants lane      && run_lane_group
@@ -4341,6 +4386,78 @@ run_metadata_group() {
   else
     bad "allows-additive-hermes-keys" "dashboard-native sibling keys were rejected"
   fi
+
+  # WHICH MODEL WROTE THE DIFF (audit F22, third recurrence). The 2026-07-30
+  # audit classed the model/reasoning_effort keys real runs already emitted as
+  # "invented, not in schema"; declared-but-optional is a different thing from
+  # undeclared, and this case pins BOTH halves of that phrase.
+  #
+  # Optional is not a softening, it is the contract. `lane` is an enum that
+  # includes `claude-interactive`, and an interactive chunk has no Codex model
+  # at all — requiring one makes every such row unvalidatable. The document's
+  # own Rules say changing a required field needs a `.v2` schema id, so a
+  # promotion would retroactively invalidate rows that were valid when written,
+  # and metadata-live.sh judges real board rows since a cutoff that would then
+  # have to move. So `required` is read STRUCTURALLY here: a future edit that
+  # promotes one of these keys reddens this case rather than the live sweep.
+  local prov_ok=1 prov_detail="" prov_schema=rubrics/chunk-handoff.schema.json
+  local prov_declared prov_required
+  prov_declared="$(jq -r '[.properties | keys[] | select(startswith("codex_"))] | sort | join(",")' \
+                     "$prov_schema" 2>/dev/null)"
+  prov_required="$(jq -r '[.required[] | select(startswith("codex_"))] | join(",")' \
+                     "$prov_schema" 2>/dev/null)"
+  if [ -z "$prov_declared" ]; then
+    bad "codex-provenance-shape" \
+        "no codex_* properties could be read out of $prov_schema — the check went blind, which is not a pass (F65)"
+  else
+    [ "$prov_declared" = "codex_model,codex_model_requested,codex_model_source,codex_reasoning_effort" ] \
+      || { prov_ok=0; prov_detail="$prov_detail declared='$prov_declared'"; }
+    [ -z "$prov_required" ] \
+      || { prov_ok=0; prov_detail="$prov_detail required='$prov_required' (a .v2 id is the only way to require one)"; }
+    # The canonical fixture carries all four and validates.
+    metadata_validate --profile forge-codex-lane "$fixtures/chunk-valid.json" \
+      || { prov_ok=0; prov_detail="$prov_detail canonical-fixture-rejected"; }
+    # And the interactive shape, which HAS no Codex model, still validates
+    # without them. This is the row a required field would have killed.
+    jq 'del(.codex_model, .codex_reasoning_effort, .codex_model_source,
+            .codex_model_requested) | .lane = "claude-interactive"' \
+         "$fixtures/chunk-valid.json" \
+      | metadata_validate --profile forge-codex-lane - \
+      || { prov_ok=0; prov_detail="$prov_detail interactive-chunk-rejected"; }
+    [ "$prov_ok" = 1 ] \
+      && ok "codex-provenance-shape (4 declared, 0 required, interactive chunks still validate)" \
+      || bad "codex-provenance-shape" \
+          "the codex_* provenance keys must be declared and optional —$prov_detail"
+  fi
+
+  # The enum is the load-bearing half. Without it `codex_model_source` accepts
+  # any string, and a producer that quietly stopped reading the rollout could
+  # write whatever it liked while every consumer went on believing the field
+  # meant "Codex said so". Three known-bad envelopes through the SAME helper,
+  # and the diagnostic is asserted, not merely the exit code: a refusal for an
+  # unrelated reason would otherwise read as this case passing.
+  local prov_mut_ok=1 prov_mut_detail="" prov_rc
+  prov_rc="$(jq '.codex_model_source = "guessed"' "$fixtures/chunk-valid.json" \
+               | metadata_rc --profile forge-codex-lane -)"
+  if [ "$prov_rc" != 1 ] || ! grep -Fq 'codex_model_source' "$validator_log"; then
+    prov_mut_ok=0
+    prov_mut_detail="$prov_mut_detail invented-source-rc=$prov_rc"
+  fi
+  prov_rc="$(jq '.codex_model_source = ""' "$fixtures/chunk-valid.json" \
+               | metadata_rc --profile forge-codex-lane -)"
+  [ "$prov_rc" = 1 ] || { prov_mut_ok=0; prov_mut_detail="$prov_mut_detail empty-source-rc=$prov_rc"; }
+  prov_rc="$(jq '.codex_model = 5' "$fixtures/chunk-valid.json" \
+               | metadata_rc --profile forge-codex-lane -)"
+  [ "$prov_rc" = 1 ] || { prov_mut_ok=0; prov_mut_detail="$prov_mut_detail numeric-model-rc=$prov_rc"; }
+  # The control. Without it every refusal above could be for some unrelated
+  # reason and this case would still read green.
+  prov_rc="$(jq '.codex_model_source = "requested"' "$fixtures/chunk-valid.json" \
+               | metadata_rc --profile forge-codex-lane -)"
+  [ "$prov_rc" = 0 ] || { prov_mut_ok=0; prov_mut_detail="$prov_mut_detail legal-source-rc=$prov_rc"; }
+  [ "$prov_mut_ok" = 1 ] \
+    && ok "codex-provenance-mutation-is-caught (guessed/empty/numeric refused, requested accepted)" \
+    || bad "codex-provenance-mutation-is-caught" \
+        "an envelope inventing its own provenance was accepted —$prov_mut_detail"
 
   # The same tolerance, on the one envelope that did not have it. Recorded from
   # board forge-hello-20260902, task t_0868e3c1 run 2, 2026-09-02: the chunk
@@ -7829,6 +7946,163 @@ QSTUB3
     bad "wait-cap-blocks-with-a-board-class" \
         "exceeding FORGE_QUOTA_MAX_WAIT must exit 5 with an env: reason and keep the record (rc=$qrc)"
   fi
+
+  # ---- WHICH MODEL ACTUALLY RAN (audit F22, third recurrence) -------------
+  #
+  # F22 measured what a moving model pin costs: it confounded the one chunk
+  # that failed, because nothing recorded that the pin had moved. It moved
+  # again on 2026-09-08 at 10:08:47 — the Codex desktop app rewrote
+  # ~/.codex/config.toml under a running lane — and the chunk authored three
+  # hours later recorded only a worker_session_id. Nothing on the card named
+  # the model that wrote the diff a reviewer then approved, and scripts/
+  # metrics.sh cannot say either: its model column comes from Hermes
+  # `sessions`/`session_model_usage`, which is the cheap DRIVER's model. The
+  # session rollout is the only source there is, so the runner reads it.
+  #
+  # The fixture rollout carries THREE traps, all measured on real rollouts on
+  # this machine on 2026-09-08, because a parser that merely avoids a trap is
+  # a parser nothing holds to it:
+  #   - `"model"` appears TWICE in one turn_context, at payload level and
+  #     nested under collaboration_mode.settings. The fixture makes the two
+  #     DISAGREE, so a greedy scrape records gpt-decoy-0.
+  #   - codex's own auto-review runs as a SUB-turn under a cheaper model
+  #     (measured: `codex-auto-review` / `low`). Recording that as the author
+  #     is F22 with a new hat, so a sub-turn follows the root turn here.
+  #   - the effort sits beside the model as `effort`, not `reasoning_effort`;
+  #     the nested decoy uses the other spelling.
+  local qm_sid=verify-model-1 qm_rollout=yes
+  cat > "$qbin/codex" <<'QSTUBM'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "codex-cli stub"; exit 0;; esac
+sid="${STUB_SESSION_ID:-verify-model-1}"
+if [ "${STUB_WRITE_ROLLOUT:-yes}" = yes ]; then
+  d="$CODEX_HOME/sessions/2026/09/08"; mkdir -p "$d"
+  {
+    printf '{"type":"session_meta","payload":{"session_id":"%s"}}\n' "$sid"
+    printf '{"type":"turn_context","payload":{"turn_id":"t1","root_turn_id":"t1","model":"gpt-fixture-7","collaboration_mode":{"settings":{"model":"gpt-decoy-0","reasoning_effort":"decoy"}},"effort":"xhigh"}}\n'
+    printf '{"type":"turn_context","payload":{"turn_id":"t2","root_turn_id":"t1","model":"codex-auto-review","effort":"low"}}\n'
+  } > "$d/rollout-2026-09-08T10-00-00-$sid.jsonl"
+fi
+printf '{"type":"session_meta","payload":{"session_id":"%s"}}\n' "$sid"
+printf '{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}\n'
+exit 0
+QSTUBM
+  chmod +x "$qbin/codex"
+
+  # ONE helper, and every mutant below is driven through it. That is the shape
+  # config/codex-pin-live-diagnostic-names-both-values pins: a green run must
+  # prove the comparison REJECTS a known-bad, not merely that today's runner
+  # agrees with itself. It prints what the record claims AND what actually ran,
+  # because a mismatch nobody can read is a mismatch nobody repairs.
+  _qmodel_check() { # <runner> <suffix> <want model> <want effort> <want source>
+    local mrunner="$1" suffix="$2" wm="$3" we="$4" wsrc="$5"
+    local rt="$qroot/runtime-$suffix" file out rc got
+    rm -rf "$rt"; mkdir -p "$rt"; printf 'contract\n' > "$rt/contract.md"
+    file="$rt/codex-model"
+    out="$(_qrun 60 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
+             STUB_SESSION_ID="$qm_sid" STUB_WRITE_ROLLOUT="$qm_rollout" \
+             FORGE_LANE_RUNTIME="$rt" FORGE_LANE_PARK_ROOT="$qpark" \
+             FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+             FORGE_CODEX_MODEL=gpt-requested-3 \
+             "$mrunner" "$qws" "run-$suffix" "task-$suffix" 2>&1)"
+    rc=$?
+    printf '%s\n' "$out" > "$qroot/model-run-$suffix.log"
+    [ "$rc" = 0 ] \
+      || { printf 'the runner exited %s instead of finishing cleanly\n' "$rc"; return 1; }
+    [ -s "$file" ] \
+      || { printf 'nothing was written to %s at all\n' "$file"; return 1; }
+    got="$(sed -n 's/^FORGE_CODEX_MODEL_RAN=//p' "$file")"
+    got="$got/$(sed -n 's/^FORGE_CODEX_REASONING_EFFORT=//p' "$file")"
+    got="$got/$(sed -n 's/^FORGE_CODEX_MODEL_SOURCE=//p' "$file")"
+    [ "$got" = "$wm/$we/$wsrc" ] \
+      || { printf 'the record claims %s; the run was %s\n' "$got" "$wm/$we/$wsrc"; return 1; }
+    return 0
+  }
+
+  local qm_ok=1 qm_detail="" qm_diag qm_rc
+  qm_sid=verify-model-1; qm_rollout=yes
+  qm_diag="$(_qmodel_check "$runner" m1 gpt-fixture-7 xhigh rollout)" \
+    || { qm_ok=0; qm_detail="$qm_detail rollout-half($qm_diag)"; }
+  # The pin that was ASKED for is recorded too, but under its own key and only
+  # when it differs from what ran. That difference is F22 itself.
+  grep -Fq 'FORGE_CODEX_MODEL_REQUESTED=gpt-requested-3' \
+       "$qroot/runtime-m1/codex-model" 2>/dev/null \
+    || { qm_ok=0; qm_detail="$qm_detail requested-pin-not-recorded"; }
+  # No rollout to read. The chunk is already paid for by this point, so losing
+  # the provenance must not lose the diff — but it must not be SILENT either,
+  # and the record must say `requested`, never `rollout`.
+  qm_sid=verify-model-absent; qm_rollout=no
+  qm_diag="$(_qmodel_check "$runner" m2 gpt-requested-3 '' requested)" \
+    || { qm_ok=0; qm_detail="$qm_detail fallback-half($qm_diag)"; }
+  grep -Fq 'WARNING: no readable turn_context' "$qroot/model-run-m2.log" 2>/dev/null \
+    || { qm_ok=0; qm_detail="$qm_detail degradation-was-silent"; }
+  if grep -Fq 'FORGE_CODEX_MODEL_REQUESTED' "$qroot/runtime-m2/codex-model" 2>/dev/null; then
+    qm_ok=0; qm_detail="$qm_detail requested-key-restates-the-model"
+  fi
+  [ "$qm_ok" = 1 ] \
+    && ok "codex-model-is-recorded (rollout: gpt-fixture-7/xhigh; no rollout: requested, loudly)" \
+    || bad "codex-model-is-recorded" \
+        "the runner must record the model the rollout names, and say so when it fell back (F22) —$qm_detail"
+
+  # Three mutants, each defeating a DIFFERENT half, all driven through the same
+  # helper. Copies under $TMPROOT, never the tracked file: a mutation harness
+  # that edits in place leaves a live defect behind when it is killed, and
+  # neither the pushed head nor CI can see that.
+  #
+  # The FIRST is the anti-degradation one, and the only defect on this list the
+  # fix could plausibly introduce by itself. A fallback that claims `rollout`
+  # degrades provenance to intent while looking exactly like evidence — F22
+  # wearing the fix's clothes. Everything else here records a string; only the
+  # source marker protects the property.
+  #
+  # The mutants live in their own directory beside SYMLINKS to the two helpers
+  # codex-run.sh resolves relative to itself. Without them the mutant exits 3
+  # (substrate — no quota-window.py) before reaching a single line of the code
+  # under test, and three mutations would "fail" for a reason that has nothing
+  # to do with what they mutate. Measured here first: all three reported
+  # `the runner exited 3` until the links were added.
+  local qmut_ok=1 qmut_detail="" qmut qmutdir="$qroot/mutants"
+  mkdir -p "$qmutdir"
+  ln -sf "$REPO_ROOT/scripts/quota-window.py" "$qmutdir/quota-window.py"
+  ln -sf "$REPO_ROOT/scripts/codex-progress.py" "$qmutdir/codex-progress.py"
+  _qmodel_mutant() { # <name> <sed program>  -> path, or empty when it changed nothing
+    local out="$qmutdir/codex-run-$1.sh"
+    sed "$2" "$runner" > "$out" 2>/dev/null && chmod +x "$out" || return 1
+    cmp -s "$out" "$runner" && return 1
+    printf '%s' "$out"
+  }
+  for spec in \
+    "lying-fallback:s/^  CODEX_MODEL_SOURCE=requested\$/  CODEX_MODEL_SOURCE=rollout/:absent:gpt-requested-3::requested:gpt-requested-3//rollout" \
+    "blind-parser:s/^chosen = last_root or last_any\$/chosen = None/:present:gpt-fixture-7:xhigh:rollout:gpt-requested-3//requested" \
+    "sub-turn-author:s/^chosen = last_root or last_any\$/chosen = last_any/:present:gpt-fixture-7:xhigh:rollout:codex-auto-review/low/rollout"; do
+    local mname="${spec%%:*}" mrest="${spec#*:}"
+    local mprog="${mrest%%:*}"; mrest="${mrest#*:}"
+    local mhas="${mrest%%:*}"; mrest="${mrest#*:}"
+    local mwm="${mrest%%:*}"; mrest="${mrest#*:}"
+    local mwe="${mrest%%:*}"; mrest="${mrest#*:}"
+    local mws="${mrest%%:*}"; local mwant="${mrest#*:}"
+    qmut="$(_qmodel_mutant "$mname" "$mprog")"
+    if [ -z "$qmut" ]; then
+      qmut_ok=0; qmut_detail="$qmut_detail $mname-changed-nothing(the mutation missed its line)"
+      continue
+    fi
+    if [ "$mhas" = present ]; then
+      qm_sid=verify-model-1; qm_rollout=yes
+    else
+      qm_sid=verify-model-absent; qm_rollout=no
+    fi
+    qm_diag="$(_qmodel_check "$qmut" "x-$mname" "$mwm" "$mwe" "$mws")"; qm_rc=$?
+    if [ "$qm_rc" = 0 ]; then
+      qmut_ok=0; qmut_detail="$qmut_detail $mname-was-accepted"
+    elif ! printf '%s' "$qm_diag" | grep -Fq "$mwant"; then
+      qmut_ok=0
+      qmut_detail="$qmut_detail $mname-diagnostic-did-not-name-'$mwant'($qm_diag)"
+    fi
+  done
+  [ "$qmut_ok" = 1 ] \
+    && ok "codex-model-mutation-is-caught (lying fallback, blind parser, sub-turn author)" \
+    || bad "codex-model-mutation-is-caught" \
+        "a runner that degrades provenance must redden codex-model-is-recorded —$qmut_detail"
 
   # The other half: a runner the lane does not call is dead code. §4 must reach
   # it through ~/.forge/repo, the only path that resolves from a worktree.
