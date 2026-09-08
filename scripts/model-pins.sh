@@ -39,8 +39,11 @@
 FORGE_PIN_ROUTER="z-ai/glm-5.3-flash"
 FORGE_PIN_DRIVER="z-ai/glm-5.3-flash"
 
-# `~/.codex/config.toml`: the implementer that actually reasons. Overridable
-# per card with `FORGE_CODEX_MODEL`; whichever ran is recorded in the chunk's
-# completion metadata (F22).
+# The implementer that actually reasons. `scripts/codex-run.sh` PASSES these
+# two as `-m` and `-c model_reasoning_effort` on both of its argv branches, so
+# `~/.codex/config.toml` does not govern an unattended run and the Codex
+# desktop app may rewrite it freely. Overridable per card with
+# `FORGE_CODEX_MODEL` / `FORGE_CODEX_EFFORT`; whichever ran is recorded in the
+# chunk's completion metadata (F22).
 FORGE_PIN_CODEX_MODEL="gpt-5.6-luna"
 FORGE_PIN_CODEX_EFFORT="xhigh"

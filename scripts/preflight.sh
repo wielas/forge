@@ -880,8 +880,13 @@ if [ -n "$FORGE_DIR" ]; then
   #
   # It lives in preflight rather than verify because only the host that owns
   # the tools can answer it: a CI runner has different ones and the same check
-  # there would be red forever. The precedent is config/codex-pin-live, which
-  # skips when the operator's ~/.codex/config.toml is absent.
+  # there would be red forever. The precedent is config/model-pin-live/<profile>,
+  # which is judged only where the live Hermes profiles exist. It used to cite
+  # config/codex-pin-live; that case was deleted when scripts/codex-run.sh began
+  # PASSING the Codex pin as -m / -c model_reasoning_effort, which stopped
+  # ~/.codex/config.toml from governing an unattended run at all. Preflight has
+  # never read the Codex pin itself — ADR-0015's table saying preflight.sh:419
+  # does is stale; that line is kanban.max_in_progress.
   #
   # Drift WARNs rather than FAILs — a stale record does not stop a run, it only
   # makes the next failure harder to attribute. A line that cannot be parsed
