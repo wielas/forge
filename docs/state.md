@@ -78,6 +78,19 @@ reports 9 skips: the four `config/external-dirs/*` cases skip because the
 profiles point at the main checkout, which is F49's documented caveat and not a
 regression. Check the count from `main` before reading a rise in skips as one.
 
+ADR-0018 (2026-09-08) added four cases to `cli/`, all offline and therefore all
+in CI: the model pins now live once, in `scripts/model-pins.sh`, sourced by both
+`hermes/profiles-bootstrap.sh` and `scripts/verify.sh` and parsed by neither.
+Measured from a linked worktree, default `make verify` went from **352 passed /
+4 failed / 8 skipped** to **356 passed / 4 failed / 8 skipped**; those four
+failures are the `config/external-dirs/*` worktree artefact described above and
+predate this change. The `cli/` group alone is 22 passed / 0 failed. What the
+pin file replaced: the same three values stated in four different shapes, each
+read by its own `sed`, one of them anchored to two English sentences in a skill
+body — reword the sentence and the reader extracts nothing, which is F65.
+`scripts/codex-run.sh` still writes the Codex pin its own way; converting it is
+the next slice.
+
 The two tool lines below are now **checked**, not merely written down.
 `make preflight` section 10 compares each recorded version against the live
 binary (2026-09-01). It **WARNs** on drift and does not fail the run — preflight

@@ -46,15 +46,29 @@ run() {
   fi
 }
 
-# Model pins. The lane, prejudge and digest models only DRIVE another agent —
-# the reasoning happens inside Codex — so cheap and fast is correct, not a
-# compromise. These defaults are the live values as of 2026-07-27; they are
-# checked in precisely so a rebuild reproduces the running system. Confirm ids
-# against `hermes model` / OpenRouter before bumping them. Bumped 2026-09-08:
-# both roles moved to `z-ai/glm-5.3-flash`, confirmed present in the live
-# OpenRouter catalogue before this line was written.
-MODEL_ROUTER="${FORGE_MODEL_ROUTER:-z-ai/glm-5.3-flash}"  # orchestrator: decomposition quality matters
-MODEL_DRIVER="${FORGE_MODEL_DRIVER:-z-ai/glm-5.3-flash}"  # lane + prejudge + digest: shell driver only
+# Model pins. The values are NOT here: they live once, in
+# `scripts/model-pins.sh`, together with the provenance of each (ADR-0018).
+# They used to be stated here and in three prose places, each reconciled by its
+# own `sed` in `scripts/verify.sh` — so a bump was a four-file hand-edit and a
+# reworded copy made its reader extract nothing, which is F65's blind-not-red
+# shape. That file is SOURCED, never parsed; do not reintroduce a literal model
+# id below, `cli/model-pin-documented` fails if one appears.
+#
+# The operator overrides are unchanged and still win over the checked-in pin.
+# Guarded the way `scripts/prejudge.sh` and `scripts/roadmap-check.sh` guard
+# `touches-exempt.sh`: under `set -u` an unsourced file dies later, part-way
+# through writing profiles, instead of here with the path named.
+# shellcheck source=../scripts/model-pins.sh
+MODEL_PINS_FILE="$FORGE_DIR/scripts/model-pins.sh"
+[ -r "$MODEL_PINS_FILE" ] || {
+  echo "profiles-bootstrap: missing $MODEL_PINS_FILE — the model pins have one definition and this is it" >&2
+  exit 1; }
+. "$MODEL_PINS_FILE"
+[ -n "${FORGE_PIN_ROUTER:-}" ] && [ -n "${FORGE_PIN_DRIVER:-}" ] || {
+  echo "profiles-bootstrap: $MODEL_PINS_FILE defined no FORGE_PIN_ROUTER/FORGE_PIN_DRIVER" >&2
+  exit 1; }
+MODEL_ROUTER="${FORGE_MODEL_ROUTER:-$FORGE_PIN_ROUTER}"  # orchestrator: decomposition quality matters
+MODEL_DRIVER="${FORGE_MODEL_DRIVER:-$FORGE_PIN_DRIVER}"  # lane + prejudge + digest: shell driver only
 
 # `codex exec` and `make check` run SYNCHRONOUSLY inside a worker. The 180s
 # stock default kills the lane at `make check` — after the code is written and

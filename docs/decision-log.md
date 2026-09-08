@@ -353,3 +353,38 @@ matched `forge-operator-handoff`, the sentinel that by design has no profile. It
 now reads `assignees --json` and requires `.on_disk`. Still owed: a `substrate/`
 probe pinning these CLI semantics against real Hermes. The stub is honest today
 because it was corrected twice by hand; nothing yet catches the next drift.
+
+2026-09-08 slice/model-pin-source-of-truth: three model pins were stated in four
+places in four shapes — a shell default in `hermes/profiles-bootstrap.sh`, two
+prose sentences in `docs/state.md`, and a third in `skills/forge-lane/SKILL.md`
+§4 — each reconciled by its own `sed` in `scripts/verify.sh`, one of them a range
+anchored on two English sentences. A bump was a four-file hand-edit; rewording
+any copy made its reader extract the empty string, which is F65 (blind, not red).
+Now one sourced file, `scripts/model-pins.sh` (ADR-0018), non-executable like
+`scripts/touches-exempt.sh`, and `source` is its ONLY parser — a `sed` in
+`verify.sh` beside a `.` in the bootstrap would be the same defect one layer
+down. Env-shaped rather than JSON on purpose: `jq` is `skip`-guarded at eleven
+sites, so a JSON pin read by the offline `cli` group would go QUIET on a jq-less
+runner, F65 aimed at F65's own defence. `FORGE_PIN_*` is namespaced away from the
+override knobs `FORGE_MODEL_ROUTER`/`FORGE_MODEL_DRIVER`/`FORGE_CODEX_MODEL` so
+sourcing can never clobber an export an operator meant.
+
+The thing the suite caught that a reading would not have: the first draft called
+`codex_pin_agreement_diagnostic` inside a command substitution, so every global
+the helper loaded landed in a **subshell** and was gone by the time the assertion
+read it. The case reported `ok cli/codex-pin-documented (/; offline)` — a pass on
+two empty strings — and only its sibling mutation went red, because that one
+carried an is-it-empty guard. The pins are now loaded in the calling shell and
+the guard is kept as a guard. Proof the three mutations bite, `cli` group, which
+is 22 passed / 0 failed clean: a pin line carrying `$(id -un)` yields 21/1; a
+`FORGE_PIN_CODEX_MODEL` that disagrees with the prose yields 21/1 naming both
+pairs; a deleted `scripts/model-pins.sh` yields 19/3 — `bad` all three times,
+`skip` none. And the guard against the *vacuous* pass was mutated too, because
+it is the one nothing else exercises: delete the all-four-are-present arm from
+`model_pin_file_data_diagnostic` and a truncated pin file sails through on "no
+offending lines", which yields 21/1. `scripts/codex-run.sh` is deliberately untouched: it is the next
+slice, and ADR-0018 D18.6 records why a separate `CODEX_HOME` with
+`--ignore-user-config` was rejected before someone reaches for it — the live
+`~/.codex/config.toml` carries ~30 `trust_level = "trusted"` project entries
+including the forge dir, and codex rename-replaces a symlinked `auth.json` on
+token refresh.
