@@ -497,8 +497,8 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 Hermes 0.20.6 · codex-cli 0.148.0 · Claude Code 2.1.252 · gh 2.97.0
 lefthook 2.1.10 · uv 0.12.5 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
-profiles: forge-orchestrator (glm-5.2) · forge-codex-lane, forge-prejudge,
-          forge-digest (deepseek-v4-flash-0731) · codex pinned gpt-5.6-sol xhigh
+profiles: forge-orchestrator, forge-codex-lane, forge-prejudge,
+          forge-digest (glm-5.3-flash) · codex pinned gpt-5.6-luna xhigh
 ```
 
 The older 126 / 3 / 7 verify and PASS 82 preflight are historical; the current
