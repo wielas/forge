@@ -205,6 +205,60 @@ completed cards and call them merged chunks: the board has no trustworthy merge
 marker. The dedicated cell closes F31's presentation gap without overstating
 what the existing source can see.
 
+### 6. Implementer model — which model actually wrote the diff
+
+**Definition:** the completed chunk runs in the period, split into four buckets
+that **partition** that denominator: `from_rollout`, `requested_only`,
+`unverified` (a model with no source marker) and `unrecorded` (no model named at
+all). `by_model` carries one row per distinct model/effort/source/requested
+tuple with its run count. Every figure is a count; there is no rate, because the
+interesting number is not a ratio but whether any run at all is unattributed.
+
+**Source:** `codex_model`, `codex_reasoning_effort`, `codex_model_source` and
+`codex_model_requested` on the flat `forge.chunk.v1` envelope, written by
+`forge-lane` §7 from what `scripts/codex-run.sh` read out of Codex's own session
+rollout. Declared, and **optional**, in `rubrics/chunk-handoff.schema.json` —
+the `lane` enum includes `claude-interactive`, which has no Codex model at all.
+
+**This is not the driver-usage model above, and the two must never be read as
+one.** Number 4 comes from Hermes `sessions`/`session_model_usage`, which is the
+metered driver: the cheap agent that reads the lane protocol and shells out. It
+is never Codex. Until `codex_model` existed this report had no source of any
+kind for the model that authored the code, and said so only by omission.
+
+**`codex_model_source` is counted separately for the same reason a gate block is
+not a bounce.** `rollout` is evidence — Codex's own session log said so.
+`requested` is intent — the rollout could not be read, so all that is known is
+the pin that was *asked for*. Summing the two into one "model recorded" figure
+would report a run whose provenance was lost as though it had been confirmed,
+which is F22 wearing the fix's clothes. `unverified` is the third honest state:
+`codex_model_source` is optional, so a producer predating it — or a card an
+operator completes by hand — is schema-valid and unproven.
+
+**Why this number exists at all — 2026-09-08.** The Codex desktop app rewrote
+`~/.codex/config.toml` to a model nobody pinned. `config/codex-pin-live` FAILED
+against it; the control worked and **nobody looked**. Lane run 52 on
+`redglass-run-1` then authored CHUNK-11 under that unpinned model, and run 55
+approved it at 13:44 with nothing on the card naming what wrote the diff. That
+was an *attention* failure, not a detection failure. The companion half of this
+number therefore lives where a human cannot miss it:
+`scripts/prejudge-review.sh` puts the model and its source marker on the tier-2
+card an operator opens before merging, and prints its own absence rather than
+staying silent.
+
+**Reads as:** whether any merged work is unattributed, and whether the pin held.
+A non-zero `requested_only` says provenance is degrading — read it as a
+telemetry finding about the rollout read, not as a fact about the model. A
+`by_model` row carrying `requested` (the pin) *different* from `model` (what
+ran) is F22 recurring, live.
+
+**Series break, and no Log cell yet.** No period before 2026-09-08 has this
+exhaust, and the retro Log's rows cannot be backfilled from memory — this file's
+own honesty rules forbid it. The numbers are therefore reported in the text and
+JSON output of `scripts/metrics.sh` only; the Log row keeps its nine cells.
+Adding a tenth is worth doing once there are periods on both sides of it to
+compare.
+
 ## Judge telemetry remains contextual
 
 `forge.judge.v1` carries `tokens_estimate` and a full `cost` block since
