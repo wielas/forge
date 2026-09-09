@@ -2055,6 +2055,8 @@ metrics/driver-usage-missing-profile-is-explicit  unreadable profile state prese
 metrics/driver-usage-estimate-keeps-actual-absent  estimated Hermes cost never manufactures zero actual cost
 metrics/markdown-row-has-operator-and-driver-cells  generated rows match the retro log's expanded header
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
+metrics/implementer-model-is-counted   which model WROTE the diff, off codex_model, in four buckets that partition the runs (F22)
+metrics/implementer-model-mutation-is-caught  a requested-only run counted as rollout-sourced reddens
 metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from bounces (ADR-0009 D9.4)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
 metrics/is-read-only              reading changes neither database nor sidecar membership/bytes
@@ -2145,6 +2147,8 @@ prejudge/envelope-is-repaired-before-it-is-stored  an absent nits_as_cards is fi
 prejudge/bounce-card-lands-in-the-rejected-worktree  route_bounce's own flags make a card Hermes accepts, in the rejected worktree
 prejudge/tier2-handoff-survives-a-live-parent  route_tier2 creates parentless, blocks, then links — a live (non-done) parent no longer breaks the handoff
 prejudge/chunk-cannot-be-its-own-running-task  --chunk equal to the running task is refused by substrate before Stage 1 runs
+prejudge/tier2-card-names-the-implementer-model  the card a human merges from names the model that wrote the diff, and whether that is evidence (F22)
+prejudge/implementer-model-mutation-is-caught  a line that prints the model and swallows codex_model_source reddens
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
@@ -3866,6 +3870,43 @@ db_source_fingerprint() { # $1=kanban.db; membership + bytes of SQLite's source 
   done
 }
 
+# The implementer-model report, judged by ONE function, because the mutation
+# case below must redden exactly what the positive case passes. Two assertions
+# that merely agree today prove nothing about each other tomorrow — that is the
+# shape every mutation case in this file keeps.
+#
+# The tuple is fixture-derived (scripts/fixtures/metrics-board.sql carries one
+# run per bucket) exactly as `driver_usage`'s expectations are. The source-marker
+# arm is separate and comes FIRST so its diagnostic names the two numbers rather
+# than burying them in a whole-tuple mismatch: `requested` is intent and
+# `rollout` is evidence, and reporting the former as the latter is the defect
+# this column exists to prevent (F22).
+implementer_model_diagnostic() { # $1=metrics JSON file; 0 = the report is honest
+  local json="$1" rollout requested got want
+  [ -s "$json" ] || {
+    printf 'no metrics JSON at %s — the check went blind, which is not a pass (F65)\n' "$json"
+    return 1; }
+  jq -e '.implementer_model | type == "object"' "$json" >/dev/null 2>&1 || {
+    printf '%s carries no implementer_model object — the check went blind, which is not a pass (F65)\n' "$json"
+    return 1; }
+  rollout="$(jq -r '.implementer_model.from_rollout' "$json" 2>/dev/null)"
+  requested="$(jq -r '.implementer_model.requested_only' "$json" 2>/dev/null)"
+  if [ "$rollout" != 1 ] || [ "$requested" != 1 ]; then
+    printf 'codex_model_source is not discriminating: from_rollout=%s requested_only=%s, want 1/1 — a run whose provenance degraded to intent is being reported as though the rollout had been read (F22)\n' \
+      "${rollout:-absent}" "${requested:-absent}"
+    return 1
+  fi
+  got="$(jq -c '.implementer_model
+                | [.runs, .unrecorded, .from_rollout, .requested_only, .unverified,
+                   [.by_model[] | [.model, .reasoning_effort, .source, .requested, .runs]]]' \
+          "$json" 2>/dev/null)"
+  want='[4,1,1,1,1,[["gpt-5.6-luna",null,null,null,1],["gpt-5.6-luna","xhigh","requested",null,1],["gpt-6-astra","high","rollout","gpt-5.6-luna",1]]]'
+  [ "$got" = "$want" ] || {
+    printf 'implementer model report is %s, want %s\n' "${got:-nothing}" "$want"
+    return 1; }
+  return 0
+}
+
 live_schema_report() { # $1=boards root $2=snapshot root; TSV board/status/detail
   local boards_root="$1" snapshot_root="$2"
   local live board snapdir snapdb err missing spec t c ordinal=0
@@ -4122,6 +4163,54 @@ METRICS_STATE_SQL
   else
     bad "detects-noncanonical-envelope" \
         "expected [flat,nested,neither,total,chunk_cards]=[2,1,1,4,3], got ${e:-nothing} — a nonconforming envelope was normalized or dropped from the denominator"
+  fi
+
+  # WHICH MODEL WROTE THE DIFF (F22). Every other model figure in this report
+  # comes from Hermes `sessions`/`session_model_usage` and is the metered DRIVER
+  # by construction — never Codex. On 2026-09-08 the Codex desktop app rewrote
+  # ~/.codex/config.toml under a running lane, lane run 52 authored a chunk under
+  # the unpinned model, and run 55 approved that diff with nothing naming what
+  # wrote it. The four buckets must PARTITION the completed-run denominator, so
+  # a bucket quietly dropped reads as an arithmetic contradiction rather than as
+  # a smaller total nobody notices.
+  local im_diag
+  im_diag="$(implementer_model_diagnostic "$TMPROOT/metrics.json" 2>&1)"
+  if [ -z "$im_diag" ]; then
+    ok "implementer-model-is-counted (4 runs: 1 rollout, 1 requested, 1 unverified, 1 unrecorded)"
+  else
+    bad "implementer-model-is-counted" "$(printf '%s' "$im_diag" | tr '\n' ' ')"
+  fi
+
+  # MUTATION: make `codex_model_source` stop discriminating. This is the defect
+  # the column exists to prevent — a run whose provenance degraded to intent
+  # counted as though Codex's own rollout had confirmed it — and it is driven
+  # through the SAME diagnostic the case above passes.
+  #
+  # The mutant is assembled in a private tree carrying its own scripts/ and
+  # rubrics/ siblings, because metrics.sh reaches both through "$HERE/..". Never
+  # mutate the checked-out script in place: a killed run then leaves a live
+  # defect that the pushed head and CI cannot see.
+  local mut="$TMPROOT/metrics-mutant" mut_diag=""
+  rm -rf "$mut"; mkdir -p "$mut/scripts" "$mut/rubrics"
+  cp scripts/board-snapshot.sh "$mut/scripts/" 2>/dev/null
+  cp rubrics/run-metadata-contract.json "$mut/rubrics/" 2>/dev/null
+  sed -e "s/source = 'rollout'/model IS NOT NULL/" \
+      -e "s/source = 'requested'/0/" "$ms" > "$mut/scripts/metrics.sh"
+  chmod +x "$mut/scripts/metrics.sh" 2>/dev/null
+  if cmp -s "$ms" "$mut/scripts/metrics.sh"; then
+    bad "implementer-model-mutation-is-caught" \
+        "the mutation changed nothing in $ms — the source-marker comparison it edits was renamed, so this case is proving nothing (F65)"
+  else
+    HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+      "$mut/scripts/metrics.sh" metrics-fixture --json \
+      > "$TMPROOT/metrics-mutant.json" 2>&1
+    mut_diag="$(implementer_model_diagnostic "$TMPROOT/metrics-mutant.json" 2>&1)"
+    if printf '%s' "$mut_diag" | grep -Fq 'from_rollout=3 requested_only=0'; then
+      ok "implementer-model-mutation-is-caught (a requested run counted as rollout-sourced reddens)"
+    else
+      bad "implementer-model-mutation-is-caught" \
+          "ignoring codex_model_source must be reported as a miscount naming both numbers; got: ${mut_diag:-no diagnostic at all, which means the mutant passed}"
+    fi
   fi
 
   # ADR-0009 D9.4. A gate block and a bounce are different events and must stay
@@ -5186,6 +5275,39 @@ wants metadata  && run_metadata_live_cases
 # is covered exactly, and separately, by the walker fixture above — the point of
 # these two is the GitHub/tree-facing set that was covered by nothing.
 # ---------------------------------------------------------------------------
+# The implementer-model line, LIFTED OUT of prejudge-review.sh and RUN — the
+# same treatment route_tier2 and route_bounce get, and for the same reason: a
+# grep for the text would assert that the script mentions a model, not that it
+# renders one. `kanban` and `board_live` are overridden so this needs no board,
+# no hermes and no network, which is what lets it run in CI.
+implementer_line_render() { # $1=script to lift from, $2=`kanban show --json` payload
+  ( set -uo pipefail
+    CHUNK=t_lifted
+    PAYLOAD="$2"
+    board_live() { return 0; }
+    kanban() { printf '%s' "$PAYLOAD"; }
+    eval "$(sed -n '/^implementer_model_line() {/,/^}$/p' "$1")" || exit 1
+    implementer_model_line )
+}
+
+# One judgement, two callers (the case and its mutation). The `requested` arm is
+# what the mutation attacks: a line that prints the model and swallows the
+# source marker reads identically whether Codex confirmed the model or the
+# rollout could not be read at all, and that is F22 wearing the fix's clothes.
+implementer_line_diagnostic() { # $1=the rendered card line
+  local line="$1"
+  [ -n "$line" ] || {
+    printf 'no implementer-model line was rendered at all — the check went blind, which is not a pass (F65)\n'
+    return 1; }
+  printf '%s' "$line" | grep -Fq 'gpt-6-astra' || {
+    printf 'the line does not name the model that wrote the diff: %s\n' "$line"
+    return 1; }
+  printf '%s' "$line" | grep -Fq 'REQUESTED, not observed' || {
+    printf 'the line names the model but not that its provenance DEGRADED to intent (codex_model_source=requested), so a reviewer cannot tell a read rollout from a guess: %s\n' "$line"
+    return 1; }
+  return 0
+}
+
 run_prejudge_group() {
   group prejudge
   local gate=scripts/prejudge.sh walker=scripts/prejudge-steps.py
@@ -6274,6 +6396,67 @@ TABLE
   else
     bad "chunk-cannot-be-its-own-running-task" \
         "--chunk equal to \$HERMES_KANBAN_TASK must be refused by substrate before Stage 1 runs; rc=$self_rc out='$(printf '%s' "$self_out" | tr '\n' ' ')'"
+  fi
+
+  # RUN 55 APPROVED RUN 52'S DIFF WITHOUT KNOWING WHAT WROTE IT. On 2026-09-08
+  # the Codex desktop app rewrote ~/.codex/config.toml to an unpinned model,
+  # `config/codex-pin-live` FAILED against it — the control worked — and nobody
+  # looked. Everything since (#63 provenance, #64 one pin file, #65 the pin is
+  # passed not inherited, #66 set-model.sh) improved DETECTION. This case pins
+  # the part that makes a human SEE it: the tier-2 card an operator opens before
+  # merging names the model that authored the diff, and says whether that name
+  # is evidence or only intent.
+  #
+  # Four payloads, because every one of them is a real card shape: provenance
+  # degraded to intent, the incident itself (a rollout naming a model the pin
+  # did not ask for), a producer that recorded a model and no source at all, and
+  # a card nothing can be read off. The last two must PRINT their absence — a
+  # silent line reproduces exactly the silence this exists to end.
+  local im_requested im_rollout im_legacy im_unreadable im_line_diag im_call
+  im_requested="$(implementer_line_render "$review" \
+    '{"runs":[{"id":1,"started_at":10,"metadata":{"schema":"forge.chunk.v1","codex_model":"gpt-6-astra","codex_reasoning_effort":"high","codex_model_source":"requested"}}]}')"
+  im_rollout="$(implementer_line_render "$review" \
+    '{"runs":[{"id":1,"started_at":10,"metadata":{"codex_model":"stale-earlier-run","codex_model_source":"rollout"}},{"id":2,"started_at":20,"metadata":{"codex_model":"gpt-6-astra","codex_reasoning_effort":"high","codex_model_source":"rollout","codex_model_requested":"gpt-5.6-luna"}}]}')"
+  im_legacy="$(implementer_line_render "$review" \
+    '{"runs":[{"id":1,"started_at":10,"metadata":{"tests_run":3}}]}')"
+  im_unreadable="$(implementer_line_render "$review" '')"
+  im_line_diag="$(implementer_line_diagnostic "$im_requested" 2>&1)"
+  # The function existing and never being called is the quiet way to lose this.
+  # Read the approve arm itself — from the routed verdict to the envelope that
+  # ends it — and require the call inside it.
+  im_call="$(awk '/^  approve\|approve-with-nits\)/{a=1} a; a && /^    envelope approve/{exit}' \
+               "$review" | grep -c 'implementer_model_line')"
+  if [ -z "$im_line_diag" ] \
+     && [ "$im_call" -ge 1 ] \
+     && printf '%s' "$im_rollout" | grep -Fq 'source: rollout' \
+     && printf '%s' "$im_rollout" | grep -Fq 'WHAT RAN IS NOT WHAT WAS PINNED' \
+     && printf '%s' "$im_legacy" | grep -Fq 'NOT RECORDED' \
+     && printf '%s' "$im_unreadable" | grep -Fq 'UNREADABLE'; then
+    ok "tier2-card-names-the-implementer-model (4 card shapes; the approve arm calls it)"
+  else
+    bad "tier2-card-names-the-implementer-model" \
+        "the tier-2 card must name the implementer model and its provenance on every shape, and the approve arm must call it (calls=$im_call requested='${im_requested:-nothing}' rollout='${im_rollout:-nothing}' legacy='${im_legacy:-nothing}' unreadable='${im_unreadable:-nothing}'): ${im_line_diag:-}"
+  fi
+
+  # MUTATION: make the source marker unmatchable, so a `requested` run renders
+  # through the same shape a proven one does. The line still appears and still
+  # names a model — which is exactly why the exit code cannot catch this and the
+  # DIAGNOSTIC TEXT must. Driven through the same two helpers as the case above.
+  local im_mutant="$TMPROOT/prejudge-review-mutant.sh" im_mut_line im_mut_diag
+  sed 's/== "requested"/== "requested-never-emitted"/' "$review" > "$im_mutant"
+  if cmp -s "$review" "$im_mutant"; then
+    bad "implementer-model-mutation-is-caught" \
+        "the mutation changed nothing in $review — the source-marker comparison it edits was renamed, so this case is proving nothing (F65)"
+  else
+    im_mut_line="$(implementer_line_render "$im_mutant" \
+      '{"runs":[{"id":1,"started_at":10,"metadata":{"schema":"forge.chunk.v1","codex_model":"gpt-6-astra","codex_reasoning_effort":"high","codex_model_source":"requested"}}]}')"
+    im_mut_diag="$(implementer_line_diagnostic "$im_mut_line" 2>&1)"
+    if printf '%s' "$im_mut_diag" | grep -Fq 'DEGRADED to intent'; then
+      ok "implementer-model-mutation-is-caught (a swallowed source marker reddens, exit code unchanged)"
+    else
+      bad "implementer-model-mutation-is-caught" \
+          "a line that prints the model and ignores codex_model_source must be reported as degraded provenance; rendered '${im_mut_line:-nothing}', got: ${im_mut_diag:-no diagnostic at all, which means the mutant passed}"
+    fi
   fi
 
   # The caller must use the guarded entry point, not the raw two lines.

@@ -76,6 +76,36 @@
     "neither": 1,
     "total": 4
   },
+  "implementer_model": {
+    "runs": 4,
+    "unrecorded": 1,
+    "from_rollout": 1,
+    "requested_only": 1,
+    "unverified": 1,
+    "by_model": [
+      {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": null,
+        "source": null,
+        "requested": null,
+        "runs": 1
+      },
+      {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "xhigh",
+        "source": "requested",
+        "requested": null,
+        "runs": 1
+      },
+      {
+        "model": "gpt-6-astra",
+        "reasoning_effort": "high",
+        "source": "rollout",
+        "requested": "gpt-5.6-luna",
+        "runs": 1
+      }
+    ]
+  },
   "driver_usage": {
     "coverage": {
       "eligible": 4,

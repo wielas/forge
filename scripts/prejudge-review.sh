@@ -248,6 +248,67 @@ $findings" \
 }
 
 # ---------------------------------------------------------------------------
+# WHO WROTE THE DIFF — one line, on the card a human opens before merging (F22).
+#
+# 2026-09-08: the Codex desktop app rewrote `~/.codex/config.toml` to a model
+# nobody pinned. `config/codex-pin-live` FAILED against it — the control worked.
+# Nobody looked. Lane run 52 then authored CHUNK-11 under the unpinned model and
+# run 55 APPROVED that diff, with nothing on either card naming what wrote it.
+#
+# THAT WAS AN ATTENTION FAILURE, NOT A DETECTION FAILURE, and the four PRs since
+# (#63 provenance, #64 one pin file, #65 the pin is passed not inherited, #66
+# set-model.sh) all improved detection. Better records nobody reads recur as the
+# same finding a fourth time. This is the line that makes the record land in
+# front of the one reader who can still stop the merge.
+#
+# `codex_model_source` IS THE HALF THAT MATTERS. `rollout` is evidence — Codex's
+# own session log said so. `requested` is intent — the rollout could not be
+# read, so all that is known is the pin that was ASKED for, which is precisely
+# what the incident proved can differ from what ran. A line that printed the
+# model and swallowed the marker would read identically in both cases, which is
+# F22 wearing the fix's clothes (rubrics/chunk-handoff.schema.json says so too).
+#
+# ABSENCE IS PRINTED, NEVER OMITTED. A chunk card naming no model is the
+# 2026-09-08 shape exactly; a silent line reproduces the silence this exists to
+# end. Same rule as a check that goes blind: it has not passed.
+#
+# This reads the CHUNK card, not the review card: the model is stamped by the
+# lane into the chunk's own completion envelope (forge-lane §7). `.runs[]
+# .metadata` comes back as a PARSED OBJECT — measured against Hermes 0.20.6, not
+# assumed, because `--json` shapes differ per subcommand and jq answers a wrong
+# path with silence (docs/ladder-2026-07-28.md R3-F2). Runs are sorted here by
+# `started_at` rather than trusting the array's order for the same reason.
+#
+# It never fails the review. A missing provenance line must not cost a verdict
+# that was actually reached — the same rule the shadow stamp keeps below.
+implementer_model_line() {
+  local shown="" line=""
+  board_live && shown="$(kanban show "$CHUNK" --json 2>/dev/null)"
+  [ -n "$shown" ] && line="$(printf '%s' "$shown" | jq -r '
+      [ (.runs // [])[]
+        | select((.metadata | type) == "object")
+        | select((.metadata.codex_model | type) == "string"
+                 and (.metadata.codex_model | length) > 0) ]
+      | sort_by(.started_at, .id) | last | .metadata
+      | if . == null then
+          "implementer model: NOT RECORDED — no completed run on this chunk card names the model that wrote this diff (F22)"
+        else
+          "implementer model: \(.codex_model)"
+          + (if (.codex_reasoning_effort | type) == "string"
+             then " \(.codex_reasoning_effort)" else "" end)
+          + (if .codex_model_source == "rollout"
+             then " — source: rollout (Codex own session log; evidence)"
+             elif .codex_model_source == "requested"
+             then " — source: REQUESTED, not observed — the rollout could not be read, so this is the pin that was asked for and NOT proof of what ran"
+             else " — source: absent; provenance unverified" end)
+          + (if (.codex_model_requested | type) == "string"
+             then " — the pin requested \(.codex_model_requested); WHAT RAN IS NOT WHAT WAS PINNED (F22)"
+             else "" end)
+        end' 2>/dev/null)"
+  printf '%s\n' "${line:-implementer model: UNREADABLE — the chunk card could not be read, so nothing here names the model that wrote this diff (F22)}"
+}
+
+# ---------------------------------------------------------------------------
 # Stage 1 — the gate. Before anything is spawned and before a diff is bought.
 # ---------------------------------------------------------------------------
 GATE="$TMP/gate.json"
@@ -582,8 +643,14 @@ gated="$(jq -c --slurpfile gate "$GATE" '.gate_result = $gate[0]' "$TMP/verdict.
 # ---------------------------------------------------------------------------
 case "$VERDICT" in
   approve|approve-with-nits)
+    # The implementer line goes FIRST, above the gate and the scores: it is the
+    # one fact on this card that decides whether the rest of it can be trusted,
+    # and run 55 approved without it. It is composed at the CALL SITE rather
+    # than inside route_tier2 so the bounce path and the lifted-function checks
+    # keep taking exactly the body they always took.
     route_tier2 "$PR_URL
 
+$(implementer_model_line)
 tier-1 gate: clear — $(jq -r '[.checks[]|select(.status=="warn")|.id]
       | if length==0 then "no warnings" else "warnings: "+join(", ") end' "$GATE")
 tier-1 verdict: $SUMMARY — scores $(jq -r '.scores

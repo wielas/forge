@@ -471,6 +471,50 @@ env AS (
    WHERE r.outcome = 'completed'
      AND r.started_at >= :since AND r.started_at < :until
 ),
+-- WHICH MODEL WROTE THE DIFF (F22). Every other model column in this report —
+-- `driver_usage` below, its `sessions[].model`, its per-model rows — comes from
+-- Hermes `sessions`/`session_model_usage`, and that is the metered DRIVER: the
+-- cheap agent that reads the lane protocol and shells out. It is never Codex,
+-- so until `forge.chunk.v1` carried `codex_model` this report had no source at
+-- all for the model that actually authored the code, and said so by omission.
+--
+-- 2026-09-08 is why the column exists. The Codex desktop app rewrote
+-- `~/.codex/config.toml` under a running lane, `config/codex-pin-live` FAILED
+-- against it, lane run 52 authored a chunk under the unpinned model, and run 55
+-- approved that diff with nothing anywhere naming what wrote it.
+--
+-- `source` IS THE LOAD-BEARING FIELD AND IT IS COUNTED SEPARATELY, for the same
+-- reason gate blocks are not folded into bounces above. `rollout` is evidence —
+-- Codex's own session log said so. `requested` is intent — the rollout could
+-- not be read, so all that is known is what was ASKED for, which is precisely
+-- the thing the incident proved can differ from what ran. Summing the two into
+-- one "model recorded" number would report a degraded run as a proven one,
+-- which is F22 wearing the fix's clothes.
+--
+-- The fourth bucket is a model with NO source marker. It is reachable, not a
+-- defensive else-branch: `codex_model_source` is optional in
+-- rubrics/chunk-handoff.schema.json, so every producer that predates it — and
+-- any card an operator completes by hand — is valid and unverified. NULL here
+-- means the key is absent, empty or not a string; `json_type` separates that
+-- from a real value without trusting `json_extract` to return NULL for both.
+im AS (
+  SELECT
+    CASE WHEN json_type(r.metadata,'$.codex_model') = 'text'
+              AND trim(json_extract(r.metadata,'$.codex_model')) <> ''
+         THEN json_extract(r.metadata,'$.codex_model') END AS model,
+    CASE WHEN json_type(r.metadata,'$.codex_reasoning_effort') = 'text'
+              AND trim(json_extract(r.metadata,'$.codex_reasoning_effort')) <> ''
+         THEN json_extract(r.metadata,'$.codex_reasoning_effort') END AS effort,
+    CASE WHEN json_type(r.metadata,'$.codex_model_source') = 'text'
+              AND trim(json_extract(r.metadata,'$.codex_model_source')) <> ''
+         THEN json_extract(r.metadata,'$.codex_model_source') END AS source,
+    CASE WHEN json_type(r.metadata,'$.codex_model_requested') = 'text'
+              AND trim(json_extract(r.metadata,'$.codex_model_requested')) <> ''
+         THEN json_extract(r.metadata,'$.codex_model_requested') END AS requested
+    FROM task_runs r JOIN cc ON cc.id = r.task_id
+   WHERE r.outcome = 'completed'
+     AND r.started_at >= :since AND r.started_at < :until
+),
 -- forge.block.v1 does not exist and never has: kanban_block takes no metadata
 -- parameter, so nothing can carry it (audit F26). The class is whatever leading
 -- `token:` the free-text reason happens to start with. Anything that is not a
@@ -556,6 +600,26 @@ SELECT json_object(
                         AND started_at >= :since AND started_at < :until),
   'envelope', (SELECT json_object('flat', SUM(shape='flat'), 'nested', SUM(shape='nested'),
                  'neither', SUM(shape='neither'), 'total', COUNT(*)) FROM env),
+  -- The four buckets PARTITION `runs`: unrecorded + from_rollout +
+  -- requested_only + unverified = runs, always. That is what makes the number
+  -- checkable rather than decorative — a bucket quietly dropped shows up as an
+  -- arithmetic contradiction instead of as a smaller total nobody notices.
+  'implementer_model', (SELECT json_object(
+     'runs',           (SELECT COUNT(*) FROM im),
+     'unrecorded',     (SELECT COUNT(*) FROM im WHERE model IS NULL),
+     'from_rollout',   (SELECT COUNT(*) FROM im WHERE model IS NOT NULL
+                          AND source = 'rollout'),
+     'requested_only', (SELECT COUNT(*) FROM im WHERE model IS NOT NULL
+                          AND source = 'requested'),
+     'unverified',     (SELECT COUNT(*) FROM im WHERE model IS NOT NULL
+                          AND (source IS NULL OR source NOT IN ('rollout','requested'))),
+     'by_model', (SELECT json_group_array(json_object(
+                    'model', model, 'reasoning_effort', effort,
+                    'source', source, 'requested', requested, 'runs', n))
+                  FROM (SELECT model, effort, source, requested, COUNT(*) n
+                          FROM im WHERE model IS NOT NULL
+                         GROUP BY model, effort, source, requested
+                         ORDER BY n DESC, model, effort, source)))),
   '_driver_runs', (SELECT COALESCE(json_group_array(json_object(
                     'run_id', run_id, 'task_id', task_id, 'profile', profile,
                     'worker_session_id', worker_session_id)), json_array())
@@ -676,6 +740,20 @@ text)
     "  flat, $.schema == \"forge.chunk.v1\"      \(.envelope.flat // 0)   <- the documented shape",
     "  nested under $.\"forge.chunk.v1\"         \(.envelope.nested // 0)",
     "  neither                                  \(.envelope.neither // 0)",
+    "",
+    "implementer model — which model WROTE THE DIFF, off the chunk envelope'"'"'s codex_model (F22). This is not the driver below: that is the cheap Hermes agent, never Codex",
+    "  \(.implementer_model.runs) completed chunk runs   rollout-proven \(.implementer_model.from_rollout) · requested-only \(.implementer_model.requested_only) · no source marker \(.implementer_model.unverified) · no model at all \(.implementer_model.unrecorded)",
+    (if .implementer_model.requested_only > 0
+     then "  \(.implementer_model.requested_only) run(s) recorded INTENT, NOT EVIDENCE: codex_model_source=requested means the session rollout could not be read, so the pin that was asked for is all that is known"
+     else empty end),
+    (if (.implementer_model.by_model | length) == 0
+     then "  no completed chunk run named a model — the 2026-09-08 shape exactly: a diff nothing on the board attributes"
+     else ([.implementer_model.by_model[]
+            | "  \(.model)\(if .reasoning_effort == null then "" else " \(.reasoning_effort)" end) ×\(.runs)"
+              + "   source " + (.source // "absent — provenance unverified")
+              + (if .requested == null then ""
+                 else "   (the pin requested \(.requested); what ran is NOT what was pinned — F22)" end)]
+           | join("\n")) end),
     "",
     "driver usage — completed chunk runs joined \(.driver_usage.coverage.joined)/\(.driver_usage.coverage.eligible) (\(.driver_usage.coverage.rate // "n/a")); \(.driver_usage.coverage.unjudged) unjudged; \(.driver_usage.sessions | length) unique session(s)",
     "  calls \(.driver_usage.totals.api_calls) · input \(.driver_usage.totals.input_tokens) · output \(.driver_usage.totals.output_tokens) · cache read \(.driver_usage.totals.cache_read_tokens) · cache write \(.driver_usage.totals.cache_write_tokens) · reasoning \(.driver_usage.totals.reasoning_tokens)",

@@ -86,17 +86,44 @@ INSERT INTO task_links (parent_id, child_id) VALUES
 -- Chunk completions. t_c3 has no prejudge child, so it is only identifiable by
 -- its forge-codex-lane run — and its metadata carries neither envelope shape,
 -- which must still leave it inside the denominator.
+--
+-- These four rows also carry the four IMPLEMENTER-MODEL buckets, one each, so
+-- the partition `unrecorded + from_rollout + requested_only + unverified = 4`
+-- is exercised in every direction on every run. Which model wrote the diff is a
+-- fact about CODEX; every other model in this fixture — `deepseek-v4-flash` in
+-- the profile state database — is the metered Hermes DRIVER, and conflating the
+-- two is the gap `codex_model` exists to close (F22).
+--
+-- Run 1 is the 2026-09-08 incident verbatim: the rollout was read (so the model
+-- is evidence, `rollout`), and it names a model the operator did NOT pin — the
+-- Codex desktop app had rewritten ~/.codex/config.toml under a running lane.
+-- `codex_model_requested` is present ONLY in that case, because scripts/
+-- codex-run.sh emits it only when the request and the observation differ.
+--
+-- Run 2 is the degraded one and it is the load-bearing row: `requested` means
+-- the rollout could NOT be read, so the value is intent, not evidence. Counting
+-- it beside run 1 as "model recorded" would report a run whose provenance was
+-- lost as if Codex had confirmed it.
+--
+-- Run 3 (nested envelope) carries no codex_model at all: the fields the lane
+-- copies land beside `schema` in the FLAT object, so an envelope that nests
+-- loses them with everything else — the F1/F2 divergence, priced.
+--
+-- Run 4 names a model and no source. That is not a defensive else-branch:
+-- `codex_model_source` is optional in rubrics/chunk-handoff.schema.json, so a
+-- producer predating it — or an operator completing a card by hand — writes
+-- exactly this and is valid. An unverified model must not be counted as proven.
 INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, metadata) VALUES
   ('t_c1','forge-codex-lane','done',1785200010,1785200100,'completed',
-   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1","worker_session_id":"session-exact"}'),
+   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1","worker_session_id":"session-exact","codex_model":"gpt-6-astra","codex_reasoning_effort":"high","codex_model_source":"rollout","codex_model_requested":"gpt-5.6-luna"}'),
   -- One metered session may drive more than one completed run. Coverage keeps
   -- both run mappings; tokens and cost must still charge session-exact once.
   ('t_c1','forge-codex-lane','done',1785200011,1785200101,'completed',
-   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1","worker_session_id":"session-exact"}'),
+   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-1","pr":"https://example/pull/1","worker_session_id":"session-exact","codex_model":"gpt-5.6-luna","codex_reasoning_effort":"xhigh","codex_model_source":"requested"}'),
   ('t_c2','forge-missing-driver','done',1785200110,1785200200,'completed',
    '{"forge.chunk.v1":{"chunk_id":"CHUNK-2","pr":"https://example/pull/2"},"tests_run":9,"worker_session_id":"session-unavailable"}'),
   ('t_c3','forge-codex-lane','done',1785200210,1785200300,'completed',
-   '{"changed_files":["a.py"],"tests_run":4}');
+   '{"changed_files":["a.py"],"tests_run":4,"codex_model":"gpt-5.6-luna"}');
 
 -- Tier 1 is the forge-prejudge profile. Tier 2 is everything else, including
 -- the unassigned cards an operator drives by hand (profile NULL).
