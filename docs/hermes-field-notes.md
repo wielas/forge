@@ -318,6 +318,16 @@ warns that it "can quickly consume Plus plan rate limits" — so an unattended
 lane can inherit a different cost profile than the one the repo claims, in
 either direction, without anything changing in version control.
 
+**Closed 2026-09-09 — the pin is passed, not inherited.** `scripts/codex-run.sh`
+now sources `scripts/model-pins.sh` and states `-m <model>` and
+`-c model_reasoning_effort="<effort>"` on *both* of its argv branches, so
+`~/.codex/config.toml` no longer resolves the model for an unattended run and
+`config/codex-pin-live` was deleted along with the property it asserted. The
+flapping above is still real; it just no longer reaches a lane. `-m` and `-c`
+are the mechanism rather than `-p/--profile` because they are the only
+model-affecting flags `codex exec resume` accepts — measured against codex-cli
+0.153.4, where `-p`, `-s`, `-C` and `--add-dir` are all rejected on resume.
+
 Two more things measured against codex-cli 0.148.0, both load-bearing:
 
 - **`codex exec resume <session-id>` takes neither `-s`, `-C` nor `--add-dir`.**

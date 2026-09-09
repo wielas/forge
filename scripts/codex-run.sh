@@ -24,9 +24,35 @@
 # the chunk envelope. Read the block above record_codex_model() for why the
 # source marker is the load-bearing half (audit F22).
 #
+# THE MODEL PIN IS PASSED, NEVER INHERITED. `~/.codex/config.toml` does not
+# resolve the model for an unattended run: the pin is sourced out of
+# scripts/model-pins.sh (ADR-0018) and restated on EVERY attempt, so the Codex
+# desktop app may rewrite that file freely -- as it did on 2026-09-08 at
+# 10:08:47, swapping the model under a running lane with no human edit, after
+# which a chunk was authored and approved with nothing naming the model (F22).
+#
+# The mechanism is -m/-c and NOT a profile, because those two are the only
+# model-affecting flags accepted on BOTH branches. Measured, codex-cli 0.153.4:
+#
+#     flag                 codex exec    codex exec resume
+#     -m/--model           yes           yes
+#     -c/--config          yes           yes
+#     -p/--profile         yes           NO
+#     -s, -C, --add-dir    yes           NO
+#
+# Everything below the second row silently drops the pin on resume -- and
+# resume is not an edge case, it is what every park comes back through. That
+# table is executed by cli/codex-run-flags-exist against the live `--help`;
+# quota/codex-pin-is-passed-not-inherited executes the argv itself.
+#
+# The -c value is TOML-quoted (`model_reasoning_effort="xhigh"`) for the same
+# reason `sandbox_mode="workspace-write"` below is: codex parses the value
+# portion as TOML and only falls back to a raw literal, so a quoted string is
+# the one shape whose meaning cannot change under it.
+#
 # Exit: 0  Codex finished of its own accord
 #       2  usage
-#       3  substrate — no codex, no runtime dir, no contract
+#       3  substrate — no codex, no pin file, no runtime dir, no contract
 #       4  env — Codex failed for a reason that is not a usage limit
 #       5  env — the accumulated wait passed FORGE_QUOTA_MAX_WAIT
 #
@@ -42,7 +68,10 @@
 #   FORGE_QUOTA_TICK       sleep granularity, so a park stays responsive   [60]
 #   FORGE_LANE_PARK_ROOT   where park records live      [~/.forge/lane-parks]
 #   FORGE_CODEX_BIN        the codex binary                            [codex]
-#   FORGE_CODEX_MODEL      passed through as -m                       [unset]
+#   FORGE_CODEX_MODEL      overrides the checked-in -m pin
+#                                                   [FORGE_PIN_CODEX_MODEL]
+#   FORGE_CODEX_EFFORT     overrides the checked-in reasoning effort
+#                                                  [FORGE_PIN_CODEX_EFFORT]
 set -uo pipefail
 
 [ "$#" -eq 3 ] || {
@@ -124,6 +153,60 @@ PROGRESS="$SCRIPT_DIR/codex-progress.py"
 for helper in "$QUOTA_WINDOW" "$PROGRESS"; do
   [ -x "$helper" ] || { echo "env: $helper is missing or not executable"; exit 3; }
 done
+
+# ---------------------------------------------------------------------------
+# THE PIN, resolved before anything can want it. Beside this script, because
+# this script is invoked as ~/.forge/repo/scripts/codex-run.sh and SCRIPT_DIR
+# is already `pwd -P`, which resolves that symlink.
+#
+# SOURCED, never parsed (ADR-0018 D18.2) -- and sourced INSIDE a command
+# substitution, so this script's own environment is never mutated by the file
+# it is reading. That matters more here than in verify.sh: this environment is
+# the one `codex` inherits. The two names are unset first so a FORGE_PIN_*
+# value leaking in from the environment cannot mask a pin the file failed to
+# define.
+#
+# EVERY KEY IS THEN VALIDATED BY NAME, and this is the load-bearing half. The
+# script runs `set -uo pipefail`; a bare "$FORGE_PIN_CODEX_MODEL" against a pin
+# file that lost the key exits **127** -- a code absent from the table above,
+# and worse than the exit 1 ADR-0010 deliberately leaves unused so a caller
+# under `set -e` cannot misread a park as a crash. A pin with no source, or no
+# value, is substrate, and it says which key is missing. Same shape as the
+# _int_knob handling above: a value that reads as garbage never degrades
+# quietly. Without this the design would have replaced one silent-inheritance
+# path with a new one.
+#
+# The effort is deliberately NOT validated against models_cache.json here: that
+# would put a substrate dependency on the lane's hot path. Validation belongs
+# at the authoring boundary, in set-model.sh.
+# ---------------------------------------------------------------------------
+PIN_FILE="$SCRIPT_DIR/model-pins.sh"
+[ -r "$PIN_FILE" ] || {
+  echo "env: $PIN_FILE is missing or unreadable — the model pin has no source (ADR-0018)"
+  exit 3
+}
+PIN_LINES="$(
+  unset FORGE_PIN_CODEX_MODEL FORGE_PIN_CODEX_EFFORT
+  # shellcheck disable=SC1090
+  . "$PIN_FILE" >/dev/null 2>&1 || exit 1
+  printf '%s\n%s\n' "${FORGE_PIN_CODEX_MODEL:-}" "${FORGE_PIN_CODEX_EFFORT:-}"
+)" || {
+  echo "env: $PIN_FILE could not be sourced — the model pin has no source (ADR-0018)"
+  exit 3
+}
+PIN_CODEX_MODEL="$(printf '%s\n' "$PIN_LINES" | sed -n 1p)"
+PIN_CODEX_EFFORT="$(printf '%s\n' "$PIN_LINES" | sed -n 2p)"
+[ -n "$PIN_CODEX_MODEL" ] || {
+  echo "env: $PIN_FILE defines no FORGE_PIN_CODEX_MODEL — the model pin has no value"
+  exit 3
+}
+[ -n "$PIN_CODEX_EFFORT" ] || {
+  echo "env: $PIN_FILE defines no FORGE_PIN_CODEX_EFFORT — the reasoning-effort pin has no value"
+  exit 3
+}
+# The per-card overrides still win, unchanged in shape (ADR-0018 D18.4).
+MODEL="${FORGE_CODEX_MODEL:-$PIN_CODEX_MODEL}"
+EFFORT="${FORGE_CODEX_EFFORT:-$PIN_CODEX_EFFORT}"
 
 command -v "$CODEX_BIN" >/dev/null 2>&1 || {
   echo "env: $CODEX_BIN is not on PATH — the implementation lane cannot run"
@@ -461,7 +544,14 @@ build_argv() {
     ARGV=("${ARGV[@]}" resume "$SESSION_ID")
   fi
   ARGV=("${ARGV[@]}" --json)
-  [ -n "${FORGE_CODEX_MODEL:-}" ] && ARGV=("${ARGV[@]}" -m "$FORGE_CODEX_MODEL")
+  # THE PIN. On the common path so it reaches BOTH branches, and unconditional
+  # so ~/.codex/config.toml never gets to resolve the model. -m and -c are the
+  # only model-affecting flags `codex exec resume` accepts; see the table in
+  # the header. quota/codex-pin-on-the-{fresh,resume}-branch-mutation-is-caught
+  # drive a copy of this file with this line made conditional on each branch in
+  # turn, so "the flag is somewhere in the file" cannot pass for "it reaches
+  # both invocations".
+  ARGV=("${ARGV[@]}" -m "$MODEL" -c "model_reasoning_effort=\"$EFFORT\"")
 
   if [ -n "${SESSION_ID:-}" ]; then
     # `codex exec resume` accepts neither -s, -C nor --add-dir (measured

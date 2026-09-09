@@ -184,9 +184,9 @@ cannot read, `3` substrate, `4` Codex failed for a reason that is not a usage
 limit, `5` the wait passed `FORGE_QUOTA_MAX_WAIT`. Each prints a canonical
 `<class>: <reason>`.
 
-- Model: the pin lives in `~/.codex/config.toml` (`gpt-5.6-luna`, reasoning
-  `xhigh`). Override per card with `FORGE_CODEX_MODEL`; record whichever you
-  used in the completion metadata.
+- Model: the pin lives in `scripts/model-pins.sh` (`gpt-5.6-luna`, reasoning `xhigh`), and the
+  runner **passes** it as `-m`/`-c model_reasoning_effort` on both argv branches, so
+  `~/.codex/config.toml` never governs a run. Override with `FORGE_CODEX_MODEL`/`FORGE_CODEX_EFFORT`; record what ran in the completion metadata.
 
 Run it in the background so a long chunk — or a park — cannot hit
 `terminal.timeout` (1800s):

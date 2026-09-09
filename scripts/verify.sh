@@ -193,7 +193,7 @@ CHECKED_LANE_MODEL=""; CHECKED_LANE_EFFORT=""
 CHECKED_STATE_MODEL=""; CHECKED_STATE_EFFORT=""
 load_checked_in_codex_pins() {
   local lane_pair state_pair
-  lane_pair="$(sed -n '/^- Model: the pin lives in `~\/.codex\/config.toml`/,/completion metadata\./p' \
+  lane_pair="$(sed -n '/^- Model: the pin lives in `scripts\/model-pins.sh`/,/completion metadata\./p' \
                     skills/forge-lane/SKILL.md \
     | tr '\n' ' ' \
     | sed -n 's/.*(`\([^`]*\)`, reasoning[[:space:]]*`\([^`]*\)`).*/\1 \2/p')"
@@ -272,24 +272,6 @@ codex_pin_agreement_diagnostic() { # $1=pin file; the pin file vs forge-lane §4
     return 1
   fi
   return 0
-}
-
-codex_live_pin_diagnostic() { # $1=config.toml; checked-in pins already loaded
-  local config="$1" live_model live_effort
-  if [ ! -r "$config" ]; then
-    echo "live Codex pin is '<unreadable at $config>'; checked-in pin is '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT'"
-    return 1
-  fi
-  live_model="$(sed -n 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-                       "$config" | head -1)"
-  live_effort="$(sed -n 's/^[[:space:]]*model_reasoning_effort[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-                        "$config" | head -1)"
-  if [ "$live_model" = "$CHECKED_LANE_MODEL" ] \
-     && [ "$live_effort" = "$CHECKED_LANE_EFFORT" ]; then
-    return 0
-  fi
-  echo "live Codex pin is '${live_model:-<unset>}/${live_effort:-<unset>}'; checked-in pin is '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT'"
-  return 1
 }
 
 # The two hardcoded lists of check-group names in this file must name the same
@@ -488,10 +470,17 @@ run_cli_group() {
     $1 --help 2>&1 | grep -qE -- "(^|[[:space:]])$2([[:space:],=]|$)"
   }
   local cr_pair cr_cmd cr_fl cr_missing="" cr_rejected="" cr_n=0
+  # -m and -c are claimed on BOTH subcommands since the pin stopped being
+  # inherited from ~/.codex/config.toml: they are the only model-affecting
+  # flags `codex exec resume` accepts, which is the whole reason the runner's
+  # header states that table and the reason the mechanism is not a profile. An
+  # unasserted table is exactly the claim ADR-0003 refuses.
   for cr_pair in 'codex exec|-C'            'codex exec|-s' \
                  'codex exec|--add-dir'     'codex exec|--json' \
-                 'codex exec|-m'            'codex exec|--output-last-message' \
-                 'codex exec resume|-c'     'codex exec resume|--json' \
+                 'codex exec|-m'            'codex exec|-c' \
+                 'codex exec|--output-last-message' \
+                 'codex exec resume|-c'     'codex exec resume|-m' \
+                 'codex exec resume|--json' \
                  'codex exec resume|--output-last-message'; do
     cr_cmd="${cr_pair%%|*}"; cr_fl="${cr_pair##*|}"
     # The terminator is "not more flag", not "whitespace": the array literal
@@ -693,8 +682,8 @@ run_cli_group() {
   # `source` is only safe on a file that is data, so assert that first, then
   # the agreement checks that source it. Each is preceded by its own mutation
   # driven through the SAME helper, so a green run proves the check can still
-  # fail rather than only that today happens to agree — the shape
-  # config/codex-pin-live-diagnostic-names-both-values established.
+  # fail rather than only that today happens to agree — the shape every
+  # mutation case in this file keeps.
   local pin_fixture="$TMPROOT/model-pins-fixtures"
   local pin_diag pin_rc
   mkdir -p "$pin_fixture"
@@ -857,37 +846,18 @@ run_cli_group() {
 # ---------------------------------------------------------------------------
 run_config_group() {
   group config
-  # Compare the operator's live Codex config with the checked-in pair. First
-  # drive a known mismatch through the same helper so a green run proves the
-  # required two-value diagnostic rather than only today's agreement.
-  local codex_config codex_diag mismatch_config
-  if ! load_checked_in_codex_pins; then
-    bad "codex-pin-live" "checked-in Codex pin is unreadable; cli/codex-pin-documented also fails"
-  elif [ "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT" \
-       != "$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT" ]; then
-    bad "codex-pin-live" \
-        "checked-in pins disagree: forge-lane '$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT', state '$CHECKED_STATE_MODEL/$CHECKED_STATE_EFFORT'"
-  else
-    mismatch_config="$TMPROOT/codex-config-mismatch.toml"
-    printf 'model = "fixture-wrong"\nmodel_reasoning_effort = "low"\n' > "$mismatch_config"
-    codex_diag="$(codex_live_pin_diagnostic "$mismatch_config" 2>&1)"; local codex_diag_rc=$?
-    if [ "$codex_diag_rc" -ne 0 ] \
-       && printf '%s' "$codex_diag" | grep -Fq "fixture-wrong/low" \
-       && printf '%s' "$codex_diag" | grep -Fq "$CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT"; then
-      ok "codex-pin-live-diagnostic-names-both-values"
-    else
-      bad "codex-pin-live-diagnostic-names-both-values" \
-          "known mismatch did not print live and checked-in pairs (got: ${codex_diag:-no diagnostic})"
-    fi
-    codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
-    if [ ! -f "$codex_config" ]; then
-      skip "codex-pin-live" "$codex_config is absent; no live operator pin to judge"
-    elif codex_diag="$(codex_live_pin_diagnostic "$codex_config" 2>&1)"; then
-      ok "codex-pin-live ($CHECKED_LANE_MODEL/$CHECKED_LANE_EFFORT)"
-    else
-      bad "codex-pin-live" "$codex_diag"
-    fi
-  fi
+  # The Codex pin used to be judged here, as `codex-pin-live`: the operator's
+  # live ~/.codex/config.toml had to agree with the checked-in pair. It was
+  # deleted when scripts/codex-run.sh started PASSING the pin as -m and
+  # -c model_reasoning_effort on both argv branches — that file no longer
+  # resolves the model for an unattended run, so agreement with it is not a
+  # property worth holding, and the desktop app is free to rewrite it.
+  #
+  # The replacement, quota/codex-pin-is-passed-not-inherited, runs the runner
+  # and reads both argvs. That also moves the assertion out of this group,
+  # which returns early without hermes and is absent from CI, into an offline
+  # one that runs on every pull request — the same argument
+  # cli/model-pin-documented makes for the driver pin.
 
   if ! command -v hermes >/dev/null 2>&1; then
     skip "per-profile" "hermes not on PATH"; return
@@ -1670,8 +1640,6 @@ cli/lane-skill-management-policy  retained skills toolset is write-approval-gate
 cli/skill-description-budget              frontmatter descriptions fit the budget every session pays to list
 cli/retro-metrics                         docs/retro-metrics.md exists and carries the table /retro appends to
 cli/codex-run-flags-exist                 each flag codex-run.sh builds is in its argv AND accepted by that subcommand
-config/codex-pin-live-diagnostic-names-both-values mismatch output names live and checked-in pins
-config/codex-pin-live             ~/.codex/config.toml agrees with the checked-in model-and-effort pair
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
 config/external-dirs/<profile>    points at this checkout's skills/
@@ -1992,6 +1960,10 @@ quota/the-reactive-check-reads-the-current-attempt  a later failure is judged on
 quota/the-park-record-is-json-and-the-comment-is-prefixed  the record survives a hostile --version and §1's PARK-COMMENT marker holds
 quota/the-model-override-reaches-argv-and-a-missing-runtime-is-substrate  FORGE_CODEX_MODEL appears as -m; no runtime is exit 3
 quota/a-knob-that-reads-as-garbage-is-a-usage-error  an unparseable knob exits 2 naming itself, never silently unbounded
+quota/codex-pin-is-passed-not-inherited   `codex exec` AND `codex exec resume` each carry -m and -c model_reasoning_effort out of scripts/model-pins.sh
+quota/codex-pin-on-the-fresh-branch-mutation-is-caught  a runner that pins only the resume call turns this group red
+quota/codex-pin-on-the-resume-branch-mutation-is-caught  a runner that pins only the first call turns this group red
+quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 manifest/list-matches-the-suite           every case that ran is named in this catalogue (the reverse is not asserted)
 EOF
@@ -8033,15 +8005,18 @@ QARGV
                  FORGE_LANE_RUNTIME="$qrt10" FORGE_LANE_PARK_ROOT="$qpark" \
                  FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
                  FORGE_QUOTA_MAX_WAIT=1 FORGE_CODEX_MODEL=gpt-probe-9 \
+                 FORGE_CODEX_EFFORT=probe-effort \
                  FORGE_CODEX_BIN="$qbin/argv-echo" "$runner" "$qws" qrun-10 qtask-10 2>&1)"
   _qrun 30 env PATH="$qbin:$PATH" FORGE_LANE_RUNTIME=/nonexistent-runtime \
     FORGE_LANE_PARK_ROOT="$qpark" "$runner" "$qws" qrun-11 qtask-11 >/dev/null 2>&1
   qsubrc=$?
-  if printf '%s' "$qmodelout" | grep -q 'argv: .*-m gpt-probe-9' && [ "$qsubrc" = 3 ]; then
+  if printf '%s' "$qmodelout" | grep -q 'argv: .*-m gpt-probe-9' \
+     && printf '%s' "$qmodelout" | grep -Fq 'model_reasoning_effort="probe-effort"' \
+     && [ "$qsubrc" = 3 ]; then
     ok "the-model-override-reaches-argv-and-a-missing-runtime-is-substrate"
   else
     bad "the-model-override-reaches-argv-and-a-missing-runtime-is-substrate" \
-        "FORGE_CODEX_MODEL must appear as -m in the argv, and no runtime must exit 3 (got $qsubrc)"
+        "FORGE_CODEX_MODEL and FORGE_CODEX_EFFORT must appear as -m and -c model_reasoning_effort in the argv, and no runtime must exit 3 (got $qsubrc)"
   fi
 
   # Codex fails for many reasons and only one is worth waiting out. Sleeping on
@@ -8145,9 +8120,9 @@ QSTUBM
   chmod +x "$qbin/codex"
 
   # ONE helper, and every mutant below is driven through it. That is the shape
-  # config/codex-pin-live-diagnostic-names-both-values pins: a green run must
-  # prove the comparison REJECTS a known-bad, not merely that today's runner
-  # agrees with itself. It prints what the record claims AND what actually ran,
+  # every mutation case in this file keeps: a green run must prove the
+  # comparison REJECTS a known-bad, not merely that today's runner agrees with
+  # itself. It prints what the record claims AND what actually ran,
   # because a mismatch nobody can read is a mismatch nobody repairs.
   _qmodel_check() { # <runner> <suffix> <want model> <want effort> <want source>
     local mrunner="$1" suffix="$2" wm="$3" we="$4" wsrc="$5"
@@ -8220,6 +8195,10 @@ QSTUBM
   mkdir -p "$qmutdir"
   ln -sf "$REPO_ROOT/scripts/quota-window.py" "$qmutdir/quota-window.py"
   ln -sf "$REPO_ROOT/scripts/codex-progress.py" "$qmutdir/codex-progress.py"
+  # And the pin file, for the same reason: codex-run.sh resolves it relative to
+  # itself and exits 3 (substrate — the pin has no source) without it, so every
+  # mutant here would "fail" before reaching the line it mutates.
+  ln -sf "$REPO_ROOT/scripts/model-pins.sh" "$qmutdir/model-pins.sh"
   _qmodel_mutant() { # <name> <sed program>  -> path, or empty when it changed nothing
     local out="$qmutdir/codex-run-$1.sh"
     sed "$2" "$runner" > "$out" 2>/dev/null && chmod +x "$out" || return 1
@@ -8258,6 +8237,188 @@ QSTUBM
     && ok "codex-model-mutation-is-caught (lying fallback, blind parser, sub-turn author)" \
     || bad "codex-model-mutation-is-caught" \
         "a runner that degrades provenance must redden codex-model-is-recorded —$qmut_detail"
+
+  # ---- THE PIN IS PASSED, NOT INHERITED -----------------------------------
+  #
+  # The Codex desktop app rewrote ~/.codex/config.toml on 2026-09-08 at
+  # 10:08:47 — no human edit — and the chunk authored under it three hours
+  # later was approved with nothing naming the model. The repair is that the
+  # runner STATES the pin out of scripts/model-pins.sh, so that file stops
+  # governing unattended runs and the desktop app may rewrite it freely.
+  #
+  # This REPLACES config/codex-pin-live, which asserted the opposite: that the
+  # live ~/.codex/config.toml agreed with the checked-in pair. That file is no
+  # longer authoritative, so agreement with it is no longer a property worth
+  # holding. The assertion also moves out of config/, which returns early
+  # without hermes and is absent from CI, into a group that is offline and runs
+  # on every pull request — the same argument cli/model-pin-documented makes
+  # for the driver pin.
+  #
+  # It RUNS the runner rather than grepping its source, because the property is
+  # about argv on TWO branches. Of the model-affecting flags, `codex exec
+  # resume` accepts only -m and -c (measured, codex-cli 0.153.4), so a refactor
+  # that kept the pin on one branch alone would silently inherit
+  # ~/.codex/config.toml on the other — and resume is not an edge case, it is
+  # what every ADR-0016 park comes back through. A grep for the flag "somewhere
+  # in the file" cannot see that; two recorded argvs can.
+  cat > "$qbin/pin-echo" <<'QPIN'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "pin-echo stub"; exit 0;; esac
+for a in "$@"; do
+  if [ "$a" = resume ]; then
+    printf '%s\n' "$*" > "$STUBDIR/pin-argv-resume"
+    printf '{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}\n'
+    exit 0
+  fi
+done
+printf '%s\n' "$*" > "$STUBDIR/pin-argv-first"
+printf '{"type":"session_meta","payload":{"session_id":"verify-pin-1"}}\n'
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"resets_at":%d}}}}\n' "$(( $(date +%s) + 2 ))"
+printf '{"type":"event_msg","payload":{"type":"error","error_type":"usage_limit_reached"}}\n'
+exit 1
+QPIN
+  chmod +x "$qbin/pin-echo"
+
+  local qpin_model="" qpin_effort="" qpin_case
+  load_model_pins && { qpin_model="$PIN_CODEX_MODEL"; qpin_effort="$PIN_CODEX_EFFORT"; }
+
+  # BOTH argv files are read, and EITHER one missing a flag fails. Asserting on
+  # the two concatenated would pass a runner that pins only the resume call,
+  # which is precisely the refactor this case exists to refuse.
+  _qpin_check() { # <runner> <suffix> -> diagnostic on stdout, 1 when a branch lost the pin
+    # `rt` on its own `local`: bash expands every word of a `local` before it
+    # assigns any of them, so `rt="$qroot/runtime-$suffix"` on the line that
+    # sets `suffix` reads an unbound variable and dies at 127 under `set -u`.
+    # _qmodel_check above splits it for the same reason.
+    local prunner="$1" suffix="$2" out rc branch f
+    local rt="$qroot/runtime-$suffix"
+    rm -rf "$rt"; mkdir -p "$rt"; printf 'contract\n' > "$rt/contract.md"
+    rm -f "$qroot/pin-argv-first" "$qroot/pin-argv-resume"
+    out="$(_qrun 60 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+             FORGE_LANE_RUNTIME="$rt" FORGE_LANE_PARK_ROOT="$qpark" \
+             FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+             FORGE_CODEX_BIN="$qbin/pin-echo" \
+             "$prunner" "$qws" "run-$suffix" "task-$suffix" 2>&1)"
+    rc=$?
+    printf '%s\n' "$out" > "$qroot/pin-run-$suffix.log"
+    [ "$rc" = 0 ] \
+      || { printf 'the runner exited %s instead of parking and resuming cleanly\n' "$rc"; return 1; }
+    for branch in first resume; do
+      f="$qroot/pin-argv-$branch"
+      [ -s "$f" ] \
+        || { printf 'the %s attempt recorded no argv at all\n' "$branch"; return 1; }
+      grep -Fq -- "-m $qpin_model" "$f" \
+        || { printf 'the %s attempt argv carries no -m %s: %s\n' \
+                    "$branch" "$qpin_model" "$(cat "$f")"; return 1; }
+      grep -Fq -- "model_reasoning_effort=\"$qpin_effort\"" "$f" \
+        || { printf 'the %s attempt argv carries no -c model_reasoning_effort=%s: %s\n' \
+                    "$branch" "$qpin_effort" "$(cat "$f")"; return 1; }
+    done
+    return 0
+  }
+
+  if [ -z "$qpin_model" ] || [ -z "$qpin_effort" ]; then
+    # An empty expectation makes every `grep -Fq` above match anything, so this
+    # guard IS the check rather than a defensive extra — cli/codex-pin-documented
+    # learned that the hard way. And a pin file this case cannot read is its own
+    # source of truth going missing, which is bad, never skip.
+    for qpin_case in codex-pin-is-passed-not-inherited \
+                     codex-pin-on-the-fresh-branch-mutation-is-caught \
+                     codex-pin-on-the-resume-branch-mutation-is-caught; do
+      bad "$qpin_case" \
+          "could not source $PIN_FILE for the Codex pin — the check went blind, which is not a pass (F65)"
+    done
+  else
+    local qpin_diag qpin_rc
+    qpin_diag="$(_qpin_check "$runner" pin)"; qpin_rc=$?
+    if [ "$qpin_rc" = 0 ]; then
+      ok "codex-pin-is-passed-not-inherited ($qpin_model/$qpin_effort on both argv branches)"
+    else
+      bad "codex-pin-is-passed-not-inherited" \
+          "codex exec AND codex exec resume must each carry -m and -c model_reasoning_effort out of $PIN_FILE — $qpin_diag"
+    fi
+
+    # One mutant per branch. The pin sits on build_argv's common path, so the
+    # mutation that models "stripped from the other branch" is to make that one
+    # line conditional on the branch it must NOT be confined to. Copies under
+    # $TMPROOT beside the helper symlinks, never the tracked file: a mutation
+    # harness that edits in place leaves a live defect behind when it is killed,
+    # and neither the pushed head nor CI can see that.
+    _qpin_mutant_case() { # <case> <mutant> <sed program> <expected diagnostic>
+      local cname="$1" mname="$2" mprog="$3" want="$4" mpath mdiag mrc
+      mpath="$(_qmodel_mutant "$mname" "$mprog")"
+      if [ -z "$mpath" ]; then
+        bad "$cname" \
+            "the mutation changed nothing, so this case proves nothing — it missed the line it was aimed at (F65)"
+        return
+      fi
+      mdiag="$(_qpin_check "$mpath" "x-$mname")"; mrc=$?
+      if [ "$mrc" = 0 ]; then
+        bad "$cname" "a runner that drops the pin from that argv branch was accepted"
+      elif ! printf '%s' "$mdiag" | grep -Fq "$want"; then
+        bad "$cname" \
+            "the mutant reddened for the wrong reason; expected a diagnostic naming '$want', got: ${mdiag:-none}"
+      else
+        ok "$cname"
+      fi
+    }
+    _qpin_mutant_case codex-pin-on-the-fresh-branch-mutation-is-caught \
+      pin-not-on-fresh \
+      's/^  ARGV=\(.*model_reasoning_effort.*\)$/  [ -n "${SESSION_ID:-}" ] \&\& ARGV=\1/' \
+      'the first attempt argv carries no -m'
+    _qpin_mutant_case codex-pin-on-the-resume-branch-mutation-is-caught \
+      pin-not-on-resume \
+      's/^  ARGV=\(.*model_reasoning_effort.*\)$/  [ -z "${SESSION_ID:-}" ] \&\& ARGV=\1/' \
+      'the resume attempt argv carries no -m'
+  fi
+
+  # ---- a pin with no source is SUBSTRATE, and it is exit 3, not 127 -------
+  #
+  # codex-run.sh is `set -uo pipefail`. A bare "$FORGE_PIN_CODEX_MODEL" against
+  # a pin file that lost the key exits **127** — a code absent from that
+  # script's own documented table, and worse than the exit 1 ADR-0010
+  # deliberately leaves unused so a caller under `set -e` cannot misread a park
+  # as a crash. Without the startup validation this design would have replaced
+  # one silent-inheritance path with a new one, so the exit code is asserted to
+  # be 3 EXACTLY: "non-zero" is also true of 127, which is the defect itself.
+  #
+  # A copy in its own directory, because codex-run.sh resolves the pin file
+  # relative to itself — $qmutdir has one symlinked in, which is what keeps the
+  # mutants above from failing for this reason instead of their own.
+  local qnp="$qroot/no-pins" qnprt="$qroot/runtime-nopin"
+  local qnp_absent qnp_absent_rc qnp_short qnp_short_rc qnp_real
+  mkdir -p "$qnp"
+  # codex-run.sh names the pin file as "$SCRIPT_DIR/model-pins.sh", and
+  # SCRIPT_DIR is `pwd -P` — on macOS that turns /var into /private/var, so the
+  # expected path has to be resolved the same way or this grep never matches.
+  qnp_real="$(cd "$qnp" && pwd -P)"
+  cp "$runner" "$qnp/codex-run.sh" && chmod +x "$qnp/codex-run.sh"
+  ln -sf "$REPO_ROOT/scripts/quota-window.py" "$qnp/quota-window.py"
+  ln -sf "$REPO_ROOT/scripts/codex-progress.py" "$qnp/codex-progress.py"
+  rm -f "$qnp/model-pins.sh"
+  rm -rf "$qnprt"; mkdir -p "$qnprt"; printf 'contract\n' > "$qnprt/contract.md"
+  qnp_absent="$(_qrun 30 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
+                  FORGE_LANE_RUNTIME="$qnprt" FORGE_LANE_PARK_ROOT="$qpark" \
+                  FORGE_CODEX_BIN="$qbin/pin-echo" \
+                  "$qnp/codex-run.sh" "$qws" qrun-nopin qtask-nopin 2>&1)"
+  qnp_absent_rc=$?
+  # The 127 case exactly: a pin file that sources cleanly and lost one key.
+  printf 'FORGE_PIN_CODEX_MODEL="fixture-model"\n' > "$qnp/model-pins.sh"
+  qnp_short="$(_qrun 30 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
+                 FORGE_LANE_RUNTIME="$qnprt" FORGE_LANE_PARK_ROOT="$qpark" \
+                 FORGE_CODEX_BIN="$qbin/pin-echo" \
+                 "$qnp/codex-run.sh" "$qws" qrun-nopin2 qtask-nopin2 2>&1)"
+  qnp_short_rc=$?
+  rm -f "$qnp/model-pins.sh"
+  if [ "$qnp_absent_rc" = 3 ] \
+     && printf '%s' "$qnp_absent" | grep -Fq "$qnp_real/model-pins.sh" \
+     && [ "$qnp_short_rc" = 3 ] \
+     && printf '%s' "$qnp_short" | grep -Fq 'FORGE_PIN_CODEX_EFFORT'; then
+    ok "a-pin-with-no-source-is-substrate-not-a-crash"
+  else
+    bad "a-pin-with-no-source-is-substrate-not-a-crash" \
+        "an absent pin file and one missing a key must EACH exit 3 naming what is absent, never 127 (got $qnp_absent_rc / $qnp_short_rc: ${qnp_absent:-none} / ${qnp_short:-none})"
+  fi
 
   # The other half: a runner the lane does not call is dead code. §4 must reach
   # it through ~/.forge/repo, the only path that resolves from a worktree.
