@@ -108,7 +108,8 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/lane-setup.sh scripts/lane-blast-radius.sh scripts/codex-run.sh \
 	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh \
 	  scripts/roadmap-check.sh scripts/touches-exempt.sh scripts/merge-gate.sh \
-	  scripts/metadata-live.sh scripts/commission.sh scripts/model-pins.sh
+	  scripts/metadata-live.sh scripts/commission.sh scripts/model-pins.sh \
+	  scripts/set-model.sh
 	@# GLOBBED, not enumerated. This was a hardcoded two-file list, and
 	@# scripts/respawn-guard-probe.py landed outside it — so `make validate` and
 	@# CI both went green on a Python file that could not even parse, and the

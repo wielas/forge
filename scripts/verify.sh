@@ -838,6 +838,310 @@ run_cli_group() {
     bad "model-pin-documented" \
         "$PIN_FILE pins '$PIN_ROUTER' / '$PIN_DRIVER'; docs/state.md's environment block does not name both"
   fi
+
+  # ---- set-model: the checked-in half of a swap, as one command -----------
+  # scripts/set-model.sh writes the three sites judged above and reads them
+  # back through these same extractions. Every case below drives the REAL
+  # script inside a FIXTURE repo — a symlinked scripts/set-model.sh beside
+  # copies of the three files — with $HOME and $PATH pointed at stub
+  # catalogues, rather than grepping its source. Grepping would assert the
+  # shape of the code; what has to hold is the behaviour, and the two parted
+  # company on 2026-08-07 with every string comparison in this repo agreeing.
+  local sm_lab="$TMPROOT/set-model" sm_out sm_rc
+
+  _set_model_lab() { # $1=lab dir -> a fixture repo, two stub PATHs, two stub HOMEs
+    local lab="$1"
+    rm -rf "$lab"
+    mkdir -p "$lab/repo/scripts" "$lab/repo/docs" "$lab/repo/skills/forge-lane" \
+             "$lab/pristine" "$lab/home/.codex" "$lab/home/.hermes/cache" \
+             "$lab/bare" "$lab/bin" "$lab/offline" || return 1
+    # A SYMLINK on purpose. set-model.sh resolves its root with
+    # `cd "$(dirname "$0")"` and NOT readlink -f / pwd -P / rev-parse, so the
+    # fixture is what it edits; were it to resolve the link, every mutation
+    # below would rewrite the live docs/state.md and skills/forge-lane/SKILL.md
+    # and leave a defect in the worktree that CI could not see.
+    ln -sf "$REPO_ROOT/scripts/set-model.sh" "$lab/repo/scripts/set-model.sh" || return 1
+    cp "$REPO_ROOT/scripts/model-pins.sh"      "$lab/repo/scripts/model-pins.sh" || return 1
+    cp "$REPO_ROOT/docs/state.md"              "$lab/repo/docs/state.md" || return 1
+    cp "$REPO_ROOT/skills/forge-lane/SKILL.md" "$lab/repo/skills/forge-lane/SKILL.md" || return 1
+    # Synthetic catalogues, never the operator's own: a CI runner has neither
+    # ~/.codex nor ~/.hermes, so fixtures copied from a live machine would pass
+    # here and vanish there. `router-alpha` and `driver-beta` are deliberately
+    # NOT substrings of one another — the state.md check greps both stripped
+    # ids, and a substring pair would let one string satisfy both.
+    cat > "$lab/home/openrouter.json" <<'SMJSON'
+{"data":[{"id":"fixture/router-alpha"},{"id":"fixture/driver-beta"},{"id":"z-ai/glm-5.3-flash"}]}
+SMJSON
+    cat > "$lab/home/.hermes/cache/model_catalog.json" <<'SMJSON'
+{ "version": 1, "providers": { "openrouter": { "models": [
+  { "id": "fixture/router-alpha", "description": "" } ] } } }
+SMJSON
+    # Model AND effort in one document: `fixture-luna` supports xhigh but not
+    # ultra, exactly as the real gpt-5.6-luna does (measured 2026-09-09).
+    cat > "$lab/home/.codex/models_cache.json" <<'SMJSON'
+{ "client_version": "9.9.9-fixture",
+  "models": [
+    { "slug": "fixture-luna",
+      "supported_reasoning_levels": [
+        { "effort": "low" }, { "effort": "high" }, { "effort": "xhigh" } ] },
+    { "slug": "fixture-sol",
+      "supported_reasoning_levels": [ { "effort": "ultra" } ] } ] }
+SMJSON
+    printf '#!/usr/bin/env bash\ncat "$HOME/openrouter.json"\n' > "$lab/bin/curl"
+    printf '#!/usr/bin/env bash\nexit 7\n'                      > "$lab/offline/curl"
+    printf '#!/usr/bin/env bash\necho "codex-cli 9.9.9-fixture"\n' > "$lab/bin/codex"
+    cp "$lab/bin/codex" "$lab/offline/codex"
+    chmod +x "$lab/bin/curl" "$lab/bin/codex" "$lab/offline/curl" "$lab/offline/codex"
+    _set_model_freeze "$lab"
+  }
+  # Snapshot AFTER any per-case mutation, so "nothing was written" is measured
+  # against the tree the script was actually handed.
+  _set_model_freeze() { # $1=lab
+    cp "$1/repo/scripts/model-pins.sh"      "$1/pristine/pins" \
+      && cp "$1/repo/docs/state.md"              "$1/pristine/state" \
+      && cp "$1/repo/skills/forge-lane/SKILL.md" "$1/pristine/lane"
+  }
+  _set_model_unchanged() { # $1=lab -> 0 iff all three files are byte-identical
+    cmp -s "$1/repo/scripts/model-pins.sh"      "$1/pristine/pins" \
+      && cmp -s "$1/repo/docs/state.md"              "$1/pristine/state" \
+      && cmp -s "$1/repo/skills/forge-lane/SKILL.md" "$1/pristine/lane"
+  }
+  # $1=lab $2=bin|offline $3=home|bare $4=APPLY $5=UNVERIFIED, then argv.
+  # `env` rather than a `VAR=v func` prefix: bash restores those after a
+  # function returns, which would silently run every case unapplied.
+  _set_model_run() {
+    local lab="$1" bin="$2" home="$3" apply="$4" unver="$5"; shift 5
+    env HOME="$lab/$home" PATH="$lab/$bin:$PATH" APPLY="$apply" \
+        FORGE_SET_MODEL_UNVERIFIED="$unver" \
+        "$lab/repo/scripts/set-model.sh" "$@" 2>&1
+  }
+  # The suite's OWN prose parser, pointed at a fixture root by cd-ing: the
+  # globals it sets would be lost from a subshell, so the values are printed.
+  _set_model_checked_pairs() { # $1=fixture repo root -> "laneM laneE stateM stateE"
+    ( cd "$1" 2>/dev/null || exit 1
+      load_checked_in_codex_pins || exit 1
+      printf '%s %s %s %s\n' "$CHECKED_LANE_MODEL" "$CHECKED_LANE_EFFORT" \
+                             "$CHECKED_STATE_MODEL" "$CHECKED_STATE_EFFORT" )
+  }
+  # cli/model-pin-documented's conjunction, against an arbitrary state.md.
+  _set_model_block_names_both() { # $1=state.md $2=stripped router $3=stripped driver
+    local blk
+    blk="$(sed -n '/^profiles: forge-orchestrator/,/codex pinned/p' "$1")"
+    [ -n "$blk" ] || return 1
+    printf '%s' "$blk" | grep -Fq "$2" && printf '%s' "$blk" | grep -Fq "$3"
+  }
+
+  # --- POSITIVE CONTROL, and it is not optional. Every refusal case below
+  # passes if the harness is broken in any way that makes the script refuse
+  # unconditionally — a stub off PATH, an unhonoured HOME, a fixture root that
+  # does not exist. This case is what gives the four exit-2 cases meaning: the
+  # same lab, the same stubs, a full three-site write that comes back clean.
+  if ! _set_model_lab "$sm_lab"; then
+    bad "set-model-applies-and-reads-back" "could not build the fixture lab under $sm_lab"
+  else
+    sm_out="$(_set_model_run "$sm_lab" bin home 1 "" \
+                --router fixture/router-alpha --driver fixture/router-alpha \
+                --codex-model fixture-luna --codex-effort high)"; sm_rc=$?
+    local sm_pairs="" sm_pinned=""
+    PIN_ROUTER=""; PIN_DRIVER=""
+    if load_model_pins "$sm_lab/repo/scripts/model-pins.sh"; then
+      sm_pinned="$PIN_ROUTER/$PIN_DRIVER/$PIN_CODEX_MODEL/$PIN_CODEX_EFFORT"
+    fi
+    sm_pairs="$(_set_model_checked_pairs "$sm_lab/repo")"
+    if [ "$sm_rc" = 0 ] \
+       && [ "$sm_pinned" = "fixture/router-alpha/fixture/router-alpha/fixture-luna/high" ] \
+       && [ "$sm_pairs" = "fixture-luna high fixture-luna high" ] \
+       && _set_model_block_names_both "$sm_lab/repo/docs/state.md" router-alpha router-alpha; then
+      ok "set-model-applies-and-reads-back (three sites, one command)"
+    else
+      bad "set-model-applies-and-reads-back" \
+          "APPLY=1 must write all three sites and satisfy this group's own extractions; exit $sm_rc, pin file '$sm_pinned', prose pairs '$sm_pairs' (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
+    fi
+    # Restore the pin file the suite itself sources; load_model_pins above left
+    # $PIN_* holding fixture values.
+    load_model_pins || true
+  fi
+
+  # --- a router that differs from the driver names BOTH stripped models -----
+  # They are identical today, so ONE string satisfies both greps in
+  # cli/model-pin-documented and a rewrite that emitted only the driver would
+  # look correct forever. The second half of this case is the mutation: the
+  # SAME conjunction, run against the block as it stood before the rewrite,
+  # must fail — otherwise the first half asserts nothing.
+  if _set_model_lab "$sm_lab"; then
+    sm_out="$(_set_model_run "$sm_lab" bin home 1 "" \
+                --router fixture/router-alpha --driver fixture/driver-beta)"; sm_rc=$?
+    if [ "$sm_rc" = 0 ] \
+       && _set_model_block_names_both "$sm_lab/repo/docs/state.md" router-alpha driver-beta \
+       && ! _set_model_block_names_both "$sm_lab/pristine/state" router-alpha driver-beta; then
+      ok "set-model-split-pin-mutation-is-caught"
+    else
+      bad "set-model-split-pin-mutation-is-caught" \
+          "a router differing from the driver must leave docs/state.md naming both stripped ids, and the pre-swap block must fail the same test; exit $sm_rc, block now: $(sed -n '/^profiles: forge-orchestrator/,/codex pinned/p' "$sm_lab/repo/docs/state.md" | tr '\n' ' ')"
+    fi
+  fi
+
+  # --- an id no catalogue carries is refused, and nothing is written --------
+  # This is the case that did not exist on 2026-08-07, when MODEL_DRIVER read
+  # `deepseek-v4-flash-latest-latest` for a day with the whole suite green.
+  if _set_model_lab "$sm_lab"; then
+    sm_out="$(_set_model_run "$sm_lab" bin home 1 "" --driver fixture/resolves-nowhere)"; sm_rc=$?
+    if [ "$sm_rc" = 2 ] && _set_model_unchanged "$sm_lab" \
+       && printf '%s' "$sm_out" | grep -Fq "does not carry the driver id 'fixture/resolves-nowhere'"; then
+      ok "set-model-unresolvable-id-mutation-is-caught"
+    else
+      bad "set-model-unresolvable-id-mutation-is-caught" \
+          "an id absent from the catalogue must exit 2 with nothing written; exit $sm_rc, files $(_set_model_unchanged "$sm_lab" && echo unchanged || echo WRITTEN) (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
+    fi
+  fi
+
+  # --- model and effort are ONE question ------------------------------------
+  # The Codex cache pairs each slug with its own supported_reasoning_levels, so
+  # a supported effort on the wrong model must be refused by name. Both arms
+  # run, because "always refuses" would pass the first alone.
+  if _set_model_lab "$sm_lab"; then
+    sm_out="$(_set_model_run "$sm_lab" bin home 1 "" \
+                --codex-model fixture-luna --codex-effort ultra)"; sm_rc=$?
+    local sm_ok_out sm_ok_rc
+    sm_ok_out="$(_set_model_run "$sm_lab" bin home 1 "" \
+                --codex-model fixture-sol --codex-effort ultra)"; sm_ok_rc=$?
+    if [ "$sm_rc" = 2 ] \
+       && printf '%s' "$sm_out" | grep -Fq "does not support reasoning effort 'ultra'" \
+       && printf '%s' "$sm_out" | grep -Fq "it supports: low high xhigh" \
+       && [ "$sm_ok_rc" = 0 ]; then
+      ok "set-model-effort-mutation-is-caught"
+    else
+      bad "set-model-effort-mutation-is-caught" \
+          "an effort the slug does not support must be refused by name while the slug that does support it is accepted; exit $sm_rc / $sm_ok_rc (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
+    fi
+  fi
+
+  # --- no catalogue could answer: refuse, do not guess ----------------------
+  # A bare $HOME (no caches) plus a curl that cannot reach the network. Writing
+  # an unchecked id through a tool that looks authoritative is worse than the
+  # hand edit it replaces, so this is exit 2 and not a warning.
+  if _set_model_lab "$sm_lab"; then
+    sm_out="$(_set_model_run "$sm_lab" offline bare 1 "" --router fixture/router-alpha)"; sm_rc=$?
+    if [ "$sm_rc" = 2 ] && _set_model_unchanged "$sm_lab" \
+       && printf '%s' "$sm_out" | grep -Fq "no catalogue could be asked"; then
+      ok "set-model-validation-unavailable-mutation-is-caught"
+    else
+      bad "set-model-validation-unavailable-mutation-is-caught" \
+          "with no live catalogue and no cache the write must be refused, not attempted; exit $sm_rc, files $(_set_model_unchanged "$sm_lab" && echo unchanged || echo WRITTEN) (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
+    fi
+    # ... and the documented escape hatch writes, but leaves its trace IN the
+    # commit message, so an unverified pin cannot reach history looking clean.
+    _set_model_lab "$sm_lab"
+    sm_out="$(_set_model_run "$sm_lab" offline bare 1 1 --router fixture/router-alpha)"; sm_rc=$?
+    if [ "$sm_rc" = 0 ] && ! _set_model_unchanged "$sm_lab" \
+       && printf '%s' "$sm_out" | grep -Fq 'FORGE_SET_MODEL_UNVERIFIED=1 — these values were NOT confirmed'; then
+      ok "set-model-unverified-override-is-traced"
+    else
+      bad "set-model-unverified-override-is-traced" \
+          "FORGE_SET_MODEL_UNVERIFIED=1 must write AND print itself into the suggested commit message; exit $sm_rc (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
+    fi
+  fi
+
+  # --- APPLY is 1 or nothing, and dry run is the default -------------------
+  # `APPLY=0`, `APPLY=false` and `APPLY=no` are how an operator writes "don't".
+  # The Makefile records what happened the last time a non-empty test read them
+  # as "do", on a command that deleted branches.
+  if _set_model_lab "$sm_lab"; then
+    sm_out="$(_set_model_run "$sm_lab" bin home frobnicate "" --driver fixture/driver-beta)"; sm_rc=$?
+    local sm_dry_out sm_dry_rc
+    sm_dry_out="$(_set_model_run "$sm_lab" bin home "" "" --driver fixture/driver-beta)"; sm_dry_rc=$?
+    if [ "$sm_rc" = 2 ] \
+       && printf '%s' "$sm_out" | grep -Fq "APPLY='frobnicate' is not understood" \
+       && [ "$sm_dry_rc" = 0 ] \
+       && printf '%s' "$sm_dry_out" | grep -Fq "DRY RUN — nothing was written" \
+       && _set_model_unchanged "$sm_lab"; then
+      ok "set-model-apply-value-mutation-is-caught"
+    else
+      bad "set-model-apply-value-mutation-is-caught" \
+          "APPLY=frobnicate must be refused rather than reinterpreted, and a bare run must be a dry run; exit $sm_rc / $sm_dry_rc, files $(_set_model_unchanged "$sm_lab" && echo unchanged || echo WRITTEN) (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
+    fi
+  fi
+
+  # --- a readback that disagrees restores and fails -------------------------
+  # The mutation is the one this repository keeps paying for: a SECOND line in
+  # docs/state.md carrying the phrase `codex pinned`. cli/codex-pin-documented
+  # takes `head -1`, so the extraction then reads a line nobody rewrote — the
+  # swap is half-applied and every string still agrees with itself. The write
+  # succeeds; the readback is what must catch it, and the files must come back.
+  if _set_model_lab "$sm_lab"; then
+    awk 'NR==400 { print "Historically the lane ran with codex pinned gpt-old low." } { print }' \
+      "$sm_lab/repo/docs/state.md" > "$sm_lab/state.mutated" \
+      && mv "$sm_lab/state.mutated" "$sm_lab/repo/docs/state.md"
+    _set_model_freeze "$sm_lab"
+    sm_out="$(_set_model_run "$sm_lab" bin home 1 "" \
+                --codex-model fixture-luna --codex-effort high)"; sm_rc=$?
+    if [ "$sm_rc" = 1 ] && _set_model_unchanged "$sm_lab" \
+       && printf '%s' "$sm_out" | grep -Fq "readback: cli/codex-pin-documented's extraction reads 'gpt-old low" \
+       && printf '%s' "$sm_out" | grep -Fq "RESTORED from backup"; then
+      ok "set-model-readback-mutation-is-caught"
+    else
+      bad "set-model-readback-mutation-is-caught" \
+          "a readback that disagrees must restore all three files and exit non-zero; exit $sm_rc, files $(_set_model_unchanged "$sm_lab" && echo restored || echo LEFT-MUTATED) (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
+    fi
+  fi
+
+  # --- the readback uses THIS suite's extractions, not a paraphrase ---------
+  # set-model.sh deliberately duplicates three sed programs from this file. A
+  # duplicate that drifts is worse than no readback at all: it would confirm a
+  # value no check reads. Assert both files still carry the same literals, and
+  # treat an anchor missing from verify.sh as blindness rather than a pass.
+  local sm_anchor sm_anchors_ok=1 sm_missing=""
+  while IFS= read -r sm_anchor; do
+    [ -n "$sm_anchor" ] || continue
+    # TWO matches in verify.sh, not one. The heredoc below lives in verify.sh,
+    # so a plain `grep -Fq` here matches ITSELF and passes however the real
+    # extraction is reworded — the guard against F65 wearing F65's own defect.
+    # One match means load_checked_in_codex_pins (or the env-block sed) no
+    # longer uses this anchor and only this check's copy remains.
+    [ "$(grep -Fc "$sm_anchor" scripts/verify.sh)" -ge 2 ] \
+      || { sm_anchors_ok=0; sm_missing="$sm_missing [only this check's own copy survives in verify.sh: $sm_anchor]"; }
+    grep -Fq "$sm_anchor" scripts/set-model.sh || { sm_anchors_ok=0; sm_missing="$sm_missing [absent from set-model.sh: $sm_anchor]"; }
+  done <<'SMANCHORS'
+/^profiles: forge-orchestrator/,/codex pinned/p
+s/.*codex pinned \([^[:space:]]*\)[[:space:]]\([^[:space:]]*\).*/\1 \2/p
+/^- Model: the pin lives in `scripts\/model-pins.sh`/,/completion metadata\./p
+SMANCHORS
+  if [ "$sm_anchors_ok" = 1 ]; then
+    ok "set-model-readback-mirrors-the-suite"
+  else
+    bad "set-model-readback-mirrors-the-suite" \
+        "set-model.sh's readback must run the same extractions this file does —$sm_missing"
+  fi
+
+  # --- help is anchored to content, not to a line interval ------------------
+  # Grow the header first, so this fails against a range that merely happens to
+  # fit today's prose (worktree-sweep.sh's help lost its `Exit:` line that way).
+  local sm_help_fixture="$TMPROOT/set-model-help.sh" sm_help
+  awk '/^# Exit codes:/ { print "#   an appended paragraph that a line range would cut off" } { print }' \
+    scripts/set-model.sh > "$sm_help_fixture"
+  chmod +x "$sm_help_fixture"
+  sm_help="$("$sm_help_fixture" --help 2>/dev/null)"
+  if printf '%s' "$sm_help" | grep -Fq 'Exit codes:' \
+     && printf '%s' "$sm_help" | grep -Fq 'an appended paragraph that a line range would cut off' \
+     && printf '%s' "$sm_help" | grep -Fq 'APPLY=1 is the ONLY value that acts'; then
+    ok "set-model-help-is-anchored-to-the-header"
+  else
+    bad "set-model-help-is-anchored-to-the-header" \
+        "--help must print the whole header block; a sed line range goes blind the first time a paragraph moves"
+  fi
+
+  # --- it is RUN, so it must be executable, and covered by bash -n ----------
+  # model-pins.sh is sourced and therefore deliberately not +x; this one is a
+  # command. A non-executable command file fails at the moment an operator
+  # needs it, which is mid-swap.
+  local sm_exec_ok=1 sm_exec_detail=""
+  [ -x scripts/set-model.sh ] || { sm_exec_ok=0; sm_exec_detail="$sm_exec_detail scripts/set-model.sh is not executable;"; }
+  grep -Fq 'scripts/set-model.sh' Makefile || { sm_exec_ok=0; sm_exec_detail="$sm_exec_detail Makefile's bash -n list does not name scripts/set-model.sh;"; }
+  if [ "$sm_exec_ok" = 1 ]; then
+    ok "set-model-is-executable-and-syntax-checked"
+  else
+    bad "set-model-is-executable-and-syntax-checked" "${sm_exec_detail# }"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1636,6 +1940,17 @@ cli/model-pin-file-data-not-code-mutation-is-caught  a command-substitution pin 
 cli/model-pin-file-unreadable-mutation-is-caught  a pin file that cannot be read is bad, never skip (F65)
 cli/codex-pin-mutation-is-caught   a pin file disagreeing with the prose names both values
 cli/codex-pin-documented          the pin file, forge-lane §4 and state.md agree without reading live config (F36)
+cli/set-model-applies-and-reads-back  APPLY=1 writes all three sites and satisfies this group's own extractions
+cli/set-model-split-pin-mutation-is-caught  a router differing from the driver leaves state.md naming BOTH stripped models
+cli/set-model-unresolvable-id-mutation-is-caught  an id no catalogue carries is exit 2 with nothing written (2026-08-07)
+cli/set-model-effort-mutation-is-caught  an effort the slug does not support is refused; the slug that does support it is not
+cli/set-model-validation-unavailable-mutation-is-caught  no live catalogue and no cache refuses rather than guessing
+cli/set-model-unverified-override-is-traced  FORGE_SET_MODEL_UNVERIFIED=1 writes, and prints itself into the commit message
+cli/set-model-apply-value-mutation-is-caught  APPLY=frobnicate is refused, not reinterpreted, and a bare run is a dry run
+cli/set-model-readback-mutation-is-caught  a second `codex pinned` line half-applies the swap; the readback restores all three files
+cli/set-model-readback-mirrors-the-suite  set-model.sh reads back through the same sed programs this file uses
+cli/set-model-help-is-anchored-to-the-header  --help survives a paragraph appended to the header block
+cli/set-model-is-executable-and-syntax-checked  it is run, not sourced: +x and named in the Makefile's bash -n list
 cli/lane-skill-management-policy  retained skills toolset is write-approval-gated (ADR-0013)
 cli/skill-description-budget              frontmatter descriptions fit the budget every session pays to list
 cli/retro-metrics                         docs/retro-metrics.md exists and carries the table /retro appends to
