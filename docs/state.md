@@ -507,8 +507,8 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 ```
-Hermes 0.20.6 · codex-cli 0.148.0 · Claude Code 2.1.252 · gh 2.97.0
-lefthook 2.1.10 · uv 0.12.5 · copier 9.17.0
+Hermes 0.20.6 · codex-cli 0.153.4 · Claude Code 2.1.266 · gh 2.100.0
+lefthook 2.1.10 · uv 0.12.10 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator, forge-codex-lane, forge-prejudge,
           forge-digest (glm-5.3-flash) · codex pinned gpt-5.6-luna xhigh
