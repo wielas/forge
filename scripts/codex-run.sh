@@ -288,11 +288,12 @@ park_field() { # file key pattern
 # Codex's. The rollout Codex writes for its own session is the only place on
 # this machine where the fact exists, so this is where it gets read.
 #
-# FORGE_CODEX_MODEL is what was ASKED for. It is intent, not evidence: the
-# whole finding is that the request and the run can differ mid-flight. So the
-# request is recorded only as a FALLBACK, and the fallback SAYS SO --
-# provenance quietly degrading to intent is F22 wearing the fix's clothes, and
-# FORGE_CODEX_MODEL_SOURCE is the only thing that tells the two apart.
+# $MODEL -- the resolved pin, per-card override or not -- is what was ASKED
+# for. It is intent, not evidence: the whole finding is that the request and
+# the run can differ mid-flight. So the request is recorded only as a
+# FALLBACK, and the fallback SAYS SO -- provenance quietly degrading to intent
+# is F22 wearing the fix's clothes, and FORGE_CODEX_MODEL_SOURCE is the only
+# thing that tells the two apart.
 #
 # Deliberately NOT fatal. By the time this runs the chunk is already paid for;
 # losing the provenance must not lose the diff. It is not silent either.
@@ -350,7 +351,15 @@ PY
 
 record_codex_model() {
   local rollout="" parsed
-  CODEX_MODEL="${FORGE_CODEX_MODEL:-}"
+  # $MODEL, not ${FORGE_CODEX_MODEL:-}: since PR #65 the thing actually
+  # requested is the RESOLVED PIN -- ${FORGE_CODEX_MODEL:-$PIN_CODEX_MODEL},
+  # set once above and always non-empty by the time this runs. When #63 added
+  # this fallback, FORGE_CODEX_MODEL was the only request signal that existed;
+  # #65 gave the pin its own resolved value without updating this function, so
+  # on the default path -- no per-card override, which is every production
+  # run -- the fallback silently reverted to "unset" instead of naming the pin
+  # actually asked for (F22, 2026-09-08 incident shape).
+  CODEX_MODEL="$MODEL"
   CODEX_EFFORT=""
   CODEX_MODEL_SOURCE=requested
   # Matched on the FILENAME, which ends in the session id. `sort | tail -1` for
@@ -379,8 +388,8 @@ record_codex_model() {
     printf 'FORGE_CODEX_MODEL_RAN=%s\n' "$CODEX_MODEL"
     printf 'FORGE_CODEX_REASONING_EFFORT=%s\n' "$CODEX_EFFORT"
     printf 'FORGE_CODEX_MODEL_SOURCE=%s\n' "$CODEX_MODEL_SOURCE"
-    if [ -n "${FORGE_CODEX_MODEL:-}" ] && [ "$FORGE_CODEX_MODEL" != "$CODEX_MODEL" ]; then
-      printf 'FORGE_CODEX_MODEL_REQUESTED=%s\n' "$FORGE_CODEX_MODEL"
+    if [ -n "$MODEL" ] && [ "$MODEL" != "$CODEX_MODEL" ]; then
+      printf 'FORGE_CODEX_MODEL_REQUESTED=%s\n' "$MODEL"
     fi
   } > "$MODEL_FILE" || say "WARNING: $MODEL_FILE could not be written" >&2
   return 0
