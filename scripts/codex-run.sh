@@ -358,9 +358,12 @@ record_codex_model() {
   # #65 gave the pin its own resolved value without updating this function, so
   # on the default path -- no per-card override, which is every production
   # run -- the fallback silently reverted to "unset" instead of naming the pin
-  # actually asked for (F22, 2026-09-08 incident shape).
+  # actually asked for (F22, 2026-09-08 incident shape). $EFFORT is resolved
+  # the same way at the line above (${FORGE_CODEX_EFFORT:-$PIN_CODEX_EFFORT}),
+  # and just as non-empty here, so it gets the identical baseline: a requested
+  # model with no requested effort beside it is the same gap in a smaller hat.
   CODEX_MODEL="$MODEL"
-  CODEX_EFFORT=""
+  CODEX_EFFORT="$EFFORT"
   CODEX_MODEL_SOURCE=requested
   # Matched on the FILENAME, which ends in the session id. `sort | tail -1` for
   # the same reason quota_verdict() sorts: the layout is
