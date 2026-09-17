@@ -2271,6 +2271,8 @@ quota/an-incredible-reset-is-not-slept-on a resets_at beyond the horizon reads a
 quota/the-horizon-is-one-number           quota-window.py and codex-run.sh agree on the horizon constant
 quota/codex-model-is-recorded             the runner records the model the ROLLOUT says ran, and says so when it could not
 quota/codex-model-mutation-is-caught      a runner that loses the rollout, reads a sub-turn, or lies about its source is caught
+quota/codex-model-requested-baseline-is-the-pin  with no per-card override the requested baseline is $MODEL, not the empty override
+quota/codex-model-requested-baseline-is-the-pin-mutation-is-caught  reverting either line of the fix back to the override is caught
 quota/a-stream-without-windows-is-unknown-not-clear  no rate-limit data is exit 3 unknown, never a licence to start
 quota/a-named-refusal-blocks-only-the-window-it-names  rate_limit_reached_type must not widen to healthy windows
 quota/a-fresh-snapshot-supersedes-an-earlier-refusal  a reached marker must not outlive the snapshot that described it
@@ -8622,16 +8624,17 @@ QSTUBM
   # comparison REJECTS a known-bad, not merely that today's runner agrees with
   # itself. It prints what the record claims AND what actually ran,
   # because a mismatch nobody can read is a mismatch nobody repairs.
-  _qmodel_check() { # <runner> <suffix> <want model> <want effort> <want source>
+  _qmodel_check() { # <runner> <suffix> <want model> <want effort> <want source> [override, "" for none; default gpt-requested-3] [want requested: a value, ABSENT, or "" to skip]
     local mrunner="$1" suffix="$2" wm="$3" we="$4" wsrc="$5"
-    local rt="$qroot/runtime-$suffix" file out rc got
+    local ov="${6-gpt-requested-3}" wreq="${7-}"
+    local rt="$qroot/runtime-$suffix" file out rc got reqline
     rm -rf "$rt"; mkdir -p "$rt"; printf 'contract\n' > "$rt/contract.md"
     file="$rt/codex-model"
     out="$(_qrun 60 env PATH="$qbin:$PATH" CODEX_HOME="$qroot/codexhome" \
              STUB_SESSION_ID="$qm_sid" STUB_WRITE_ROLLOUT="$qm_rollout" \
              FORGE_LANE_RUNTIME="$rt" FORGE_LANE_PARK_ROOT="$qpark" \
              FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
-             FORGE_CODEX_MODEL=gpt-requested-3 \
+             FORGE_CODEX_MODEL="$ov" \
              "$mrunner" "$qws" "run-$suffix" "task-$suffix" 2>&1)"
     rc=$?
     printf '%s\n' "$out" > "$qroot/model-run-$suffix.log"
@@ -8644,10 +8647,37 @@ QSTUBM
     got="$got/$(sed -n 's/^FORGE_CODEX_MODEL_SOURCE=//p' "$file")"
     [ "$got" = "$wm/$we/$wsrc" ] \
       || { printf 'the record claims %s; the run was %s\n' "$got" "$wm/$we/$wsrc"; return 1; }
+    # The 7th param is opt-in (default unset skips it) so every pre-existing
+    # caller keeps checking exactly what it checked before this was added.
+    if [ -n "$wreq" ]; then
+      reqline="$(sed -n 's/^FORGE_CODEX_MODEL_REQUESTED=//p' "$file")"
+      if [ "$wreq" = ABSENT ]; then
+        [ -z "$reqline" ] \
+          || { printf 'FORGE_CODEX_MODEL_REQUESTED=%s was written but should stay absent\n' "$reqline"; return 1; }
+      else
+        [ "$reqline" = "$wreq" ] \
+          || { printf 'FORGE_CODEX_MODEL_REQUESTED reads "%s", not the expected "%s"\n' "$reqline" "$wreq"; return 1; }
+      fi
+    fi
     return 0
   }
 
+  # $PIN_CODEX_MODEL / $PIN_CODEX_EFFORT are read ONCE here, from the real
+  # checked-in scripts/model-pins.sh, and reused by everything below that
+  # needs the real pin's shape: m2's fallback effort, the whole "no override"
+  # section, and its mutants. Read live rather than hardcoded so a future
+  # `set-model.sh --codex-effort` bump cannot make this fixture stale.
+  local qm_pin_model="" qm_pin_effort="" qm_pin_ok=1
+  if load_model_pins; then
+    qm_pin_model="$PIN_CODEX_MODEL"
+    qm_pin_effort="$PIN_CODEX_EFFORT"
+  else
+    qm_pin_ok=0
+  fi
+
   local qm_ok=1 qm_detail="" qm_diag qm_rc
+  [ "$qm_pin_ok" = 1 ] \
+    || { qm_ok=0; qm_detail="$qm_detail could-not-read-$PIN_FILE(F65)"; }
   qm_sid=verify-model-1; qm_rollout=yes
   qm_diag="$(_qmodel_check "$runner" m1 gpt-fixture-7 xhigh rollout)" \
     || { qm_ok=0; qm_detail="$qm_detail rollout-half($qm_diag)"; }
@@ -8658,9 +8688,13 @@ QSTUBM
     || { qm_ok=0; qm_detail="$qm_detail requested-pin-not-recorded"; }
   # No rollout to read. The chunk is already paid for by this point, so losing
   # the provenance must not lose the diff — but it must not be SILENT either,
-  # and the record must say `requested`, never `rollout`.
+  # and the record must say `requested`, never `rollout`. The expected effort
+  # is the PIN's, not the override's: this fixture never sets
+  # FORGE_CODEX_EFFORT, only FORGE_CODEX_MODEL, so CODEX_EFFORT falls back to
+  # ${FORGE_CODEX_EFFORT:-$PIN_CODEX_EFFORT} = the pin regardless of the model
+  # override — the same fix this PR makes for the model, applied to effort.
   qm_sid=verify-model-absent; qm_rollout=no
-  qm_diag="$(_qmodel_check "$runner" m2 gpt-requested-3 '' requested)" \
+  qm_diag="$(_qmodel_check "$runner" m2 gpt-requested-3 "$qm_pin_effort" requested)" \
     || { qm_ok=0; qm_detail="$qm_detail fallback-half($qm_diag)"; }
   grep -Fq 'WARNING: no readable turn_context' "$qroot/model-run-m2.log" 2>/dev/null \
     || { qm_ok=0; qm_detail="$qm_detail degradation-was-silent"; }
@@ -8703,9 +8737,16 @@ QSTUBM
     cmp -s "$out" "$runner" && return 1
     printf '%s' "$out"
   }
+  # The effort half of "correct" and "what the mutant actually produced" for
+  # lying-fallback and blind-parser is $qm_pin_effort, not a hardcoded literal
+  # or an empty string: both scenarios fall back to the baseline (no rollout
+  # read, or the parser blinded so nothing is read), and the baseline is now
+  # $EFFORT — the same fix this PR makes for the model. sub-turn-author is
+  # untouched: its mutant still succeeds at parsing, so both halves come from
+  # the fixture rollout's own embedded strings, never the pin.
   for spec in \
-    "lying-fallback:s/^  CODEX_MODEL_SOURCE=requested\$/  CODEX_MODEL_SOURCE=rollout/:absent:gpt-requested-3::requested:gpt-requested-3//rollout" \
-    "blind-parser:s/^chosen = last_root or last_any\$/chosen = None/:present:gpt-fixture-7:xhigh:rollout:gpt-requested-3//requested" \
+    "lying-fallback:s/^  CODEX_MODEL_SOURCE=requested\$/  CODEX_MODEL_SOURCE=rollout/:absent:gpt-requested-3:$qm_pin_effort:requested:gpt-requested-3/$qm_pin_effort/rollout" \
+    "blind-parser:s/^chosen = last_root or last_any\$/chosen = None/:present:gpt-fixture-7:xhigh:rollout:gpt-requested-3/$qm_pin_effort/requested" \
     "sub-turn-author:s/^chosen = last_root or last_any\$/chosen = last_any/:present:gpt-fixture-7:xhigh:rollout:codex-auto-review/low/rollout"; do
     local mname="${spec%%:*}" mrest="${spec#*:}"
     local mprog="${mrest%%:*}"; mrest="${mrest#*:}"
@@ -8735,6 +8776,125 @@ QSTUBM
     && ok "codex-model-mutation-is-caught (lying fallback, blind parser, sub-turn author)" \
     || bad "codex-model-mutation-is-caught" \
         "a runner that degrades provenance must redden codex-model-is-recorded —$qmut_detail"
+
+  # ---- NO PER-CARD OVERRIDE: THE PRODUCTION PATH --------------------------
+  #
+  # Every case above sets FORGE_CODEX_MODEL=gpt-requested-3, so none of them
+  # exercise the path a real lane run actually takes: no per-card override,
+  # which is every commissioned chunk today (PR #65's ADR-0018 D18.4 made the
+  # override the exception, not the rule). Before this fix, record_codex_model
+  # took "${FORGE_CODEX_MODEL:-}" as its notion of "requested" — always empty
+  # on this path — so a lost rollout wrote FORGE_CODEX_MODEL_RAN blank instead
+  # of naming the pin, and the FORGE_CODEX_MODEL_REQUESTED guard compared the
+  # pin against nothing, so it never fired even when the rollout disagreed
+  # with the pin. prejudge-review.sh's F22 "WHAT RAN IS NOT WHAT WAS PINNED"
+  # card keys off exactly that field — on the default path it was never
+  # written, which is the 2026-09-08 incident's exact shape. This is a #63 x
+  # #65 interaction: when #63 added the fallback, FORGE_CODEX_MODEL was the
+  # only request signal that existed; #65 gave the pin its own resolved value
+  # ($MODEL) without updating this function. $EFFORT gets the identical
+  # baseline fix beside it: record_codex_model() hardcoded CODEX_EFFORT=""
+  # regardless of override or pin, so FORGE_CODEX_REASONING_EFFORT came out
+  # blank on this exact path too — same shape, same root cause, fixed the
+  # same way. $qm_pin_model / $qm_pin_ok / $qm_pin_effort come from the
+  # shared load_model_pins call above m1/m2.
+  local qm_np_ok=1 qm_np_detail=""
+  # A pin that happens to equal the fixture rollout's model would make the
+  # first case below pass vacuously — the two must disagree for it to prove
+  # anything (F65's shape one layer down).
+  if [ "$qm_pin_ok" = 1 ] && [ "$qm_pin_model" = gpt-fixture-7 ]; then
+    qm_pin_ok=0
+  fi
+  if [ "$qm_pin_ok" = 1 ]; then
+    # Rollout readable, disagrees with the pin, NO override: the F22 card's
+    # branch must be reachable without one, or the whole fix is theater.
+    qm_sid=verify-model-1; qm_rollout=yes
+    qm_diag="$(_qmodel_check "$runner" npr gpt-fixture-7 xhigh rollout '' "$qm_pin_model")" \
+      || { qm_np_ok=0; qm_np_detail="$qm_np_detail requested-half($qm_diag)"; }
+    # No override AND no readable rollout: CODEX_MODEL and CODEX_EFFORT must
+    # both fall back to the resolved pin, never to empty — the two symptoms
+    # this PR fixes. And the model half agrees with the pin here, so
+    # REQUESTED must stay absent (the existing property, now proven on the
+    # path that matters).
+    qm_sid=verify-model-absent; qm_rollout=no
+    qm_diag="$(_qmodel_check "$runner" npf "$qm_pin_model" "$qm_pin_effort" requested '' ABSENT)" \
+      || { qm_np_ok=0; qm_np_detail="$qm_np_detail ran-half($qm_diag)"; }
+  else
+    qm_np_ok=0
+    qm_np_detail=" could not read $PIN_FILE, or its model now equals the fixture rollout's — the check would prove nothing (F65)"
+  fi
+  [ "$qm_np_ok" = 1 ] \
+    && ok "codex-model-requested-baseline-is-the-pin (no override, rollout disagrees: \$MODEL recorded as requested; no override, no rollout: \$MODEL and \$EFFORT fill FORGE_CODEX_MODEL_RAN and FORGE_CODEX_REASONING_EFFORT, never blank)" \
+    || bad "codex-model-requested-baseline-is-the-pin" \
+        "with no per-card override the requested baseline must be \$MODEL/\$EFFORT (the resolved pin, ADR-0018), not \${FORGE_CODEX_MODEL:-}/\"\" —$qm_np_detail"
+
+  # Three mutants, each reverting exactly one line of this fix, each checked
+  # against the ONE fixture it actually breaks. Reverting the model baseline
+  # or the effort baseline against the rollout-disagrees fixture would not
+  # show up there — the rollout overwrites both CODEX_MODEL and CODEX_EFFORT
+  # regardless of what they were initialised to, so a baseline-only revert is
+  # invisible there and only shows up with no rollout to read. Symmetrically
+  # the guard-only revert never touches either RAN field; it only breaks
+  # FORGE_CODEX_MODEL_REQUESTED.
+  local qm_bp_ok=1 qm_bp_detail=""
+  if [ "$qm_pin_ok" = 1 ]; then
+    qmut="$(_qmodel_mutant baseline-reverts-to-the-override \
+      's/CODEX_MODEL="\$MODEL"/CODEX_MODEL="${FORGE_CODEX_MODEL:-}"/')"
+    if [ -z "$qmut" ]; then
+      qm_bp_ok=0; qm_bp_detail="$qm_bp_detail baseline-mutation-changed-nothing(missed its line, F65)"
+    else
+      qm_sid=verify-model-absent; qm_rollout=no
+      qm_diag="$(_qmodel_check "$qmut" x-baseline-reverts "$qm_pin_model" "$qm_pin_effort" requested '')"; qm_rc=$?
+      if [ "$qm_rc" = 0 ]; then
+        qm_bp_ok=0; qm_bp_detail="$qm_bp_detail baseline-mutant-was-accepted"
+      elif ! printf '%s' "$qm_diag" | grep -Fq "the run was $qm_pin_model"; then
+        qm_bp_ok=0
+        qm_bp_detail="$qm_bp_detail baseline-diagnostic-did-not-name-the-pin($qm_diag)"
+      fi
+    fi
+
+    qmut="$(_qmodel_mutant guard-reverts-to-the-override \
+      's/-n "\$MODEL"/-n "${FORGE_CODEX_MODEL:-}"/')"
+    if [ -z "$qmut" ]; then
+      qm_bp_ok=0; qm_bp_detail="$qm_bp_detail guard-mutation-changed-nothing(missed its line, F65)"
+    else
+      qm_sid=verify-model-1; qm_rollout=yes
+      qm_diag="$(_qmodel_check "$qmut" x-guard-reverts gpt-fixture-7 xhigh rollout '' "$qm_pin_model")"; qm_rc=$?
+      if [ "$qm_rc" = 0 ]; then
+        qm_bp_ok=0; qm_bp_detail="$qm_bp_detail guard-mutant-was-accepted"
+      elif ! printf '%s' "$qm_diag" | grep -Fq 'FORGE_CODEX_MODEL_REQUESTED reads ""'; then
+        qm_bp_ok=0
+        qm_bp_detail="$qm_bp_detail guard-diagnostic-did-not-name-the-missing-key($qm_diag)"
+      fi
+    fi
+
+    # The effort twin: reverting CODEX_EFFORT back to the historical hardcoded
+    # "" (never a per-card override fallback — record_codex_model() ignored
+    # $EFFORT/FORGE_CODEX_EFFORT entirely before this PR) is invisible on the
+    # rollout-disagrees fixture for the same reason the model baseline mutant
+    # is, so it is checked only on the no-rollout fixture.
+    qmut="$(_qmodel_mutant effort-baseline-reverts-to-empty \
+      's/CODEX_EFFORT="\$EFFORT"/CODEX_EFFORT=""/')"
+    if [ -z "$qmut" ]; then
+      qm_bp_ok=0; qm_bp_detail="$qm_bp_detail effort-mutation-changed-nothing(missed its line, F65)"
+    else
+      qm_sid=verify-model-absent; qm_rollout=no
+      qm_diag="$(_qmodel_check "$qmut" x-effort-reverts "$qm_pin_model" "$qm_pin_effort" requested '')"; qm_rc=$?
+      if [ "$qm_rc" = 0 ]; then
+        qm_bp_ok=0; qm_bp_detail="$qm_bp_detail effort-mutant-was-accepted"
+      elif ! printf '%s' "$qm_diag" | grep -Fq "the run was $qm_pin_model/$qm_pin_effort/requested"; then
+        qm_bp_ok=0
+        qm_bp_detail="$qm_bp_detail effort-diagnostic-did-not-name-the-pin($qm_diag)"
+      fi
+    fi
+  else
+    qm_bp_ok=0
+    qm_bp_detail=" could not read $PIN_FILE, or its model now equals the fixture rollout's (F65)"
+  fi
+  [ "$qm_bp_ok" = 1 ] \
+    && ok "codex-model-requested-baseline-is-the-pin-mutation-is-caught (model baseline reverts to the override, guard reverts to the override, effort baseline reverts to empty)" \
+    || bad "codex-model-requested-baseline-is-the-pin-mutation-is-caught" \
+        "a runner that reverts either baseline, or the guard, must redden codex-model-requested-baseline-is-the-pin —$qm_bp_detail"
 
   # ---- THE PIN IS PASSED, NOT INHERITED -----------------------------------
   #
