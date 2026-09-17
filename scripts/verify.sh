@@ -274,6 +274,29 @@ codex_pin_agreement_diagnostic() { # $1=pin file; the pin file vs forge-lane §4
   return 0
 }
 
+# The two ADR-0018 D18.2 refusal arms of cli/model-pin-documented, factored out
+# so the SAME helper judges the real hermes/profiles-bootstrap.sh and the
+# mutation probes below it. Since ADR-0018 the router/driver values are
+# SOURCED out of scripts/model-pins.sh rather than sed out of the bootstrap
+# script; this asserts the bootstrap still COMPOSES its defaults from
+# $FORGE_PIN_ROUTER/$FORGE_PIN_DRIVER and names no pin value literally —
+# re-hardcoding today's value would leave the pin file, state.md and every
+# live profile agreeing while the source of truth had silently forked in two.
+model_pin_bootstrap_shape_diagnostic() { # $1=bootstrap file (or a mutated copy)  $2=router pin  $3=driver pin; empty stdout + rc 0 on success, else a message on stdout and rc 1
+  local bootstrap="$1" pin_router="$2" pin_driver="$3"
+  if ! grep -Fq 'FORGE_PIN_ROUTER' "$bootstrap" || ! grep -Fq 'FORGE_PIN_DRIVER' "$bootstrap"; then
+    printf '%s does not compose its defaults from $FORGE_PIN_ROUTER/$FORGE_PIN_DRIVER, so %s is decorative (ADR-0018 D18.2)' \
+      "$bootstrap" "$PIN_FILE"
+    return 1
+  fi
+  if grep -Fq "$pin_router" "$bootstrap" || grep -Fq "$pin_driver" "$bootstrap"; then
+    printf "%s names a pin value literally ('%s' / '%s'); one source of truth means it appears only in %s" \
+      "$bootstrap" "$pin_router" "$pin_driver" "$PIN_FILE"
+    return 1
+  fi
+  return 0
+}
+
 # The two hardcoded lists of check-group names in this file must name the same
 # set. The arg-allowlist `case` arm is the registry — what `verify.sh <group>`
 # accepts — and DEFAULT_SUITES is what a bare `make verify`, and therefore CI,
@@ -818,25 +841,66 @@ run_cli_group() {
   # file, state.md and every live profile agreeing while the source of truth had
   # silently forked back into two.
   local env_block bootstrap=hermes/profiles-bootstrap.sh
+  local pins_loaded=0 shape_diag="" shape_rc=0
   env_block="$(sed -n '/^profiles: forge-orchestrator/,/codex pinned/p' docs/state.md)"
-  if ! load_model_pins; then
+  load_model_pins && pins_loaded=1
+  if [ "$pins_loaded" = 1 ]; then
+    shape_diag="$(model_pin_bootstrap_shape_diagnostic "$bootstrap" "$PIN_ROUTER" "$PIN_DRIVER")"; shape_rc=$?
+  fi
+  if [ "$pins_loaded" != 1 ]; then
     bad "model-pin-documented" \
         "could not source $PIN_FILE for FORGE_PIN_ROUTER/FORGE_PIN_DRIVER — the check went blind, which is not a pass (F65)"
   elif [ -z "$env_block" ]; then
     bad "model-pin-documented" \
         "docs/state.md has no 'profiles: forge-orchestrator … codex pinned' environment block to compare against"
-  elif ! grep -Fq 'FORGE_PIN_ROUTER' "$bootstrap" || ! grep -Fq 'FORGE_PIN_DRIVER' "$bootstrap"; then
-    bad "model-pin-documented" \
-        "$bootstrap does not compose its defaults from \$FORGE_PIN_ROUTER/\$FORGE_PIN_DRIVER, so $PIN_FILE is decorative (ADR-0018 D18.2)"
-  elif grep -Fq "$PIN_ROUTER" "$bootstrap" || grep -Fq "$PIN_DRIVER" "$bootstrap"; then
-    bad "model-pin-documented" \
-        "$bootstrap names a pin value literally ('$PIN_ROUTER' / '$PIN_DRIVER'); one source of truth means it appears only in $PIN_FILE"
+  elif [ "$shape_rc" != 0 ]; then
+    bad "model-pin-documented" "$shape_diag"
   elif printf '%s' "$env_block" | grep -Fq "${PIN_DRIVER#*/}" \
     && printf '%s' "$env_block" | grep -Fq "${PIN_ROUTER#*/}"; then
     ok "model-pin-documented ($PIN_DRIVER)"
   else
     bad "model-pin-documented" \
         "$PIN_FILE pins '$PIN_ROUTER' / '$PIN_DRIVER'; docs/state.md's environment block does not name both"
+  fi
+
+  # MUTATION: prove model-pin-documented's two ADR-0018 D18.2 refusal arms can
+  # actually fire. PR #64's four mutation cases never touch
+  # hermes/profiles-bootstrap.sh, so these two arms have passed since they were
+  # written only because the real file happens to satisfy them — never proven
+  # able to redden. Both mutants are copies of $bootstrap under TMPROOT; the
+  # tracked file is never touched.
+  local mp_mut_root="$TMPROOT/model-pin-bootstrap-mutants" mp_mut_shape mp_mut_literal
+  rm -rf "$mp_mut_root"; mkdir -p "$mp_mut_root"
+  mp_mut_shape="$mp_mut_root/wrong-shape.sh"
+  mp_mut_literal="$mp_mut_root/literal-pin.sh"
+  # (a) wrong shape: the composition reference is renamed away, so the file no
+  #     longer reads its defaults from $FORGE_PIN_ROUTER/$FORGE_PIN_DRIVER —
+  #     ADR-0018 D18.2's exact failure, the pin file becoming decorative.
+  sed -e 's/FORGE_PIN_ROUTER/FORGE_LITERAL_ROUTER/g' \
+      -e 's/FORGE_PIN_DRIVER/FORGE_LITERAL_DRIVER/g' \
+      "$bootstrap" > "$mp_mut_shape"
+  # (b) literal pin: today's router value hardcoded into a fallback line,
+  #     forking the source of truth in two while every other check keeps
+  #     agreeing with it.
+  { cat "$bootstrap"; printf '\n# fallback default: %s\n' "${PIN_ROUTER:-unset}"; } > "$mp_mut_literal"
+
+  if cmp -s "$bootstrap" "$mp_mut_shape" || cmp -s "$bootstrap" "$mp_mut_literal"; then
+    bad "model-pin-documented-mutation-is-caught" \
+        "a mutation changed nothing against $bootstrap — the pattern it targets moved, so this probe proves nothing (F65)"
+  elif [ "$pins_loaded" != 1 ]; then
+    bad "model-pin-documented-mutation-is-caught" \
+        "could not source $PIN_FILE to build the mutation probes — the check went blind, which is not a pass (F65)"
+  else
+    local shape_mut_diag shape_mut_rc literal_mut_diag literal_mut_rc
+    shape_mut_diag="$(model_pin_bootstrap_shape_diagnostic "$mp_mut_shape" "$PIN_ROUTER" "$PIN_DRIVER")"; shape_mut_rc=$?
+    literal_mut_diag="$(model_pin_bootstrap_shape_diagnostic "$mp_mut_literal" "$PIN_ROUTER" "$PIN_DRIVER")"; literal_mut_rc=$?
+    if [ "$shape_mut_rc" != 0 ] && printf '%s' "$shape_mut_diag" | grep -Fq 'does not compose its defaults' \
+       && [ "$literal_mut_rc" != 0 ] && printf '%s' "$literal_mut_diag" | grep -Fq 'names a pin value literally'; then
+      ok "model-pin-documented-mutation-is-caught (wrong-shape and literal-pin bootstraps both refused)"
+    else
+      bad "model-pin-documented-mutation-is-caught" \
+          "a bootstrap that stops composing \$FORGE_PIN_ROUTER/\$FORGE_PIN_DRIVER must be refused as wrong-shape (got rc=$shape_mut_rc '$shape_mut_diag'), and one hardcoding the pin value must be refused as literal (got rc=$literal_mut_rc '$literal_mut_diag')"
+    fi
   fi
 
   # ---- set-model: the checked-in half of a swap, as one command -----------
@@ -1935,6 +1999,7 @@ cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not 
 cli/no-programs-in-souls          no fenced block in a SOUL exceeds 6 lines
 cli/permissions-are-read-only     no allowlist wildcard admits a paid or mutating command
 cli/model-pin-documented          the sourced pin file, profiles-bootstrap.sh and state.md agree (F22/F36, ADR-0018)
+cli/model-pin-documented-mutation-is-caught  a bootstrap that stops composing the pin vars, or hardcodes one, is refused (ADR-0018 D18.2)
 cli/model-pin-file-is-data-not-code  every pin line is a plain quoted assignment, so sourcing it executes nothing
 cli/model-pin-file-data-not-code-mutation-is-caught  a command-substitution pin line, and a truncated file, are both reported
 cli/model-pin-file-unreadable-mutation-is-caught  a pin file that cannot be read is bad, never skip (F65)
@@ -2026,6 +2091,7 @@ lane/prejudge-terminator-mapping        rc 0 -> kanban_complete, rc 3 -> kanban_
 lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
 lane/prejudge-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
 lane/codex-model-reaches-the-envelope   §7 copies the runner's recorded Codex model into the chunk envelope (F22)
+lane/codex-model-reaches-the-envelope-mutation-is-caught  a dropped codex_* key, and a section boundary moved early, both redden
 bootstrap/root-only-creates-one-card    a valid graph creates only its unique root
 bootstrap/multiple-roots-mutate-nothing invalid staged graphs refuse before the first Hermes command
 bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed dependency ids invoke no Hermes command
@@ -2057,6 +2123,7 @@ metrics/markdown-row-has-operator-and-driver-cells  generated rows match the ret
 metrics/detects-noncanonical-envelope  a nested chunk envelope is reported as nonconforming, not normalized or dropped
 metrics/implementer-model-is-counted   which model WROTE the diff, off codex_model, in four buckets that partition the runs (F22)
 metrics/implementer-model-mutation-is-caught  a requested-only run counted as rollout-sourced reddens
+metrics/text-implementer-model-exact   the text renderer's four implementer-model buckets and its INTENT, NOT EVIDENCE line agree with the JSON fixture, numeral for numeral
 metrics/gate-blocks-are-not-bounces    forge.gate.v1 blocks are counted apart from bounces (ADR-0009 D9.4)
 metrics/reads-a-quiescent-board   a board at rest, with no WAL sidecars, is still readable (F47)
 metrics/is-read-only              reading changes neither database nor sidecar membership/bytes
@@ -2298,6 +2365,32 @@ wants cli       && run_cli_group
 wants config    && run_config_group
 wants substrate && run_substrate_group
 wants template  && run_template_group
+
+# Judges whether forge-lane §7 copies the runner's recorded Codex provenance
+# into the chunk envelope (F22). Factored out of run_lane_group so the SAME
+# helper judges the real skill file AND the mutation probes below it — two
+# assertions that merely agree today would prove nothing about tomorrow.
+lane_codex_model_provenance_diagnostic() { # $1=forge-lane SKILL.md (or a mutated copy)  $2=scripts/codex-run.sh; empty stdout + rc 0 on success, else every missing marker on stdout and rc 1
+  local lane_file="$1" codex_run_file="$2" sec7_prov prov_ok=1 prov_detail="" prov_key bt='`'
+  sec7_prov="$(sed -n '/^## 7\./,/^## Hard rules/p' "$lane_file" | tr '\n' ' ' | tr -s ' ')"
+  [ -n "$sec7_prov" ] || { prov_ok=0; prov_detail="$prov_detail no-section-7"; }
+  grep -Fq 'MODEL_FILE="$RUNTIME/codex-model"' "$codex_run_file" \
+    || { prov_ok=0; prov_detail="$prov_detail producer-writes-elsewhere"; }
+  printf '%s' "$sec7_prov" | grep -Fq '$FORGE_LANE_RUNTIME/codex-model' \
+    || { prov_ok=0; prov_detail="$prov_detail file-unnamed"; }
+  printf '%s' "$sec7_prov" | grep -Fq 'FORGE_CODEX_MODEL_SOURCE' \
+    || { prov_ok=0; prov_detail="$prov_detail source-marker-unnamed"; }
+  # Backticked, because codex_model is a PREFIX of two of the others: a bare
+  # substring match would let one key stand in for all four.
+  for prov_key in codex_model codex_reasoning_effort codex_model_source \
+                  codex_model_requested; do
+    printf '%s' "$sec7_prov" | grep -Fq "$bt$prov_key$bt" \
+      || { prov_ok=0; prov_detail="$prov_detail $prov_key-not-copied"; }
+  done
+  [ "$prov_ok" = 1 ] && return 0
+  printf '%s' "$prov_detail"
+  return 1
+}
 
 # ---------------------------------------------------------------------------
 # lane/ — what the unattended lane must do FOR Codex, because Codex cannot do
@@ -3068,27 +3161,52 @@ run_lane_group() {
   # The PATH is asserted against codex-run.sh's own declaration rather than
   # written out twice: two literals that must agree are two literals that can
   # drift, and the drift would be silent on both sides.
-  local sec7_prov prov_ok=1 prov_detail="" prov_key bt='`'
-  sec7_prov="$(sed -n '/^## 7\./,/^## Hard rules/p' "$lane" | tr '\n' ' ' | tr -s ' ')"
-  [ -n "$sec7_prov" ] || { prov_ok=0; prov_detail="$prov_detail no-section-7"; }
-  grep -Fq 'MODEL_FILE="$RUNTIME/codex-model"' scripts/codex-run.sh \
-    || { prov_ok=0; prov_detail="$prov_detail producer-writes-elsewhere"; }
-  printf '%s' "$sec7_prov" | grep -Fq '$FORGE_LANE_RUNTIME/codex-model' \
-    || { prov_ok=0; prov_detail="$prov_detail file-unnamed"; }
-  printf '%s' "$sec7_prov" | grep -Fq 'FORGE_CODEX_MODEL_SOURCE' \
-    || { prov_ok=0; prov_detail="$prov_detail source-marker-unnamed"; }
-  # Backticked, because codex_model is a PREFIX of two of the others: a bare
-  # substring match would let one key stand in for all four.
-  for prov_key in codex_model codex_reasoning_effort codex_model_source \
-                  codex_model_requested; do
-    printf '%s' "$sec7_prov" | grep -Fq "$bt$prov_key$bt" \
-      || { prov_ok=0; prov_detail="$prov_detail $prov_key-not-copied"; }
-  done
-  if [ "$prov_ok" = 1 ]; then
+  #
+  # Judged through lane_codex_model_provenance_diagnostic, the same helper the
+  # mutation cases below drive against a private copy of $lane.
+  local prov_detail
+  prov_detail="$(lane_codex_model_provenance_diagnostic "$lane" scripts/codex-run.sh)"
+  if [ -z "$prov_detail" ]; then
     ok "codex-model-reaches-the-envelope (4 keys, named source marker)"
   else
     bad "codex-model-reaches-the-envelope" \
         "forge-lane §7 must read \$FORGE_LANE_RUNTIME/codex-model and copy all four codex_* keys into the envelope (F22) —$prov_detail"
+  fi
+
+  # MUTATION: prove codex-model-reaches-the-envelope can actually go red. Two
+  # realistic regressions, both applied to PRIVATE COPIES of $lane under
+  # TMPROOT — never the tracked file. A harness that mutated it in place would
+  # leave a live defect behind if killed mid-run, one the pushed head and CI
+  # cannot see.
+  #
+  # (a) a reworded §7 that drops one of the four codex_* key mentions — the
+  #     backtick around codex_model_source is stripped, the shape an
+  #     unintentional copy-edit produces.
+  # (b) an edit that moves §7 past the section boundary: a second, premature
+  #     "## Hard rules" heading right after the §7 title truncates the sed
+  #     range before any real content, so the extraction reads nothing — the
+  #     F65 shape one layer down.
+  local lane_mut_root="$TMPROOT/lane-mutants" lane_mut_a lane_mut_b
+  rm -rf "$lane_mut_root"; mkdir -p "$lane_mut_root"
+  lane_mut_a="$lane_mut_root/dropped-key.md"
+  lane_mut_b="$lane_mut_root/truncated-boundary.md"
+  sed 's/`codex_model_source`/codex_model_source/' "$lane" > "$lane_mut_a"
+  awk '/^## 7\./ { print; print "## Hard rules"; next } { print }' "$lane" > "$lane_mut_b"
+
+  if cmp -s "$lane" "$lane_mut_a" || cmp -s "$lane" "$lane_mut_b"; then
+    bad "codex-model-reaches-the-envelope-mutation-is-caught" \
+        "a mutation changed nothing against $lane — the pattern it targets moved, so this probe proves nothing (F65)"
+  else
+    local mut_a_detail mut_a_rc mut_b_detail mut_b_rc
+    mut_a_detail="$(lane_codex_model_provenance_diagnostic "$lane_mut_a" scripts/codex-run.sh)"; mut_a_rc=$?
+    mut_b_detail="$(lane_codex_model_provenance_diagnostic "$lane_mut_b" scripts/codex-run.sh)"; mut_b_rc=$?
+    if [ "$mut_a_rc" != 0 ] && printf '%s' "$mut_a_detail" | grep -Fq 'codex_model_source-not-copied' \
+       && [ "$mut_b_rc" != 0 ] && printf '%s' "$mut_b_detail" | grep -Fq 'file-unnamed'; then
+      ok "codex-model-reaches-the-envelope-mutation-is-caught (dropped key AND an early section boundary both redden)"
+    else
+      bad "codex-model-reaches-the-envelope-mutation-is-caught" \
+          "a dropped codex_* key must report codex_model_source-not-copied (got rc=$mut_a_rc '$mut_a_detail'), and a premature '## Hard rules' must read nothing (got rc=$mut_b_rc '$mut_b_detail')"
+    fi
   fi
 }
 wants lane      && run_lane_group
@@ -3909,6 +4027,74 @@ implementer_model_diagnostic() { # $1=metrics JSON file; 0 = the report is hones
   return 0
 }
 
+# The TEXT twin of implementer_model_diagnostic above. docs/retro-metrics.md §6
+# names json and text as the two surfaces this fact is reported on; `text)` in
+# scripts/metrics.sh is a SEPARATE jq program from `--json` — a wrong field
+# name or a bucket read off the wrong key there renders wrong prose while the
+# JSON assertions stay green, and until this function existed nothing in
+# verify.sh ever read the rendered text at all.
+#
+# The bucket-count line is matched on TWO substrings together — "completed
+# chunk runs" AND "rollout-proven" — never either alone. metrics.sh says
+# "completed chunk runs" on three separate lines (chunk envelope conformance,
+# this bucket line, and driver usage); only this one also says
+# "rollout-proven", so the pair can only ever match the one line intended.
+# No self-match risk either way: this greps the CAPTURED OUTPUT of metrics.sh
+# run against the fixture, never verify.sh's own source.
+#
+# `.*` stands in for the separator between numbers rather than the literal
+# middle-dot character the renderer prints, because the middle dot is a
+# multi-byte UTF-8 sequence and a bare `.` in POSIX sed/grep matches one BYTE,
+# not one character — under a byte-oriented locale that leaves half the dot
+# unconsumed and the whole match silently fails.
+text_implementer_model_diagnostic() { # $1=metrics.sh TEXT output  $2=expected JSON fixture; 0 = the rendered text agrees with it, numeral for numeral
+  local txt="$1" exp="$2" bucket_line intent_line got want
+  local exp_runs exp_rollout exp_requested exp_unverified exp_unrecorded
+
+  [ -s "$txt" ] || {
+    printf 'no metrics text output at %s — the check went blind, which is not a pass (F65)\n' "$txt"
+    return 1; }
+  [ -s "$exp" ] || {
+    printf 'no expected-JSON fixture at %s to check the text against\n' "$exp"
+    return 1; }
+
+  exp_runs="$(jq -r '.implementer_model.runs' "$exp" 2>/dev/null)"
+  exp_rollout="$(jq -r '.implementer_model.from_rollout' "$exp" 2>/dev/null)"
+  exp_requested="$(jq -r '.implementer_model.requested_only' "$exp" 2>/dev/null)"
+  exp_unverified="$(jq -r '.implementer_model.unverified' "$exp" 2>/dev/null)"
+  exp_unrecorded="$(jq -r '.implementer_model.unrecorded' "$exp" 2>/dev/null)"
+
+  bucket_line="$(grep -E '^  [0-9]+ completed chunk runs.*rollout-proven [0-9]+' "$txt")"
+  [ "$(printf '%s\n' "$bucket_line" | grep -c .)" = 1 ] || {
+    printf 'expected exactly one implementer-model bucket-count line in the text report, found %s: %s\n' \
+      "$(printf '%s\n' "$bucket_line" | grep -c .)" "${bucket_line:-nothing}"
+    return 1; }
+
+  got="$(printf '%s' "$bucket_line" | sed -E \
+    's/^[[:space:]]*([0-9]+) completed chunk runs.*rollout-proven ([0-9]+).*requested-only ([0-9]+).*no source marker ([0-9]+).*no model at all ([0-9]+)[[:space:]]*$/[\1,\2,\3,\4,\5]/')"
+  want="[$exp_runs,$exp_rollout,$exp_requested,$exp_unverified,$exp_unrecorded]"
+  [ "$got" = "$want" ] || {
+    printf 'text bucket counts (runs,rollout,requested,unverified,unrecorded) are %s, want %s from %s\n' \
+      "${got:-unparsed: $bucket_line}" "$want" "$exp"
+    return 1; }
+
+  intent_line="$(grep -E '^  [0-9]+ run\(s\) recorded INTENT, NOT EVIDENCE:' "$txt")"
+  if [ "$exp_requested" -gt 0 ]; then
+    [ -n "$intent_line" ] || {
+      printf 'the fixture requested_only is %s but the text report carries no INTENT, NOT EVIDENCE line\n' "$exp_requested"
+      return 1; }
+    got="$(printf '%s' "$intent_line" | sed -E 's/^[[:space:]]*([0-9]+) run.*/\1/')"
+    [ "$got" = "$exp_requested" ] || {
+      printf 'the INTENT, NOT EVIDENCE line says %s run(s), the fixture requested_only is %s\n' "${got:-nothing}" "$exp_requested"
+      return 1; }
+  else
+    [ -z "$intent_line" ] || {
+      printf 'the fixture requested_only is 0 but the text report still carries an INTENT, NOT EVIDENCE line: %s\n' "$intent_line"
+      return 1; }
+  fi
+  return 0
+}
+
 live_schema_report() { # $1=boards root $2=snapshot root; TSV board/status/detail
   local boards_root="$1" snapshot_root="$2"
   local live board snapdir snapdb err missing spec t c ordinal=0
@@ -4181,6 +4367,26 @@ METRICS_STATE_SQL
     ok "implementer-model-is-counted (4 runs: 1 rollout, 1 requested, 1 unverified, 1 unrecorded)"
   else
     bad "implementer-model-is-counted" "$(printf '%s' "$im_diag" | tr '\n' ' ')"
+  fi
+
+  # The TEXT surface of the same fact. `text)` in scripts/metrics.sh is a
+  # SEPARATE jq program from `--json` above — docs/retro-metrics.md §6 names
+  # both as surfaces this is reported on, and before this case NEITHER the
+  # distinctive strings it emits ("INTENT, NOT EVIDENCE", "rollout-proven",
+  # "no source marker", "no completed chunk run named a model") NOR any other
+  # assertion on its output appeared anywhere in this file. The only other
+  # non-JSON invocation of metrics.sh in this suite is `is-read-only` above,
+  # which discards its output on purpose. A wrong field name or a bucket read
+  # off the wrong key in the text renderer would render wrong prose while
+  # every case above stayed green.
+  local text_diag
+  HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+    "$ms" metrics-fixture > "$TMPROOT/metrics.txt" 2>&1
+  text_diag="$(text_implementer_model_diagnostic "$TMPROOT/metrics.txt" "$exp" 2>&1)"
+  if [ -z "$text_diag" ]; then
+    ok "text-implementer-model-exact (4 runs: 1 rollout, 1 requested, 1 unverified, 1 unrecorded; INTENT line agrees)"
+  else
+    bad "text-implementer-model-exact" "$(printf '%s' "$text_diag" | tr '\n' ' ')"
   fi
 
   # MUTATION: make `codex_model_source` stop discriminating. This is the defect
