@@ -72,10 +72,14 @@
 # Exit codes:
 #   0  ran and made no unfinished change: the plan was printed (dry run), or
 #      APPLY=1 wrote all three sites and every readback agreed.
-#   1  a write was made and then FAILED its readback. The three files were
-#      RESTORED from backup, so the tree is as it was, and the diagnostic names
-#      which extraction disagreed. This is the only exit that means a `sed`
-#      matched nothing — which is precisely how a swap ships half-applied.
+#   1  a write was made and then FAILED its readback. A restore from backup is
+#      ATTEMPTED for all three files; the diagnostic names which extraction
+#      disagreed and then either confirms the three files were RESTORED (the
+#      tree is as it was) or, if a restoring `cp` itself failed, names which
+#      file could not be put back and reports the tree HALF-APPLIED instead of
+#      claiming a clean restore it never verified. The readback disagreeing is
+#      the only way this exit is reached at all, and that is precisely how a
+#      swap ships half-applied.
 #   2  REFUSED — nothing was written, and no claim is made about the id.
 #
 # EXIT 2 ALWAYS MEANS "COULD NOT ASK", and it deliberately covers both "no
@@ -389,9 +393,23 @@ cp "$PIN_FILE" "$BACKUP/pins" && cp "$STATE_FILE" "$BACKUP/state" && cp "$LANE_F
   || refuse "cannot back up the three files; refusing to write without a way back"
 
 restore_and_die() { # $1=diagnostic
-  cp "$BACKUP/pins" "$PIN_FILE"; cp "$BACKUP/state" "$STATE_FILE"; cp "$BACKUP/lane" "$LANE_FILE"
+  # Each cp is checked on its own. The three writes above are coupled (a
+  # backup that could not be read would have refused the write too), but the
+  # three RESTORES are not: nothing stops one cp from failing while its
+  # neighbours succeed, and claiming "RESTORED" when that happened would be
+  # exactly the unverified assertion this whole command exists to refuse.
+  local failed=""
+  cp "$BACKUP/pins"  "$PIN_FILE"   || failed="$failed $PIN_FILE"
+  cp "$BACKUP/state" "$STATE_FILE" || failed="$failed $STATE_FILE"
+  cp "$BACKUP/lane"  "$LANE_FILE"  || failed="$failed $LANE_FILE"
+  failed="${failed# }"
   printf 'set-model: %s\n' "$1" >&2
-  printf 'set-model: the three files were RESTORED from backup; the tree is as it was.\n' >&2
+  if [ -z "$failed" ]; then
+    printf 'set-model: the three files were RESTORED from backup; the tree is as it was.\n' >&2
+  else
+    printf 'set-model: RESTORE FAILED for: %s\n' "$failed" >&2
+    printf 'set-model: the automatic restore did NOT complete — the tree is now HALF-APPLIED. The file(s) named above could not be put back and may still hold the value this run just wrote; any of the three not named above was restored to its old value. Check all three files by hand before touching this pin again.\n' >&2
+  fi
   exit 1
 }
 
