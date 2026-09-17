@@ -109,7 +109,15 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/new-dest.sh scripts/worktree-sweep.sh scripts/board-snapshot.sh \
 	  scripts/roadmap-check.sh scripts/touches-exempt.sh scripts/merge-gate.sh \
 	  scripts/metadata-live.sh scripts/commission.sh scripts/model-pins.sh \
-	  scripts/set-model.sh
+	  scripts/set-model.sh scripts/acceptance-freeze.sh scripts/verdict.sh \
+	  scripts/prejudge-review.sh
+	@# This list is hand-maintained and asserted complete by
+	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which
+	@# diffs it against `git ls-files '*.sh'` outside templates/. That template
+	@# has exactly one tracked .sh (branch-name.sh, no copier placeholders,
+	@# parses clean) and it is deliberately excluded here: the template suite
+	@# COPIES it into a stamped project and RUNS it there, so it is covered by
+	@# execution, which is a stronger guarantee than bash -n alone.
 	@# GLOBBED, not enumerated. This was a hardcoded two-file list, and
 	@# scripts/respawn-guard-probe.py landed outside it — so `make validate` and
 	@# CI both went green on a Python file that could not even parse, and the

@@ -757,7 +757,12 @@ run_cli_group() {
   # The Codex pin has three checked-in statements now: the pin file, the lane
   # contract and the environment record. This half deliberately never reads
   # $HOME, so CI can catch drift without an operator config.
-  # config/codex-pin-live is the live half.
+  # There is no live half to pair it with any more: config/codex-pin-live, which
+  # compared these against the operator's live ~/.codex/config.toml, was deleted
+  # when scripts/codex-run.sh started PASSING the pin as -m and
+  # -c model_reasoning_effort instead of relying on that file — see
+  # run_config_group's comment for the full reasoning, and
+  # quota/codex-pin-is-passed-not-inherited for the replacement.
   #
   # Load the prose pair in THIS shell first. The diagnostic helper is called
   # inside a command substitution, so every global it sets lands in a subshell
@@ -1194,17 +1199,21 @@ SMANCHORS
         "--help must print the whole header block; a sed line range goes blind the first time a paragraph moves"
   fi
 
-  # --- it is RUN, so it must be executable, and covered by bash -n ----------
+  # --- it is RUN, so it must be executable -----------------------------
   # model-pins.sh is sourced and therefore deliberately not +x; this one is a
   # command. A non-executable command file fails at the moment an operator
   # needs it, which is mid-swap.
+  #
+  # This case used to also grep the Makefile for 'scripts/set-model.sh' to
+  # cover the bash -n half — a one-off, single-script version of exactly what
+  # manifest/makefile-syntax-list-is-complete now asserts for every tracked
+  # script. That grep is gone; the general check subsumes it and covers more.
   local sm_exec_ok=1 sm_exec_detail=""
   [ -x scripts/set-model.sh ] || { sm_exec_ok=0; sm_exec_detail="$sm_exec_detail scripts/set-model.sh is not executable;"; }
-  grep -Fq 'scripts/set-model.sh' Makefile || { sm_exec_ok=0; sm_exec_detail="$sm_exec_detail Makefile's bash -n list does not name scripts/set-model.sh;"; }
   if [ "$sm_exec_ok" = 1 ]; then
-    ok "set-model-is-executable-and-syntax-checked"
+    ok "set-model-is-executable"
   else
-    bad "set-model-is-executable-and-syntax-checked" "${sm_exec_detail# }"
+    bad "set-model-is-executable" "${sm_exec_detail# }"
   fi
 }
 
@@ -2015,7 +2024,7 @@ cli/set-model-apply-value-mutation-is-caught  APPLY=frobnicate is refused, not r
 cli/set-model-readback-mutation-is-caught  a second `codex pinned` line half-applies the swap; the readback restores all three files
 cli/set-model-readback-mirrors-the-suite  set-model.sh reads back through the same sed programs this file uses
 cli/set-model-help-is-anchored-to-the-header  --help survives a paragraph appended to the header block
-cli/set-model-is-executable-and-syntax-checked  it is run, not sourced: +x and named in the Makefile's bash -n list
+cli/set-model-is-executable       it is run, not sourced: +x (bash -n list membership is manifest/makefile-syntax-list-is-complete's job now)
 cli/lane-skill-management-policy  retained skills toolset is write-approval-gated (ADR-0013)
 cli/skill-description-budget              frontmatter descriptions fit the budget every session pays to list
 cli/retro-metrics                         docs/retro-metrics.md exists and carries the table /retro appends to
@@ -2353,6 +2362,8 @@ quota/codex-pin-on-the-fresh-branch-mutation-is-caught  a runner that pins only 
 quota/codex-pin-on-the-resume-branch-mutation-is-caught  a runner that pins only the first call turns this group red
 quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
+manifest/makefile-syntax-list-is-complete  every tracked *.sh outside templates/ is named in the Makefile's bash -n list
+manifest/makefile-syntax-list-is-complete-mutation-is-caught  dropping a tracked script from the list reddens and names it
 manifest/list-matches-the-suite           every case that ran is named in this catalogue (the reverse is not asserted)
 EOF
   exit 0
@@ -5153,7 +5164,10 @@ run_metadata_group() {
       || { prov_ok=0; prov_detail="$prov_detail declared='$prov_declared'"; }
     [ -z "$prov_required" ] \
       || { prov_ok=0; prov_detail="$prov_detail required='$prov_required' (a .v2 id is the only way to require one)"; }
-    # The canonical fixture carries all four and validates.
+    # The canonical fixture carries three of the four — codex_model_requested
+    # is absent, because "rollout" provenance has nothing to compare against —
+    # and validates. All four together is exercised separately, by
+    # chunk-additive.json through allows-additive-hermes-keys above.
     metadata_validate --profile forge-codex-lane "$fixtures/chunk-valid.json" \
       || { prov_ok=0; prov_detail="$prov_detail canonical-fixture-rejected"; }
     # And the interactive shape, which HAS no Codex model, still validates
@@ -9315,9 +9329,94 @@ wants quota     && run_quota_group
 # It runs LAST because it can only judge a run that has finished, and only a
 # COMPLETE one: a narrowed `SUITES=` emits a subset, and reporting the absent
 # groups as drift would be a check that cries wolf. That case skips, loudly.
+#
+# `make validate`'s `bash -n` list is the same F65 shape PR #62 closed for
+# DEFAULT_SUITES: a hardcoded list of scripts, asserted against nothing. Three
+# tracked scripts sat outside it — scripts/acceptance-freeze.sh,
+# scripts/verdict.sh, and scripts/prejudge-review.sh after it grew +67 lines in
+# PR #67 — and were therefore never syntax-checked by `make validate` at all.
+# This reads the Makefile's own `@bash -n` recipe line the same way `make
+# validate` executes it, and compares the names in it against `git ls-files`,
+# never `find` — an untracked scratch script in a scratchpad or worktree must
+# not make this check fail.
+#
+# templates/ is excluded on purpose, not by oversight. It carries exactly one
+# tracked .sh — templates/python-service/template/scripts/branch-name.sh — with
+# no copier placeholders, so it parses clean under bash -n; but it is already
+# covered by EXECUTION, which is a stronger guarantee than syntax alone: the
+# `template` group in this suite stamps a project with copier, which copies
+# that script in, and a separate template check runs it there.
+makefile_bashn_list_diagnostic() { # $1=Makefile path; diagnostics on stdout, empty + rc 0 iff complete
+  local mkfile="$1" block listed tracked missing="" f
+  [ -r "$mkfile" ] \
+    || { echo "cannot read $mkfile — the check went blind, which is not a pass (F65)"; return 1; }
+  # Grab the recipe line starting `@bash -n` and every backslash-continued line
+  # after it, stripping the trailing `\` from each so the words concatenate.
+  block="$(awk '
+      /^\t@bash -n /{grab=1}
+      grab {
+        line=$0
+        sub(/\\$/, "", line)
+        print line
+        if ($0 !~ /\\$/) exit
+      }' "$mkfile")"
+  if [ -z "$block" ]; then
+    echo "no '@bash -n' recipe line found in $mkfile — the reader is broken, not the manifest (F65)"
+    return 1
+  fi
+  listed="$(printf '%s\n' "$block" | grep -oE '[A-Za-z0-9_./-]+\.sh' | sort -u)"
+  if [ -z "$listed" ]; then
+    echo "the '@bash -n' recipe in $mkfile named no .sh files — the reader is broken, not the manifest (F65)"
+    return 1
+  fi
+  tracked="$(git -C "$REPO_ROOT" ls-files '*.sh' | grep -v '^templates/' | sort -u)"
+  if [ -z "$tracked" ]; then
+    echo "git ls-files '*.sh' returned nothing — the check went blind, which is not a pass (F65)"
+    return 1
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    printf '%s\n' "$listed" | grep -qxF "$f" || missing="$missing $f"
+  done < <(printf '%s\n' "$tracked")
+  if [ -n "$missing" ]; then
+    echo "tracked outside templates/ but missing from the Makefile's bash -n list:$missing"
+    return 1
+  fi
+  return 0
+}
 # ---------------------------------------------------------------------------
 run_manifest_group() {
   group manifest
+
+  local mk_diag mk_rc
+  mk_diag="$(makefile_bashn_list_diagnostic "$REPO_ROOT/Makefile" 2>&1)"; mk_rc=$?
+  if [ "$mk_rc" -eq 0 ]; then
+    ok "makefile-syntax-list-is-complete ($(git -C "$REPO_ROOT" ls-files '*.sh' | grep -vc '^templates/') tracked scripts outside templates/, all named)"
+  else
+    bad "makefile-syntax-list-is-complete" "$mk_diag"
+  fi
+
+  # MUTATION: drop one already-listed, currently-tracked script and prove the
+  # diagnostic reddens and names it. cmp -s against the pristine Makefile first
+  # — a sed that missed its target would leave this case "passing" on a mutant
+  # indistinguishable from reality, the F65 shape one layer down.
+  local mk_mutdir="$TMPROOT/makefile-mutants" mk_mut
+  mkdir -p "$mk_mutdir"
+  mk_mut="$mk_mutdir/Makefile.dropped-verdict"
+  sed 's/ scripts\/verdict\.sh//' "$REPO_ROOT/Makefile" > "$mk_mut"
+  if cmp -s "$mk_mut" "$REPO_ROOT/Makefile"; then
+    bad "makefile-syntax-list-is-complete-mutation-is-caught" \
+        "the mutation changed nothing against $REPO_ROOT/Makefile — it missed the line it was aimed at, so this probe proves nothing (F65)"
+  else
+    local mk_mut_diag mk_mut_rc
+    mk_mut_diag="$(makefile_bashn_list_diagnostic "$mk_mut" 2>&1)"; mk_mut_rc=$?
+    if [ "$mk_mut_rc" -ne 0 ] && printf '%s' "$mk_mut_diag" | grep -Fq 'scripts/verdict.sh'; then
+      ok "makefile-syntax-list-is-complete-mutation-is-caught (dropping scripts/verdict.sh reddens and is named)"
+    else
+      bad "makefile-syntax-list-is-complete-mutation-is-caught" \
+          "a bash -n list missing a tracked script must redden and name it (got rc=$mk_mut_rc: ${mk_mut_diag:-no diagnostic})"
+    fi
+  fi
 
   if [ "$SUITES" != "$DEFAULT_SUITES" ]; then
     skip "list-matches-the-suite" "narrowed run (SUITES='$SUITES'); the emitted set is a subset by construction"
