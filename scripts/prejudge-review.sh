@@ -284,24 +284,29 @@ $findings" \
 implementer_model_line() {
   local shown="" line=""
   board_live && shown="$(kanban show "$CHUNK" --json 2>/dev/null)"
+  # Gating matches scripts/metrics.sh's `json_type(...)='text' AND
+  # trim(...)<>''` for the same three fields: a whitespace-only string is
+  # `type == "string"` and `length > 0` but carries no evidence, so `length`
+  # alone is not enough — least of all for codex_model_requested, whose ONLY
+  # job is to trigger the F22 alarm below it.
   [ -n "$shown" ] && line="$(printf '%s' "$shown" | jq -r '
+      def present: type == "string" and (gsub("^\\s+|\\s+$";"") | length) > 0;
       [ (.runs // [])[]
         | select((.metadata | type) == "object")
-        | select((.metadata.codex_model | type) == "string"
-                 and (.metadata.codex_model | length) > 0) ]
+        | select(.metadata.codex_model | present) ]
       | sort_by(.started_at, .id) | last | .metadata
       | if . == null then
           "implementer model: NOT RECORDED — no completed run on this chunk card names the model that wrote this diff (F22)"
         else
           "implementer model: \(.codex_model)"
-          + (if (.codex_reasoning_effort | type) == "string"
+          + (if (.codex_reasoning_effort | present)
              then " \(.codex_reasoning_effort)" else "" end)
           + (if .codex_model_source == "rollout"
              then " — source: rollout (Codex own session log; evidence)"
              elif .codex_model_source == "requested"
              then " — source: REQUESTED, not observed — the rollout could not be read, so this is the pin that was asked for and NOT proof of what ran"
              else " — source: absent; provenance unverified" end)
-          + (if (.codex_model_requested | type) == "string"
+          + (if (.codex_model_requested | present)
              then " — the pin requested \(.codex_model_requested); WHAT RAN IS NOT WHAT WAS PINNED (F22)"
              else "" end)
         end' 2>/dev/null)"

@@ -1000,6 +1000,36 @@ SMJSON
     printf '%s' "$blk" | grep -Fq "$2" && printf '%s' "$blk" | grep -Fq "$3"
   }
 
+  # --- restore_and_die, LIFTED and RUN, for the one honest way in ------------
+  # Reaching this path for real requires interfering with the script's own
+  # private mktemp -d backup directory inside a sub-millisecond window between
+  # two writes (see the header comment on restore_and_die). Making the whole
+  # script's readback disagree AND losing a backup file in that same window is
+  # a contrivance this suite will not stage — so restore_and_die is lifted out
+  # of the script text, exactly like implementer_model_line is in prejudge/,
+  # and run directly against a fixture where one backup source is UNREADABLE.
+  # That is the one way in a reviewer could demonstrate honestly: it does not
+  # touch the write, only the restore.
+  _set_model_restore_lab() { # $1=lab dir -> backup/{pins,state,lane}=OLD, tree/{pins.sh,state.md,SKILL.md}=NEW, backup/state UNREADABLE
+    local lab="$1"
+    rm -rf "$lab"
+    mkdir -p "$lab/backup" "$lab/tree" || return 1
+    printf 'OLD_PINS\n'  > "$lab/backup/pins"
+    printf 'OLD_STATE\n' > "$lab/backup/state"
+    printf 'OLD_LANE\n'  > "$lab/backup/lane"
+    printf 'NEW_PINS\n'  > "$lab/tree/pins.sh"
+    printf 'NEW_STATE\n' > "$lab/tree/state.md"
+    printf 'NEW_LANE\n'  > "$lab/tree/SKILL.md"
+    chmod 000 "$lab/backup/state"
+  }
+  # $1=script to lift restore_and_die from $2=BACKUP dir $3=PIN_FILE $4=STATE_FILE $5=LANE_FILE $6=diagnostic
+  _set_model_restore_render() {
+    ( set -uo pipefail
+      BACKUP="$2"; PIN_FILE="$3"; STATE_FILE="$4"; LANE_FILE="$5"
+      eval "$(sed -n '/^restore_and_die() {/,/^}$/p' "$1")" || exit 1
+      restore_and_die "$6" ) 2>&1
+  }
+
   # --- POSITIVE CONTROL, and it is not optional. Every refusal case below
   # passes if the harness is broken in any way that makes the script refuse
   # unconditionally — a stub off PATH, an unhonoured HOME, a fixture root that
@@ -1152,6 +1182,62 @@ SMJSON
       bad "set-model-readback-mutation-is-caught" \
           "a readback that disagrees must restore all three files and exit non-zero; exit $sm_rc, files $(_set_model_unchanged "$sm_lab" && echo restored || echo LEFT-MUTATED) (output: $(printf '%s' "$sm_out" | tr '\n' ' '))"
     fi
+  fi
+
+  # --- a restore that cannot complete says so, and names what is wrong ------
+  # A reviewer demonstrated a case where one of the three cp's visibly failed
+  # and the unconditional "RESTORED from backup" claim printed anyway, leaving
+  # scripts/model-pins.sh on the NEW value while the two prose sites still
+  # held the OLD one. Here: two backup sources readable, one (state) is not,
+  # so two of the three cp's succeed and one cannot. The claim must name the
+  # file that could not be put back and say the tree is half-applied, not
+  # assert a clean restore it never verified.
+  local sm_restore_lab="$TMPROOT/set-model-restore" sm_restore_out sm_restore_rc
+  if _set_model_restore_lab "$sm_restore_lab"; then
+    sm_restore_out="$(_set_model_restore_render scripts/set-model.sh \
+      "$sm_restore_lab/backup" "$sm_restore_lab/tree/pins.sh" "$sm_restore_lab/tree/state.md" "$sm_restore_lab/tree/SKILL.md" \
+      "readback disagreed")"; sm_restore_rc=$?
+    if [ "$sm_restore_rc" = 1 ] \
+       && ! printf '%s' "$sm_restore_out" | grep -Fq 'the three files were RESTORED from backup; the tree is as it was.' \
+       && printf '%s' "$sm_restore_out" | grep -Fq "$sm_restore_lab/tree/state.md" \
+       && printf '%s' "$sm_restore_out" | grep -Fq 'HALF-APPLIED' \
+       && [ "$(cat "$sm_restore_lab/tree/pins.sh")" = OLD_PINS ] \
+       && [ "$(cat "$sm_restore_lab/tree/state.md")" = NEW_STATE ] \
+       && [ "$(cat "$sm_restore_lab/tree/SKILL.md")" = OLD_LANE ]; then
+      ok "set-model-restore-failure-is-reported-honestly (state's backup unreadable; pins/lane restore, state is named and left NEW)"
+    else
+      bad "set-model-restore-failure-is-reported-honestly" \
+          "a cp that cannot restore its file must be NAMED, not papered over by the unconditional claim; exit $sm_restore_rc, pins=$(cat "$sm_restore_lab/tree/pins.sh" 2>/dev/null) state=$(cat "$sm_restore_lab/tree/state.md" 2>/dev/null) lane=$(cat "$sm_restore_lab/tree/SKILL.md" 2>/dev/null) (output: $(printf '%s' "$sm_restore_out" | tr '\n' ' '))"
+    fi
+    chmod 644 "$sm_restore_lab/backup/state" 2>/dev/null || true
+  else
+    bad "set-model-restore-failure-is-reported-honestly" "could not build the restore fixture lab under $sm_restore_lab"
+  fi
+
+  # MUTATION: force the clean-restore branch unconditionally, regardless of
+  # $failed — reproducing the exact defect a reviewer demonstrated, where a cp
+  # visibly failed one line above the claim and the claim printed anyway.
+  # Driven through the SAME helper and the SAME fixture as the case above.
+  local sm_restore_mutant="$TMPROOT/set-model-restore-mutant.sh"
+  sed 's/if \[ -z "\$failed" \]; then/if true; then/' scripts/set-model.sh > "$sm_restore_mutant"
+  if cmp -s scripts/set-model.sh "$sm_restore_mutant"; then
+    bad "set-model-restore-honesty-mutation-is-caught" \
+        "the mutation changed nothing in scripts/set-model.sh — the \$failed guard it edits was renamed, so this case is proving nothing (F65)"
+  elif ! _set_model_restore_lab "$sm_restore_lab"; then
+    bad "set-model-restore-honesty-mutation-is-caught" "could not rebuild the restore fixture lab under $sm_restore_lab"
+  else
+    sm_restore_out="$(_set_model_restore_render "$sm_restore_mutant" \
+      "$sm_restore_lab/backup" "$sm_restore_lab/tree/pins.sh" "$sm_restore_lab/tree/state.md" "$sm_restore_lab/tree/SKILL.md" \
+      "readback disagreed")"; sm_restore_rc=$?
+    if [ "$sm_restore_rc" = 1 ] \
+       && printf '%s' "$sm_restore_out" | grep -Fq 'the three files were RESTORED from backup; the tree is as it was.' \
+       && [ "$(cat "$sm_restore_lab/tree/state.md")" = NEW_STATE ]; then
+      ok "set-model-restore-honesty-mutation-is-caught (an unconditional claim over a half-applied tree reddens)"
+    else
+      bad "set-model-restore-honesty-mutation-is-caught" \
+          "an unconditional clean-restore branch must be caught claiming success while \$STATE_FILE is still NEW_STATE (never restored); exit $sm_restore_rc (output: $(printf '%s' "$sm_restore_out" | tr '\n' ' '))"
+    fi
+    chmod 644 "$sm_restore_lab/backup/state" 2>/dev/null || true
   fi
 
   # --- the readback uses THIS suite's extractions, not a paraphrase ---------
@@ -2022,6 +2108,8 @@ cli/set-model-validation-unavailable-mutation-is-caught  no live catalogue and n
 cli/set-model-unverified-override-is-traced  FORGE_SET_MODEL_UNVERIFIED=1 writes, and prints itself into the commit message
 cli/set-model-apply-value-mutation-is-caught  APPLY=frobnicate is refused, not reinterpreted, and a bare run is a dry run
 cli/set-model-readback-mutation-is-caught  a second `codex pinned` line half-applies the swap; the readback restores all three files
+cli/set-model-restore-failure-is-reported-honestly  one backup source unreadable: the other two restore, the third is NAMED, not papered over
+cli/set-model-restore-honesty-mutation-is-caught  a clean-restore claim forced unconditionally is caught over a tree still holding the NEW value
 cli/set-model-readback-mirrors-the-suite  set-model.sh reads back through the same sed programs this file uses
 cli/set-model-help-is-anchored-to-the-header  --help survives a paragraph appended to the header block
 cli/set-model-is-executable       it is run, not sourced: +x (bash -n list membership is manifest/makefile-syntax-list-is-complete's job now)
@@ -2225,6 +2313,8 @@ prejudge/tier2-handoff-survives-a-live-parent  route_tier2 creates parentless, b
 prejudge/chunk-cannot-be-its-own-running-task  --chunk equal to the running task is refused by substrate before Stage 1 runs
 prejudge/tier2-card-names-the-implementer-model  the card a human merges from names the model that wrote the diff, and whether that is evidence (F22)
 prejudge/implementer-model-mutation-is-caught  a line that prints the model and swallows codex_model_source reddens
+prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_model, an empty codex_model_requested and a blank effort all fall to their honest branch, never evidence or a false F22 alarm
+prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
@@ -5530,6 +5620,29 @@ implementer_line_diagnostic() { # $1=the rendered card line
   return 0
 }
 
+# implementer_model_line gates codex_model, codex_reasoning_effort and
+# codex_model_requested more loosely than scripts/metrics.sh does for the same
+# three fields (metrics.sh: `json_type(...)='text' AND trim(...)<>''`) — a
+# `length > 0` check with no trim lets whitespace through, and the other two
+# fields had no length check at all. Three EXACT renders, because the bug is
+# exact: whitespace-only codex_model must fall to the same "NOT RECORDED" line
+# a wholly absent one gets, and an empty (not merely blank) codex_model_requested
+# beside a real, sourced model must render NO F22 alarm at all — a false alarm
+# on the exact line added to stop reviewers approving blind.
+implementer_line_blank_diagnostic() { # $1=blank-model line $2=blank-requested line $3=blank-effort line
+  local model_line="$1" requested_line="$2" effort_line="$3"
+  [ "$model_line" = "implementer model: NOT RECORDED — no completed run on this chunk card names the model that wrote this diff (F22)" ] || {
+    printf 'a whitespace-only codex_model must fall to NOT RECORDED like an absent one, never render as evidence: %s\n' "${model_line:-nothing}"
+    return 1; }
+  [ "$requested_line" = "implementer model: gpt-6-astra — source: rollout (Codex own session log; evidence)" ] || {
+    printf 'an empty codex_model_requested beside a real, sourced model must render with no F22 alarm: %s\n' "${requested_line:-nothing}"
+    return 1; }
+  [ "$effort_line" = "implementer model: gpt-6-astra — source: rollout (Codex own session log; evidence)" ] || {
+    printf 'a whitespace-only codex_reasoning_effort must be omitted entirely, not rendered as padding: %s\n' "${effort_line:-nothing}"
+    return 1; }
+  return 0
+}
+
 run_prejudge_group() {
   group prejudge
   local gate=scripts/prejudge.sh walker=scripts/prejudge-steps.py
@@ -6678,6 +6791,55 @@ TABLE
     else
       bad "implementer-model-mutation-is-caught" \
           "a line that prints the model and ignores codex_model_source must be reported as degraded provenance; rendered '${im_mut_line:-nothing}', got: ${im_mut_diag:-no diagnostic at all, which means the mutant passed}"
+    fi
+  fi
+
+  # --- blank fields render honestly, never as evidence and never as a false
+  # F22 alarm ------------------------------------------------------------
+  # implementer_model_line gated these three fields more loosely than
+  # scripts/metrics.sh does for the SAME data. Not reachable through the one
+  # real producer today — since #69 codex-run.sh baselines both codex_model
+  # and codex_reasoning_effort on the resolved pin, so neither ships empty —
+  # but the renderer must not manufacture evidence, or a false F22 alarm, out
+  # of input it cannot currently receive.
+  local im_blank_model im_blank_requested im_blank_effort im_blank_diag
+  im_blank_model="$(implementer_line_render "$review" \
+    '{"runs":[{"id":1,"started_at":10,"metadata":{"codex_model":"   ","codex_model_source":"rollout"}}]}')"
+  im_blank_requested="$(implementer_line_render "$review" \
+    '{"runs":[{"id":1,"started_at":10,"metadata":{"codex_model":"gpt-6-astra","codex_model_source":"rollout","codex_model_requested":""}}]}')"
+  im_blank_effort="$(implementer_line_render "$review" \
+    '{"runs":[{"id":1,"started_at":10,"metadata":{"codex_model":"gpt-6-astra","codex_reasoning_effort":"   ","codex_model_source":"rollout"}}]}')"
+  im_blank_diag="$(implementer_line_blank_diagnostic "$im_blank_model" "$im_blank_requested" "$im_blank_effort" 2>&1)"
+  if [ -z "$im_blank_diag" ]; then
+    ok "implementer-model-blank-fields-render-honestly (whitespace model, empty requested, blank effort)"
+  else
+    bad "implementer-model-blank-fields-render-honestly" "$(printf '%s' "$im_blank_diag" | tr '\n' ' ')"
+  fi
+
+  # MUTATION: strip implementer_model_line's `present` helper down to a bare
+  # type check — looser than any single one of the three original per-field
+  # bugs, and it reproduces all of them at once. Driven through the same
+  # helper as the case above, against the two payloads that expose it: a
+  # whitespace-only codex_model must stop falling to NOT RECORDED and start
+  # rendering as if it were evidence, and the empty codex_model_requested must
+  # start printing the F22 alarm it must never print on its own.
+  local im_gate_mutant="$TMPROOT/prejudge-review-gate-mutant.sh"
+  sed -E 's/^( *)def present:.*$/\1def present: type == "string";/' "$review" > "$im_gate_mutant"
+  if cmp -s "$review" "$im_gate_mutant"; then
+    bad "implementer-model-blank-gate-mutation-is-caught" \
+        "the mutation changed nothing in $review — the present() helper it edits was renamed or removed, so this case is proving nothing (F65)"
+  else
+    local im_gm_model im_gm_requested
+    im_gm_model="$(implementer_line_render "$im_gate_mutant" \
+      '{"runs":[{"id":1,"started_at":10,"metadata":{"codex_model":"   ","codex_model_source":"rollout"}}]}')"
+    im_gm_requested="$(implementer_line_render "$im_gate_mutant" \
+      '{"runs":[{"id":1,"started_at":10,"metadata":{"codex_model":"gpt-6-astra","codex_model_source":"rollout","codex_model_requested":""}}]}')"
+    if printf '%s' "$im_gm_model" | grep -Fq 'source: rollout' \
+       && printf '%s' "$im_gm_requested" | grep -Fq 'WHAT RAN IS NOT WHAT WAS PINNED'; then
+      ok "implementer-model-blank-gate-mutation-is-caught (whitespace-as-evidence and a false F22 alarm both reproduced)"
+    else
+      bad "implementer-model-blank-gate-mutation-is-caught" \
+          "a present() with no trim/length check must render whitespace as evidence and manufacture the F22 alarm; got model-line '${im_gm_model:-nothing}', requested-line '${im_gm_requested:-nothing}'"
     fi
   fi
 
