@@ -181,14 +181,29 @@ the current hardcoded shape and will break or silently degrade:
 
 | site | what it does today |
 |---|---|
-| `verify.sh:181` `load_checked_in_codex_pins` | `sed`-scrapes the §4 prose bullet + `docs/state.md` |
-| `verify.sh:196` `codex_live_pin_diagnostic` | reads `~/.codex/config.toml` |
-| `verify.sh:470-482` `cli/codex-pin-documented` | asserts the two prose pins agree |
+| `verify.sh:194` `load_checked_in_codex_pins` | `sed`-scrapes the §4 prose bullet + `docs/state.md` |
+| `verify.sh:196` `codex_live_pin_diagnostic` — **deleted**, with the row below | reads `~/.codex/config.toml` |
+| `verify.sh:788-793` `cli/codex-pin-documented` | asserts the two prose pins agree |
 | `verify.sh:531-548` `config/model-pin-documented` | scrapes `FORGE_MODEL_*` vs `docs/state.md` |
-| `verify.sh:560-587` `config/codex-pin-live` | live pin comparison + two-value diagnostic |
+| `verify.sh:560-587` `config/codex-pin-live` — **deleted** | live pin comparison + two-value diagnostic |
 | `verify.sh:1442` `lane/env-prepared-before-codex` | greps `UV_CACHE_DIR=.*codex exec` for ordering |
-| `verify.sh:1469` `lane/driver-never-authors-diff` | greps `` goes through `codex exec` `` in the SOUL |
-| `preflight.sh:419` | per-profile live config readback |
+| `verify.sh:2647-2656` `lane/driver-never-authors-diff` | greps `` goes through `codex exec` `` in the SOUL |
+| `preflight.sh:466` | per-profile live config readback |
+
+*Corrected 2026-09-17: several of the line numbers above had drifted from later,
+unrelated edits to `verify.sh`/`preflight.sh`; they are re-pointed to the same
+check by content, not renumbered by guesswork. Two rows are not a stale line
+number but a stale existence claim — `codex_live_pin_diagnostic` and
+`config/codex-pin-live` were both deleted in PR #65, the day `scripts/codex-run.sh`
+started PASSING the Codex pin as `-m`/`-c model_reasoning_effort` on both argv
+branches instead of relying on the operator's live `~/.codex/config.toml`. There
+is no live half to re-point to; its replacement is
+`quota/codex-pin-is-passed-not-inherited`, which runs the runner and reads
+both argvs instead of reading that file. Left uncorrected, because the drift is
+more than a moved line: `config/model-pin-documented` was renamed
+`cli/model-pin-documented` by ADR-0018, and `lane/env-prepared-before-codex` no
+longer greps for ordering at all — it now executes `scripts/lane-setup.sh`
+against a fixture (F64) — so a line number alone would misdescribe both.*
 
 Per ADR-0003, each replacement claim needs its check in the same change —
 and here the usual reassurance is inverted. CLAUDE.md warns that a moved anchor
