@@ -1475,13 +1475,19 @@ run_substrate_group() {
   # F2: the dispatcher materialises the worktree BEFORE spawning the worker.
   # forge-lane tells the worker never to create it, which is only safe while
   # this holds. Read the installed source; a hermes upgrade could change it.
-  local kdb="$HOME/.hermes/hermes-agent/hermes_cli/kanban_db.py"
-  if [ -f "$kdb" ]; then
+  # 0.21 split kanban_db.py into kanban_db_*.py modules and the dispatch loop
+  # moved to kanban_db_dispatch.py, so find whichever file holds the resolve
+  # call and look for the spawn after it in that same file (0.20: `_spawn =
+  # spawn_fn`; 0.21: `_call_spawn_fn(spawn_fn …`).
+  local kdir="$HOME/.hermes/hermes-agent/hermes_cli" kdb=""
+  if [ -f "$kdir/kanban_db.py" ]; then
+    kdb=$(grep -l '_resolve_worktree_workspace(claimed' "$kdir"/kanban_db*.py 2>/dev/null | head -1)
+    kdb="${kdb:-$kdir/kanban_db.py}"
     local res_line spawn_line
     res_line=$(grep -n '_resolve_worktree_workspace(claimed' "$kdb" | head -1 | cut -d: -f1)
-    spawn_line=$(awk -v s="${res_line:-0}" 'NR>s && /_spawn = spawn_fn/ {print NR; exit}' "$kdb")
+    spawn_line=$(awk -v s="${res_line:-0}" 'NR>s && /_spawn = spawn_fn|_call_spawn_fn\(spawn_fn/ {print NR; exit}' "$kdb")
     if [ -n "$res_line" ] && [ -n "$spawn_line" ] && [ "$res_line" -lt "$spawn_line" ]; then
-      ok "worktree-ownership (resolve@$res_line before spawn@$spawn_line)"
+      ok "worktree-ownership ($(basename "$kdb"): resolve@$res_line before spawn@$spawn_line)"
     else
       bad "worktree-ownership" "dispatch order changed: forge-lane assumes the worktree already exists"
     fi
