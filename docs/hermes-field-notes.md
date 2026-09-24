@@ -56,6 +56,14 @@ needs_input` to make the state sticky, then `kanban assign <id> none` and read
 back `.task.assignee`, `.task.status`, and the `blocked` event. There is no
 `kanban_update` tool.
 
+**0.21.5 made the create-time park sticky.** `create_task` now appends a real
+`blocked` event (payload `reason: initial_status`) when the status is
+`blocked`, so the promotion described above no longer happens. The procedure
+above still stands: it is correct on both kernels, and older installs still
+re-promote. `verify.sh substrate --with-hermes` caught the change: its
+stickiness case had assumed a create-time park is status-only, and it now
+checks which kernel it is running on.
+
 **Nested CLI creation needs explicit provenance.** The CLI defaults
 `created_by=user`, even when a profile invokes it inside a dispatched task.
 `kanban_complete(created_cards=[...])` then rejects the card because the

@@ -159,7 +159,8 @@ fi
 # `hermes/board-bootstrap.sh`'s `create_interactive_card` hit and fixed the
 # same way; converge on that shape rather than inventing a second one.
 #
-# `--initial-status blocked` writes no sticky `blocked` event, so the next
+# `--initial-status blocked` wrote no sticky `blocked` event before Hermes
+# 0.21.5 (which now appends one), so on older kernels the next
 # dispatcher sweep promotes the card and `kanban.default_assignee` routes it
 # to a real profile — observed twice, once back to the very model that had
 # just approved it. Start on a deliberately non-existent sentinel assignee,

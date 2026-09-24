@@ -296,6 +296,10 @@ create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=bra
 #      probe was promoted on the next tick, assigned to
 #      `kanban.default_assignee`, and dispatched. Only a real `block` call
 #      makes it stick; `link`'s `linked` event does not clear it.
+#      Hermes 0.21.5 changed this: create now also appends a `blocked` event
+#      (reason `initial_status`), so a create-time park sticks as well
+#      (verify substrate/kanban-card-parking-semantics, 2026-09-24). The real
+#      `block` call stays — it is correct on both kernels.
 #
 # `--assignee forge-operator-handoff` is load-bearing and deliberately NOT a
 # real profile (scripts/preflight.sh asserts it never becomes one). It holds
