@@ -15,7 +15,8 @@ WHY IT EXISTS: `hermes update` falls back to `git reset --hard origin/<branch>`
 when history has diverged (hermes_cli/update_cmd.py, the ff-only branch), which
 destroyed the locally carried commit `fix(kanban): let unblock supersede prior
 PR guard` during the 0.19.0 -> 0.20.4 upgrade. Nothing announced the loss: the
-0.20.4 version banner no longer prints a carried-commit count. Forge has already
+banner prints a carried-commit count only while one exists, so a lost patch is
+an absence, never a warning (0.20.4 omitted the count altogether). Forge has already
 been bitten by the underlying bug in production — docs/audit-forgeboard-
 2026-07-30.md records `respawn_guarded: active_pr after explicit unblock`.
 
@@ -107,6 +108,15 @@ def _run(tmp):
 
     try:
         from hermes_cli import kanban_db as kb
+
+        # 0.21 split kanban_db into modules; kb.connect / kb.check_respawn_guard
+        # survive only as plugin-compat shims with a published removal date.
+        # Prefer the new homes, fall back to the old ones for older installs.
+        try:
+            from hermes_cli.kanban_db_connect import connect
+            from hermes_cli.kanban_db_dispatch import check_respawn_guard
+        except ImportError:
+            connect, check_respawn_guard = kb.connect, kb.check_respawn_guard
     except Exception as exc:  # noqa: BLE001 — any import failure is "cannot run"
         return _cannot_run(
             "cannot import hermes_cli. Run this under the Hermes venv's python3 "
@@ -135,7 +145,7 @@ def _run(tmp):
                 % (resolved, tmp)
             )
 
-        conn = kb.connect(used)
+        conn = connect(used)
         try:
             now = int(time.time())
 
@@ -150,13 +160,13 @@ def _run(tmp):
                 "'Parent open: https://github.com/example/project/pull/42', ?)",
                 (t, now - 10),
             )
-            before = kb.check_respawn_guard(conn, t)
+            before = check_respawn_guard(conn, t)
             conn.execute(
                 "INSERT INTO task_events (task_id, kind, created_at) "
                 "VALUES (?, 'unblocked', ?)",
                 (t, now),
             )
-            after = kb.check_respawn_guard(conn, t)
+            after = check_respawn_guard(conn, t)
 
             # Contracts 3 and 4 — upstream's own behaviour, no re-queue event.
             t2 = kb.create_task(conn, title="already PRed", assignee="worker")
@@ -166,8 +176,8 @@ def _run(tmp):
                 author="worker",
                 body="Opened https://github.com/example/repo/pull/123 for review.",
             )
-            ready_lane = kb.check_respawn_guard(conn, t2)
-            review_lane = kb.check_respawn_guard(conn, t2, lane="review")
+            ready_lane = check_respawn_guard(conn, t2)
+            review_lane = check_respawn_guard(conn, t2, lane="review")
         finally:
             conn.close()
     except Exception as exc:  # noqa: BLE001 — fixture build failed: no verdict
@@ -192,8 +202,8 @@ def _run(tmp):
     if "CARRIED FIX: unblock supersedes active_pr" in fails:
         print("        The carried commit 'fix(kanban): let unblock supersede prior")
         print("        PR guard' is most likely gone from ~/.hermes/hermes-agent.")
-        print("        `hermes update` resets --hard on divergence and 0.20.4 no")
-        print("        longer prints a carried-commit count, so nothing announces it.")
+        print("        `hermes update` resets --hard on divergence, and the banner just")
+        print("        stops saying '+1 carried commit', so nothing announces it.")
     return EXIT_CONTRACT_VIOLATED
 
 

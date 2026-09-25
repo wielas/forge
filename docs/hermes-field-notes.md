@@ -56,6 +56,14 @@ needs_input` to make the state sticky, then `kanban assign <id> none` and read
 back `.task.assignee`, `.task.status`, and the `blocked` event. There is no
 `kanban_update` tool.
 
+**0.21.5 made the create-time park sticky.** `create_task` now appends a real
+`blocked` event (payload `reason: initial_status`) when the status is
+`blocked`, so the promotion described above no longer happens. The procedure
+above still stands: it is correct on both kernels, and older installs still
+re-promote. `verify.sh substrate --with-hermes` caught the change: its
+stickiness case had assumed a create-time park is status-only, and it now
+checks which kernel it is running on.
+
 **Nested CLI creation needs explicit provenance.** The CLI defaults
 `created_by=user`, even when a profile invokes it inside a dispatched task.
 `kanban_complete(created_cards=[...])` then rejects the card because the
@@ -180,17 +188,43 @@ not. The 0.19.0 → 0.20.4 upgrade took that branch and deleted the carried
 Anything carried in `~/.hermes/hermes-agent` must be re-appliable from a source
 that is not that checkout.
 
-**0.20.4's banner no longer prints a carried-commit count.** The one signal that
-made a carried patch visible at a glance is gone, so the reset above is silent
-in both directions:
+Still true at 0.21.5 (`hermes_cli/update_cmd.py`, the "history diverged"
+branch). The procedure that works: tag the carried commit, `git reset --hard`
+its parent so the checkout is purely *behind*, run `hermes update` (it takes the
+fast-forward path), then re-apply the patch — by hand if upstream moved the code.
+
+**The banner's carried-commit count is an absence signal, not a warning.**
+0.20.4 printed no count at all; 0.20.6 and 0.21.5 print one only while a
+carried commit exists. A reset that eats the patch just makes the phrase
+disappear:
 
 ```
 $ hermes --version
-Hermes Agent v0.20.4 (2026.8.18)
-Install directory: /Users/goonlab/.hermes/hermes-agent
-Python: 3.11.15
-OpenAI SDK: 2.24.0
+Hermes Agent v0.21.5 (2026.9.24) · upstream 30565b2d · local 1a3bee0e (+1 carried commit)
 ```
+
+**`hermes update` restarts a gateway you stopped.** 0.20.6's updater found the
+launchd job unloaded and reloaded it ("↻ launchd job was unloaded; reloading"),
+so the dispatcher ran the *unpatched* post-update code until it was stopped
+again. Stopping the gateway before an update does not keep it stopped: stop it
+again straight after, re-apply the patch, then start it.
+
+**The 0.21.5 launchd job wraps the gateway in `osascript`.** The rewritten plist
+execs `osascript -e 'do shell script "exec …python -m hermes_cli.main gateway
+run …"'`, so `pgrep -f 'hermes.*gateway'` now returns the wrapper first, and
+`ps eww` on the wrapper shows no `PATH`. Preflight §7 read that as "could not
+read the gateway's PATH" and five PASSes became one WARN with FAIL still 0.
+Choose the first matching process whose env is readable.
+
+**0.20.6 → 0.21.5 moved the respawn guard and half-absorbed the fix.**
+`check_respawn_guard` now lives in `hermes_cli/kanban_db_dispatch.py`; the
+`kanban_db` attribute survives only as a plugin-compat shim with a published
+removal date. Upstream's rule 4 (`active_pr`) now yields to a *handoff* after
+the PR comment — `assigned` to a different profile, `changes_requested`,
+`review_reopened` (upstream #111910) — but still not to `unblocked` or
+`promoted_manual`, which is the dependency-worker case. The carried commit is
+now two kinds added to that `IN (...)` list; NousResearch/hermes-agent#90225
+was still open on 2026-09-24. The old patch does not cherry-pick; port it.
 
 The replacement is behavioural, not a SHA — a SHA changes on every
 re-cherry-pick and says nothing about what the code does.

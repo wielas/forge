@@ -89,11 +89,18 @@ fi
 # topped up with the usual macOS install dirs. §7 still checks the gateway's own
 # PATH separately — that check must not be affected by what we do here.
 # ---------------------------------------------------------------------------
-GWPID="$(pgrep -f 'hermes.*gateway' 2>/dev/null | head -1)"
+# Several processes match: since Hermes 0.21.5 the launchd job execs the gateway
+# through `osascript -e 'do shell script …'`, and that wrapper is the lowest PID
+# with an env that carries no PATH. Taking `head -1` turned the five §7 "gateway
+# PATH can reach" PASSes into one WARN without anything failing. Take the first
+# match whose env ps can actually read; keep the first match only as a fallback.
+GWPID=""
 GWPATH=""
-if [ -n "$GWPID" ]; then
-  GWPATH="$(ps eww -p "$GWPID" 2>/dev/null | tr ' ' '\n' | grep '^PATH=' | head -1 | cut -d= -f2-)"
-fi
+for p in $(pgrep -f 'hermes.*gateway' 2>/dev/null); do
+  [ -n "$GWPID" ] || GWPID="$p"
+  pth="$(ps eww -p "$p" 2>/dev/null | tr ' ' '\n' | grep '^PATH=' | head -1 | cut -d= -f2-)"
+  if [ -n "$pth" ]; then GWPID="$p"; GWPATH="$pth"; break; fi
+done
 PROBE_PATH="$PATH"
 [ -n "$GWPATH" ] && PROBE_PATH="$GWPATH:$PROBE_PATH"
 for d in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/.codex/bin" \
@@ -1075,8 +1082,9 @@ sect "11. The carried Hermes patch — asserted by BEHAVIOUR, not by SHA"
 # The 0.19.0 -> 0.20.4 upgrade took that branch and DESTROYED the locally
 # carried commit `fix(kanban): let unblock supersede prior PR guard`. It was
 # restored by hand. Two things make that worse than a one-off:
-#   * the 0.20.4 version banner no longer prints a carried-commit count, so the
-#     signal that made the patch visible at a glance is gone;
+#   * the version banner shows a carried-commit count only while one exists
+#     (0.20.4 omitted it entirely; 0.20.6 and 0.21.5 print `+1 carried
+#     commit`), so a lost patch shows up as an ABSENCE, never as a warning;
 #   * nothing in Forge asserted the patch's behaviour, so its loss is silent
 #     until a card misbehaves — and Forge has already been bitten by the
 #     underlying bug in production (`respawn_guarded: active_pr after explicit
@@ -1195,7 +1203,7 @@ else
         fail "respawn guard: a contract is VIOLATED. The carried commit"
         say  "      'fix(kanban): let unblock supersede prior PR guard' is most likely"
         say  "      gone from ~/.hermes/hermes-agent — 'hermes update' resets --hard on"
-        say  "      divergence and 0.20.4 no longer prints a carried-commit count."
+        say  "      divergence, and the banner just stops saying '+1 carried commit'."
       else
         fail "respawn guard: exit 1 with NO verdict line — the probe never reached its"
         say  "      own comparisons, so nothing was verified. This is the 'could not"

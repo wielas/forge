@@ -1475,13 +1475,19 @@ run_substrate_group() {
   # F2: the dispatcher materialises the worktree BEFORE spawning the worker.
   # forge-lane tells the worker never to create it, which is only safe while
   # this holds. Read the installed source; a hermes upgrade could change it.
-  local kdb="$HOME/.hermes/hermes-agent/hermes_cli/kanban_db.py"
-  if [ -f "$kdb" ]; then
+  # 0.21 split kanban_db.py into kanban_db_*.py modules and the dispatch loop
+  # moved to kanban_db_dispatch.py, so find whichever file holds the resolve
+  # call and look for the spawn after it in that same file (0.20: `_spawn =
+  # spawn_fn`; 0.21: `_call_spawn_fn(spawn_fn …`).
+  local kdir="$HOME/.hermes/hermes-agent/hermes_cli" kdb=""
+  if [ -f "$kdir/kanban_db.py" ]; then
+    kdb=$(grep -l '_resolve_worktree_workspace(claimed' "$kdir"/kanban_db*.py 2>/dev/null | head -1)
+    kdb="${kdb:-$kdir/kanban_db.py}"
     local res_line spawn_line
     res_line=$(grep -n '_resolve_worktree_workspace(claimed' "$kdb" | head -1 | cut -d: -f1)
-    spawn_line=$(awk -v s="${res_line:-0}" 'NR>s && /_spawn = spawn_fn/ {print NR; exit}' "$kdb")
+    spawn_line=$(awk -v s="${res_line:-0}" 'NR>s && /_spawn = spawn_fn|_call_spawn_fn\(spawn_fn/ {print NR; exit}' "$kdb")
     if [ -n "$res_line" ] && [ -n "$spawn_line" ] && [ "$res_line" -lt "$spawn_line" ]; then
-      ok "worktree-ownership (resolve@$res_line before spawn@$spawn_line)"
+      ok "worktree-ownership ($(basename "$kdb"): resolve@$res_line before spawn@$spawn_line)"
     else
       bad "worktree-ownership" "dispatch order changed: forge-lane assumes the worktree already exists"
     fi
@@ -1698,6 +1704,11 @@ run_substrate_group() {
     # both call sites end to end, nothing there ever appends a
     # 'blocked'/'unblocked' event for a create-time park. So recompute_ready
     # must promote B once its parent is done, and must leave A alone.
+    # Hermes 0.21.5 changed that premise: create_task now appends a `blocked`
+    # event (reason initial_status) for a create-time park, so B is sticky
+    # too. The case detects which kernel it is on from B's events and asserts
+    # that kernel's rule; card C (no blocked event in either) is the positive
+    # control that the sweep ran.
     #
     # complete_task calls recompute_ready synchronously in the SAME call
     # (kanban_db.py:5579, "Recompute ready status for dependents"), so B is
@@ -1734,18 +1745,38 @@ run_substrate_group() {
               --initial-status blocked --assignee forge-operator-handoff --json 2>/dev/null \
               | jq -r '.id // empty')"
     sk_b_events="$(_pk show "$sk_b" --json 2>/dev/null | jq -r '[.events[]?.kind] | join(",")')"
+    # Card C: a plain child, `ready` at create and demoted to `todo` by `link`
+    # while the parent is open. It carries no blocked event in any kernel, so
+    # it is the positive control that the promotion sweep ran at all.
+    local sk_c
+    sk_c="$(_pk create "parking-semantics: card C, plain todo child" \
+              --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.id // empty')"
     _pk link "$sk_parent" "$sk_a" >/dev/null 2>&1
     _pk link "$sk_parent" "$sk_b" >/dev/null 2>&1
+    _pk link "$sk_parent" "$sk_c" >/dev/null 2>&1
     _pk complete "$sk_parent" --result "parking-semantics probe" >/dev/null 2>&1
     _pk dispatch --dry-run --max 0 --json >"$TMPROOT/parking-dispatch.json" 2>&1
-    local sk_a_status sk_b_status
+    local sk_a_status sk_b_status sk_c_status
     sk_a_status="$(_pk show "$sk_a" --json 2>/dev/null | jq -r '.task.status // empty')"
     sk_b_status="$(_pk show "$sk_b" --json 2>/dev/null | jq -r '.task.status // empty')"
-    if [ -z "$sk_parent" ] || [ -z "$sk_a" ] || [ -z "$sk_b" ]; then
-      a3_ok=0; a3_msg="setup failed: could not create the parent/A/B cards${board_setup_err}"
-    elif printf '%s' "$sk_b_events" | grep -q 'blocked'; then
+    sk_c_status="$(_pk show "$sk_c" --json 2>/dev/null | jq -r '.task.status // empty')"
+    if [ -z "$sk_parent" ] || [ -z "$sk_a" ] || [ -z "$sk_b" ] || [ -z "$sk_c" ]; then
+      a3_ok=0; a3_msg="setup failed: could not create the parent/A/B/C cards${board_setup_err}"
+    elif [ "$sk_c_status" != ready ]; then
       a3_ok=0
-      a3_msg="setup is void: card B (--initial-status blocked) carries a blocked/unblocked EVENT (events=$sk_b_events) — create_task now emits one, so this run cannot distinguish event-blocked from status-only-blocked"
+      a3_msg="card C (plain todo child, no blocked event) was not promoted (status=$sk_c_status) — the promotion sweep did not run, so nothing below would mean anything (dispatch said: $(tr '\n' ' ' < "$TMPROOT/parking-dispatch.json" | cut -c1-300))"
+    elif printf '%s' "$sk_b_events" | grep -q 'blocked'; then
+      # Hermes 0.21 kernel: create_task appends a `blocked` event (reason
+      # initial_status) for a create-time park, so B is event-blocked too and
+      # must stick exactly like A. Forge never relied on B being promoted —
+      # board-bootstrap.sh and prejudge-review.sh block through a real `block`
+      # call precisely because it used to be — so this is the safe direction.
+      if [ "$sk_a_status" != blocked ] || [ "$sk_b_status" != blocked ]; then
+        a3_ok=0
+        a3_msg="an event-blocked card was promoted anyway (A=$sk_a_status, B=$sk_b_status, B events=$sk_b_events) — _has_sticky_block no longer holds a blocked EVENT"
+      else
+        a3_msg="A (block call) and B (create-time park, which now writes a blocked event) both stayed blocked; C (no event) was promoted to ready"
+      fi
     elif [ "$sk_a_status" = "$sk_b_status" ] && [ "$sk_a_status" = blocked ]; then
       a3_ok=0
       a3_msg="both A and B are STILL blocked after complete+dispatch — the promotion sweep did not run (recompute_ready was not reached by complete_task:5579 or dispatch:10004); without this exact message this case would pass forever while detecting nothing, which is the vacuity it exists to prevent (dispatch said: $(tr '\n' ' ' < "$TMPROOT/parking-dispatch.json" | cut -c1-300))"
