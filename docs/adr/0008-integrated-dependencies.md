@@ -1,6 +1,11 @@
 # ADR-0008: Code dependencies wait for integration
 
-**Status:** accepted · 2026-07-28
+**Status:** accepted · 2026-07-28 · **mechanism amended by ADR-0019**
+(2026-09-25). The rule is unchanged and non-negotiable: children build on
+merged parents. What changed is that a chunk card now reaches `done` only
+after its PR merges, so Hermes's own `_parents_satisfied` enforces this
+natively and the compensating mechanisms below become redundant rather than
+wrong. They are retired only once a run shows the native gate holding.
 
 ## Context
 

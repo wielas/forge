@@ -2549,6 +2549,7 @@ quota/codex-pin-on-the-fresh-branch-mutation-is-caught  a runner that pins only 
 quota/codex-pin-on-the-resume-branch-mutation-is-caught  a runner that pins only the first call turns this group red
 quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
+docs/the-open-epic-is-discoverable  CLAUDE.md and state.md both route a cold session to the epic and its § How we run this epic (Q4)
 manifest/makefile-syntax-list-is-complete  every tracked *.sh outside templates/ is named in the Makefile's bash -n list
 manifest/makefile-syntax-list-is-complete-mutation-is-caught  dropping a tracked script from the list reddens and names it
 manifest/list-matches-the-suite           every case that ran is named in this catalogue (the reverse is not asserted)
@@ -8530,6 +8531,30 @@ DISPOSITIONS
   else
     bad "launch-docs-share-next-command" \
         "$missing of the four launch documents do not name '$shared' as the next command"
+  fi
+
+  # Q4 (epic-hands-free). A fresh session with no context reads CLAUDE.md and
+  # state.md, in that order, and neither knew the epic existed -- so the one
+  # document that says what is done and what is next was reachable only by
+  # someone who already knew its filename. A link is prose until something
+  # executes it; this is that (ADR-0003).
+  local epic=docs/epic-hands-free.md router=CLAUDE.md epic_missing=""
+  [ -f "$epic" ] || epic_missing="the epic itself is gone"
+  grep -Fq 'epic-hands-free.md' "$router" || epic_missing="$epic_missing CLAUDE.md"
+  grep -Fq 'epic-hands-free.md' "$state" || epic_missing="$epic_missing docs/state.md"
+  # …and reachable is not enough: both routers must send the reader to the
+  # section that governs how a session is run, not merely name the file.
+  grep -Fq 'How we run this epic' "$router" || epic_missing="$epic_missing CLAUDE.md(§)"
+  grep -Fq 'How we run this epic' "$state" || epic_missing="$epic_missing state.md(§)"
+  # The epic's own claim about itself: its session table is the only progress
+  # record. If that heading is renamed, both links above become dead ends.
+  grep -Fq '## Session plan' "$epic" || epic_missing="$epic_missing epic(session-table)"
+  grep -Fq '## How we run this epic' "$epic" || epic_missing="$epic_missing epic(§)"
+  if [ -z "$epic_missing" ]; then
+    ok "the-open-epic-is-discoverable"
+  else
+    bad "the-open-epic-is-discoverable" \
+        "a session starting with no context cannot reach the epic:$epic_missing"
   fi
 }
 wants docs      && run_docs_group

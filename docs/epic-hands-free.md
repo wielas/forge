@@ -166,11 +166,16 @@ CHUNK-8 got "You've hit your usage limit … try again at 11:55 AM" with no
 heartbeat wait. *Done when* a `quota/` fixture of that event parks with the
 parsed reset time.
 
-**Q2. Skills cite rubrics through `~/.forge/repo/rubrics/`.**
+**Q2. Skills cite rubrics through `~/.forge/rubrics/`.**
 `skills/judge/SKILL.md:18` and `skills/end-chunk/SKILL.md:46` use bare
 `rubrics/…`, which resolves against the project cwd; redglass's closing
 session concluded the rubrics did not exist. *Done when* `verify` rejects a
 bare `rubrics/` path in any skill body, as it already does for `scripts/`.
+**Settled in S1:** the form is `~/.forge/rubrics/`, not `~/.forge/repo/rubrics/`
+as first written here. `install.sh` symlinks both, and the shorter one is
+already what `forge-lane` §7, the three SOULs, `prejudge-review.sh` and the
+control-arm fixture use; a second spelling of one directory is the drift this
+item exists to stop.
 
 **Q3. Operator setup** *(operator actions)*. Remove the unused `builder`
 profile: it holds the same `TELEGRAM_BOT_TOKEN` as `default`, so the gateway
@@ -188,6 +193,8 @@ the `docs/` group green.
 ## Track FL — flow
 
 **FL1. ADR-0019: one card per chunk, same-card review, the verifier merges.**
+*(Written in S1:* `docs/adr/0019-one-card-per-chunk-same-card-review.md`. *It is
+a decision, so it has no* done when *and adds no proven claim to* `state.md`.*)*
 Supersedes ADR-0007 D7.1–D7.3; changes ADR-0008's *mechanism* (native parent
 gating) but not its rule (children build on merged parents). Records the
 backtest and the new risk: a machine approval can reach `main`. Mitigations:
@@ -472,7 +479,7 @@ closes.
 | Session | Items | Why here | Status | PR |
 |---|---|---|---|---|
 | S0 | this document; operator: merge it, Q3, remove `builder` | Plan agreed | open | #73 |
-| S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | planned | |
+| S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | done | #PR |
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | planned | |
 | S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending | planned | |
 | S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
@@ -572,12 +579,41 @@ Discoveries made during a session that are not its items. Each carries its
 evidence and is triaged when the next session opens: promoted to an item,
 folded into an existing one, or closed with a reason.
 
-*(empty)*
+**PL-1 (S1). `config/external-dirs/*` is red on a clean `main`, and the epic
+made it so.** Four cases — `forge-codex-lane`, `forge-digest`,
+`forge-orchestrator`, `forge-prejudge` — fail with
+
+```
+does not point at /Users/goonlab/dev/forge/skills
+  (got '- /Users/goonlab/.forge/repo/skills')
+```
+
+The check (`scripts/verify.sh`, the `config` group) knows two worlds: the
+profiles point at *this* checkout (ok), or at the main checkout while you work
+in a linked worktree (skip, F49). *§ How we run this epic* introduced a third:
+`~/.forge/repo` now symlinks `~/dev/forge-runtime`, which is deliberately **not**
+this checkout, so the live profiles can never satisfy it again. This is the
+epic's own three-places design surfacing as a red baseline, not a defect in the
+profiles — and nothing here may be fixed by a host mutation, which is the
+operator's.
+
+Consequence, and why this wants deciding before S2: every session's closing
+comparison is *"failed stays 0"*. It is now *"failed stays 4, and the same 4"*,
+which is a weaker instrument. CI is unaffected — the `config` group skips
+wholesale without Hermes.
+
+Shape of the fix: the check gains a third arm — a match on
+`~/.forge/repo/skills` passes when that symlink resolves to a real forge
+checkout, and reports which one, so it keeps asserting something rather than
+being deleted. Read on 2026-09-25: `~/.forge/repo → ~/dev/forge-runtime`, whose
+HEAD is `f1ca5fe` (#72), one merge behind `main`.
 
 ## Open questions
 
-1. Merge method: squash with branch deletion, and `worktree-sweep` after each
-   merge? Proposed default: yes to all three; settle in FL1.
+1. ~~Merge method: squash with branch deletion, and `worktree-sweep` after each
+   merge?~~ **Settled in FL1: yes to all three** — ADR-0019 D19.6, which also
+   records why each part is load-bearing (the revert path depends on the
+   squash).
 2. Do Codex and Hermes's OpenAI OAuth draw on the same quota? Run B measures.
 3. Roadmap authorship: revisit after run B whether the overseer drafts it and
    the operator approves through the gateway.
