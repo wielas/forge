@@ -188,6 +188,19 @@ argument above.
 - `forge-lane` §7 keeps its existing prohibition on `kanban_request_review` and
   `kanban_request_changes` — those are the verifier's calls, not the lane's, and
   a card left in `review` is not `done`.
+
+  > **Correction, 2026-09-26 (epic S2, FL3).** Half of that sentence is wrong
+  > about the kernel. `request-review` is the *implementer's* transition —
+  > `running → review`, recording the implementer so a bounce can route back —
+  > and D19.1 cannot happen without the lane making it. Only `request-changes`
+  > is the reviewer's. What survives, and is still asserted by
+  > `lane/terminator-set-is-closed`, is the prohibition on the *model's tools*:
+  > the driver may call neither. The handoff is made by
+  > `scripts/lane-handoff.sh` through the Hermes CLI, after the envelope is
+  > validated and with the reviewer named, and the CLI binds the run id from
+  > the worker's environment, so it proves ownership of the live claim.
+  > `lane/bounce-round-trip-on-real-hermes` executes the whole trip, including
+  > that the lane's own run cannot complete the card after handing it off.
 - The tier-2 handoff, the judge child and the fix child become dead machinery,
   along with the `verify` cases guarding them. They are removed in their own
   slices, each one after the replacement is green, never in the same change.

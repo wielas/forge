@@ -2377,7 +2377,10 @@ lane/uv-cache-dir-is-deterministic-and-outside-worktree  one run-specific TMPDIR
 lane/verification-is-plain-make-check   executed: lane.sh strips UV_OFFLINE/UV_CACHE_DIR from make check
 lane/lane-sh-runs-the-protocol    executed end to end with stub hermes/gh/codex: order, park relay, heartbeat, push, PR, validated envelope
 lane/lane-sh-blocks-before-the-push  a red check and an audit breach block with their class and never push; missing env is 2
-lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers beside itself
+lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers, the handoff included, beside itself
+lane/lane-sh-reenters-on-a-bounce  FL3, stubs: same card/branch/PR, red baseline tolerated, the implementer's session resumed with the reasons
+lane/bounce-round-trip-on-real-hermes  FL3, real kernel in an isolated HERMES_HOME: handoff, native gate, request-changes, re-entry, approval releases the child
+lane/lane-handoff-is-fail-closed  validates before the transition, reads the end state back, unparks a blocked human-tier card
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/prejudge-delegates-its-protocol    the SOUL names the script and the script exists (ADR-0010)
 lane/prejudge-terminator-mapping        rc 0 -> kanban_complete, rc 3 -> kanban_block; an outage is not a rejection
@@ -2791,7 +2794,7 @@ run_lane_group() {
               HERMES_KANBAN_BOARD=vboard \
               "$setup" "$lrepo" capture-exists)" = 6 ] \
       || { e_ok=0; detail="$detail audit-failure-not-6"; }
-    setup_line="$(grep -n '^"$HERE/lane-setup.sh"' scripts/lane.sh | head -1 | cut -d: -f1)"
+    setup_line="$(grep -n '"$HERE/lane-setup.sh" "$WS" "$RUN_ID"' scripts/lane.sh | head -1 | cut -d: -f1)"
     codex_line="$(grep -n '^"$HERE/codex-run.sh"' scripts/lane.sh | head -1 | cut -d: -f1)"
     [ -n "$setup_line" ] && [ -n "$codex_line" ] && [ "$setup_line" -lt "$codex_line" ] \
       || { e_ok=0; detail="$detail setup-not-before-codex"; }
@@ -3342,8 +3345,12 @@ case "$verb" in
     id="$1"; shift; reviewer=""
     while [ $# -gt 0 ]; do case "$1" in --reviewer) reviewer="$2"; shift 2;; *) shift;; esac; done
     f="$STUB/cards/$id.json"
+    [ -n "${STUB_RR_LIES:-}" ] && { echo "Requested review for $id"; exit 0; }
     jq --arg r "$reviewer" '.task.status = "review" | .task.assignee = $r' "$f" > "$f.new" && mv "$f.new" "$f"
     echo "Requested review for $id";;
+  unblock)
+    f="$STUB/cards/$1.json"
+    jq '.task.status = "ready"' "$f" > "$f.new" && mv "$f.new" "$f";;
   *) exit 0;;
 esac
 LHERMES
@@ -3369,6 +3376,7 @@ LGH
 case "${1:-}" in --version) echo "codex-cli stub"; exit 0;; esac
 printf 'codex%s\n' "$(for a in "$@"; do [ "$a" = resume ] && printf ' resume'; done)" >> "$LANE_CALLS"
 printf '%s\n' "$*" >> "$STUB/codex.argv"
+printf '%s\n' "$*" > "$STUB/codex.last"
 sid="${STUB_SESSION_ID:-lane-session-1}"
 if [ -n "${STUB_LIMIT_ONCE:-}" ] && [ ! -e "$STUB/limited" ]; then
   touch "$STUB/limited"
@@ -3424,7 +3432,11 @@ LCODEX
       && git -C "$lroot/main" push -q origin main >/dev/null 2>&1
     lh_rc="$(_lsh_run STUB_LIMIT_ONCE=1 UV_OFFLINE=1 UV_CACHE_DIR="$lroot/leaked-cache")"
     [ "$lh_rc" = 0 ] || lh_detail="$lh_detail rc=$lh_rc($(_lsh_env .reason))"
-    [ "$(_lsh_env .action)" = complete ] || lh_detail="$lh_detail action=$(_lsh_env .action)"
+    [ "$(_lsh_env .action)" = handed-off ] || lh_detail="$lh_detail action=$(_lsh_env .action)"
+    grep -q '^kanban --board vlane request-review t_lane --reviewer forge-prejudge --summary ' "$lstub/hermes.log"       || lh_detail="$lh_detail no-handoff-with-a-named-reviewer"
+    [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-prejudge ]       || lh_detail="$lh_detail card-not-in-review"
+    ! grep -q '^kanban --board vlane create' "$lstub/hermes.log" || lh_detail="$lh_detail a-card-was-created"
+    [ "$(_lsh_env '.created_cards | length')" = 0 ] || lh_detail="$lh_detail created-cards-not-empty"
     order="$(sed 's/ .*//' "$lstub/calls" 2>/dev/null | tr '\n' ' ')"
     case "$order" in "setup check codex codex check "*) ;; *) lh_detail="$lh_detail order=[$order]";; esac
     git -C "$lorig" rev-parse --verify --quiet refs/heads/chunk/7-sync-engine >/dev/null \
@@ -3444,7 +3456,7 @@ LCODEX
     [ "$(jq -s length "$lroot/out.json" 2>/dev/null)" = 1 ] && [ "$(wc -c < "$lroot/out.json")" -lt 4096 ] \
       || lh_detail="$lh_detail stdout-is-not-one-small-envelope"
     if [ -z "$lh_detail" ]; then
-      ok "lane-sh-runs-the-protocol (setup, green baseline, codex parked and resumed, plain check, audit, push, PR, validated envelope; heartbeats and PARK-COMMENT reach the card)"
+      ok "lane-sh-runs-the-protocol (setup, green baseline, codex parked and resumed, plain check, audit, push, PR, validated envelope, handed to the named reviewer on the same card; heartbeats and PARK-COMMENT reach the card; no card created)"
     else
       bad "lane-sh-runs-the-protocol" "lane.sh must drive the whole chunk and hand back one envelope —$lh_detail"
     fi
@@ -3478,6 +3490,45 @@ LCODEX
     else
       bad "codex-model-reaches-the-envelope" \
           "lane.sh must copy codex-run.sh's recorded model into the envelope (F22); got: $(printf '%s' "$lh_meta" | jq -c '{codex_model, codex_reasoning_effort, codex_model_source, codex_model_requested, worker}' 2>/dev/null)"
+    fi
+
+
+    # --- FL3: a bounce comes back to THIS card -------------------------------
+    # Continues the happy path's project, branch and PR. The card now carries
+    # the handoff and a request-changes, the branch's own baseline is RED (the
+    # bounce may be exactly that), and the stub Codex fixes it. Stubs only, so
+    # this runs in CI; lane/bounce-round-trip-on-real-hermes below runs the
+    # same trip against the real kernel.
+    local lr_detail="" lr_rc
+    if [ -z "$lh_detail" ]; then
+      jq '.task.status = "running" | .task.assignee = "forge-codex-lane"
+          | .events += [{kind: "review_requested", created_at: 100, payload: {}},
+                        {kind: "changes_requested", created_at: 101,
+                         payload: {reason: "REVIEW-REASON-MARKER: mutant survived at foo.py:12"}}]
+          | .comments += [{author: "default", body: "REOPEN-COMMENT-MARKER", created_at: 102}]' \
+        "$lstub/cards/t_lane.json" > "$lstub/t.json" && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
+      touch "$lstub/red"
+      : > "$lstub/calls"
+      lr_rc="$(LSH_RUN=2 _lsh_run STUB_FIX_RED=1)"
+      [ "$lr_rc" = 0 ] || lr_detail="$lr_detail rc=$lr_rc($(_lsh_env .reason))"
+      [ "$(_lsh_env .action)" = handed-off ] || lr_detail="$lr_detail action=$(_lsh_env .action)"
+      grep -q 'resume lane-session-1' "$lstub/codex.last" 2>/dev/null || lr_detail="$lr_detail not-resumed"
+      grep -q 'REVIEW-REASON-MARKER' "$lstub/codex.last" 2>/dev/null || lr_detail="$lr_detail change-reason-not-delivered"
+      grep -q 'REOPEN-COMMENT-MARKER' "$lstub/codex.last" 2>/dev/null || lr_detail="$lr_detail comment-reason-not-delivered"
+      grep -qi 'do NOT push' "$lstub/codex.last" 2>/dev/null || lr_detail="$lr_detail boundary-not-restated"
+      [ "$(grep -c '^gh pr create' "$lstub/gh.log")" = 1 ] || lr_detail="$lr_detail second-pr"
+      [ "$(git -C "$lorig" rev-list --count main..chunk/7-sync-engine 2>/dev/null)" = 2 ] \
+        || lr_detail="$lr_detail branch-not-extended"
+      [ "$(grep -c 'request-review t_lane --reviewer forge-prejudge' "$lstub/hermes.log")" = 2 ] \
+        || lr_detail="$lr_detail reviewer-not-named-twice"
+      ! grep -q '^kanban --board vlane create' "$lstub/hermes.log" || lr_detail="$lr_detail a-card-was-created"
+    else
+      lr_detail=" the happy path above did not run clean"
+    fi
+    if [ -z "$lr_detail" ]; then
+      ok "lane-sh-reenters-on-a-bounce (same card, worktree, branch and PR; red baseline tolerated; the implementer's session resumed with the reasons from the event AND the comment)"
+    else
+      bad "lane-sh-reenters-on-a-bounce" "a bounce must return to this card and resume its own Codex session —$lr_detail"
     fi
 
     # --- blocks: each must stop BEFORE the push, and name its class ---------
@@ -3530,11 +3581,142 @@ LCODEX
      && grep -Fq '"$HERE/lane-setup.sh" "$WS" "$RUN_ID"' "$lsh" \
      && grep -Fq '"$HERE/codex-run.sh" "$WS" "$RUN_ID" "$TASK"' "$lsh" \
      && grep -Fq '"$HERE/lane-blast-radius.sh" check "$WS" "$FORGE_LANE_RUN_KEY"' "$lsh" \
-     && grep -Fq '"$HERE/validate-metadata.py" --profile forge-codex-lane' "$lsh"; then
-    ok "lane-sh-is-reached-through-forge-repo (skill and SOUL call ~/.forge/repo/scripts/lane.sh; lane.sh calls its helpers beside itself)"
+     && grep -Fq '"$HERE/validate-metadata.py" --profile forge-codex-lane' "$lsh"      && grep -Fq '"$HERE/lane-handoff.sh" "$TASK"' "$lsh"      && grep -Fq '"$HERE/validate-metadata.py" --profile forge-codex-lane' scripts/lane-handoff.sh; then
+    ok "lane-sh-is-reached-through-forge-repo (skill and SOUL call ~/.forge/repo/scripts/lane.sh; lane.sh calls its helpers, the handoff included, beside itself)"
   else
     bad "lane-sh-is-reached-through-forge-repo" \
         "forge-lane and the SOUL must invoke ~/.forge/repo/scripts/lane.sh, and lane.sh must call lane-setup, codex-run, the blast-radius check and the validator from its own directory"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # FL3's done-when, against the REAL kernel: one bounce round trip on one
+  # card, and the `failing-prereq` class unable to occur. The installed
+  # `hermes` runs in an isolated HERMES_HOME under TMPROOT (never the operator's
+  # boards, never the live gateway's); `gh` and `codex` are the stubs above.
+  # The reviewer's claim from `review` is dispatcher-only in the CLI, so it is
+  # made through Hermes's own Python API, exactly as the dispatcher makes it.
+  #   1 lane.sh hands P off: P in review, assigned to the reviewer
+  #   2 P's child stays todo and cannot be claimed — the native gate that
+  #     makes the parent-unmerged block unreachable (ADR-0019 D19.5)
+  #   3 the lane's run cannot complete P after the handoff (a driver calling
+  #     kanban_complete by habit must not release the child onto unmerged code)
+  #   4 the reviewer requests changes: P back to ready, the lane restored
+  #   5 lane.sh re-enters on a red baseline and hands P off again
+  #   6 the reviewer completes P: P done, the child released
+  # ---------------------------------------------------------------------------
+  local rh_home="$TMPROOT/lane-real-home" rh_py="$HOME/.hermes/hermes-agent/venv/bin/python"
+  local rh_src="$HOME/.hermes/hermes-agent" rh_detail="" rh_p rh_c rh_run rh_rc rh_bin
+  if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$rh_py" ]; then
+    skip "bounce-round-trip-on-real-hermes" "hermes (and its venv python) not installed"
+  elif [ ! -x "$lsh" ]; then
+    bad "bounce-round-trip-on-real-hermes" "$lsh is missing"
+  else
+    _lsh_fixture real
+    rh_bin="$lroot/realbin"; mkdir -p "$rh_bin"
+    cp "$lstub/bin/gh" "$lstub/bin/codex" "$rh_bin/"
+    rm -rf "$rh_home"; mkdir -p "$rh_home"
+    _rh() { HERMES_HOME="$rh_home" hermes kanban --board lanelab "$@"; }
+    _rh_status() { _rh show "$1" --json 2>/dev/null | jq -r '[.task.status, .task.assignee] | join("/")'; }
+    _rh_claim() { _rh claim "$1" >/dev/null 2>&1 && _rh show "$1" --json | jq -r '.runs | max_by(.id).id'; }
+    _rh_reviewer() { # $1=task $2=verb: claim the review run as the dispatcher does, then act
+      ( cd "$rh_src" && HERMES_HOME="$rh_home" HERMES_KANBAN_BOARD=lanelab "$rh_py" -c "
+from hermes_cli import kanban_db as kb, kanban_db_connect as kbc
+with kbc.connect_closing() as c:
+    t = kb.claim_review_task(c, '$1')
+    raise SystemExit(0 if t is not None else 1)" ) >/dev/null 2>&1 || return 1
+      local rid; rid="$(_rh show "$1" --json | jq -r '.runs | max_by(.id).id')"
+      case "$2" in
+        changes) HERMES_KANBAN_TASK="$1" HERMES_KANBAN_RUN_ID="$rid" \
+                   _rh request-changes "$1" "REVIEW-REASON-MARKER: mutant survived at foo.py:12" >/dev/null 2>&1;;
+        approve) HERMES_KANBAN_TASK="$1" HERMES_KANBAN_RUN_ID="$rid" \
+                   _rh complete "$1" --result "approved" >/dev/null 2>&1;;
+      esac
+    }
+    _rh_lane() { # $1=run id, then extra env
+      local rid="$1"; shift
+      env PATH="$rh_bin:$PATH" STUB="$lstub" LANE_CALLS="$lstub/calls" LANE_RED="$lstub/red" \
+          HERMES_HOME="$rh_home" TMPDIR="$lroot/tmp" CODEX_HOME="$lroot/codexhome" \
+          FORGE_CODEX_BIN="$rh_bin/codex" FORGE_LANE_AUDIT_ROOT="$lroot/audits" \
+          FORGE_LANE_PARK_ROOT="$lroot/parks" FORGE_LANE_SESSION_ROOT="$lroot/sessions" \
+          FORGE_LANE_TICK=1 FORGE_LANE_HEARTBEAT=1 \
+          HERMES_KANBAN_TASK="$rh_p" HERMES_KANBAN_WORKSPACE="$lwt" HERMES_KANBAN_RUN_ID="$rid" \
+          HERMES_KANBAN_BOARD=lanelab HERMES_KANBAN_BRANCH=chunk/7-sync-engine \
+          "$@" "$REPO_ROOT/$lsh" > "$lroot/out.json" 2> "$lroot/err"
+      echo $?
+    }
+    HERMES_HOME="$rh_home" hermes kanban boards create lanelab >/dev/null 2>&1 \
+      || rh_detail="$rh_detail board-create-failed"
+    rh_p="$(_rh create "CHUNK-7: Sync engine" --assignee forge-codex-lane \
+              --body "Implement the sync engine." --json 2>/dev/null | jq -r '.id // empty')"
+    rh_c="$(_rh create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$rh_p" \
+              --body "child" --json 2>/dev/null | jq -r '.id // empty')"
+    [ -n "$rh_p" ] && [ -n "$rh_c" ] || rh_detail="$rh_detail cards-not-created"
+
+    # 1. first pass
+    rh_run="$(_rh_claim "$rh_p")"
+    rh_rc="$(_rh_lane "$rh_run")"
+    [ "$rh_rc" = 0 ] || rh_detail="$rh_detail pass1-rc=$rh_rc($(_lsh_env .reason))"
+    [ "$(_rh_status "$rh_p")" = review/forge-prejudge ] || rh_detail="$rh_detail pass1-not-in-review($(_rh_status "$rh_p"))"
+    # 2. the native gate
+    [ "$(_rh_status "$rh_c" | cut -d/ -f1)" = todo ] || rh_detail="$rh_detail child-released-early"
+    ! _rh claim "$rh_c" >/dev/null 2>&1 || rh_detail="$rh_detail child-claimable-while-parent-in-review"
+    # 3. the lane's own run cannot complete the card it handed off
+    ! HERMES_KANBAN_TASK="$rh_p" HERMES_KANBAN_RUN_ID="$rh_run" _rh complete "$rh_p" --result habit >/dev/null 2>&1 \
+      || rh_detail="$rh_detail lane-could-complete-after-handoff"
+    [ "$(_rh_status "$rh_p" | cut -d/ -f1)" = review ] || rh_detail="$rh_detail handoff-undone"
+    # 4. bounce
+    _rh_reviewer "$rh_p" changes || rh_detail="$rh_detail request-changes-failed"
+    [ "$(_rh_status "$rh_p")" = ready/forge-codex-lane ] || rh_detail="$rh_detail not-returned-to-lane($(_rh_status "$rh_p"))"
+    # 5. re-entry on a red baseline
+    touch "$lstub/red"
+    rh_run="$(_rh_claim "$rh_p")"
+    rh_rc="$(_rh_lane "$rh_run" STUB_FIX_RED=1)"
+    [ "$rh_rc" = 0 ] || rh_detail="$rh_detail pass2-rc=$rh_rc($(_lsh_env .reason))"
+    [ "$(_rh_status "$rh_p")" = review/forge-prejudge ] || rh_detail="$rh_detail pass2-not-in-review($(_rh_status "$rh_p"))"
+    grep -q 'resume lane-session-1' "$lstub/codex.last" 2>/dev/null || rh_detail="$rh_detail not-resumed"
+    grep -q 'REVIEW-REASON-MARKER' "$lstub/codex.last" 2>/dev/null || rh_detail="$rh_detail reason-not-delivered"
+    [ "$(grep -c '^gh pr create' "$lstub/gh.log" 2>/dev/null)" = 1 ] || rh_detail="$rh_detail second-pr"
+    [ "$(_rh list --json 2>/dev/null | jq length)" = 2 ] || rh_detail="$rh_detail card-count-not-2"
+    # 6. approval releases the child
+    _rh_reviewer "$rh_p" approve || rh_detail="$rh_detail approve-failed"
+    [ "$(_rh_status "$rh_p" | cut -d/ -f1)" = done ] || rh_detail="$rh_detail not-done"
+    [ "$(_rh_status "$rh_c" | cut -d/ -f1)" = ready ] || rh_detail="$rh_detail child-not-released($(_rh_status "$rh_c"))"
+    if [ -z "$rh_detail" ]; then
+      ok "bounce-round-trip-on-real-hermes (one card, two cards on the board: handoff, native gate, no completion by habit, request-changes, re-entry on a red baseline with the session resumed, approval releases the child)"
+    else
+      bad "bounce-round-trip-on-real-hermes" "the same-card round trip broke against the installed kernel —$rh_detail"
+    fi
+  fi
+
+  # lane-handoff.sh on its own: the three promises end-chunk §5 makes for it.
+  # Validated BEFORE any transition; the end state READ BACK, never taken from
+  # the kernel's word; and a human-tier card, parked `blocked` by
+  # board-bootstrap, unparked and handed off from outside any worker.
+  local lho=scripts/lane-handoff.sh lho_detail="" lho_rc lho_meta="$TMPROOT/lane-sh-happy/tmp/forge-lane-vlane-1/chunk-metadata.json"
+  if [ ! -x "$lho" ] || [ ! -s "$lho_meta" ]; then
+    bad "lane-handoff-is-fail-closed" "$lho is missing, or the happy path left no envelope to hand off"
+  else
+    _lho() { env PATH="$lstub/bin:$PATH" STUB="$lstub" "$@" > "$lroot/lho.out" 2>&1; echo $?; }
+    _lsh_fixture handoff
+    printf '{"schema":"forge.chunk.v1"}\n' > "$lroot/bad-meta.json"
+    lho_rc="$(_lho HERMES_KANBAN_TASK=t_lane HERMES_KANBAN_RUN_ID=1 "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lroot/bad-meta.json")"
+    { [ "$lho_rc" = 3 ] && tail -1 "$lroot/lho.out" | grep -q '^other: the handoff envelope failed its contract' \
+      && ! grep -q request-review "$lstub/hermes.log" 2>/dev/null; } || lho_detail="$lho_detail invalid-envelope-transitioned(rc=$lho_rc)"
+    _lsh_fixture handoff
+    lho_rc="$(_lho STUB_RR_LIES=1 HERMES_KANBAN_TASK=t_lane HERMES_KANBAN_RUN_ID=1 "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
+    { [ "$lho_rc" = 3 ] && tail -1 "$lroot/lho.out" | grep -q "did not land"; } || lho_detail="$lho_detail kernel-word-trusted(rc=$lho_rc)"
+    _lsh_fixture handoff
+    jq '.task.status = "blocked" | .task.assignee = "forge-operator-handoff"' "$lstub/cards/t_lane.json" > "$lstub/t.json" \
+      && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
+    lho_rc="$(_lho HERMES_KANBAN_TASK= HERMES_KANBAN_RUN_ID= "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
+    { [ "$lho_rc" = 0 ] && [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-prejudge ] \
+      && [ "$(grep -oE '(unblock|request-review) t_lane' "$lstub/hermes.log" | awk '{ print $1 }' | tr '\n' ' ')" = "unblock request-review " ]; } \
+      || lho_detail="$lho_detail human-chunk-not-handed-off(rc=$lho_rc,$(tail -1 "$lroot/lho.out"))"
+    if [ -z "$lho_detail" ]; then
+      ok "lane-handoff-is-fail-closed (an invalid envelope never transitions; a kernel claiming success is read back; a blocked human-tier card is unblocked, then handed off)"
+    else
+      bad "lane-handoff-is-fail-closed" "lane-handoff.sh must validate first, read the end state back, and unpark a human-tier card —$lho_detail"
+    fi
   fi
 
   # The first real graph was created in two passes: both cards were briefly
@@ -5486,14 +5668,17 @@ run_metadata_group() {
   local lane=skills/forge-lane/SKILL.md validate_line complete_line
   validate_line="$(grep -Fn '"$HERE/validate-metadata.py" --profile forge-codex-lane' \
                     scripts/lane.sh | head -1 | cut -d: -f1)"
-  complete_line="$(grep -n '^envelope complete ' scripts/lane.sh | head -1 | cut -d: -f1)"
+  # Since FL3 the envelope rides the handoff, and lane-handoff.sh validates it
+  # a second time, immediately before the transition it is attached to.
+  complete_line="$(grep -n '^"$HERE/lane-handoff.sh"' scripts/lane.sh | head -1 | cut -d: -f1)"
   if [ -n "$validate_line" ] && [ -n "$complete_line" ] \
      && [ "$validate_line" -lt "$complete_line" ] \
-     && grep -Fq 'metadata` **from the envelope**' "$lane"; then
+     && [ "$(grep -n 'validate-metadata.py" --profile forge-codex-lane' scripts/lane-handoff.sh | head -1 | cut -d: -f1)" \
+          -lt "$(grep -n 'kanban request-review' scripts/lane-handoff.sh | head -1 | cut -d: -f1)" ]; then
     ok "lane-validates-before-complete"
   else
     bad "lane-validates-before-complete" \
-        "lane.sh must validate the envelope before it routes to kanban_complete, and forge-lane must pass the envelope's metadata through unmodified"
+        "lane.sh must validate the envelope before the handoff, and lane-handoff.sh must validate it again before request-review"
   fi
 
   local valid_ok=1 name profile gate_rc
@@ -5819,6 +6004,7 @@ run_metadata_group() {
   metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-prejudge.SOUL.md
   metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     skills/forge-lane/SKILL.md
   metadata_sweep block    's/.*block "\([a-z0-9=-]*:\).*/\1/p'      scripts/lane.sh
+  metadata_sweep refuse   's/.*refuse "\([a-z0-9=-]*:\).*/\1/p'     scripts/lane-handoff.sh
 
   while IFS= read -r reason; do
     [ -n "$reason" ] || continue
@@ -5831,7 +6017,7 @@ run_metadata_group() {
   legacy="$(grep -lF 'reason_class=' \
               scripts/prejudge-review.sh scripts/lane-setup.sh \
               scripts/lane-blast-radius.sh hermes/profiles/forge-prejudge.SOUL.md \
-              skills/forge-lane/SKILL.md scripts/lane.sh 2>/dev/null | tr '\n' ' ')"
+              skills/forge-lane/SKILL.md scripts/lane.sh scripts/lane-handoff.sh 2>/dev/null | tr '\n' ' ')"
 
   for producer in skills/forge-lane/SKILL.md \
                   hermes/profiles/forge-codex-lane.SOUL.md \
@@ -5840,7 +6026,7 @@ run_metadata_group() {
   done
   grep -Fq 'run-metadata-contract.json' scripts/metrics.sh || reason_ok=0
   if [ "$reason_ok" = 1 ] && [ -z "$silent" ] && [ -z "$legacy" ]; then
-    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 8 producer rules)"
+    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 9 producer rules)"
   else
     bad "blocked-reason-contract" \
         "${silent:+no class matched in:$silent — the sweep went blind, not green; }${legacy:+the retired reason-class form is back in: $legacy; }a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"

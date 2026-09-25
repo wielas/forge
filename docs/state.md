@@ -247,9 +247,22 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   deliberately small fault probes; none began as a product idea and passed
   through scope, architecture, roadmap and completed implementation chunks.
 - **The corrected integration gate.** The first real graph proved card-level
-  gating but also proved `done` means PR-open, not merged. ADR-0008 and the
-  atomic-parent/merged-PR guards are static and deployed to the lane; a fresh
-  graph still needs to prove the corrected path live.
+  gating but also proved `done` means PR-open, not merged. Since epic S2 the
+  gate is native (ADR-0019 D19.5): a chunk card sits in `review` until its PR
+  merges, and `lane/bounce-round-trip-on-real-hermes` executes that against the
+  installed Hermes kernel in an isolated `HERMES_HOME` — the child stays `todo`
+  and unclaimable while its parent is in review, and is released only when the
+  parent completes. That is fixture proof on the real kernel, not a live run;
+  the merged-PR guard stays in `scripts/lane.sh` until a live graph shows the
+  native gate holding.
+- **The lane as a program, live.** Since epic S2 the lane's protocol is
+  `scripts/lane.sh` and its handoff `scripts/lane-handoff.sh`: executed end to
+  end in the `lane` group (real setup, runner, audit, make and validator; stub
+  `hermes`/`gh`/`codex`), and the same-card bounce round trip against the real
+  kernel. No dispatcher-spawned driver has run them yet. **Between S2 and S3 the
+  runtime must not run a live board:** the lane now hands its card to
+  `forge-prejudge` on the same card, and that profile still expects a child
+  card — FL4 (S3) is what teaches the reviewer side.
 - **Timeout/reclaim and circuit-breaker recovery.** Signal-9 retry is proven;
   stale-heartbeat reclaim and a tripped retry limit are not.
 - **The usage-limit park against a real window.** ADR-0016 shipped

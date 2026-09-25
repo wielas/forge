@@ -781,7 +781,7 @@ fi
 # checkout being fine is not the property that matters, and `make verify`
 # already covers that one.
 # ---------------------------------------------------------------------------
-for _lscript in lane.sh lane-setup.sh lane-blast-radius.sh validate-metadata.py \
+for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh validate-metadata.py \
                 codex-run.sh quota-window.py codex-progress.py; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then

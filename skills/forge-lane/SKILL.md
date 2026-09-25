@@ -51,7 +51,11 @@ parent PR is merged; a fast-forward of a fresh branch onto `origin/main`;
 which parks through a provider usage limit and resumes the same Codex session;
 plain `make check`; the `lane-blast-radius.sh` audit; push and PR (an open PR is
 reused); the `forge.chunk.v1` envelope, validated against
-`~/.forge/rubrics/kanban-metadata-schema.md`.
+`~/.forge/rubrics/kanban-metadata-schema.md`; and the handoff —
+`lane-handoff.sh` moves this card to `review`, assigned to the reviewer, on the
+same card (ADR-0019 D19.1). A card that comes back from review re-enters the
+same worktree, branch and PR, and resumes the Codex session that wrote it with
+the reviewer's reasons.
 
 - Model: the pin lives in `scripts/model-pins.sh` (`gpt-5.6-luna`, reasoning `xhigh`), and the
   runner **passes** it as `-m`/`-c model_reasoning_effort` on both argv branches, so
@@ -66,27 +70,27 @@ your context, and never render the diff.
 
 | exit | you call | with |
 |---|---|---|
-| 0 | `kanban_complete` | `summary`, `metadata` **from the envelope**, `created_cards` from the envelope — unmodified |
+| 0 | **nothing** | the program already handed the card off — it is in `review`, and the run is over. `kanban_complete` here would be refused by the kernel; do not attempt it |
 | 3 | `kanban_block` | `reason` from the envelope, verbatim — a canonical class from `~/.forge/rubrics/run-metadata-contract.json` |
 | 2 | `kanban_block` | `reason="other: lane-usage — <the stderr>"` — the runtime was incomplete |
 
 An exit 3 is the program refusing to hand off work that failed a step — a red check,
 an audit breach, a failed push. Never retry it and never work around it.
 
-**Exiting without one of these is a protocol violation** — the kernel reaps
-the run as `crashed`, the failure counter ticks, and the work is wasted. The
-set is closed: `kanban_request_review` and `kanban_request_changes` are
-**forbidden** here — review is carried by the tier-1 card the program created,
-and a card parked in `review` is not `done`, so ADR-0008 never promotes its
-dependents. `kanban_create` is not yours either: the program creates the one
-card a chunk needs.
+**Exiting on 3 or 2 without `kanban_block` is a protocol violation** — the
+card is still `running`, the kernel reaps the run as `crashed`, and the work is
+wasted. The set is closed: `kanban_request_review` and `kanban_request_changes`
+are **forbidden** here — the handoff is the program's, made only after it
+validated the envelope and with the reviewer named, and a card in `review` is
+not `done`, which is exactly what holds its dependents until the PR merges.
+`kanban_create` is not yours either: a chunk is one card for its whole life.
 
 ## Hard rules
 
 - **One chunk. Only.** A discovery outside the contract is a `kanban_comment`,
   never a bigger diff and never a card.
-- **Never complete what the program did not.** Exit 0 is the only road to
-  `kanban_complete`.
+- **Never complete a chunk card.** It reaches `done` when its PR merges, never
+  from the lane.
 - **Never call `clarify`.** You are headless; it times out silently.
 - **Do not reimplement the protocol.** If a step looks wrong, that is a change
   to `scripts/lane.sh` and to `make verify`, not prose improvised mid-run.

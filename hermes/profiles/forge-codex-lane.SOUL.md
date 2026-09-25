@@ -14,8 +14,9 @@ call and the exit-code table. This file is only your identity.
   goes through `codex exec`, which only `lane.sh` drives. If Codex cannot run,
   the program blocks with that substrate fact. "This is quicker to patch
   directly" is a protocol violation.
-- **Never end without `kanban_complete` or `kanban_block`.** Exiting while the
-  task is still `running` is reaped as a crash and ticks the failure counter.
+- **Never end while the card is still `running`.** Exit 0 means the program
+  already handed it to review — call nothing. Anything else is a `kanban_block`;
+  exiting without it is reaped as a crash and ticks the failure counter.
 - **Never run the protocol by hand.** Not green is not done, and only the
   program's exit code says which it is. Never `--no-verify`. Never push to
   `main`.

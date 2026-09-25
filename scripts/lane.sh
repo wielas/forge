@@ -37,7 +37,17 @@
 #   8 blast-radius check   the final fail-closed audit, one per run key
 #   9 push, PR             reuse an open PR; never main
 #  10 metadata             forge.chunk.v1, computed, then validated
-#  11 hand off             (see the tail of this file)
+#  11 hand off             lane-handoff.sh: running -> review, same card
+#
+# A BOUNCE COMES BACK TO THIS CARD (epic FL3, ADR-0019 D19.1). When the
+# reviewer requests changes, or the operator reopens the review, the card
+# returns to `ready` with this profile restored, and the dispatcher spawns this
+# file again in the SAME worktree, on the SAME branch, with the SAME PR. It
+# notices (the card carries a review_requested event), collects the reasons
+# recorded since that handoff, and resumes the implementer's OWN Codex session
+# with them — the comprehension paid for on the first pass is reused, not
+# re-read. There is no fix card, no judge card, and so no parent check that a
+# fix card could fail (the `failing-prereq` blocks of the product runs).
 #
 # Usage: lane.sh          — everything comes from the dispatcher's environment:
 #   HERMES_KANBAN_TASK, HERMES_KANBAN_WORKSPACE, HERMES_KANBAN_RUN_ID,
@@ -47,9 +57,14 @@
 #   FORGE_LANE_BASE        the protected branch PRs target            [main]
 #   FORGE_LANE_HEARTBEAT   seconds between card heartbeats            [300]
 #   FORGE_LANE_TICK        seconds between checks of the Codex run      [5]
+#   FORGE_LANE_REVIEWER    the profile the card is handed to  [forge-prejudge]
+#                          (FL4 renames it forge-verifier)
+#   FORGE_LANE_SESSION_ROOT  where each card's Codex session id is kept for a
+#                          bounce re-entry          [~/.forge/lane-sessions]
 #
-# Exit: 0 a routed outcome — `.action` is `complete`: call kanban_complete with
-#         the envelope's summary, metadata and created_cards.
+# Exit: 0 handed off — `.action` is `handed-off`: the card is already in
+#         `review` and this run is over. Call NO terminator; kanban_complete
+#         would be refused, and must not be attempted.
 #       3 a block — `.reason` is a canonical `<class>: <reason>` from
 #         rubrics/run-metadata-contract.json; pass it to kanban_block verbatim.
 #       2 a usage error — the dispatcher environment is incomplete.
@@ -71,6 +86,8 @@ RUN_ID="${HERMES_KANBAN_RUN_ID:-}"
 BOARD="${HERMES_KANBAN_BOARD:-}"
 BASE="${FORGE_LANE_BASE:-main}"
 HEARTBEAT="${FORGE_LANE_HEARTBEAT:-300}"
+REVIEWER="${FORGE_LANE_REVIEWER:-forge-prejudge}"
+SESSION_ROOT="${FORGE_LANE_SESSION_ROOT:-$HOME/.forge/lane-sessions}"
 TICK="${FORGE_LANE_TICK:-5}"
 STARTED="$(date +%s)"
 CREATED=()
@@ -160,6 +177,23 @@ jq -r '[.comments[]? | select((.author // "") | startswith("forge-") | not) | .b
        | if length == 0 then empty else
          "\n---\nOperator comments on this card. Where they disagree with the contract above, THEY win:\n\n"
          + (map("- " + (gsub("\n"; "\n  "))) | join("\n")) end' "$TMP/card.json" > "$TMP/comments.md"
+# A card that was handed off before is a bounce re-entry. The reasons are
+# whatever was recorded since the LATEST handoff: request-changes puts its
+# reason on the event; reopen-review and the verifier put theirs in comments.
+# Both are read — reading one would lose the other path's reasons.
+REENTRY=0
+LAST_HANDOFF="$(jq -r '[.events[]? | select(.kind == "review_requested") | .created_at] | max // empty' "$TMP/card.json")"
+if [ -n "$LAST_HANDOFF" ]; then
+  REENTRY=1
+  jq -r --argjson t "$LAST_HANDOFF" '
+    ([.events[]? | select(.kind == "changes_requested" and .created_at >= $t)
+                 | .payload.reason // empty]
+     + [.comments[]? | select(.created_at >= $t and (.author // "") != "forge-codex-lane")
+                     | .body]) | map(select(length > 0)) | .[] | "- " + gsub("\n"; "\n  ")' \
+    "$TMP/card.json" > "$TMP/reasons.md"
+  [ -s "$TMP/reasons.md" ] \
+    || block "judge-bounce: card $TASK came back from review with no recorded reason — there is nothing to fix"
+fi
 beat "lane: card read"
 
 # ---------------------------------------------------------------------------
@@ -213,7 +247,7 @@ fi
 # audit key as its last two lines; they are consumed, never recomputed — run
 # ids are board-local, so a recomputed key rebuilds the collision.
 # ---------------------------------------------------------------------------
-"$HERE/lane-setup.sh" "$WS" "$RUN_ID" > "$TMP/setup.out" 2>/dev/null
+FORGE_LANE_REENTRY="$REENTRY" "$HERE/lane-setup.sh" "$WS" "$RUN_ID" > "$TMP/setup.out" 2>/dev/null
 setup_rc=$?
 [ "$setup_rc" = 0 ] || block "$(reason_from "$TMP/setup.out" "env: lane-setup.sh exited $setup_rc")"
 FORGE_LANE_RUN_KEY="$(sed -n 's/^FORGE_LANE_RUN_KEY=//p' "$TMP/setup.out" | tail -1)"
@@ -230,10 +264,8 @@ beat "lane: environment ready"
 # skills/ and adopted the calling agent's role — push, PR and board included
 # (measured 2026-07-28).
 # ---------------------------------------------------------------------------
-{
-  cat "$TMP/body.md"
-  cat "$TMP/comments.md"
-  cat << 'EOF'
+BOUNDARY_FILE="$TMP/boundary.md"
+cat > "$BOUNDARY_FILE" << 'EOF'
 
 ---
 You implement this contract inside this worktree. That is your whole job.
@@ -242,7 +274,38 @@ do NOT read or follow `forge-lane`, `start-chunk` or `end-chunk` — those are
 the calling agent's protocol, not yours. Commit in small scoped commits.
 Never use --no-verify. `make check` must be green when you stop.
 EOF
+{
+  cat "$TMP/body.md"
+  cat "$TMP/comments.md"
+  if [ "$REENTRY" = 1 ]; then
+    printf '\n---\nThis contract was implemented on this branch, reviewed, and sent back. Fix exactly these, in new commits on top of the existing ones:\n\n'
+    cat "$TMP/reasons.md"
+  fi
+  cat "$BOUNDARY_FILE"
 } > "$FORGE_LANE_RUNTIME/contract.md"
+
+# A re-entry resumes the session that wrote the branch, when it still exists:
+# codex-run.sh finds the id in its session file and delivers the reasons as
+# the resume prompt. Codex prunes old sessions, so an id whose rollout is gone
+# falls back to a fresh session given the full contract — which carries the
+# reasons too. Only a record naming THIS workspace is trusted.
+SESSION_RECORD="$SESSION_ROOT/$BOARD-$TASK"
+if [ "$REENTRY" = 1 ]; then
+  prior_session="" prior_ws=""
+  [ -r "$SESSION_RECORD" ] && IFS=$'\t' read -r prior_session prior_ws < "$SESSION_RECORD"
+  if [ -n "$prior_session" ] && [ "$prior_ws" = "$WS" ] \
+     && [ -n "$(find "${CODEX_HOME:-$HOME/.codex}/sessions" -name "*-$prior_session.jsonl" -type f 2>/dev/null | head -1)" ]; then
+    printf '%s\n' "$prior_session" > "$FORGE_LANE_RUNTIME/codex-session-id"
+    {
+      printf 'Your implementation of this contract, on this branch, was reviewed and sent back. Fix exactly these, in new commits on top of your earlier ones. Do not start over and do not revert your earlier work:\n\n'
+      cat "$TMP/reasons.md"
+      cat "$BOUNDARY_FILE"
+    } > "$FORGE_LANE_RUNTIME/bounce-prompt.md"
+    say "re-entry: resuming the implementer's session $prior_session"
+  else
+    say "re-entry: no resumable session for $TASK; a fresh session gets the contract and the reasons"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Codex. codex-run.sh owns the invocation (sandbox, --add-dir grant, model
@@ -275,6 +338,14 @@ wait "$CODEX_PID"; codex_rc=$?
 CODEX_PID=""
 post_park_comments
 [ "$codex_rc" = 0 ] || block "$(reason_from "$CODEX_LOG" "env: codex-run.sh exited $codex_rc")"
+# Kept for a bounce re-entry, keyed by board and card, outside the per-run
+# scratch (which a new run never sees). Never fatal: losing it costs one
+# re-read of the chunk, not the chunk.
+if [ -s "$FORGE_LANE_RUNTIME/codex-session-id" ]; then
+  mkdir -p "$SESSION_ROOT" 2>/dev/null \
+    && printf '%s\t%s\n' "$(head -1 "$FORGE_LANE_RUNTIME/codex-session-id")" "$WS" > "$SESSION_RECORD" \
+    || say "could not keep the Codex session id for a re-entry (continuing)"
+fi
 LAST_BEAT=0; beat "lane: codex finished; verifying"
 
 # ---------------------------------------------------------------------------
@@ -412,26 +483,21 @@ validator_says() {
   "$FORGE_LANE_RUNTIME/chunk-metadata.json" > "$TMP/validate.out" 2>&1 \
   || block "other: the completion envelope failed its contract — $(validator_says "$TMP/validate.out")"
 
-SUMMARY="$CHUNK_ID: PR $PR_URL — make check green, blast radius clean, codex ${codex_model:-unknown}. Watch: $(jq -r '.files_changed' "$FORGE_LANE_RUNTIME/chunk-metadata.json") files, ${lines_ins:-0}+/${lines_del:-0}- lines."
+SUMMARY="$CHUNK_ID$([ "$REENTRY" = 1 ] && printf ' (after review)'): PR $PR_URL — make check green, blast radius clean, codex ${codex_model:-unknown}. Watch: $(jq -r '.files_changed' "$FORGE_LANE_RUNTIME/chunk-metadata.json") files, ${lines_ins:-0}+/${lines_del:-0}- lines."
 
 # ---------------------------------------------------------------------------
-# 11. Hand off. The tier-1 review is a child card, created HERE by a program
-# rather than by the driver: a cheap model creating cards is the CHUNK-8 storm.
-# The body is read back before the id is handed on, because a child created
-# with an empty body tripped Hermes' respawn guard 173 times over ~2h52m on
-# jobapp-second-instance (docs/hermes-field-notes.md). The driver then calls
-# kanban_complete with this envelope's summary, metadata and created_cards.
+# 11. Hand off, on the same card (epic FL3). lane-handoff.sh validates the
+# envelope again and moves the card running -> review, assigned to the
+# reviewer — always named, because after an operator reopen the kernel has no
+# reviewer to default to and would dispatch the card back to this lane. The
+# Hermes CLI binds this run's id from the dispatcher environment, so the
+# transition proves ownership of the live claim. It is this run's terminator:
+# the card leaves `running`, and the driver calls nothing after it. The card
+# reaches `done` only when its PR merges, which is what holds its children.
 # ---------------------------------------------------------------------------
-{
-  printf 'PR: %s\n\nChunk card: %s (%s)\n\n' "$PR_URL" "$TASK" "$CHUNK_ID"
-  printf 'Review this PR against the chunk contract below.\n\n## Contract\n\n'
-  cat "$TMP/body.md"
-} > "$TMP/child-body.md"
-child="$(kanban create "prejudge: $CHUNK_ID" --assignee forge-prejudge \
-           --parent "$TASK" --body "$(cat "$TMP/child-body.md")" --json 2>/dev/null \
-         | jq -r '.id // empty')"
-[ -n "$child" ] || block "other: the tier-1 review card for $PR_URL could not be created"
-kanban show "$child" --json 2>/dev/null | jq -e '(.task.body // "") | length > 0' >/dev/null \
-  || block "other: tier-1 review card $child reads back with an empty body"
-CREATED+=("$child")
-envelope complete "$SUMMARY" "$FORGE_LANE_RUNTIME/chunk-metadata.json" "" 0
+"$HERE/lane-handoff.sh" "$TASK" --board "$BOARD" --reviewer "$REVIEWER" \
+  --summary "$SUMMARY" --metadata "$FORGE_LANE_RUNTIME/chunk-metadata.json" \
+  > "$TMP/handoff.out" 2>&1
+handoff_rc=$?
+[ "$handoff_rc" = 0 ] || block "$(reason_from "$TMP/handoff.out" "other: lane-handoff.sh exited $handoff_rc")"
+envelope handed-off "$SUMMARY" "$FORGE_LANE_RUNTIME/chunk-metadata.json" "" 0
