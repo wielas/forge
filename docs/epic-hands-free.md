@@ -480,7 +480,7 @@ closes.
 |---|---|---|---|---|
 | S0 | this document; operator: merge it, Q3, remove `builder` | Plan agreed | open | #73 |
 | S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | done | #74 |
-| S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | |
+| S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | #75 |
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | planned | |
 | S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending | planned | |
 | S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
