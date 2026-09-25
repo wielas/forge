@@ -189,6 +189,40 @@ check_skill_section_references() { # $1=repo root; diagnostics on stdout
   return "$bad_refs"
 }
 
+# Q2 (epic-hands-free). A skill body that cites a rubric as a bare `rubrics/<file>`
+# is read from whatever directory the worker happens to be in — a project
+# worktree, never this checkout — so the file is simply not there. redglass's
+# closing session read `rubrics/judge-rubric.md` from skills/judge/SKILL.md:18
+# and concluded the rubrics did not exist. This is CLAUDE.md's `~/.forge/repo`
+# invariant for scripts, one directory over: `install.sh` symlinks BOTH
+# ~/.forge/repo -> the checkout AND ~/.forge/rubrics -> its rubrics/, and the
+# skills, the three SOULs, prejudge-review.sh and the control-arm fixture all
+# already use the shorter `~/.forge/rubrics/` form, so that is the one required
+# here rather than a second spelling of the same directory.
+# Every bare `rubrics/` is rejected -- the bare directory included, and column 0
+# included, because that is where a wrapped markdown line puts a path. There is
+# no exemption list and no per-site argument about which cwd a given skill
+# happens to run in: the whole defect is that a reader cannot tell by looking.
+check_skill_rubric_paths() { # $1=repo root; diagnostics on stdout
+  local root="$1" hits source line text bare=0 seen=0
+  hits="$(grep -rnEo '(^|[^~/[:alnum:]_.-])rubrics/' \
+             "$root/skills" --include='SKILL.md' 2>/dev/null || true)"
+  # The check must not pass by finding nothing to look at: a corpus that names
+  # no rubric at all is a blind check, not a clean one (F65/F66).
+  seen="$(grep -rlE 'rubrics/' \
+             "$root/skills" --include='SKILL.md' 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${seen:-0}" -eq 0 ]; then
+    echo "no skill names a rubric at all — the check went blind"
+    return 1
+  fi
+  while IFS=: read -r source line text; do
+    [ -n "$source" ] || continue
+    echo "${source#"$root"/}:$line has a bare 'rubrics/' path — it resolves against the worker's cwd, not this checkout; use ~/.forge/rubrics/"
+    bare=1
+  done <<< "$(printf '%s' "$hits" | grep . || true)"
+  return "$bare"
+}
+
 CHECKED_LANE_MODEL=""; CHECKED_LANE_EFFORT=""
 CHECKED_STATE_MODEL=""; CHECKED_STATE_EFFORT=""
 load_checked_in_codex_pins() {
@@ -616,6 +650,34 @@ run_cli_group() {
   else
     bad "skill-section-reference-rename-is-named" \
         "renaming forge-lane §6 was not reported with its end-chunk source and missing heading (got: ${section_mutation:-no diagnostic})"
+  fi
+
+  # Q2. Same shape, one directory over: a rubric cited as a bare `rubrics/<file>`
+  # from a skill body. Run it on the real corpus, then inject the defect into a
+  # copy and assert the file:line comes back named.
+  local rubric_out rubric_fixture rubric_mutation rubric_rc
+  if rubric_out="$(check_skill_rubric_paths "$REPO_ROOT")"; then
+    ok "skill-rubric-paths-are-anchored"
+  else
+    bad "skill-rubric-paths-are-anchored" "$(printf '%s' "$rubric_out" | tr '\n' ' ')"
+  fi
+  rubric_fixture="$TMPROOT/skill-bare-rubric"
+  mkdir -p "$rubric_fixture"
+  cp -R skills "$rubric_fixture/skills"
+  sed 's|~/\.forge/rubrics/judge-rubric\.md|rubrics/judge-rubric.md|' \
+    "$rubric_fixture/skills/judge/SKILL.md" > "$rubric_fixture/judge.mutated"
+  mv "$rubric_fixture/judge.mutated" "$rubric_fixture/skills/judge/SKILL.md"
+  # …and the same defect at column 0, which is where a wrapped line puts it.
+  printf 'rubrics/kanban-metadata-schema.md is the schema.\n' \
+    >> "$rubric_fixture/skills/retro/SKILL.md"
+  rubric_mutation="$(check_skill_rubric_paths "$rubric_fixture" 2>&1)"; rubric_rc=$?
+  if [ "$rubric_rc" -ne 0 ] \
+     && printf '%s' "$rubric_mutation" | grep -Fq "skills/judge/SKILL.md" \
+     && printf '%s' "$rubric_mutation" | grep -Fq "skills/retro/SKILL.md"; then
+    ok "skill-bare-rubric-path-is-named"
+  else
+    bad "skill-bare-rubric-path-is-named" \
+        "un-anchoring judge's citation, and a bare path at column 0 in retro, were not both reported with their files (got: ${rubric_mutation:-no diagnostic})"
   fi
 
   # The same discipline for the other kind of prompt, which never had a number.
@@ -2121,6 +2183,8 @@ cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim marke
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 308
 cli/skill-section-references-resolve every named numeric skill section exists
 cli/skill-section-reference-rename-is-named a renamed target reports source and missing heading
+cli/skill-rubric-paths-are-anchored no skill cites a rubric as a bare rubrics/<file> (Q2)
+cli/skill-bare-rubric-path-is-named an un-anchored citation reports its file, line and path
 cli/soul-body-budget              every profile SOUL <= 60 lines (identity, not protocol)
 cli/no-programs-in-souls          no fenced block in a SOUL exceeds 6 lines
 cli/permissions-are-read-only     no allowlist wildcard admits a paid or mutating command
@@ -2471,6 +2535,13 @@ quota/codex-model-mutation-is-caught      a runner that loses the rollout, reads
 quota/codex-model-requested-baseline-is-the-pin  with no per-card override the requested baseline is $MODEL, not the empty override
 quota/codex-model-requested-baseline-is-the-pin-mutation-is-caught  reverting either line of the fix back to the override is caught
 quota/a-stream-without-windows-is-unknown-not-clear  no rate-limit data is exit 3 unknown, never a licence to start
+quota/a-plaintext-refusal-parks-with-its-stated-reset  a prose refusal with no rate_limits parks on the time it names (Q1)
+quota/a-plaintext-reset-is-anchored-to-the-event-not-to-now  a stale prose refusal resolves into the past and clears
+quota/a-plaintext-reset-is-read-only-on-the-error-channel  the same sentence in agent text stays unknown
+quota/a-dated-plaintext-reset-is-parsed   the second observed spelling, carrying its own date
+quota/the-reactive-exec-json-refusal-parks  the REAL `codex exec --json` refusal (session 01a07acc): no marker, no timestamp, no rate_limits
+quota/the-reactive-channel-rule-is-not-the-marker-rule  collapsing the channel test to the marker alone makes that stream unjudgeable again, while the rollout still parses
+quota/a-plaintext-refusal-parks-through-the-runner  codex-run.sh parks on the parsed epoch instead of exiting 4
 quota/a-named-refusal-blocks-only-the-window-it-names  rate_limit_reached_type must not widen to healthy windows
 quota/a-fresh-snapshot-supersedes-an-earlier-refusal  a reached marker must not outlive the snapshot that described it
 quota/a-record-that-is-foreign-or-undatable-is-not-adopted  adoption refuses another workspace's record and one past its TTL
@@ -2483,6 +2554,7 @@ quota/codex-pin-on-the-fresh-branch-mutation-is-caught  a runner that pins only 
 quota/codex-pin-on-the-resume-branch-mutation-is-caught  a runner that pins only the first call turns this group red
 quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
+docs/the-open-epic-is-discoverable  CLAUDE.md and state.md both route a cold session to the epic and its § How we run this epic (Q4)
 manifest/makefile-syntax-list-is-complete  every tracked *.sh outside templates/ is named in the Makefile's bash -n list
 manifest/makefile-syntax-list-is-complete-mutation-is-caught  dropping a tracked script from the list reddens and names it
 manifest/list-matches-the-suite           every case that ran is named in this catalogue (the reverse is not asserted)
@@ -6174,7 +6246,7 @@ FROZEN_FEATURE
     ok "gate-is-a-stage-not-a-replacement (gate has no model call; the scorer survives in $review)"
   else
     bad "gate-is-a-stage-not-a-replacement" \
-        "the tier-1 scorer call is gone from $review — ADR-0007 D7.1 stands and ADR-0009 does not supersede it; deleting it is S5's experiment, not this gate's side effect"
+        "the tier-1 scorer call is gone from $review — ADR-0019 D19.7 keeps it in place and ADR-0009 does not supersede it; deleting it is S5's experiment, not this gate's side effect"
   fi
 
   # -------------------------------------------------------------------------
@@ -8465,6 +8537,30 @@ DISPOSITIONS
     bad "launch-docs-share-next-command" \
         "$missing of the four launch documents do not name '$shared' as the next command"
   fi
+
+  # Q4 (epic-hands-free). A fresh session with no context reads CLAUDE.md and
+  # state.md, in that order, and neither knew the epic existed -- so the one
+  # document that says what is done and what is next was reachable only by
+  # someone who already knew its filename. A link is prose until something
+  # executes it; this is that (ADR-0003).
+  local epic=docs/epic-hands-free.md router=CLAUDE.md epic_missing=""
+  [ -f "$epic" ] || epic_missing="the epic itself is gone"
+  grep -Fq 'epic-hands-free.md' "$router" || epic_missing="$epic_missing CLAUDE.md"
+  grep -Fq 'epic-hands-free.md' "$state" || epic_missing="$epic_missing docs/state.md"
+  # …and reachable is not enough: both routers must send the reader to the
+  # section that governs how a session is run, not merely name the file.
+  grep -Fq 'How we run this epic' "$router" || epic_missing="$epic_missing CLAUDE.md(§)"
+  grep -Fq 'How we run this epic' "$state" || epic_missing="$epic_missing state.md(§)"
+  # The epic's own claim about itself: its session table is the only progress
+  # record. If that heading is renamed, both links above become dead ends.
+  grep -Fq '## Session plan' "$epic" || epic_missing="$epic_missing epic(session-table)"
+  grep -Fq '## How we run this epic' "$epic" || epic_missing="$epic_missing epic(§)"
+  if [ -z "$epic_missing" ]; then
+    ok "the-open-epic-is-discoverable"
+  else
+    bad "the-open-epic-is-discoverable" \
+        "a session starting with no context cannot reach the epic:$epic_missing"
+  fi
 }
 wants docs      && run_docs_group
 
@@ -8594,6 +8690,121 @@ run_quota_group() {
   else
     bad "a-stream-without-windows-is-unknown-not-clear" \
         "no rate-limit data must be exit 3 unknown; got '$(_q no-rate-limits)'"
+  fi
+
+  # Q1 (epic-hands-free). …but a refusal with a stated time in PROSE is not "no
+  # data". The fixture is redglass's own event, byte-for-byte out of rollout
+  # 01a07acc: no `rate_limits` anywhere, `codex_error_info:
+  # usage_limit_exceeded`, and the reset only as "try again at 11:55 AM". It
+  # used to read as `unknown no-rate-limit-data`, which codex-run.sh routes to
+  # "not a usage limit" (exit 4).
+  # TZ is pinned because the sentence carries no zone: under TZ=UTC the event at
+  # 07:36:41Z resolves to 11:55:00Z = 1788782100, 2 h 19 m later -- against the
+  # ~3 h the lane improvised.
+  local QTEXT=1788766602        # one second after the refusal was written
+  _qtz() { TZ=UTC "$qw" --threshold 95 --now "${2:-$QTEXT}" "$fx/$1.jsonl" 2>/dev/null; }
+  if [ "$(_qtz plaintext-usage-limit)" = "blocked wake_at=1788782100 windows=stated" ]; then
+    ok "a-plaintext-refusal-parks-with-its-stated-reset (11:55 AM -> 1788782100)"
+  else
+    bad "a-plaintext-refusal-parks-with-its-stated-reset" \
+        "a prose refusal naming its reset must block with that epoch; got '$(_qtz plaintext-usage-limit)'"
+  fi
+
+  # The clock form is resolved against the moment the refusal was WRITTEN, not
+  # against now. Anchored to now, an hours-old rollout read at pre-flight parks
+  # until this afternoon's 11:55 -- the exact mistake _is_stale exists to stop.
+  # Anchored to the event, the same stale refusal lands in the past and clears.
+  local QTEXTLATER=1788790000   # ~2 h after the stated 11:55 has passed
+  local qwnow="$TMPROOT/quota-window-anchored-now.py"
+  sed 's/parse_stated_reset(message, event_time(obj, clock_now))/parse_stated_reset(message, clock_now)/' \
+    "$qw" > "$qwnow" && chmod +x "$qwnow"
+  if [ "$(_qtz plaintext-usage-limit $QTEXTLATER)" = clear ] \
+     && [ "$(TZ=UTC "$qwnow" --threshold 95 --now $QTEXTLATER \
+               "$fx/plaintext-usage-limit.jsonl" 2>/dev/null)" != clear ]; then
+    ok "a-plaintext-reset-is-anchored-to-the-event-not-to-now"
+  else
+    bad "a-plaintext-reset-is-anchored-to-the-event-not-to-now" \
+        "a refusal older than its own stated reset must be stale; got '$(_qtz plaintext-usage-limit $QTEXTLATER)'"
+  fi
+
+  # And it is read off the ERROR CHANNEL only. A chunk that builds a rate
+  # limiter prints this sentence in agent text; parsing any string in the
+  # stream would park the lane on the model's own prose. The marker and the
+  # message must sit in the same object.
+  local qprose="$TMPROOT/quota-prose.jsonl"
+  printf '%s\n' \
+    '{"timestamp":"2026-09-07T07:36:41.002Z","type":"event_msg","payload":{"type":"agent_message","message":"You'"'"'ve hit your usage limit. ... or try again at 11:55 AM."}}' \
+    > "$qprose"
+  TZ=UTC "$qw" --threshold 95 --now $QTEXT "$qprose" >/dev/null 2>&1
+  if [ "$?" = 3 ] \
+     && [ "$(TZ=UTC "$qw" --threshold 95 --now $QTEXT "$qprose" 2>/dev/null)" \
+          = "unknown no-rate-limit-data" ]; then
+    ok "a-plaintext-reset-is-read-only-on-the-error-channel"
+  else
+    bad "a-plaintext-reset-is-read-only-on-the-error-channel" \
+        "the same sentence in agent text must stay unknown, not park the lane"
+  fi
+
+  # The second spelling seen in a real rollout, carrying its own date. Recorded
+  # because a parser that handles only the bare clock silently falls back to
+  # exit 3 on it -- the identical defect, one message format over.
+  local qdated="$TMPROOT/quota-dated.jsonl"
+  printf '%s\n' \
+    '{"timestamp":"2026-08-05T06:00:00.000Z","type":"event_msg","payload":{"type":"task_complete","error":{"message":"You'"'"'ve hit your usage limit... try again at Aug 5th, 2026 9:53 AM.","codex_error_info":"usage_limit_exceeded"}}}' \
+    > "$qdated"
+  if [ "$(TZ=UTC "$qw" --threshold 95 --now 1785900000 "$qdated" 2>/dev/null)" \
+       = "blocked wake_at=1785923580 windows=stated" ]; then
+    ok "a-dated-plaintext-reset-is-parsed (Aug 5th, 2026 9:53 AM -> 1785923580)"
+  else
+    bad "a-dated-plaintext-reset-is-parsed" \
+        "the dated refusal form must parse too; got '$(TZ=UTC "$qw" --threshold 95 --now 1785900000 "$qdated" 2>/dev/null)'"
+  fi
+
+  # THE case for Q1, and the one the fixture above cannot make. The two streams
+  # this script is pointed at have different envelopes, and only one of them is
+  # the path that actually exited 4.
+  #
+  #   pre-flight  -> the newest session ROLLOUT: payload-nested, top-level ISO
+  #                  timestamp, and it carries `codex_error_info`.
+  #   reactive    -> `$CURRENT`, the live `codex exec --json` stream.
+  #
+  # The reactive stream is what `codex-run.sh` asks after a nonzero exit, so it
+  # is what routed redglass CHUNK-6/8 to "not a usage limit". This fixture is
+  # that stream, recovered verbatim from the forge-codex-lane board, session
+  # 01a07acc -- the SAME session as the rollout fixture above. It carries no
+  # `rate_limits`, no marker of any kind, and no timestamp: the error channel is
+  # identifiable only by `"type":"error"` and by the message sitting under
+  # `turn.failed`'s `error` key. A rule keyed on the marker alone parses the
+  # rollout and is inert here, which is the whole reason this case exists.
+  if [ "$(_qtz plaintext-usage-limit-exec-json)" = "blocked wake_at=1788782100 windows=stated" ]; then
+    ok "the-reactive-exec-json-refusal-parks (no marker, no timestamp, no rate_limits)"
+  else
+    bad "the-reactive-exec-json-refusal-parks" \
+        "the real `codex exec --json` refusal must park like its rollout does; got '$(_qtz plaintext-usage-limit-exec-json)'"
+  fi
+
+  # …and that it parks for the RIGHT reason. Collapse the channel test back to
+  # the marker alone — the shipped-and-inert state this case was written to
+  # catch — and the stream must go unjudgeable while the rollout, which has the
+  # marker, still parses. Both halves are asserted: a mutant that broke BOTH
+  # would prove nothing about which arm is load-bearing.
+  local qwmark="$TMPROOT/quota-window-marker-only.py"
+  # Three -e, not one script with embedded newlines: a backslash-newline inside
+  # single quotes stays a literal newline, and BSD sed refuses it as a delimiter.
+  sed -e 's/^        on_channel = (marked$/        on_channel = (False/' \
+      -e 's/^                      or (isinstance(kind, str) and kind in ERROR_EVENT_TYPES)$/                      or False/' \
+      -e 's/^                      or parent_key == "error")$/                      or marked)/' \
+    "$qw" > "$qwmark" && chmod +x "$qwmark"
+  if [ "$(TZ=UTC "$qwmark" --threshold 95 --now $QTEXT \
+            "$fx/plaintext-usage-limit-exec-json.jsonl" 2>/dev/null)" \
+       = "unknown no-rate-limit-data" ] \
+     && [ "$(TZ=UTC "$qwmark" --threshold 95 --now $QTEXT \
+               "$fx/plaintext-usage-limit.jsonl" 2>/dev/null)" \
+          = "blocked wake_at=1788782100 windows=stated" ]; then
+    ok "the-reactive-channel-rule-is-not-the-marker-rule"
+  else
+    bad "the-reactive-channel-rule-is-not-the-marker-rule" \
+        "collapsing the channel test to the marker alone must make the stream unjudgeable while the rollout still parses — otherwise this case proves nothing"
   fi
 
   # A marker is evidence about the moment it was written. Carried forward over
@@ -8988,6 +9199,41 @@ QSTUB3
   else
     bad "wait-cap-blocks-with-a-board-class" \
         "exceeding FORGE_QUOTA_MAX_WAIT must exit 5 with an env: reason and keep the record (rc=$qrc)"
+  fi
+
+  # Q1 end to end. The same stub, refusing the way redglass was actually
+  # refused: no `rate_limits` anywhere, the reset only as prose. Before this,
+  # the reactive check read `unknown no-rate-limit-data`, took the `*)` arm and
+  # exited 4 — "not a usage limit" — leaving the lane to improvise a heartbeat.
+  # The assertion is not merely that it parks, but that the epoch it parks on
+  # is the one the sentence named. The date is computed 30 days out rather than
+  # hardcoded: a fixed far-future one would be refused by quota-window.py's own
+  # 400-day horizon as incredible, and a fixed near one would expire.
+  local qdate qepoch
+  qdate="$(TZ=UTC python3 -c 'import datetime as d; t=d.datetime.now(d.timezone.utc)+d.timedelta(days=30); print(t.strftime("%b %-d, %Y 9:53 AM"))')"
+  qepoch="$(TZ=UTC python3 -c 'import datetime as d; t=d.datetime.now(d.timezone.utc)+d.timedelta(days=30); print(int(t.replace(hour=9,minute=53,second=0,microsecond=0).timestamp()))')"
+  cat > "$qbin/codex" <<QSTUB9
+#!/usr/bin/env bash
+case "\${1:-}" in --version) echo "codex-cli stub"; exit 0;; esac
+printf '{"type":"session_meta","payload":{"session_id":"verify-session-9"}}\n'
+printf '{"timestamp":"2026-09-07T07:36:41.002Z","type":"event_msg","payload":{"type":"task_complete","error":{"message":"You'"'"'ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at $qdate.","codex_error_info":"usage_limit_exceeded"}}}\n'
+exit 1
+QSTUB9
+  chmod +x "$qbin/codex"
+  local qrt9="$qroot/runtime9"; mkdir -p "$qrt9"; printf 'c\n' > "$qrt9/contract.md"
+  qout="$(_qrun 120 env TZ=UTC PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+            FORGE_LANE_RUNTIME="$qrt9" FORGE_LANE_PARK_ROOT="$qpark" \
+            FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+            FORGE_QUOTA_MAX_WAIT=2 "$runner" "$qws" qrun-9 qtask-9 2>&1)"
+  qrc=$?
+  if [ "$qrc" = 5 ] \
+     && printf '%s' "$qout" | grep -qE '^env: codex usage limit on stated' \
+     && [ -s "$qpark/qtask-9.json" ] \
+     && grep -q "\"resets_at\": \"$qepoch\"" "$qpark/qtask-9.json"; then
+    ok "a-plaintext-refusal-parks-through-the-runner ($qdate -> $qepoch)"
+  else
+    bad "a-plaintext-refusal-parks-through-the-runner" \
+        "a prose-only refusal must reach the park path carrying its parsed reset, not exit 4 (rc=$qrc)"
   fi
 
   # ---- WHICH MODEL ACTUALLY RAN (audit F22, third recurrence) -------------

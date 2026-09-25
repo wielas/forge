@@ -13,7 +13,8 @@ Output is a PROPOSAL (branch + PR against the forge repo), never a direct edit.
    writing a `RETRO-MARKER <date>` line — read from the previous marker).
 2. `make metrics BOARD=<slug> [SINCE=..] [UNTIL=..]` — the period's numbers,
    straight out of the board's SQLite. Read the output; do not recompute it.
-3. Current forge repo state: `skills/`, `rubrics/`, `templates/`.
+3. Current forge repo state: `~/.forge/repo/skills/`, `~/.forge/rubrics/`,
+   `~/.forge/repo/templates/`.
 
 ## Process
 1. **Open with the numbers, before any interpretation. Do not compute them.**

@@ -283,7 +283,7 @@ kanban_complete(summary="<one sentence landed, one sentence to watch>",
 
 `created_cards` ids must come back from a real `kanban_create` — the kernel
 rejects invented ids and refuses the completion. Metadata keys: see
-`rubrics/kanban-metadata-schema.md`; keep Hermes's own (`changed_files`,
+`~/.forge/rubrics/kanban-metadata-schema.md`; keep Hermes's own (`changed_files`,
 `tests_run`, `decisions`) alongside the forge keys so the dashboard reads them
 for free. No secrets in `summary` or `metadata` — run rows are durable forever.
 

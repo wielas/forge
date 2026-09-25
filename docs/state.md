@@ -165,25 +165,34 @@ After `CLEAR`: commission; bootstrap the root; stop unless metadata is valid;
 then bootstrap the rest, recheck, and run `/retro`. F1, F2, F3's producer half,
 F25, F26, and F44 await that run. ADR-0011 still awaits ten reviews.
 
+> **The open epic is [`docs/epic-hands-free.md`](epic-hands-free.md).** It is
+> the epic's session table, not this file, that says which of its sessions are
+> done and which is next. Read its *§ How we run this epic* before proposing
+> anything: a session opens by running `make verify` on a clean `main` and
+> recording the baseline.
+
 ## Read in this order
 
 1. This file — where things stand.
-2. `README.md` — the five layers and why.
-3. `docs/staged-run-guide.md` — the root-first run, its hard checkpoints, and
+2. `docs/epic-hands-free.md` — the open epic: what the two product runs
+   measured, the session table that is the only progress record, and how a
+   session is run.
+3. `README.md` — the five layers and why.
+4. `docs/staged-run-guide.md` — the root-first run, its hard checkpoints, and
    stop rules.
-4. `docs/hermes-field-notes.md` — how the substrate really behaves. Every trap
+5. `docs/hermes-field-notes.md` — how the substrate really behaves. Every trap
    here cost a run to find.
-5. `docs/ladder-2026-07-28.md` — the second climb, on a fresh project. Sixteen
+6. `docs/ladder-2026-07-28.md` — the second climb, on a fresh project. Sixteen
    findings with the commands that produced them, including the two that
    defeated a gate: a `make check` green that CI rejected, and a tier-2 human
    card the dispatcher claimed.
-6. `docs/experiment-2026-07-28.md` — the four exercises that made the system
+7. `docs/experiment-2026-07-28.md` — the four exercises that made the system
    fail on purpose: the deliberate bounce, the dependency edge, a killed
    worker, a red CI. Read with `docs/adr/0008-integrated-dependencies.md`,
    which is what the dependency exercise cost.
-7. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
+8. `docs/audit-2026-07-27.md` — historical. All findings closed; kept as a
    record of what reading-only analysis can and cannot catch.
-8. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
+9. `docs/retro-metrics.md` — the only numbers that can falsify "Forge is
    improving".
 
 ---
@@ -487,6 +496,10 @@ Ledger and rationale for every F-number: `docs/audit-forgeboard-2026-07-30.md`.
 ---
 
 ## Next test, and what it must be
+
+*(Written before the epic. The next runs are now the epic's proving runs A, B
+and C — `docs/epic-hands-free.md`, sessions S7, S9 and S12 — which keep this
+section's one rule and give it three specific variables.)*
 
 The next run should introduce **exactly one** new variable. In rough order of
 value:

@@ -8,10 +8,14 @@ and a second description here would drift from the first.
 
 1. `docs/state.md` — what is *proven* vs merely *claimed*, and what to do next.
    It is written for a session starting with no context. Start here, not at the README.
-2. `README.md` — the five-layer architecture (L1 methodology → L5 flywheel) and why.
-3. `docs/hermes-field-notes.md` — how the substrate actually behaves. Every trap in
+2. `docs/epic-hands-free.md` — **the open epic, and the only record of its
+   progress.** Its session table says what is done; its *§ How we run this epic*
+   says how a session opens, builds and closes. If you were asked to run an epic
+   session, that section is your contract. ADR-0019 is the decision it turns on.
+3. `README.md` — the five-layer architecture (L1 methodology → L5 flywheel) and why.
+4. `docs/hermes-field-notes.md` — how the substrate actually behaves. Every trap in
    it cost a run to find.
-4. `docs/adr/` — rationale for every major decision. ADR-0003 and ADR-0010 constrain
+5. `docs/adr/` — rationale for every major decision. ADR-0003 and ADR-0010 constrain
    how skills may be written; read those two before editing anything in `skills/`.
 
 **If two files disagree, `make verify` arbitrates.** Do not resolve a contradiction

@@ -43,7 +43,7 @@ PR body (write `.forge/pr-body.md`): chunk goal · scenario list with pass statu
 DEBT/CARD? items. The template in `.github/PULL_REQUEST_TEMPLATE.md` matches.
 
 ## 5. Emit metadata (the structured handoff)
-Produce the JSON defined in `rubrics/kanban-metadata-schema.md` and:
+Produce the JSON defined in `~/.forge/rubrics/kanban-metadata-schema.md` and:
 - Unattended lane: you are inside a Hermes worker — pass it straight to
   `kanban_complete(metadata=…)`; the lane owns that call (see the `forge-lane`
   skill). Nothing scrapes stdout.

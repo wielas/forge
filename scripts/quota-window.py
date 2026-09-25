@@ -53,7 +53,9 @@ crash (ADR-0010 D10.3).
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import re
 import sys
 import time
 from typing import Any, Iterator
@@ -71,6 +73,176 @@ NOT_WINDOWS = ("limit_id", "limit_name", "credits", "individual_limit",
 # them as authoritative, because a hard signal outranks a percentage.
 REACHED_MARKERS = ("usage_limit_reached", "rate_limit_reached",
                    "usage_limit_exceeded", "quota_exceeded")
+
+# A marker is not always there. The refusal `codex exec --json` actually emits
+# -- recovered from the `forge-codex-lane` board, session 01a07acc, the run that
+# produced redglass CHUNK-6/8's block -- is:
+#
+#   {"type":"thread.started","thread_id":"01a07acc-…"}
+#   {"type":"turn.started"}
+#   {"type":"error","message":"You've hit your usage limit. … try again at 11:55 AM."}
+#   {"type":"turn.failed","error":{"message":"You've hit your usage limit. …"}}
+#
+# No `codex_error_info`, no `error_type`, no `rate_limits`, no timestamp. The
+# rollout for the SAME session carries the marker; the stream does not. So the
+# error channel is identified by the event's own type, or by the message
+# sitting under an `error` key, as well as by a co-located marker. What is NOT
+# the error channel stays out: an `agent_message`, or an item's `text`, is the
+# model talking, and a chunk that builds a rate limiter talks about usage
+# limits all day.
+ERROR_EVENT_TYPES = ("error", "turn.failed", "task_failed", "stream_error")
+
+# Codex also refuses in PLAIN TEXT, with no `rate_limits` object anywhere in the
+# stream. Observed on redglass CHUNK-6 and CHUNK-8; the event, verbatim from
+# rollout 01a07acc (2026-09-07T07:36:41Z), is
+#
+#   {"type":"event_msg","payload":{"type":"task_complete","error":{"message":
+#    "You've hit your usage limit. Upgrade to Pro (...) or try again at
+#    11:55 AM.","codex_error_info":"usage_limit_exceeded"}}}
+#
+# `decide` raised `no-rate-limit-data`, `codex-run.sh` read exit 3 as "not a
+# usage limit" and exited 4, and the lane improvised a ~3 h heartbeat wait for a
+# window that in fact lifted in 2 h 19 m. The stated time IS the reset; it is
+# merely prose instead of an epoch. So it is parsed -- and parsed ONLY out of
+# the refusal's own message, never out of any string in the stream: a chunk that
+# builds a rate limiter prints "usage limit" in agent text all day, and
+# `quota/non-quota-failure-is-not-parked` must stay green.
+#
+# Two spellings have been seen in real rollouts. Both are matched; the dated one
+# first, because it contains the bare one.
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"))}
+# "…or try again at Aug 5th, 2026 9:53 AM."
+RESET_DATED = re.compile(
+    r"try again at\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+"
+    r"(\d{4})\s+(\d{1,2}):(\d{2})\s*([AaPp])\.?[Mm]", re.I)
+# "…or try again at 11:55 AM."
+RESET_CLOCK = re.compile(
+    r"try again at\s+(\d{1,2}):(\d{2})\s*([AaPp])\.?[Mm]", re.I)
+
+
+def _to_24h(hour: int, meridiem: str) -> int:
+    """12-hour clock to 24-hour. 12 AM is 0; 12 PM is 12."""
+    hour %= 12
+    return hour + (12 if meridiem.lower() == "p" else 0)
+
+
+def parse_stated_reset(message: str, anchor: int) -> int | None:
+    """The epoch a refusal MESSAGE says work may resume, or None.
+
+    The time is rendered in the operator's own timezone with no zone marker, so
+    it is resolved in local time -- the same clock that printed it. A DST fold
+    can move the answer by an hour, which is bounded and self-correcting: the
+    caller re-probes on its floor.
+
+    `anchor` is the moment the refusal was WRITTEN, not now, and the bare clock
+    form resolves to the next occurrence strictly after it. Anchoring to `now`
+    instead would make a stale rollout read at pre-flight -- an hours-old
+    refusal, already lifted -- park until this afternoon's 11:55, which is the
+    very mistake `_is_stale` exists to prevent. Anchored to the event, the same
+    stale refusal resolves into the past and is discarded as stale evidence.
+    """
+    dated = RESET_DATED.search(message)
+    if dated:
+        mon, day, year, hour, minute, meridiem = dated.groups()
+        month = _MONTHS.get(mon[:3].lower())
+        if month is None:
+            return None
+        try:
+            return int(dt.datetime(int(year), month, int(day),
+                                   _to_24h(int(hour), meridiem),
+                                   int(minute)).timestamp())
+        except ValueError:
+            return None
+
+    clock = RESET_CLOCK.search(message)
+    if not clock:
+        return None
+    hour, minute, meridiem = clock.groups()
+    if int(minute) > 59:
+        return None
+    when = dt.datetime.fromtimestamp(anchor)
+    try:
+        candidate = when.replace(hour=_to_24h(int(hour), meridiem),
+                                 minute=int(minute), second=0, microsecond=0)
+    except ValueError:
+        return None
+    if candidate <= when:
+        candidate += dt.timedelta(days=1)
+    return int(candidate.timestamp())
+
+
+def find_refusal_messages(obj: Any, parent_key: str | None = None
+                          ) -> Iterator[str]:
+    """Yield the `message` of every object that is ITSELF a refusal.
+
+    Three ways to be one, any of which is enough, and all three are things the
+    envelope says rather than things the prose says:
+
+    - a limit-reached marker sits in the same dict (the rollout's shape);
+    - the dict's own `type` is an error-channel event (the stream's `error`);
+    - the dict is the value of an `error` key (the stream's `turn.failed`).
+
+    An `agent_message`, or an item's `text`, satisfies none of them.
+    """
+    if isinstance(obj, dict):
+        message = obj.get("message")
+        marked = any(v in REACHED_MARKERS for v in obj.values()
+                     if isinstance(v, str))
+        kind = obj.get("type")
+        on_channel = (marked
+                      or (isinstance(kind, str) and kind in ERROR_EVENT_TYPES)
+                      or parent_key == "error")
+        if isinstance(message, str) and on_channel:
+            yield message
+        for key, value in obj.items():
+            yield from find_refusal_messages(value, key)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from find_refusal_messages(value, parent_key)
+
+
+def event_time(obj: Any, default: int) -> int:
+    """The epoch this event was written, searched by key, else `default`.
+
+    By key and not by path, for the same reason `find_rate_limits` is: the two
+    streams this script is actually pointed at have different envelopes.
+
+    - The pre-flight gate reads the newest **session rollout**, which nests the
+      payload under `payload` and stamps each line with a top-level ISO
+      `timestamp`. That is the stale-evidence path -- an hours-old refusal read
+      before a run starts -- and it is exactly the path the anchor exists for.
+    - The reactive check reads `$CURRENT`, the live `codex exec --json` stream,
+      whose events (`thread.started`, `item.completed`, …) carry **no time
+      field at all**; measured on the one real stream on this machine,
+      `~/.forge/lane-quarantine/20260902-142534/scratch-forge-lane-1`.
+
+    So the fallback to `default` is not a corner: it is the normal answer on
+    the reactive path, and it is the right one there, because the stream was
+    written seconds ago and `default` is now.
+    """
+    if isinstance(obj, dict):
+        stamp = obj.get("timestamp")
+        if isinstance(stamp, str):
+            try:
+                return int(dt.datetime.fromisoformat(
+                    stamp.replace("Z", "+00:00")).timestamp())
+            except ValueError:
+                pass
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            return int(stamp)
+        for value in obj.values():
+            found = event_time(value, 0)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = event_time(value, 0)
+            if found:
+                return found
+    return default
+
 
 # The furthest ahead a stated reset may be and still be believed. A provider
 # that moves `resets_at` to epoch MILLISECONDS -- an ordinary API change, and
@@ -281,6 +453,8 @@ def main(argv: list[str] | None = None) -> int:
         # reading of the same log, however healthy the provider says the
         # windows now are. A new snapshot supersedes the markers before it.
         rate_limits = None
+        stated_reset = None
+        clock_now = args.now if args.now is not None else int(time.time())
         for obj in iter_json_objects(text):
             fresh = False
             for found in find_rate_limits(obj):
@@ -288,6 +462,26 @@ def main(argv: list[str] | None = None) -> int:
                 fresh = True
             marker = contains_reached_marker(obj)
             reached = marker if fresh else (reached or marker)
+            # A plain-text refusal is superseded by a fresher structured
+            # snapshot for exactly the reason `reached` is: it is evidence about
+            # the moment it was written, not a standing condition.
+            here = None
+            for message in find_refusal_messages(obj):
+                here = parse_stated_reset(message, event_time(obj, clock_now))
+                if here is not None:
+                    break
+            stated_reset = here if fresh else (here or stated_reset)
+
+        # No structured windows at all, but the provider refused in prose and
+        # said when it lifts. Synthesise the window that sentence describes, so
+        # a caller gets `blocked wake_at=<epoch>` and parks, instead of the
+        # `unknown no-rate-limit-data` that routed redglass CHUNK-6/8 to "not a
+        # usage limit". A window invented here is spent by definition: the
+        # provider did not estimate, it refused.
+        if rate_limits is None and stated_reset is not None:
+            rate_limits = {"limit_id": "codex-plaintext",
+                           "stated": {"used_percent": 100.0,
+                                      "resets_at": stated_reset}}
 
     try:
         verdict = decide(rate_limits, args.threshold, reached=reached,
