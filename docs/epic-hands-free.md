@@ -480,6 +480,7 @@ closes.
 |---|---|---|---|---|
 | S0 | this document; operator: merge it, Q3, remove `builder` | Plan agreed | open | #73 |
 | S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | done | #74 |
+| S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | |
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | planned | |
 | S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending | planned | |
 | S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
@@ -580,7 +581,10 @@ evidence and is triaged when the next session opens: promoted to an item,
 folded into an existing one, or closed with a reason.
 
 **P1 (S1). `config/external-dirs/*` is red on a clean `main`, and the epic
-made it so.** Four cases — `forge-codex-lane`, `forge-digest`,
+made it so.** *Triaged at S2's opening: promoted to row S1b, its own PR ahead
+of S2, and fixed there with the third arm described below —
+`external_dirs_verdict` in `scripts/verify.sh`, every arm executed offline by
+`cli/external-dirs-arms`.* Four cases — `forge-codex-lane`, `forge-digest`,
 `forge-orchestrator`, `forge-prejudge` — fail with
 
 ```

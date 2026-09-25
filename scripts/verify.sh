@@ -341,6 +341,50 @@ model_pin_bootstrap_shape_diagnostic() { # $1=bootstrap file (or a mutated copy)
 #
 # $1=verify.sh-shaped file -> prints a diagnostic naming both sets, returns 1
 # on a mismatch in EITHER direction, and on an unreadable list.
+# Where a profile's skills.external_dirs may point, judged (P1, epic S1).
+# $1=the value `hermes config get` printed  $2=$HOME  $3=this checkout
+# $4=the main checkout. Prints `ok|skip|bad<TAB>detail`; always rc 0.
+#
+# Three worlds, and a fourth that is the defect:
+#   this checkout                 ok
+#   the main checkout, from a     skip — F49: edits in a linked worktree are
+#     linked worktree                    not live for any run
+#   ~/.forge/repo/skills          ok, naming the checkout it resolves to —
+#                                   the epic's "three places": the profiles
+#                                   run ~/dev/forge-runtime ON PURPOSE, which
+#                                   is deliberately not the dev checkout
+#   anything else                 bad
+# The third arm still asserts something, which is why it exists rather than
+# the case being deleted: the symlink must resolve, carry a skills/ directory
+# with forge-lane in it, and be a checkout of THIS repository's origin. A
+# symlink retargeted at an unrelated tree, or left dangling, is still red.
+external_dirs_verdict() {
+  local v="$1" home="$2" repo="$3" main="$4" link target origin_here origin_there head
+  case "$v" in
+    *"$repo/skills"*) printf 'ok\t\n'; return 0;;
+    *"$main/skills"*)
+      printf 'skip\tpoints at the main checkout %s/skills; edits in this worktree are not live for any run\n' "$main"
+      return 0;;
+    *"$home/.forge/repo/skills"*) ;;
+    *) printf 'bad\tdoes not point at %s/skills or %s/.forge/repo/skills (got %s)\n' \
+         "$repo" "$home" "'${v:-unset}'"; return 0;;
+  esac
+  link="$home/.forge/repo"
+  target="$(cd "$link" 2>/dev/null && pwd -P)" || {
+    printf 'bad\t%s does not resolve to a directory\n' "$link"; return 0; }
+  [ -f "$target/skills/forge-lane/SKILL.md" ] || {
+    printf 'bad\t%s resolves to %s, which carries no skills/forge-lane — not a forge checkout\n' \
+      "$link" "$target"; return 0; }
+  origin_here="$(git -C "$repo" remote get-url origin 2>/dev/null)"
+  origin_there="$(git -C "$target" remote get-url origin 2>/dev/null)"
+  if [ -z "$origin_there" ] || [ "$origin_there" != "$origin_here" ]; then
+    printf 'bad\t%s resolves to %s, whose origin %s is not this checkout'"'"'s %s\n' \
+      "$link" "$target" "'${origin_there:-none}'" "'${origin_here:-none}'"; return 0
+  fi
+  head="$(git -C "$target" rev-parse --short HEAD 2>/dev/null)"
+  printf 'ok\tvia ~/.forge/repo -> %s @ %s\n' "$target" "${head:-unknown}"
+}
+
 suite_registry_diff() {
   local f="$1" registry default missing extra
   registry="$(sed -n 's/^[[:space:]]*\([^)]*\)) SUITES=.*/\1/p' "$f" \
@@ -1363,6 +1407,42 @@ SMANCHORS
   else
     bad "set-model-is-executable" "${sm_exec_detail# }"
   fi
+
+  # config/external-dirs/* is judged by external_dirs_verdict, but the config
+  # group skips wholesale without Hermes — so in CI its arms would never run,
+  # and the new third arm (P1) would be a branch nothing executes. This drives
+  # every arm offline against fixture checkouts: a fake HOME whose
+  # ~/.forge/repo resolves to a clone of this origin, to an unrelated tree,
+  # and to nothing. The two negatives are the point: an arm that passes any
+  # symlink would have made the case unable to fail, which is worse than red.
+  local ed_root="$TMPROOT/external-dirs" ed_home ed_repo ed_main ed_rt ed_got ed_ok=1 ed_detail=""
+  rm -rf "$ed_root"; mkdir -p "$ed_root/home/.forge" "$ed_root/unrelated/skills"
+  ed_home="$ed_root/home"; ed_repo="$ed_root/dev"; ed_main="$ed_root/main"; ed_rt="$ed_root/runtime"
+  for ed_dir in "$ed_repo" "$ed_rt"; do
+    mkdir -p "$ed_dir/skills/forge-lane" && : > "$ed_dir/skills/forge-lane/SKILL.md"
+    git init -q "$ed_dir" && git -C "$ed_dir" remote add origin git@example.test:o/forge.git
+  done
+  git -C "$ed_rt" -c user.email=v@v -c user.name=v commit -q --allow-empty -m rt
+  _ed() { external_dirs_verdict "$1" "$ed_home" "$ed_repo" "$ed_main" | cut -f1; }
+  ln -s "$ed_rt" "$ed_home/.forge/repo"
+  [ "$(_ed "- $ed_repo/skills")" = ok ] || { ed_ok=0; ed_detail="$ed_detail this-checkout-not-ok"; }
+  [ "$(_ed "- $ed_main/skills")" = skip ] || { ed_ok=0; ed_detail="$ed_detail main-checkout-not-skip"; }
+  [ "$(_ed "- $ed_home/.forge/repo/skills")" = ok ] || { ed_ok=0; ed_detail="$ed_detail runtime-clone-not-ok"; }
+  external_dirs_verdict "- $ed_home/.forge/repo/skills" "$ed_home" "$ed_repo" "$ed_main" \
+    | grep -Fq "$(cd "$ed_rt" && pwd -P) @ " || { ed_ok=0; ed_detail="$ed_detail runtime-arm-does-not-name-the-checkout"; }
+  [ "$(_ed "- $ed_root/elsewhere/skills")" = bad ] || { ed_ok=0; ed_detail="$ed_detail elsewhere-not-bad"; }
+  [ "$(_ed "")" = bad ] || { ed_ok=0; ed_detail="$ed_detail unset-not-bad"; }
+  git -C "$ed_rt" remote set-url origin git@example.test:someone-else/forge.git
+  [ "$(_ed "- $ed_home/.forge/repo/skills")" = bad ] || { ed_ok=0; ed_detail="$ed_detail foreign-origin-not-bad"; }
+  rm "$ed_home/.forge/repo"; ln -s "$ed_root/unrelated" "$ed_home/.forge/repo"
+  [ "$(_ed "- $ed_home/.forge/repo/skills")" = bad ] || { ed_ok=0; ed_detail="$ed_detail non-forge-tree-not-bad"; }
+  rm "$ed_home/.forge/repo"; ln -s "$ed_root/gone" "$ed_home/.forge/repo"
+  [ "$(_ed "- $ed_home/.forge/repo/skills")" = bad ] || { ed_ok=0; ed_detail="$ed_detail dangling-not-bad"; }
+  if [ "$ed_ok" = 1 ]; then
+    ok "external-dirs-arms (this checkout ok, main skip, runtime clone ok and named; foreign origin, non-forge tree, dangling link, elsewhere and unset all bad)"
+  else
+    bad "external-dirs-arms" "external_dirs_verdict misjudged an arm —$ed_detail"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1457,12 +1537,19 @@ run_config_group() {
     # same disarming F43 describes. So: a match on this checkout passes; a match
     # on the main checkout, from a linked worktree, SKIPS with the consequence
     # stated — the skills you are editing are not the ones a run would read.
+    #
+    # And a third world since the hands-free epic (P1): ~/.forge/repo symlinks
+    # ~/dev/forge-runtime, which is deliberately NOT any dev checkout, so the
+    # two arms above made this case red on a clean main. external_dirs_verdict
+    # judges all three; cli/external-dirs-arms executes every arm offline.
+    local ed_verdict ed_detail
     v="$(hermes -p "$p" config get skills.external_dirs 2>/dev/null)"
-    case "$v" in
-      *"$REPO_ROOT/skills"*) ok "external-dirs/$p";;
-      *"$MAIN_ROOT/skills"*)
-        skip "external-dirs/$p" "points at the main checkout $MAIN_ROOT/skills; edits in this worktree are not live for any run";;
-      *) bad "external-dirs/$p" "does not point at $REPO_ROOT/skills (got '${v:-unset}')";;
+    IFS=$'\t' read -r ed_verdict ed_detail \
+      < <(external_dirs_verdict "$v" "$HOME" "$REPO_ROOT" "$MAIN_ROOT")
+    case "$ed_verdict" in
+      ok)   ok "external-dirs/$p${ed_detail:+ ($ed_detail)}";;
+      skip) skip "external-dirs/$p" "$ed_detail";;
+      *)    bad "external-dirs/$p" "${ed_detail:-the verdict helper printed nothing}";;
     esac
 
     # A SOUL edited in git does NOT reach the worker: profiles-bootstrap.sh
@@ -2212,9 +2299,10 @@ cli/lane-skill-management-policy  retained skills toolset is write-approval-gate
 cli/skill-description-budget              frontmatter descriptions fit the budget every session pays to list
 cli/retro-metrics                         docs/retro-metrics.md exists and carries the table /retro appends to
 cli/codex-run-flags-exist                 each flag codex-run.sh builds is in its argv AND accepted by that subcommand
+cli/external-dirs-arms                    config/external-dirs' three arms, executed offline: this checkout, main (skip), ~/.forge/repo named; wrong targets bad
 config/terminal-timeout/<profile> >= 1800s per profile
 config/write-approval/<profile>   ADR-0005 consent gate on per profile
-config/external-dirs/<profile>    points at this checkout's skills/
+config/external-dirs/<profile>    points at this checkout's skills/, or ~/.forge/repo resolving to a checkout of this origin
 config/soul-in-sync/<profile>     live ~/.hermes SOUL matches the one in git
 config/model-pin-live/<profile>   live model.default matches the pin that would republish it
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
