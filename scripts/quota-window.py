@@ -177,7 +177,24 @@ def find_refusal_messages(obj: Any) -> Iterator[str]:
 
 
 def event_time(obj: Any, default: int) -> int:
-    """The epoch this event was written, from the envelope, else `default`."""
+    """The epoch this event was written, searched by key, else `default`.
+
+    By key and not by path, for the same reason `find_rate_limits` is: the two
+    streams this script is actually pointed at have different envelopes.
+
+    - The pre-flight gate reads the newest **session rollout**, which nests the
+      payload under `payload` and stamps each line with a top-level ISO
+      `timestamp`. That is the stale-evidence path -- an hours-old refusal read
+      before a run starts -- and it is exactly the path the anchor exists for.
+    - The reactive check reads `$CURRENT`, the live `codex exec --json` stream,
+      whose events (`thread.started`, `item.completed`, …) carry **no time
+      field at all**; measured on the one real stream on this machine,
+      `~/.forge/lane-quarantine/20260902-142534/scratch-forge-lane-1`.
+
+    So the fallback to `default` is not a corner: it is the normal answer on
+    the reactive path, and it is the right one there, because the stream was
+    written seconds ago and `default` is now.
+    """
     if isinstance(obj, dict):
         stamp = obj.get("timestamp")
         if isinstance(stamp, str):
@@ -186,10 +203,17 @@ def event_time(obj: Any, default: int) -> int:
                     stamp.replace("Z", "+00:00")).timestamp())
             except ValueError:
                 pass
-        for key in ("completed_at", "started_at"):
-            value = obj.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return int(value)
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            return int(stamp)
+        for value in obj.values():
+            found = event_time(value, 0)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = event_time(value, 0)
+            if found:
+                return found
     return default
 
 

@@ -1,11 +1,12 @@
 # ADR-0007: Two-tier judging — a cheap unattended filter, then the operator
 
 **Status:** accepted · 2026-07-27 · **D7.1, D7.2 and D7.3 superseded by
-ADR-0019** (2026-09-25), on the evidence of the JobApp and redglass runs.
-D7.4 onward stand. The text below is left as written; it is the record of a
-decision, and D7.3's own fallback clause — *"if the hello-chunk run shows the
-child card is unreliable, switch to `review-required`"* — is what ADR-0019
-invokes.
+ADR-0019** (2026-09-25), on the evidence of the JobApp and redglass runs. D7.4
+— the structured verdict — stands; there is no D7.5. The text below is left as
+written, because it is the record of a decision. Its last consequence is the
+clause ADR-0019 invokes: *"If the hello-chunk run shows the child card is
+unreliable, switch to `review-required` — that is the honest fallback, and this
+decision is the weakest one here."*
 
 ## Context
 

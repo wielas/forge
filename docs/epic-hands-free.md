@@ -579,7 +579,7 @@ Discoveries made during a session that are not its items. Each carries its
 evidence and is triaged when the next session opens: promoted to an item,
 folded into an existing one, or closed with a reason.
 
-**PL-1 (S1). `config/external-dirs/*` is red on a clean `main`, and the epic
+**P1 (S1). `config/external-dirs/*` is red on a clean `main`, and the epic
 made it so.** Four cases — `forge-codex-lane`, `forge-digest`,
 `forge-orchestrator`, `forge-prejudge` — fail with
 

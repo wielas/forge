@@ -1,8 +1,8 @@
 # ADR-0019: One card per chunk, review on that card, and the verifier merges
 
 - Status: accepted · 2026-09-25
-- Supersedes: ADR-0007 **D7.1, D7.2 and D7.3**. D7.4 (a structured verdict) and
-  D7.5 onward stand.
+- Supersedes: ADR-0007 **D7.1, D7.2 and D7.3**. D7.4 (a structured verdict)
+  stands; ADR-0007 has no further decisions.
 - Amends: ADR-0008 — its *mechanism* changes, its *rule* does not.
 - Constrains: ADR-0009 (what tier 1 decides), ADR-0010 (a protocol is a
   program), ADR-0017 (an ungatable repository).
@@ -25,7 +25,8 @@ system. Three measurements decide this ADR.
 
 **1. Tier 2 was skipped, not performed.** Several redglass tier-2 cards were
 closed with "merged", "Approved", or CHUNK-8's "merged out of band" — no `/judge`
-run happened. A gate the operator routes around is not a gate; it is latency
+run happened. *Several* is the ledger's word and is deliberately not sharpened
+into a count here. A gate the operator routes around is not a gate; it is latency
 with a ceremony attached. Tier-2 caught a real defect in 3 of 5 JobApp chunks and
 **0 of 9** redglass chunks.
 
@@ -59,10 +60,10 @@ reader of one diff.
 Two structural costs sit on top of the three measurements. Cards per chunk ran
 1.9 (JobApp) and 3.5 (redglass) because judge and fix cards are children; the
 CHUNK-8 card storm was a cheap model making board calls, and C20's respawn-guard
-trap was the same shape. ADR-0007 itself named the remedy and the trigger:
-*"If the hello-chunk run shows the child card is unreliable, switch to
-`review-required` — that is the honest fallback, and this decision is the
-weakest one here."* The runs are that showing.
+trap was the same shape. ADR-0007 itself named the remedy and the trigger, in the last of its
+consequences rather than in a decision: *"If the hello-chunk run shows the child
+card is unreliable, switch to `review-required` — that is the honest fallback,
+and this decision is the weakest one here."* The runs are that showing.
 
 ## Decision
 
@@ -88,13 +89,26 @@ merging. The operator merges, the merge-watcher moves the card to `done`. This
 is the shadow arm — it produces the disagreement data the flip criterion needs
 while the blast radius of a wrong approval is still zero.
 
+Half of this state machine is **executed** and half is **read in source**, and
+the difference is recorded rather than blurred (ADR-0017's fixture-proof rule).
+Executed against the installed Hermes under an isolated `HERMES_HOME`,
+2026-09-24: `review → complete → done` releases the child; `reopen-review`
+returns the card to `ready` with the implementer restored and the reason
+recorded as a comment, three rounds running; an operator-level `block` of a card
+in `review` is refused. Read in Hermes 0.21.5's source and **not yet executed**:
+that a claimed review run is `running` with `source_status=review`, so the
+verifier's own block lands in `blocked` and `unblock` returns it to `review`;
+that `complete_task` accepts `blocked → done` given a result; and the
+`BLOCK_RECURRENCE_LIMIT=2` triage route. FL4's fixtures must execute those three
+before anything depends on them.
+
 Merge mode is not a configuration the verifier may choose. It is switched on by
 the operator, once, after the flip criterion below is met.
 
 **D19.4 — The flip criterion, copied from the epic and not restated.** Merge
 authority moves to the verifier only if, over milestone 1: the verifier bounced
 every seeded defect; the operator bounced no PR the verifier recommended (each
-disagreement is triaged, fixed, and replayed); and every defect the milestone
+disagreement is triaged, fixed in FL5 and replayed); and every defect the milestone
 probe found was one per-chunk verification could not have seen. Otherwise
 milestone 2 runs in shadow too. Each proving run changes **one** variable.
 
@@ -122,9 +136,11 @@ settles the epic's first open question, all three parts yes.
   branch a resumed or respawned lane can still push to, and the verifier's
   evidence is the merge commit, not the branch.
 - **`worktree-sweep` after each merge.** F40 requires every slice to run in its
-  own worktree, and a stale sibling worktree is what produced a blast-radius
-  false positive in each of the two runs (one apiece). Sweeping at merge is the
-  point where the worktree is provably spent.
+  own worktree, and each run recorded one blast-radius false positive whose
+  class the ledger names *sibling worktree*. Whether sweeping at merge would
+  have prevented those two specific events has not been checked; what is true
+  without checking is that a merged chunk's worktree is provably spent, and
+  merge is the one moment that is knowable.
 
 **D19.7 — The tier-1 scorer is not removed here.** ADR-0009's `claude -p`
 control arm and the `prejudge/scorer-is-the-control-arm` pin stay exactly as
@@ -184,7 +200,8 @@ argument above.
 ## Rejected
 
 - **Keep tier 2 and make it mandatory.** The runs show what "mandatory" is worth
-  against a tired operator at 2 a.m.: three closures that never ran `/judge`.
+  against a tired operator at 2 a.m.: several redglass closures that never ran
+  `/judge` — "merged", "Approved", CHUNK-8's "merged out of band".
   A gate that is routed around is worse than one that was never claimed, because
   the board still records it as passed.
 - **Auto-merge only on unanimous agreement** (the backtest's own rule). It is a

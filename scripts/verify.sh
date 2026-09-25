@@ -199,25 +199,25 @@ check_skill_section_references() { # $1=repo root; diagnostics on stdout
 # skills, the three SOULs, prejudge-review.sh and the control-arm fixture all
 # already use the shorter `~/.forge/rubrics/` form, so that is the one required
 # here rather than a second spelling of the same directory.
-# Only a citation that NAMES A FILE is rejected. `skills/retro/SKILL.md` lists
-# `skills/`, `rubrics/`, `templates/` as the trees a retro reads, and a retro
-# runs in the forge checkout, where those resolve; a bare directory in a list of
-# this repo's own trees is not a path a worker is told to open.
+# Every bare `rubrics/` is rejected -- the bare directory included, and column 0
+# included, because that is where a wrapped markdown line puts a path. There is
+# no exemption list and no per-site argument about which cwd a given skill
+# happens to run in: the whole defect is that a reader cannot tell by looking.
 check_skill_rubric_paths() { # $1=repo root; diagnostics on stdout
   local root="$1" hits source line text bare=0 seen=0
-  hits="$(grep -rnEo '[^~/[:alnum:]_.-]rubrics/[A-Za-z0-9_.-]+\.[A-Za-z0-9]+' \
+  hits="$(grep -rnEo '(^|[^~/[:alnum:]_.-])rubrics/' \
              "$root/skills" --include='SKILL.md' 2>/dev/null || true)"
-  # The check must not pass by finding nothing to look at: a corpus with no
-  # rubric citation at all is a blind check, not a clean one (F65/F66).
-  seen="$(grep -rlE 'rubrics/[A-Za-z0-9_.-]+\.[A-Za-z0-9]+' \
+  # The check must not pass by finding nothing to look at: a corpus that names
+  # no rubric at all is a blind check, not a clean one (F65/F66).
+  seen="$(grep -rlE 'rubrics/' \
              "$root/skills" --include='SKILL.md' 2>/dev/null | wc -l | tr -d ' ')"
   if [ "${seen:-0}" -eq 0 ]; then
-    echo "no skill cites a rubric file at all — the check went blind"
+    echo "no skill names a rubric at all — the check went blind"
     return 1
   fi
   while IFS=: read -r source line text; do
     [ -n "$source" ] || continue
-    echo "${source#"$root"/}:$line cites '$(printf '%s' "$text" | sed 's/^.//')' — a bare rubrics/ path resolves against the worker's cwd, not this checkout; use ~/.forge/rubrics/"
+    echo "${source#"$root"/}:$line has a bare 'rubrics/' path — it resolves against the worker's cwd, not this checkout; use ~/.forge/rubrics/"
     bare=1
   done <<< "$(printf '%s' "$hits" | grep . || true)"
   return "$bare"
@@ -667,14 +667,17 @@ run_cli_group() {
   sed 's|~/\.forge/rubrics/judge-rubric\.md|rubrics/judge-rubric.md|' \
     "$rubric_fixture/skills/judge/SKILL.md" > "$rubric_fixture/judge.mutated"
   mv "$rubric_fixture/judge.mutated" "$rubric_fixture/skills/judge/SKILL.md"
+  # …and the same defect at column 0, which is where a wrapped line puts it.
+  printf 'rubrics/kanban-metadata-schema.md is the schema.\n' \
+    >> "$rubric_fixture/skills/retro/SKILL.md"
   rubric_mutation="$(check_skill_rubric_paths "$rubric_fixture" 2>&1)"; rubric_rc=$?
   if [ "$rubric_rc" -ne 0 ] \
      && printf '%s' "$rubric_mutation" | grep -Fq "skills/judge/SKILL.md" \
-     && printf '%s' "$rubric_mutation" | grep -Fq "rubrics/judge-rubric.md"; then
+     && printf '%s' "$rubric_mutation" | grep -Fq "skills/retro/SKILL.md"; then
     ok "skill-bare-rubric-path-is-named"
   else
     bad "skill-bare-rubric-path-is-named" \
-        "un-anchoring judge's rubric citation was not reported with its file and path (got: ${rubric_mutation:-no diagnostic})"
+        "un-anchoring judge's citation, and a bare path at column 0 in retro, were not both reported with their files (got: ${rubric_mutation:-no diagnostic})"
   fi
 
   # The same discipline for the other kind of prompt, which never had a number.
@@ -2536,6 +2539,7 @@ quota/a-plaintext-refusal-parks-with-its-stated-reset  a prose refusal with no r
 quota/a-plaintext-reset-is-anchored-to-the-event-not-to-now  a stale prose refusal resolves into the past and clears
 quota/a-plaintext-reset-is-read-only-on-the-error-channel  the same sentence in agent text stays unknown
 quota/a-dated-plaintext-reset-is-parsed   the second observed spelling, carrying its own date
+quota/a-refusal-parses-from-the-flat-json-envelope-too  the reactive `codex exec --json` shape, which has no payload wrapper and no timestamp
 quota/a-plaintext-refusal-parks-through-the-runner  codex-run.sh parks on the parsed epoch instead of exiting 4
 quota/a-named-refusal-blocks-only-the-window-it-names  rate_limit_reached_type must not widen to healthy windows
 quota/a-fresh-snapshot-supersedes-an-earlier-refusal  a reached marker must not outlive the snapshot that described it
@@ -6241,7 +6245,7 @@ FROZEN_FEATURE
     ok "gate-is-a-stage-not-a-replacement (gate has no model call; the scorer survives in $review)"
   else
     bad "gate-is-a-stage-not-a-replacement" \
-        "the tier-1 scorer call is gone from $review — ADR-0007 D7.1 stands and ADR-0009 does not supersede it; deleting it is S5's experiment, not this gate's side effect"
+        "the tier-1 scorer call is gone from $review — ADR-0019 D19.7 keeps it in place and ADR-0009 does not supersede it; deleting it is S5's experiment, not this gate's side effect"
   fi
 
   # -------------------------------------------------------------------------
@@ -8753,6 +8757,27 @@ run_quota_group() {
   else
     bad "a-dated-plaintext-reset-is-parsed" \
         "the dated refusal form must parse too; got '$(TZ=UTC "$qw" --threshold 95 --now 1785900000 "$qdated" 2>/dev/null)'"
+  fi
+
+  # The two streams this script is pointed at have different envelopes, and the
+  # anchor has to survive both. The pre-flight gate reads the newest session
+  # ROLLOUT (nested under `payload`, stamped with a top-level ISO `timestamp`)
+  # -- the fixture above. The reactive check reads `$CURRENT`, the live
+  # `codex exec --json` stream, whose events carry NO time field at all;
+  # measured on the one real stream on this machine, under
+  # ~/.forge/lane-quarantine/20260902-142534. There the anchor falls back to
+  # now, which is right, because that stream was written seconds ago.
+  local qflat="$TMPROOT/quota-flat-envelope.jsonl"
+  printf '%s\n' \
+    '{"type":"thread.started","thread_id":"01a06114-cce3-7d62-b198-6e83591fa768"}' \
+    '{"type":"error","message":"You'"'"'ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 11:55 AM.","codex_error_info":"usage_limit_exceeded"}' \
+    > "$qflat"
+  if [ "$(TZ=UTC "$qw" --threshold 95 --now $QTEXT "$qflat" 2>/dev/null)" \
+       = "blocked wake_at=1788782100 windows=stated" ]; then
+    ok "a-refusal-parses-from-the-flat-json-envelope-too"
+  else
+    bad "a-refusal-parses-from-the-flat-json-envelope-too" \
+        "the reactive stream's envelope carries no payload wrapper and no timestamp; got '$(TZ=UTC "$qw" --threshold 95 --now $QTEXT "$qflat" 2>/dev/null)'"
   fi
 
   # A marker is evidence about the moment it was written. Carried forward over

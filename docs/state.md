@@ -165,18 +165,11 @@ After `CLEAR`: commission; bootstrap the root; stop unless metadata is valid;
 then bootstrap the rest, recheck, and run `/retro`. F1, F2, F3's producer half,
 F25, F26, and F44 await that run. ADR-0011 still awaits ten reviews.
 
-**That is the launch contract, and it is no longer the next action.** Two
-product runs have since happened — JobApp and redglass — and what they measured
-is the subject of the open epic:
-
-> **Next action: [`docs/epic-hands-free.md`](epic-hands-free.md).** It is the
-> epic's session table, not this file, that says what is done and what is next.
-> Read its *§ How we run this epic* before proposing anything; a session opens
-> by running `make verify` on a clean `main` and recording the baseline.
-
-Both runs finished with **0 % of chunks merged without the operator** — the
-number the epic exists to move. ADR-0019 records the decision that follows from
-them.
+> **The open epic is [`docs/epic-hands-free.md`](epic-hands-free.md).** It is
+> the epic's session table, not this file, that says which of its sessions are
+> done and which is next. Read its *§ How we run this epic* before proposing
+> anything: a session opens by running `make verify` on a clean `main` and
+> recording the baseline.
 
 ## Read in this order
 
