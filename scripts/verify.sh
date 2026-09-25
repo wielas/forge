@@ -3657,6 +3657,11 @@ with kbc.connect_closing() as c:
     rh_rc="$(_rh_lane "$rh_run")"
     [ "$rh_rc" = 0 ] || rh_detail="$rh_detail pass1-rc=$rh_rc($(_lsh_env .reason))"
     [ "$(_rh_status "$rh_p")" = review/forge-prejudge ] || rh_detail="$rh_detail pass1-not-in-review($(_rh_status "$rh_p"))"
+    # The envelope must arrive intact: request_review passes it through the
+    # kernel's redaction, and the verifier and /retro read the stored copy.
+    [ -n "$(_lsh_env .metadata.pr)" ] \
+      && [ "$(_rh show "$rh_p" --json | jq -S '[.runs[] | select(.outcome == "review_requested")] | last | .metadata')" \
+           = "$(jq -S .metadata "$lroot/out.json")" ] || rh_detail="$rh_detail envelope-altered-in-transit"
     # 2. the native gate
     [ "$(_rh_status "$rh_c" | cut -d/ -f1)" = todo ] || rh_detail="$rh_detail child-released-early"
     ! _rh claim "$rh_c" >/dev/null 2>&1 || rh_detail="$rh_detail child-claimable-while-parent-in-review"
@@ -3682,7 +3687,7 @@ with kbc.connect_closing() as c:
     [ "$(_rh_status "$rh_p" | cut -d/ -f1)" = done ] || rh_detail="$rh_detail not-done"
     [ "$(_rh_status "$rh_c" | cut -d/ -f1)" = ready ] || rh_detail="$rh_detail child-not-released($(_rh_status "$rh_c"))"
     if [ -z "$rh_detail" ]; then
-      ok "bounce-round-trip-on-real-hermes (one card, two cards on the board: handoff, native gate, no completion by habit, request-changes, re-entry on a red baseline with the session resumed, approval releases the child)"
+      ok "bounce-round-trip-on-real-hermes (one card, two cards on the board: handoff with the envelope stored intact, native gate, no completion by habit, request-changes, re-entry on a red baseline with the session resumed, approval releases the child)"
     else
       bad "bounce-round-trip-on-real-hermes" "the same-card round trip broke against the installed kernel —$rh_detail"
     fi
