@@ -2359,6 +2359,12 @@ lane/blast/main-is-protected              the protected branch cannot move
 lane/blast/object-alternates-are-protected  object lookup cannot be redirected elsewhere
 lane/blast/pre-existing-objects-are-protected  reachable history cannot lose an object
 lane/blast/sibling-lane-is-not-a-breach   a concurrent lane and a fetch are not escapes (F75)
+lane/blast/sibling-tracking-config-is-not-a-breach  a sibling's `push -u` branch.<other>.remote/merge entry is not an escape (FL7, JobApp C11)
+lane/blast/sibling-pull-moving-main-is-not-a-breach  main fast-forwarded to exactly what origin has is not an escape (FL7, redglass CHUNK-9)
+lane/blast/main-tracking-config-is-a-breach  branch.main.* stays protected
+lane/blast/own-branch-tracking-config-is-a-breach  this lane's own branch.* stays protected
+lane/blast/sibling-pushremote-is-a-breach  only remote/merge are exempt for a sibling; pushRemote is not
+lane/blast/main-forged-to-match-a-local-origin-ref-is-a-breach  refs/remotes/origin/main is inside the grant, so it is no witness
 lane/blast/pre-existing-fsck-damage-is-not-a-breach  malformed history predating the run is not Codex's (F76)
 lane/blast/breach-names-what-moved        a block names the offending path, not just a category
 lane/dependent-pr-must-be-merged  parent card completion cannot substitute for code integration
@@ -3236,6 +3242,48 @@ run_lane_group() {
       && git -C "$bsibling" -c user.email=v@v -c user.name=v commit -qm sibling
     git -C "$brepo" fetch origin >/dev/null 2>&1
     _expect_blast "blast/sibling-lane-is-not-a-breach" 0 "$(_blast_rc)"
+
+    # FL7. The two sibling false positives the product runs still hit, each a
+    # reproduced block against a clean chunk (docs/epic-hands-free.md):
+    #   JobApp C11     a sibling's `git push -u` wrote its branch-tracking
+    #                  entry into the SHARED .git/config
+    #   redglass CH-9  a sibling `git pull` fast-forwarded `main`
+    # Each allowance is paired with the escapes it must NOT admit — an audit
+    # that stops seeing these is the wide-open failure, not the fix.
+    _blast_fixture blast-sibling-tracking
+    git -C "$bsibling" -c user.email=v@v -c user.name=v commit -q --allow-empty -m sibling \
+      && git -C "$bsibling" push -q -u origin sibling >/dev/null 2>&1
+    _expect_blast "blast/sibling-tracking-config-is-not-a-breach" 0 "$(_blast_rc)"
+
+    _blast_fixture blast-sibling-pull
+    rm -rf "$TMPROOT/blast-upstream"
+    git clone -q "$borigin" "$TMPROOT/blast-upstream" >/dev/null 2>&1 \
+      && git -C "$TMPROOT/blast-upstream" -c user.email=v@v -c user.name=v \
+           commit -q --allow-empty -m merged-elsewhere \
+      && git -C "$TMPROOT/blast-upstream" push -q origin HEAD:main >/dev/null 2>&1 \
+      && git -C "$bmain" pull -q --ff-only origin main >/dev/null 2>&1
+    _expect_blast "blast/sibling-pull-moving-main-is-not-a-breach" 0 "$(_blast_rc)"
+
+    _blast_fixture blast-main-tracking
+    git -C "$brepo" config branch.main.merge refs/heads/elsewhere
+    _expect_blast "blast/main-tracking-config-is-a-breach" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-own-tracking
+    git -C "$brepo" config branch.task.remote "$TMPROOT/$brun-elsewhere"
+    _expect_blast "blast/own-branch-tracking-config-is-a-breach" 3 "$(_blast_rc)"
+
+    _blast_fixture blast-sibling-pushremote
+    git -C "$brepo" config branch.sibling.pushRemote "$TMPROOT/$brun-elsewhere"
+    _expect_blast "blast/sibling-pushremote-is-a-breach" 3 "$(_blast_rc)"
+
+    # refs/remotes/origin/main sits inside Codex's --add-dir grant, so it is no
+    # witness: forging it alongside `main` must still read as an escape. Only
+    # the remote itself, asked over the network, can attribute a moved main.
+    _blast_fixture blast-main-forged
+    git -C "$brepo" -c user.email=v@v -c user.name=v commit -q --allow-empty -m forged \
+      && git -C "$brepo" update-ref refs/heads/main HEAD \
+      && git -C "$brepo" update-ref refs/remotes/origin/main HEAD
+    _expect_blast "blast/main-forged-to-match-a-local-origin-ref-is-a-breach" 3 "$(_blast_rc)"
 
     # `git fsck --full` validates object CONTENT, so a repo carrying malformed
     # history blocked every chunk on it forever, blaming Codex for a commit

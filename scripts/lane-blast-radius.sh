@@ -30,6 +30,21 @@
 #   object reachability       history cannot silently lose objects
 #   worktree cleanliness      `.orig`/`.rej` leftovers (measured 2026-07-28)
 #
+# TWO NARROW ALLOWANCES, BOTH FOR SIBLINGS (epic FL7). Each was a reproduced
+# block against a clean chunk on a product run:
+#   JobApp C11     a sibling lane's `git push -u` writes
+#                  `branch.<its-branch>.remote` and `.merge` into the SHARED
+#                  config. Exactly those two keys are exempt, and only for a
+#                  branch that is neither `main` nor this lane's own; any other
+#                  key — `pushRemote` included — is still a breach.
+#   redglass CH-9  a sibling (or the operator) pulled, fast-forwarding `main`.
+#                  A moved `main` is attributed to that only when it moved
+#                  FORWARD from the captured commit AND lands at or behind what
+#                  `git ls-remote origin` reports. `refs/remotes/origin/main`
+#                  is inside Codex's write grant, so it is never the witness;
+#                  the remote is, and Codex's sandbox has no network to move it.
+#                  An unreachable remote attributes nothing: fail closed.
+#
 # WHY BOTH HOOK DIRECTORIES. `lane-setup.sh` points this worktree at its own
 # `core.hooksPath`, so `git rev-parse --git-path hooks` resolves per-worktree
 # and the shared `$COMMON/hooks` stops being rewritten by every lane's
@@ -227,10 +242,29 @@ snapshot_file() {   # a single protected file, or the fact that it is absent
   fi
 }
 
+# The shared config minus a SIBLING's branch-tracking pair (FL7). Records are
+# NUL-delimited `origin` / `key\nvalue` pairs (--null --show-origin), so a value
+# carrying a newline cannot smuggle a second key past the filter. Section and
+# variable names come back lower-cased; the branch name is case-preserved.
+scope_config() {
+  perl -e '
+    local $/ = "\0";
+    my ($own) = @ARGV; @ARGV = ();
+    my @r = <STDIN>;
+    for (my $i = 0; $i + 1 < @r; $i += 2) {
+      my ($key) = $r[$i + 1] =~ /\A([^\n\0]*)/;
+      if ($key =~ /\Abranch\.(.+)\.(remote|merge)\z/s && $1 ne "main" && $1 ne $own) { next }
+      print $r[$i], $r[$i + 1];
+    }
+    print $r[-1] if @r % 2;
+  ' "$BRANCH"
+}
+
 snapshot_all() {
   local suffix="$1"
   git config --local --includes --null --show-origin --list \
     > "$STATE/config-local.$suffix" 2>/dev/null || return 1
+  scope_config < "$STATE/config-local.$suffix" > "$STATE/config-scoped.$suffix" || return 1
 
   # Worktree-scoped config is a separate file that `--local` never shows, and
   # it is where `core.hooksPath` lives. Only readable when the extension is on.
@@ -270,6 +304,28 @@ compare() {   # label before after -> records the diff and the first path moved
     diff "$before" "$after" 2>/dev/null | awk -F'\t' '/^[<>]/ && NF >= 5 { print $5; exit }'
   )"
   return 1
+}
+
+# FL7: did `main` move the way a sibling's pull moves it? Forward from the
+# captured commit, and to a commit the REMOTE has at or beyond its tip. The
+# remote's tip may have moved on again since; that is tolerated, which is why
+# the test is ancestry and not equality. Records its reasoning either way.
+main_moved_by_a_sibling() {
+  local before after remote
+  before="$(cat "$STATE/main.before")" after="$(cat "$STATE/main.after")"
+  case "$before$after" in *MISSING*) return 1;; esac
+  git merge-base --is-ancestor "$before" "$after" 2>/dev/null || return 1
+  remote="$(git ls-remote origin refs/heads/main 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  [ -n "$remote" ] || { printf 'main moved %s -> %s; origin unreachable, not attributed\n' \
+                          "$before" "$after" >> "$STATE/attribution.txt"; return 1; }
+  if [ "$after" != "$remote" ]; then
+    git cat-file -e "$remote^{commit}" 2>/dev/null \
+      || git fetch -q origin refs/heads/main >/dev/null 2>&1 || return 1
+    git merge-base --is-ancestor "$after" "$remote" 2>/dev/null || return 1
+  fi
+  printf 'main fast-forwarded %s -> %s, at or behind origin %s: a sibling pull, not an escape\n' \
+    "$before" "$after" "$remote" >> "$STATE/attribution.txt"
+  return 0
 }
 
 case "$MODE" in
@@ -342,9 +398,13 @@ case "$MODE" in
       exit 3
     }
 
-    compare config-local    "$STATE/config-local.before"    "$STATE/config-local.after"    || breach="$breach config-edited"
+    compare config-local    "$STATE/config-scoped.before"   "$STATE/config-scoped.after"   || breach="$breach config-edited"
     compare config-worktree "$STATE/config-worktree.before" "$STATE/config-worktree.after" || breach="$breach worktree-config-edited"
-    compare main            "$STATE/main.before"            "$STATE/main.after"            || breach="$breach main-moved"
+    if ! cmp -s "$STATE/main.before" "$STATE/main.after" && main_moved_by_a_sibling; then
+      :
+    else
+      compare main          "$STATE/main.before"            "$STATE/main.after"            || breach="$breach main-moved"
+    fi
     compare alternates      "$STATE/alternates.before"      "$STATE/alternates.after"      || breach="$breach object-alternates-edited"
     compare hooks           "$STATE/hooks.before"           "$STATE/hooks.after"           || breach="$breach hooks-edited"
     if [ "$HOOKS_PATH" != "$SHARED_HOOKS" ]; then
