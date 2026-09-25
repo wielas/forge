@@ -74,6 +74,24 @@ NOT_WINDOWS = ("limit_id", "limit_name", "credits", "individual_limit",
 REACHED_MARKERS = ("usage_limit_reached", "rate_limit_reached",
                    "usage_limit_exceeded", "quota_exceeded")
 
+# A marker is not always there. The refusal `codex exec --json` actually emits
+# -- recovered from the `forge-codex-lane` board, session 01a07acc, the run that
+# produced redglass CHUNK-6/8's block -- is:
+#
+#   {"type":"thread.started","thread_id":"01a07acc-…"}
+#   {"type":"turn.started"}
+#   {"type":"error","message":"You've hit your usage limit. … try again at 11:55 AM."}
+#   {"type":"turn.failed","error":{"message":"You've hit your usage limit. …"}}
+#
+# No `codex_error_info`, no `error_type`, no `rate_limits`, no timestamp. The
+# rollout for the SAME session carries the marker; the stream does not. So the
+# error channel is identified by the event's own type, or by the message
+# sitting under an `error` key, as well as by a co-located marker. What is NOT
+# the error channel stays out: an `agent_message`, or an item's `text`, is the
+# model talking, and a chunk that builds a rate limiter talks about usage
+# limits all day.
+ERROR_EVENT_TYPES = ("error", "turn.failed", "task_failed", "stream_error")
+
 # Codex also refuses in PLAIN TEXT, with no `rate_limits` object anywhere in the
 # stream. Observed on redglass CHUNK-6 and CHUNK-8; the event, verbatim from
 # rollout 01a07acc (2026-09-07T07:36:41Z), is
@@ -155,25 +173,34 @@ def parse_stated_reset(message: str, anchor: int) -> int | None:
     return int(candidate.timestamp())
 
 
-def find_refusal_messages(obj: Any) -> Iterator[str]:
+def find_refusal_messages(obj: Any, parent_key: str | None = None
+                          ) -> Iterator[str]:
     """Yield the `message` of every object that is ITSELF a refusal.
 
-    The marker and the message must sit in the SAME dict. That is what keeps
-    this on the error channel: `{"message": …, "codex_error_info":
-    "usage_limit_exceeded"}` matches, and a model's prose about usage limits --
-    which carries no marker beside it -- does not.
+    Three ways to be one, any of which is enough, and all three are things the
+    envelope says rather than things the prose says:
+
+    - a limit-reached marker sits in the same dict (the rollout's shape);
+    - the dict's own `type` is an error-channel event (the stream's `error`);
+    - the dict is the value of an `error` key (the stream's `turn.failed`).
+
+    An `agent_message`, or an item's `text`, satisfies none of them.
     """
     if isinstance(obj, dict):
         message = obj.get("message")
-        if isinstance(message, str) and any(
-                v in REACHED_MARKERS for v in obj.values()
-                if isinstance(v, str)):
+        marked = any(v in REACHED_MARKERS for v in obj.values()
+                     if isinstance(v, str))
+        kind = obj.get("type")
+        on_channel = (marked
+                      or (isinstance(kind, str) and kind in ERROR_EVENT_TYPES)
+                      or parent_key == "error")
+        if isinstance(message, str) and on_channel:
             yield message
-        for value in obj.values():
-            yield from find_refusal_messages(value)
+        for key, value in obj.items():
+            yield from find_refusal_messages(value, key)
     elif isinstance(obj, list):
         for value in obj:
-            yield from find_refusal_messages(value)
+            yield from find_refusal_messages(value, parent_key)
 
 
 def event_time(obj: Any, default: int) -> int:

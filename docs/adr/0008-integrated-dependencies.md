@@ -2,10 +2,14 @@
 
 **Status:** accepted · 2026-07-28 · **mechanism amended by ADR-0019**
 (2026-09-25). The rule is unchanged and non-negotiable: children build on
-merged parents. What changed is that a chunk card now reaches `done` only
-after its PR merges, so Hermes's own `_parents_satisfied` enforces this
-natively and the compensating mechanisms below become redundant rather than
-wrong. They are retired only once a run shows the native gate holding.
+merged parents. What ADR-0019 changes is *how* it is enforced — once FL2–FL8
+land, a chunk card will reach `done` only after its PR merges, and Hermes's own
+`_parents_satisfied` will enforce the rule natively.
+
+**That is not true yet.** Today the lane still completes its card at PR-open,
+exactly as described below, so every compensating mechanism in this ADR is
+still load-bearing and must be treated as live. They are retired one at a time,
+each after a run shows the native gate holding in its place.
 
 ## Context
 

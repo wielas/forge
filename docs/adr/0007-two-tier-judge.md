@@ -3,7 +3,10 @@
 **Status:** accepted · 2026-07-27 · **D7.1, D7.2 and D7.3 superseded by
 ADR-0019** (2026-09-25), on the evidence of the JobApp and redglass runs. D7.4
 — the structured verdict — stands; there is no D7.5. The text below is left as
-written, because it is the record of a decision. Its last consequence is the
+written, because it is the record of a decision — **and because the machinery
+it describes is still live.** ADR-0019 supersedes these decisions; FL2–FL8
+replace their implementation, one piece at a time, each after its replacement is
+green. Its last consequence is the
 clause ADR-0019 invokes: *"If the hello-chunk run shows the child card is
 unreliable, switch to `review-required` — that is the honest fallback, and this
 decision is the weakest one here."*

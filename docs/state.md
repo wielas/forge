@@ -497,6 +497,10 @@ Ledger and rationale for every F-number: `docs/audit-forgeboard-2026-07-30.md`.
 
 ## Next test, and what it must be
 
+*(Written before the epic. The next runs are now the epic's proving runs A, B
+and C — `docs/epic-hands-free.md`, sessions S7, S9 and S12 — which keep this
+section's one rule and give it three specific variables.)*
+
 The next run should introduce **exactly one** new variable. In rough order of
 value:
 

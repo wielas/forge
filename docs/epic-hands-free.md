@@ -608,6 +608,29 @@ checkout, and reports which one, so it keeps asserting something rather than
 being deleted. Read on 2026-09-25: `~/.forge/repo → ~/dev/forge-runtime`, whose
 HEAD is `f1ca5fe` (#72), one merge behind `main`.
 
+**P2 (S1). The quota runner's stubs write the wrong envelope.** Every stub in
+`quota`'s end-to-end cases writes rollout-shaped lines into `$CURRENT`, but
+`$CURRENT` holds the `codex exec --json` stream, whose events are
+`thread.started` / `turn.started` / `item.completed` with a flat `usage` object
+— no `payload` wrapper, no `rate_limits` key, no timestamp anywhere. Key list
+taken 2026-09-25 from the one real stream on this machine,
+`~/.forge/lane-quarantine/20260902-142534/scratch-forge-lane-1/codex-events.current.jsonl`:
+
+```
+type · thread_id · usage.{input_tokens,output_tokens,cached_input_tokens,
+cache_write_input_tokens,reasoning_output_tokens} · item.{id,type,status,
+text,command,exit_code,aggregated_output,changes[].{kind,path}}
+```
+
+S1 fixed the refusal half of this: `quota/the-reactive-exec-json-refusal-parks`
+now drives the real stream shape, recovered from the lane board. **The
+structured half is untested.** Nothing has ever exercised the reactive park
+path against a real `--json` stream carrying `rate_limits`, so it is not known
+what a *structured* limit looks like in that envelope, or whether
+`find_rate_limits` finds it — and run A depends on that path. Triage: either
+recover such a stream from a board, or accept that only the prose path is
+proven and say so where the claim is made.
+
 ## Open questions
 
 1. ~~Merge method: squash with branch deletion, and `worktree-sweep` after each

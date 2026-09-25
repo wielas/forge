@@ -2539,7 +2539,8 @@ quota/a-plaintext-refusal-parks-with-its-stated-reset  a prose refusal with no r
 quota/a-plaintext-reset-is-anchored-to-the-event-not-to-now  a stale prose refusal resolves into the past and clears
 quota/a-plaintext-reset-is-read-only-on-the-error-channel  the same sentence in agent text stays unknown
 quota/a-dated-plaintext-reset-is-parsed   the second observed spelling, carrying its own date
-quota/a-refusal-parses-from-the-flat-json-envelope-too  the reactive `codex exec --json` shape, which has no payload wrapper and no timestamp
+quota/the-reactive-exec-json-refusal-parks  the REAL `codex exec --json` refusal (session 01a07acc): no marker, no timestamp, no rate_limits
+quota/the-reactive-channel-rule-is-not-the-marker-rule  collapsing the channel test to the marker alone makes that stream unjudgeable again, while the rollout still parses
 quota/a-plaintext-refusal-parks-through-the-runner  codex-run.sh parks on the parsed epoch instead of exiting 4
 quota/a-named-refusal-blocks-only-the-window-it-names  rate_limit_reached_type must not widen to healthy windows
 quota/a-fresh-snapshot-supersedes-an-earlier-refusal  a reached marker must not outlive the snapshot that described it
@@ -8759,25 +8760,51 @@ run_quota_group() {
         "the dated refusal form must parse too; got '$(TZ=UTC "$qw" --threshold 95 --now 1785900000 "$qdated" 2>/dev/null)'"
   fi
 
-  # The two streams this script is pointed at have different envelopes, and the
-  # anchor has to survive both. The pre-flight gate reads the newest session
-  # ROLLOUT (nested under `payload`, stamped with a top-level ISO `timestamp`)
-  # -- the fixture above. The reactive check reads `$CURRENT`, the live
-  # `codex exec --json` stream, whose events carry NO time field at all;
-  # measured on the one real stream on this machine, under
-  # ~/.forge/lane-quarantine/20260902-142534. There the anchor falls back to
-  # now, which is right, because that stream was written seconds ago.
-  local qflat="$TMPROOT/quota-flat-envelope.jsonl"
-  printf '%s\n' \
-    '{"type":"thread.started","thread_id":"01a06114-cce3-7d62-b198-6e83591fa768"}' \
-    '{"type":"error","message":"You'"'"'ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 11:55 AM.","codex_error_info":"usage_limit_exceeded"}' \
-    > "$qflat"
-  if [ "$(TZ=UTC "$qw" --threshold 95 --now $QTEXT "$qflat" 2>/dev/null)" \
-       = "blocked wake_at=1788782100 windows=stated" ]; then
-    ok "a-refusal-parses-from-the-flat-json-envelope-too"
+  # THE case for Q1, and the one the fixture above cannot make. The two streams
+  # this script is pointed at have different envelopes, and only one of them is
+  # the path that actually exited 4.
+  #
+  #   pre-flight  -> the newest session ROLLOUT: payload-nested, top-level ISO
+  #                  timestamp, and it carries `codex_error_info`.
+  #   reactive    -> `$CURRENT`, the live `codex exec --json` stream.
+  #
+  # The reactive stream is what `codex-run.sh` asks after a nonzero exit, so it
+  # is what routed redglass CHUNK-6/8 to "not a usage limit". This fixture is
+  # that stream, recovered verbatim from the forge-codex-lane board, session
+  # 01a07acc -- the SAME session as the rollout fixture above. It carries no
+  # `rate_limits`, no marker of any kind, and no timestamp: the error channel is
+  # identifiable only by `"type":"error"` and by the message sitting under
+  # `turn.failed`'s `error` key. A rule keyed on the marker alone parses the
+  # rollout and is inert here, which is the whole reason this case exists.
+  if [ "$(_qtz plaintext-usage-limit-exec-json)" = "blocked wake_at=1788782100 windows=stated" ]; then
+    ok "the-reactive-exec-json-refusal-parks (no marker, no timestamp, no rate_limits)"
   else
-    bad "a-refusal-parses-from-the-flat-json-envelope-too" \
-        "the reactive stream's envelope carries no payload wrapper and no timestamp; got '$(TZ=UTC "$qw" --threshold 95 --now $QTEXT "$qflat" 2>/dev/null)'"
+    bad "the-reactive-exec-json-refusal-parks" \
+        "the real `codex exec --json` refusal must park like its rollout does; got '$(_qtz plaintext-usage-limit-exec-json)'"
+  fi
+
+  # …and that it parks for the RIGHT reason. Collapse the channel test back to
+  # the marker alone — the shipped-and-inert state this case was written to
+  # catch — and the stream must go unjudgeable while the rollout, which has the
+  # marker, still parses. Both halves are asserted: a mutant that broke BOTH
+  # would prove nothing about which arm is load-bearing.
+  local qwmark="$TMPROOT/quota-window-marker-only.py"
+  # Three -e, not one script with embedded newlines: a backslash-newline inside
+  # single quotes stays a literal newline, and BSD sed refuses it as a delimiter.
+  sed -e 's/^        on_channel = (marked$/        on_channel = (False/' \
+      -e 's/^                      or (isinstance(kind, str) and kind in ERROR_EVENT_TYPES)$/                      or False/' \
+      -e 's/^                      or parent_key == "error")$/                      or marked)/' \
+    "$qw" > "$qwmark" && chmod +x "$qwmark"
+  if [ "$(TZ=UTC "$qwmark" --threshold 95 --now $QTEXT \
+            "$fx/plaintext-usage-limit-exec-json.jsonl" 2>/dev/null)" \
+       = "unknown no-rate-limit-data" ] \
+     && [ "$(TZ=UTC "$qwmark" --threshold 95 --now $QTEXT \
+               "$fx/plaintext-usage-limit.jsonl" 2>/dev/null)" \
+          = "blocked wake_at=1788782100 windows=stated" ]; then
+    ok "the-reactive-channel-rule-is-not-the-marker-rule"
+  else
+    bad "the-reactive-channel-rule-is-not-the-marker-rule" \
+        "collapsing the channel test to the marker alone must make the stream unjudgeable while the rollout still parses — otherwise this case proves nothing"
   fi
 
   # A marker is evidence about the moment it was written. Carried forward over
