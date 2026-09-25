@@ -763,7 +763,10 @@ if [ "$HAVE_HERMES" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# The lane's protocol is partly a program too (audit F64): §3 and §5 invoke
+# The lane's protocol is a program (epic FL2): forge-lane §1 invokes
+# scripts/lane.sh through ~/.forge/repo, and lane.sh reaches the helpers below
+# beside itself — so every one of them must resolve through that same path.
+# History (audit F64): §3 and §5 used to invoke
 # scripts/lane-setup.sh and scripts/lane-blast-radius.sh through ~/.forge/repo,
 # §4 now drives Codex through scripts/codex-run.sh the same way (ADR-0016), and
 # §7 gates its completion metadata through scripts/validate-metadata.py.
@@ -778,12 +781,12 @@ fi
 # checkout being fine is not the property that matters, and `make verify`
 # already covers that one.
 # ---------------------------------------------------------------------------
-for _lscript in lane-setup.sh lane-blast-radius.sh validate-metadata.py \
+for _lscript in lane.sh lane-setup.sh lane-blast-radius.sh validate-metadata.py \
                 codex-run.sh quota-window.py codex-progress.py; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
-    say  "      forge-lane §3/§4/§5 invoke it by exactly that path. Check the"
+    say  "      forge-lane §1 invokes lane.sh by exactly that path, and lane.sh the rest beside it. Check the"
     say  "      ~/.forge/repo symlink, then re-run ./hermes/profiles-bootstrap.sh."
   elif [ ! -x "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript is not executable"
