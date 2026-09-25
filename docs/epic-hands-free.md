@@ -671,6 +671,22 @@ producer rule as "a *completed* `forge-codex-lane` run". This belongs with
 GW6 (S4), which rebuilds `make metrics` around the north-star numbers anyway.
 Before run A, either way.
 
+**P5 (S2). How S2 lands decides S3's baseline.** S2 changes the lane's SOUL
+and adds two scripts the runtime does not have yet. Until the operator deploys
+it (`git -C ~/dev/forge-runtime pull --ff-only`, then
+`./hermes/profiles-bootstrap.sh` under bash), `make verify` carries
+`config/soul-in-sync/forge-codex-lane` red and `make preflight` two FAILs
+(`~/.forge/repo/scripts/lane.sh` and `lane-handoff.sh` do not resolve; PASS
+stays 90). Deploying right after merge clears all three. The cost: a lane card
+dispatched live would run a full, paid chunk and hand it to a `forge-prejudge`
+that still expects a child card; `prejudge-review.sh` then blocks on its
+`chunk-identity` guard, so it fails closed, but after the spend. Read on
+2026-09-26 through `board-snapshot.sh`: no `forge-codex-lane` card on any board
+is `ready` or `running`; three are dormant (`forge-dependency-probe-20260728`
+one `blocked` and one `todo`, `forge-ladder` one `blocked`), and none moves
+unless someone unblocks it. S3 opens against whichever state the operator
+chose, and its brief should say which.
+
 ## Open questions
 
 1. ~~Merge method: squash with branch deletion, and `worktree-sweep` after each
