@@ -15,7 +15,7 @@ card would not exist) — you evaluate ONLY what CI cannot.
 3. The feature named by the contract's `Acceptance` field and its approved entry
    in `docs/chunks/contract-freeze.json`.
 4. The chunk's completion metadata (from the card or PR body).
-5. `rubrics/judge-rubric.md` — the scoring dimensions and verdict schema.
+5. `~/.forge/rubrics/judge-rubric.md` — the scoring dimensions and verdict schema.
    READ IT NOW; it is the authoritative definition of your output.
 
 ## Process
