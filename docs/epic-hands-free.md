@@ -172,12 +172,14 @@ parsed reset time.
 session concluded the rubrics did not exist. *Done when* `verify` rejects a
 bare `rubrics/` path in any skill body, as it already does for `scripts/`.
 
-**Q3. Operator setup** *(operator actions)*. Resolve the Telegram token
-conflict — `default` and `builder` hold the same `TELEGRAM_BOT_TOKEN`, so the
-gateway serves only `default` and every forge profile's bot is silent — and
-authenticate Hermes against the OpenAI subscription. *Done when*
-`hermes gateway status` shows no conflict and a Hermes profile can call the
-overseer model.
+**Q3. Operator setup** *(operator actions)*. Remove the unused `builder`
+profile: it holds the same `TELEGRAM_BOT_TOKEN` as `default`, so the gateway
+serves only `default` and every forge profile's bot is silent. It is also the
+gateway's `kanban.default_assignee`, so that setting goes with it. No open
+card on any board is assigned to it (checked 2026-09-25), and Forge
+references it only in comments. Then authenticate Hermes against the OpenAI
+subscription. *Done when* `hermes gateway status` shows no conflict and a
+Hermes profile can call the overseer model.
 
 **Q4. The epic is where a fresh session looks.** Link this file from
 `docs/state.md`'s next-action section and from the `CLAUDE.md` router, keeping
@@ -463,24 +465,27 @@ Verify before dropping.
 
 ## Session plan
 
-The critical path runs to run A; items tagged optional stay off it.
+The critical path runs to run A; items tagged optional stay off it. This table
+is the epic's only progress record: a session updates its own row when it
+closes.
 
-| Session | Items | Why here |
-|---|---|---|
-| S1 | Q1, Q2, Q4, FL1 · operator: Q3 | Decisions recorded; epic discoverable |
-| S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk |
-| S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending |
-| S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command |
-| S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills |
-| S6 | Plan the new project — operator-led | Scope → architect with spikes → roadmap, three milestones |
-| S7 | **Run A = milestone 1** | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect |
-| S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 |
-| S9 | **Run B = milestone 2** | Variable: merge authority |
-| S10 | EN5, EN1, EN2 | Engine groundwork |
-| S11 | EN3 (decides EN8) | Pi vs Hermes-native, on data |
-| S12 | EN4, FL9; **run C = milestone 3** | Variable: the implementer tier |
-| S13 | WL2, WL4–WL7, GW5, EN6 | Consolidate, trim, re-document |
-| any | EN7 *(optional)*, EN8 *(conditional)* | Experiments |
+| Session | Items | Why here | Status | PR |
+|---|---|---|---|---|
+| S0 | this document; operator: merge it, Q3, remove `builder` | Plan agreed | open | #73 |
+| S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | planned | |
+| S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | planned | |
+| S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending | planned | |
+| S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
+| S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills | planned | |
+| S6 | Plan the new project — operator-led | Scope → architect with spikes → roadmap, three milestones | planned | |
+| S7 | **Run A = milestone 1** | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
+| S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
+| S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
+| S10 | EN5, EN1, EN2 | Engine groundwork | planned | |
+| S11 | EN3 (decides EN8) | Pi vs Hermes-native, on data | planned | |
+| S12 | EN4, FL9; **run C = milestone 3** | Variable: the implementer tier | planned | |
+| S13 | WL2, WL4–WL7, GW5, EN6 | Consolidate, trim, re-document | planned | |
+| any | EN7 *(optional)*, EN8 *(conditional)* | Experiments | — | |
 
 **Flip criterion (run A → run B).** Merge authority moves to the verifier only
 if, over milestone 1: the verifier bounced every seeded defect; the operator
@@ -492,6 +497,82 @@ shadow too.
 **The operator's involvement.** Run A: planning sessions, then a merge per
 recommended PR from the phone. After the flip: planning sessions, a daily
 digest, a reply at each milestone checkpoint, and rare exceptions.
+
+## How we run this epic
+
+**Three places, kept apart.**
+- `~/dev/forge` — the dev checkout. Slices are built here on `slice/*`
+  branches. Nothing live reads it, so a half-finished branch cannot reach a
+  running lane.
+- `~/dev/forge-runtime` — what every Hermes profile executes (`~/.forge/repo`
+  points at it). It changes only by a deliberate deploy after a merge.
+- This document — the only status record. Its session table says what is
+  done; nothing else does.
+
+**Who does what.** Claude builds in the dev checkout, runs the offline suites,
+and opens the PR. The operator merges, deploys, and performs every host
+mutation — `hermes config`, profiles, the gateway, launchd — and every live
+run. Claude hands those over as exact commands and never runs them itself.
+
+**One session, one PR.** A session delivers the items in its row and nothing
+else. When an item turns out bigger than its row, it is split and the new
+piece gets its own row; the PR is never widened. Anything discovered on the
+way goes to the parking lot below, with its evidence, and is triaged when the
+next session opens.
+
+**Opening a session.**
+1. Start from a clean `main`: `git switch main && git pull --ff-only`.
+2. Run `make verify` and record the baseline: passed / failed / skipped.
+3. Read this document's session table and parking lot, then write the session
+   brief: the items, each item's *done when* copied verbatim, what is out of
+   scope, which `verify` group proves each item, and any operator step.
+4. `git switch -c slice/s<n>-<short-name>`.
+
+**Building.** Test first: add the `verify` case, watch it fail, implement,
+watch it pass. Then prove the case can fail: reintroduce the defect, confirm
+red, restore. Anything that needs real Hermes runs under an isolated
+`HERMES_HOME`, never against a live board or the running gateway. No paid
+probes (`WITH_CODEX=1`) unless the brief names them.
+
+**Closing a session.**
+1. Run `make validate` and a full `make verify`, and compare with the
+   baseline: failed stays 0, passed rises by the new cases, and any rise in
+   skipped is explained. A drop in passed is a regression, even when nothing
+   fails.
+2. Update the session's row in this document (status, PR), and `state.md`
+   only where a proven or not-proven claim changed.
+3. Open the PR. Its body is the brief plus the before/after counts. CI must
+   pass.
+
+**Landing (operator).**
+1. Merge, then run `make verify` and `make preflight` on `main` (CLAUDE.md).
+2. If the slice changes anything a profile executes, deploy:
+   `git -C ~/dev/forge-runtime pull --ff-only`. If profile files changed, also
+   run `./hermes/profiles-bootstrap.sh` from the runtime — under bash, never
+   zsh. Then run `make preflight` again; a drop in PASS count is the signal.
+3. Rollback is `git -C ~/dev/forge-runtime checkout <previous-sha>`, then
+   `make preflight`.
+
+**Proving runs are their own sessions,** with a protocol written before the
+run starts: the runtime SHA, what is measured, the flip criterion, and the
+stop rules. The results section is filled only from pasted output, never from
+a model's arithmetic.
+
+**Hold still during the epic.** No Hermes, Codex or Claude Code upgrade
+mid-epic except as its own session, using the carried-patch procedure. Never
+two new variables in one run.
+
+**Starting a session.** Open a fresh Claude Code session in `~/dev/forge` and
+say: *"Run epic session S<n> per docs/epic-hands-free.md, § How we run this
+epic."*
+
+## Parking lot
+
+Discoveries made during a session that are not its items. Each carries its
+evidence and is triaged when the next session opens: promoted to an item,
+folded into an existing one, or closed with a reason.
+
+*(empty)*
 
 ## Open questions
 
