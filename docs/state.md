@@ -266,12 +266,16 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   `forge-prejudge` is now `forge-verifier`, and `scripts/prejudge-review.sh`
   transitions the chunk's own card: `request-changes` on a fail, a sticky block
   on an approval it may only recommend, or — only under `FORGE_VERIFIER_MERGE=1`,
-  which nothing sets — a squash merge and completion. `scripts/merge-check.sh`
-  runs `make check` on the tree the merge would produce, in a fresh clone, and is
-  executed against real repositories where every branch is green alone and only
-  the union is red. `scripts/merge-watcher.sh` completes a held card once GitHub
-  reports its PR merged; `scripts/bounce.sh` is the operator's disagree path. The
-  15 cases in the `verifier` group run all of it against the installed kernel in
+  which nothing sets — a squash merge and completion (a merge whose completion
+  then fails is held `merge-pending:` for the watcher, never stranded). A run
+  with no board to transition refuses (exit 3) rather than report an outcome it
+  did not make. `scripts/merge-check.sh` runs `make check` on the PR's head
+  merged with the PR's own base (`baseRefName`, never an assumed `main`), in a
+  fresh clone, and is executed against real repositories where every branch is
+  green alone and only the union is red. `scripts/merge-watcher.sh` completes a
+  held card once GitHub reports its PR merged, and reports a closed PR once per
+  hold; `scripts/bounce.sh` is the operator's disagree path. The
+  19 cases in the `verifier` group run all of it against the installed kernel in
   an isolated `HERMES_HOME`, including ADR-0019 D19.3's three previously
   unexecuted transitions. The disagree path's "under a live dispatcher" clause is
 met only in part: `bounce.sh` provably parks on the non-spawnable sentinel before

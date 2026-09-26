@@ -241,7 +241,9 @@ worktree would dirty the tree the implementer resumes on a bounce — then run
 - operator disagrees → `forge bounce <task> "<reason>"`: `unblock` then
   `reopen-review` back-to-back, re-checking the end state because a dispatcher
   tick can land between the two;
-- pass, merge mode → `gh pr merge --squash`, then complete.
+- pass, merge mode → `gh pr merge --squash`, then complete *(since S3's
+  review: if the merge lands and the completion does not, the card is held
+  `merge-pending:` and the merge-watcher completes it)*.
 
 ~~Same-kind re-blocks route to triage at `BLOCK_RECURRENCE_LIMIT=2`, so a chunk
 gets at most two operator disagreements before it becomes an exception.~~
