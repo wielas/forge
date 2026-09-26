@@ -106,8 +106,10 @@ forge-lane §7 copies them across; a failed read is never fatal to the run, so
 without the marker the fix would degrade to intent silently.
 
 `summary` (the human-readable sibling): one sentence of what landed + one of what
-to watch. The lane worker passes this JSON directly to
-`kanban_complete(metadata=…)` — there is no stdout scraping. Hermes's own
+to watch. Since ADR-0019 the envelope rides the chunk card's handoff to review,
+not a completion: `scripts/lane.sh` builds it and `scripts/lane-handoff.sh`
+validates it and passes it as `hermes kanban request-review --metadata` — there
+is no stdout scraping. Hermes's own
 recommended keys (`changed_files`, `tests_run`, `decisions`) are welcome
 alongside the forge keys; the dashboard renders them for free.
 

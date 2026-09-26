@@ -34,9 +34,9 @@ gh pr create --title "CHUNK-<id>: <title>" --body-file .forge/pr-body.md
 Scratch files go in `.forge/`, never in `.git/`. Writing under `.git/` fails two
 independent ways, both measured: the Codex sandbox denies it under
 `-s workspace-write`, and in a linked worktree `.git` is a *file*, not a
-directory, so the path is not even addressable. `forge-lane` §6 follows the same
-scratch-file rule at its per-run location, `$FORGE_LANE_RUNTIME/pr-body.md`;
-neither flow writes under `.git/`.
+directory, so the path is not even addressable. `forge-lane` §1's program follows
+the same scratch-file rule at its per-run location,
+`$FORGE_LANE_RUNTIME/pr-body.md`; neither flow writes under `.git/`.
 
 PR body (write `.forge/pr-body.md`): chunk goal · scenario list with pass status ·
 `make check` tail · decision-log entries added · doc reconciliation summary ·
@@ -44,9 +44,13 @@ DEBT/CARD? items. The template in `.github/PULL_REQUEST_TEMPLATE.md` matches.
 
 ## 5. Emit metadata (the structured handoff)
 Produce the JSON defined in `~/.forge/rubrics/kanban-metadata-schema.md` and:
-- Unattended lane: you are inside a Hermes worker — pass it straight to
-  `kanban_complete(metadata=…)`; the lane owns that call (see the `forge-lane`
-  skill). Nothing scrapes stdout.
+- Unattended lane: you never get here — the lane's program builds, validates
+  and hands off this envelope itself (see the `forge-lane` skill).
+- Human-tier chunk on a board: hand the card to review on itself, with this
+  envelope, instead of completing it:
+  `~/.forge/repo/scripts/lane-handoff.sh <card> --board <slug> --summary "<one line>" --metadata .forge/chunk-<id>-metadata.json`.
+  It validates the envelope, unblocks a parked card, and exits 0 only once the
+  card reads back in `review`.
 - Interactive: save as `.forge/chunk-<id>-metadata.json` and paste into the
   card's completion if you have board access.
 

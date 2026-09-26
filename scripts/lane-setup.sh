@@ -18,6 +18,10 @@
 #
 # Usage: lane-setup.sh <workspace> <run-id>
 #        HERMES_KANBAN_BOARD scopes the per-run paths (see the block below)
+#        FORGE_LANE_REENTRY=1 on a bounce re-entry (epic FL3): the branch
+#        already carries the chunk, and the bounce may BE a red check, so a
+#        red baseline is recorded rather than refused. Everything else —
+#        the worktree checks, setup, a clean tree, the capture — still holds.
 #
 # Exit: 0  ready — environment built, baseline green, audit captured
 #       2  usage
@@ -168,10 +172,14 @@ make setup >/dev/null 2>&1 || {
   exit 4
 }
 
-make check >/dev/null 2>&1 || {
-  echo "failing-prereq: baseline 'make check' was already red before the chunk started"
-  exit 5
-}
+if ! make check >/dev/null 2>&1; then
+  if [ "${FORGE_LANE_REENTRY:-}" = 1 ]; then
+    echo "lane-setup: re-entry — baseline 'make check' is red, tolerated: the bounce may be exactly that"
+  else
+    echo "failing-prereq: baseline 'make check' was already red before the chunk started"
+    exit 5
+  fi
+fi
 baseline_status="$(git status --porcelain=v1 --untracked-files=all 2>/dev/null)" || {
   echo "env: baseline worktree status could not be read"
   exit 3

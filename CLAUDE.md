@@ -28,10 +28,12 @@ between docs by reasoning about it — run the suite and believe the result.
   If you add a claim to `skills/*/SKILL.md`, add the check to `scripts/verify.sh`
   that executes it.
 - **Skills reach scripts through `~/.forge/repo/scripts/...`, never a relative path.**
-  A bare relative path cannot resolve from a project worktree. `verify.sh` and
-  `preflight.sh` both assert this for `forge-lane` §3 and §5 by grepping for the
-  literal `~/.forge/repo` form — changing the call style silently degrades those
-  checks to a skip.
+  A bare relative path cannot resolve from a project worktree. The lane's whole
+  protocol is `scripts/lane.sh`, which `forge-lane` §1 and the lane SOUL call by
+  that literal form and which reaches its helpers beside itself (`"$HERE/..."`).
+  `verify.sh` (`lane/lane-sh-is-reached-through-forge-repo`) and `preflight.sh`
+  both assert this by grepping for those literal forms — changing the call style
+  silently degrades those checks to a skip.
 - **Hermes boards are WAL. Never open one `mode=ro`** — a read-only open fails when
   the board is *idle*, not busy. Snapshot with `cp` and open the copy.
 - **`adapters/` carries no methodology** (L3). Per-harness sugar only. Methodology

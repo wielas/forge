@@ -481,7 +481,7 @@ closes.
 | S0 | this document; operator: merge it, Q3, remove `builder` | Plan agreed | open | #73 |
 | S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | done | #74 |
 | S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | #75 |
-| S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | planned | |
+| S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | done | #76 |
 | S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending | planned | |
 | S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
 | S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills | planned | |
@@ -612,7 +612,20 @@ checkout, and reports which one, so it keeps asserting something rather than
 being deleted. Read on 2026-09-25: `~/.forge/repo → ~/dev/forge-runtime`, whose
 HEAD is `f1ca5fe` (#72), one merge behind `main`.
 
-**P2 (S1). The quota runner's stubs write the wrong envelope.** Every stub in
+**P2 (S1). The quota runner's stubs write the wrong envelope.** *Triaged at
+S2's opening: **closed** — no structured stream exists to recover. The lane
+profile's full session history (a WAL-safe copy of
+`~/.hermes/profiles/forge-codex-lane/state.db`, 2026-09-26) holds 12 messages
+naming `rate_limits` and 4 naming `thread.started`, and **none** naming both:
+both real limit events (session `01a07acc…`, 2026-09-07; run 57, 2026-09-09,
+"try again at 12:58 PM") carried a prose refusal and zero `rate_limits`
+objects in the `--json` stream. So the proven reactive path is the prose one
+(S1's Q1). The structured reactive arm is unobserved, and the pre-flight gate
+reads the rollout, which does carry `rate_limits`. S2 rewrote `forge-lane`
+without restating the structured path as proven. Still true and not fixed:
+`quota-window.py`'s header says every `token_count` event `codex exec --json`
+emits carries `rate_limits`, and the `--json` stream has no `token_count`
+events at all. Correct it when FL9 next touches the parser.* Every stub in
 `quota`'s end-to-end cases writes rollout-shaped lines into `$CURRENT`, but
 `$CURRENT` holds the `codex exec --json` stream, whose events are
 `thread.started` / `turn.started` / `item.completed` with a flat `usage` object
@@ -634,6 +647,45 @@ what a *structured* limit looks like in that envelope, or whether
 `find_rate_limits` finds it — and run A depends on that path. Triage: either
 recover such a stream from a board, or accept that only the prose path is
 proven and say so where the claim is made.
+
+
+**P3 (S2). `lane/terminators-match-the-substrate` has been blind since
+Hermes 0.21.5.** Under `--with-hermes` it fails with
+`toolsets-source-yielded-no-kanban-tools`: upstream moved the kanban tool list
+out of the `"kanban": {"tools": [...]}` literal into a module-level list
+passed to a `_ts(...)` helper (`~/.hermes/hermes-agent/toolsets.py`, lines
+31–37 and 163), so the reader's window matches nothing. It is red on a clean
+`main` too, and it is skipped by default, which is why no baseline shows it.
+The reader fails loudly rather than letting the MCP source stand in, as
+designed. Checked by hand for S2: the four terminators in that list
+(`complete`, `block`, `request_review`, `request_changes`) are all named in
+the new `forge-lane` §2. Fix: re-point the reader at the list, not the literal.
+
+**P4 (S2). Metrics cannot see chunk envelopes after FL3.** Since FL3 a chunk's
+`forge.chunk.v1` rides its `review_requested` run, not a completion.
+`scripts/metrics.sh` (lines 471, 515, 564) and `scripts/metadata-live.sh`
+(line 108) read only `task_runs.outcome = 'completed'`. The next live run's
+chunk rows would therefore be invisible to `make metrics` and to the live
+metadata sweep, and `rubrics/kanban-metadata-schema.md` still states the
+producer rule as "a *completed* `forge-codex-lane` run". This belongs with
+GW6 (S4), which rebuilds `make metrics` around the north-star numbers anyway.
+Before run A, either way.
+
+**P5 (S2). How S2 lands decides S3's baseline.** S2 changes the lane's SOUL
+and adds two scripts the runtime does not have yet. Until the operator deploys
+it (`git -C ~/dev/forge-runtime pull --ff-only`, then
+`./hermes/profiles-bootstrap.sh` under bash), `make verify` carries
+`config/soul-in-sync/forge-codex-lane` red and `make preflight` two FAILs
+(`~/.forge/repo/scripts/lane.sh` and `lane-handoff.sh` do not resolve; PASS
+stays 90). Deploying right after merge clears all three. The cost: a lane card
+dispatched live would run a full, paid chunk and hand it to a `forge-prejudge`
+that still expects a child card; `prejudge-review.sh` then blocks on its
+`chunk-identity` guard, so it fails closed, but after the spend. Read on
+2026-09-26 through `board-snapshot.sh`: no `forge-codex-lane` card on any board
+is `ready` or `running`; three are dormant (`forge-dependency-probe-20260728`
+one `blocked` and one `todo`, `forge-ladder` one `blocked`), and none moves
+unless someone unblocks it. S3 opens against whichever state the operator
+chose, and its brief should say which.
 
 ## Open questions
 

@@ -572,11 +572,15 @@ build_argv() {
     # than trusting a resumed session to inherit them: the failure mode of that
     # assumption is silent loss of write access to the shared .git, which is
     # the defect that cost this repo a rung to find the first time.
+    local prompt="$RESUME_PROMPT"
+    if [ "$BOUNCE_DELIVERED" = no ] && [ -s "$BOUNCE_PROMPT_FILE" ]; then
+      prompt="$(cat "$BOUNCE_PROMPT_FILE")"
+    fi
     ARGV=("${ARGV[@]}"
           -c 'sandbox_mode="workspace-write"'
           -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\"]"
           --output-last-message "$LAST_MESSAGE"
-          "$RESUME_PROMPT")
+          "$prompt")
   else
     ARGV=("${ARGV[@]}"
           -C "$WS"
@@ -586,6 +590,15 @@ build_argv() {
           "$(cat "$CONTRACT")")
   fi
 }
+
+# A bounce re-entry (epic FL3) resumes the implementer's OWN session with the
+# reviewer's reasons instead of the park prompt below: lane.sh seeds
+# $SESSION_FILE with the session that wrote the branch and writes the reasons
+# to $BOUNCE_PROMPT_FILE. They are delivered once, on the first resumed
+# attempt; a park after that resumes with the ordinary prompt, which is then
+# true — nothing about the contract changed between the park and the wake.
+BOUNCE_PROMPT_FILE="$RUNTIME/bounce-prompt.md"
+BOUNCE_DELIVERED=no
 
 RESUME_PROMPT="A provider usage limit interrupted the previous turn. Nothing you
 did caused it and nothing about the contract has changed. Continue where you
@@ -609,6 +622,7 @@ attempt_once() {
     | tee "$CURRENT" \
     | "$PROGRESS" --session-id-file "$SESSION_FILE"
   rc="${PIPESTATUS[0]}"
+  BOUNCE_DELIVERED=yes
   read_session_id
   return "$rc"
 }

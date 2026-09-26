@@ -29,10 +29,8 @@ dependency check that its handoff PR is actually merged:
 `gh pr view <parent PR> --json state,mergedAt`. A non-null `mergedAt` on every
 one clears this step; an open parent PR means you would be building on code
 that is not in `main` yet — stop and say so (block, unattended; tell the human,
-interactive) rather than branching. `forge-lane` §1a is the unattended lane's
-identical check, including the narrow bounce-remediation exception for
-repairing an already-rejected PR on the same branch — read it there rather
-than re-deriving the exception here.
+interactive) rather than branching. `forge-lane` §1 runs the unattended lane's
+identical check, as a program.
 
 ## 3. Mark in progress & branch
 Branch only if you are not already on the chunk branch. In a Hermes worktree the
@@ -47,7 +45,8 @@ then start or rebase the implementation branch onto that approved hash.
 This skill assumes **network and a built `.venv`** — it is for an operator
 driving the repo directly. Inside a `codex exec` sandbox neither holds: the
 fetch below fails with `Could not resolve hostname` (measured 2026-07-28), and
-`forge-lane` §3 is what makes the worktree usable before Codex ever sees it.
+`forge-lane` §1's program is what makes the worktree usable before Codex ever
+sees it.
 
 ```bash
 branch=chunk/<id>-<slug>
