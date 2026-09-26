@@ -790,15 +790,25 @@ offline case that pins the accepted form, or a refusal in the script itself
 when `FORGE_DIR` is not the runtime the `~/.forge/repo` symlink resolves to.
 *Open; not fixed in S2b, whose PR is deliberately P6's fix alone.*
 
-**P10 (S3 review). Three edges left open by S3's review fixes.** Each was found
-by reading the code and none has been measured. (1) `--dry-run` promises that no
+**P10 (S3 review). Five edges left open by S3's review fixes.** Each was found
+by reading the code and none has been measured. (4) and (5) sit in merge mode,
+which is off, so like P9 they must close before `FORGE_VERIFIER_MERGE=1`. (1) `--dry-run` promises that no
 board is touched, but a gate-blocked PR routes *before* the dry-run exit. Run
 with a live board, it still makes the `request-changes` transition. (2)
 `merge-check.sh` prepares the clone once, on the head, before `main` is merged
 in. So when `main` changes dependencies, the union can go red for environment
 reasons, and that red reads as `check-failed`, a bounce. (3) The merge-watcher's
 "merged but the card did not complete" line repeats every sweep. That is the
-same noise `merge-watcher-reports-once` removed for a closed PR.
+same noise `merge-watcher-reports-once` removed for a closed PR. (4)
+`route_merge` treats any non-zero exit from `gh pr merge` as "nothing merged"
+and never reads the state back. If `gh` exits non-zero after the squash has
+landed (a failed `--delete-branch`, say), the card is blocked
+`other: handoff-integrity`, which the watcher does not sweep. That is the
+stranding the `merged-held` path fixed for a failed completion. The cheap fix
+is to read the state back on a non-zero exit and take the rc-4 path on
+`MERGED`. (5) When the post-merge `merge-pending:` hold itself fails, the
+substrate reason is written to start with `merge-pending:` so the watcher can
+still find it. No case has executed that fallback.
 
 ## Open questions
 
