@@ -57,8 +57,7 @@
 #   FORGE_LANE_BASE        the protected branch PRs target            [main]
 #   FORGE_LANE_HEARTBEAT   seconds between card heartbeats            [300]
 #   FORGE_LANE_TICK        seconds between checks of the Codex run      [5]
-#   FORGE_LANE_REVIEWER    the profile the card is handed to  [forge-prejudge]
-#                          (FL4 renames it forge-verifier)
+#   FORGE_LANE_REVIEWER    the profile the card is handed to  [forge-verifier]
 #   FORGE_LANE_SESSION_ROOT  where each card's Codex session id is kept for a
 #                          bounce re-entry          [~/.forge/lane-sessions]
 #
@@ -86,7 +85,7 @@ RUN_ID="${HERMES_KANBAN_RUN_ID:-}"
 BOARD="${HERMES_KANBAN_BOARD:-}"
 BASE="${FORGE_LANE_BASE:-main}"
 HEARTBEAT="${FORGE_LANE_HEARTBEAT:-300}"
-REVIEWER="${FORGE_LANE_REVIEWER:-forge-prejudge}"
+REVIEWER="${FORGE_LANE_REVIEWER:-forge-verifier}"
 SESSION_ROOT="${FORGE_LANE_SESSION_ROOT:-$HOME/.forge/lane-sessions}"
 TICK="${FORGE_LANE_TICK:-5}"
 STARTED="$(date +%s)"

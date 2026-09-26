@@ -42,6 +42,10 @@
 #               of real and near-miss step shapes, and the gate's own safety
 #               properties — absent CI is not a pass, skip is not pass, it does
 #               not speak the verdict schema, and it gates nothing       (F35)
+#   verifier/   the verifier's own card: the merged-tree union executed against
+#               real repositories, recommend-only holds, the bounce budget, the
+#               block kind that keeps a hold out of `triage`, the disagree path
+#               under a real dispatcher pass, and the merge-watcher  (FL4, FL6)
 #   roadmap/    the sizing rules at PLAN time: one checked-in passing roadmap,
 #               one mutation per rule family, and the audited run's own CHUNK-5
 #               driven through the real check              (F11, F53, ADR-0012)
@@ -83,11 +87,11 @@ while [ $# -gt 0 ]; do
     --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|sweep|roadmap|gate|docs|quota|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|gate|docs|quota|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge sweep roadmap gate docs quota manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap gate docs quota manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -2509,12 +2513,23 @@ prejudge/stamped-envelope-declares-every-key  no key the schema does not declare
 prejudge/envelope-is-repaired-before-it-is-stored  an absent nits_as_cards is filled and an invented worker_session_id cannot survive
 prejudge/bounce-card-lands-in-the-rejected-worktree  route_bounce's own flags make a card Hermes accepts, in the rejected worktree
 prejudge/tier2-handoff-survives-a-live-parent  route_tier2 creates parentless, blocks, then links — a live (non-done) parent no longer breaks the handoff
-prejudge/chunk-cannot-be-its-own-running-task  --chunk equal to the running task is refused by substrate before Stage 1 runs
 prejudge/tier2-card-names-the-implementer-model  the card a human merges from names the model that wrote the diff, and whether that is evidence (F22)
 prejudge/implementer-model-mutation-is-caught  a line that prints the model and swallows codex_model_source reddens
 prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_model, an empty codex_model_requested and a blank effort all fall to their honest branch, never evidence or a false F22 alarm
 prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
+verifier/chunk-is-the-running-card  D19.1: --chunk must BE the running card; a mismatch is substrate before Stage 1
+verifier/merged-tree-union-is-executed  real repositories: a red union bounces, a green one passes, a conflict is named, an absent branch or target is unrunnable
+verifier/merged-tree-mutation-is-caught  a fast-forward-only merge builds no union and stops reporting the red one
+verifier/recommend-only-holds-the-card  the review run's own block lands blocked/needs_input from review; the child stays held and nothing merges (D19.3)
+verifier/merge-mode-merges-and-completes  squash + delete-branch, card done, child released; anything but the exact switch value 1 stays recommend-only (D19.6)
+verifier/a-red-ci-pr-never-merges  merge mode on and an ungatable repo: the gate blocks on ci-state before any model, merged-tree check or merge
+verifier/bounce-returns-the-same-card  request-changes with the reasons on the card, no card created; a red union bounces before the scorer, an unrunnable one is substrate
+verifier/bounce-budget-becomes-an-exception  FL6: two rounds, then a completable decision-first block; the window restarts on an operator decision
+verifier/a-hold-is-never-triage  recommend, disagree, repair, recommend again: the second hold rotates kind, stays blocked and still completes
+verifier/hold-kind-mutation-is-caught  a pinned block kind reaches triage on the real kernel, cannot be completed, and is reported as stranded
+verifier/disagree-path-survives-a-dispatcher-tick  bounce.sh parks on the non-spawnable sentinel, a real dispatch pass spawns nothing, the implementer returns
+verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit, ignores other blocks
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
 sweep/dest-refuses-traversal-past-a-missing-component  `..` through a dir that does not exist yet still lands in /tmp
@@ -7327,28 +7342,16 @@ TABLE
     fi
   fi
 
-  # PART 2: a model deriving --chunk from prose (forge-prejudge.SOUL.md step 1:
-  # "take ... your parent chunk card's id into chunk") will get it wrong again.
-  # This is the one shape of that mistake --chunk-identity can ALWAYS catch,
-  # with no board and no hermes at all: the exact live failure above, where
-  # --chunk equalled the running task itself. It must be refused before Stage 1
-  # (the gate) ever runs — no gate, no model, no card, exit 3 — never exit 1 or
-  # 2, which a caller under a different contract could read as a crash or a
-  # routed bounce.
-  local self_out self_rc
-  self_out="$(printf '%s' "$contract" | HERMES_KANBAN_TASK=t_self "$review" \
-        https://example.invalid/pull/9 \
-        --chunk t_self --fixture "$prs/pr-9" --dry-run 2>/dev/null)"
-  self_rc=$?
-  if [ "$self_rc" = 3 ] && printf '%s' "$self_out" | jq -e '
-        .action == "substrate-block"
-        and (.reason | test("^env: chunk-identity"))
-        and .created_cards == []' >/dev/null 2>&1; then
-    ok "chunk-cannot-be-its-own-running-task"
-  else
-    bad "chunk-cannot-be-its-own-running-task" \
-        "--chunk equal to \$HERMES_KANBAN_TASK must be refused by substrate before Stage 1 runs; rc=$self_rc out='$(printf '%s' "$self_out" | tr '\n' ' ')'"
-  fi
+  # PART 2 retired here, and re-asserted inverted in the `verifier` group.
+  # `prejudge/chunk-cannot-be-its-own-running-task` refused
+  # `--chunk == $HERMES_KANBAN_TASK`, which was correct while a chunk card
+  # PARENTED a tier-1 child and a model read that parent's id out of prose
+  # (the live 2026-09-04 failure). ADR-0019 D19.1 deletes that relationship:
+  # there is one card per chunk, the verifier is claimed on it, and the SOUL
+  # passes `$HERMES_KANBAN_TASK`. The identity that must hold is therefore the
+  # inverse, and asserting it here would assert a contract the code no longer
+  # has. `verifier/chunk-is-the-running-card` executes the new one, including
+  # that a mismatch is still refused before Stage 1 and still exits 3.
 
   # RUN 55 APPROVED RUN 52'S DIFF WITHOUT KNOWING WHAT WROTE IT. On 2026-09-08
   # the Codex desktop app rewrote ~/.codex/config.toml to an unpinned model,
@@ -7470,6 +7473,578 @@ TABLE
   fi
 }
 wants prejudge  && run_prejudge_group
+
+# ===========================================================================
+# verifier/ — FL4 and FL6. The verifier's outcomes, executed.
+#
+# Two product runs ended with 0 % of chunks merged without the operator, and the
+# defects that WERE caught were caught by things that ran: mutation, a merged
+# tree, a probe. ADR-0019 D19.2 makes an executing check half of what an approval
+# rests on, so these cases execute too. Nothing here is a grep for a routing
+# string: the real `prejudge-review.sh`, the real `merge-check.sh`, the real
+# `merge-watcher.sh` and the real `bounce.sh` run against the installed Hermes in
+# an isolated HERMES_HOME, with `gh` and `claude` as call-logging stubs. The only
+# thing simulated is the network.
+#
+# D19.3 named three transitions it had read in Hermes's source but not executed,
+# and required FL4's fixtures to execute them before anything depended on them.
+# All three are below: the verifier's own block of a claimed review run lands in
+# `blocked` and `unblock` returns it to `review`; `complete` is accepted from
+# `blocked`; and the `BLOCK_RECURRENCE_LIMIT` route is real — which is exactly
+# how the design changed, because a chunk card that reaches `triage` cannot be
+# completed at all.
+# ===========================================================================
+run_verifier_group() {
+  group verifier
+  local review=scripts/prejudge-review.sh mc=scripts/merge-check.sh
+  local mw=scripts/merge-watcher.sh bo=scripts/bounce.sh
+  local prs=scripts/fixtures/prejudge-prs
+  local contract='CHUNK-7: Sync engine
+
+- **Touches:** `src/forgeboard_report/domain.py`
+- **Scenarios:** 3'
+
+  # -------------------------------------------------------------------------
+  # 1. --chunk IS the running card (the inverse of the retired prejudge case).
+  # Refused before Stage 1, with no gate, no model and no board — exit 3, never
+  # 1 or 2, which a caller under `set -e` would read as a crash.
+  # -------------------------------------------------------------------------
+  local ci_out ci_rc ci_detail=""
+  ci_out="$(printf '%s' "$contract" | HERMES_KANBAN_TASK=t_running "$review" \
+        https://example.invalid/pull/9 --chunk t_other --fixture "$prs/pr-9" --dry-run 2>/dev/null)"
+  ci_rc=$?
+  [ "$ci_rc" = 3 ] || ci_detail="$ci_detail mismatch-not-substrate(rc=$ci_rc)"
+  printf '%s' "$ci_out" | jq -e '.action == "substrate-block"
+      and (.reason | test("^env: chunk-identity"))
+      and (.reason | test("is not the running card"))
+      and .created_cards == []' >/dev/null 2>&1 \
+    || ci_detail="$ci_detail mismatch-reason-wrong"
+  ci_out="$(printf '%s' "$contract" | HERMES_KANBAN_TASK=t_same "$review" \
+        https://example.invalid/pull/9 --chunk t_same --fixture "$prs/pr-9" --dry-run 2>/dev/null)"
+  ci_rc=$?
+  [ "$ci_rc" = 0 ] || ci_detail="$ci_detail same-card-refused(rc=$ci_rc)"
+  printf '%s' "$ci_out" | jq -e '.action == "would-score"' >/dev/null 2>&1 \
+    || ci_detail="$ci_detail same-card-did-not-reach-the-prompt"
+  [ -z "$ci_detail" ] \
+    && ok "chunk-is-the-running-card (D19.1: the same id passes, a different one is substrate before Stage 1)" \
+    || bad "chunk-is-the-running-card" \
+        "under a worker --chunk must be \$HERMES_KANBAN_TASK and a mismatch must exit 3 before the gate —$ci_detail"
+
+  # -------------------------------------------------------------------------
+  # 2. The merged tree, EXECUTED against real repositories.
+  #
+  # redglass PR #9 was green, `main` was green, and their union failed five tests
+  # neither failed alone. Nothing in the pipeline had ever built that union. The
+  # fixture below is that shape in miniature: `feature` changes b and tightens
+  # the check, `main` changes a, and only the merge of the two is red.
+  # -------------------------------------------------------------------------
+  local mcroot="$TMPROOT/merge-check" mcorg="$TMPROOT/merge-check/origin" mc_detail=""
+  local mc_out mc_rc
+  rm -rf "$mcroot"; mkdir -p "$mcorg"
+  # EVERY BRANCH IS GREEN ALONE, and no two branches touch the same file except
+  # the conflict arm. That is PR #9's shape exactly: `main` adds a test that
+  # depends on `answer` returning 1, `feature` changes `answer` to 2 and updates
+  # its OWN test, and only the union has both.
+  (
+    set -e
+    cd "$mcorg"; git init -q .
+    git config user.email v@forge.invalid; git config user.name verify
+    git symbolic-ref HEAD refs/heads/main
+    printf 'check:\n\t@bash run-tests.sh\n' > Makefile
+    printf 'set -e\nfor t in t-*.sh; do bash "$t"; done\n' > run-tests.sh
+    printf 'answer() { echo 1; }\n\n# padding, so an append below cannot overlap the function above\n#\n#\n#\n#\n#\n#\n# end of lib\n' > lib.sh
+    printf '. ./lib.sh\n[ "$(answer)" = 1 ]\n' > t-a.sh
+    git add -A; git commit -qm base
+    git checkout -qb feature
+    printf 'answer() { echo 2; }\n\n# padding, so an append below cannot overlap the function above\n#\n#\n#\n#\n#\n#\n# end of lib\n' > lib.sh
+    printf '. ./lib.sh\n[ "$(answer)" = 2 ]\n' > t-a.sh
+    git commit -qam 'feature: answer is 2, and its own test says so'
+    git checkout -qb green main
+    printf '[ -f lib.sh ]\n' > t-c.sh; git add -A
+    git commit -qm 'green: a test nothing else touches'
+    git checkout -qb conflicting main
+    printf '# a note from the other branch\n' >> lib.sh
+    git commit -qam 'conflicting: appends to the end of lib.sh'
+    git checkout -q main
+    printf '. ./lib.sh\n[ "$(answer)" = 1 ]\n' > t-b.sh
+    printf '# a note from main\n' >> lib.sh
+    git add -A; git commit -qm 'main: a second test that depends on answer being 1'
+  ) >/dev/null 2>&1 || mc_detail="$mc_detail fixture-repo-not-built"
+
+  mc_out="$("$mc" --clone-from "$mcorg" --head-ref feature 2>/dev/null)"; mc_rc=$?
+  [ "$mc_rc" = 1 ] || mc_detail="$mc_detail red-union-rc=$mc_rc"
+  printf '%s' "$mc_out" | jq -e '.schema == "forge.mergecheck.v1" and .result == "check-failed"
+      and (.action | test("merge"))
+      and (.base_sha | type) == "string" and (.head_sha | type) == "string"' >/dev/null 2>&1 \
+    || mc_detail="$mc_detail red-union-shape"
+  mc_out="$("$mc" --clone-from "$mcorg" --head-ref green 2>/dev/null)"; mc_rc=$?
+  { [ "$mc_rc" = 0 ] && printf '%s' "$mc_out" | jq -e '.result == "pass"' >/dev/null 2>&1; } \
+    || mc_detail="$mc_detail green-union-not-pass(rc=$mc_rc)"
+  mc_out="$("$mc" --clone-from "$mcorg" --head-ref conflicting 2>/dev/null)"; mc_rc=$?
+  { [ "$mc_rc" = 1 ] && printf '%s' "$mc_out" | jq -e '.result == "conflict" and (.evidence | test("a"))' >/dev/null 2>&1; } \
+    || mc_detail="$mc_detail conflict-not-reported(rc=$mc_rc)"
+  # A branch that is gone is UNRUNNABLE, never a pass. A bare `git rev-parse`
+  # echoes its own argument on failure, so the absent-branch arm only fires
+  # because the script uses `--verify --quiet`; this is that arm.
+  mc_out="$("$mc" --clone-from "$mcorg" --head-ref deleted-branch 2>/dev/null)"; mc_rc=$?
+  { [ "$mc_rc" = 3 ] && printf '%s' "$mc_out" | jq -e '.result == "unrunnable"' >/dev/null 2>&1; } \
+    || mc_detail="$mc_detail absent-branch-not-unrunnable(rc=$mc_rc)"
+  # And a project with no `make check` target at all is unrunnable, not failing.
+  mc_out="$("$mc" --clone-from "$mcorg" --head-ref green --check-cmd 'make nosuchtarget' 2>/dev/null)"; mc_rc=$?
+  { [ "$mc_rc" = 3 ] && printf '%s' "$mc_out" | jq -e '.result == "unrunnable" and (.evidence | test("no target"))' >/dev/null 2>&1; } \
+    || mc_detail="$mc_detail absent-target-not-unrunnable(rc=$mc_rc)"
+  [ -z "$mc_detail" ] \
+    && ok "merged-tree-union-is-executed (red union bounces, green passes, a conflict is named, an absent branch and an absent target are unrunnable)" \
+    || bad "merged-tree-union-is-executed" \
+        "$mc must build the union and judge it, and never report an unrunnable check as a pass —$mc_detail"
+
+  # MUTATION: the one-line version of this check that does not work. Merging
+  # fast-forward-only never builds a union at all, so redglass PR #9 passes.
+  local mc_mut="$mcroot/ff-only.sh"
+  sed -e 's/merge --no-edit --no-ff/merge --no-edit --ff-only/' "$mc" > "$mc_mut"
+  chmod +x "$mc_mut"
+  if cmp -s "$mc" "$mc_mut"; then
+    bad "merged-tree-mutation-is-caught" \
+        "the mutation changed nothing in $mc — the merge it targets moved, so this probe proves nothing (F65)"
+  else
+    mc_out="$("$mc_mut" --clone-from "$mcorg" --head-ref feature 2>/dev/null)"; mc_rc=$?
+    if [ "$mc_rc" != 1 ] || ! printf '%s' "$mc_out" | jq -e '.result == "check-failed"' >/dev/null 2>&1; then
+      ok "merged-tree-mutation-is-caught (a fast-forward-only merge never builds the union, and stops reporting the red one)"
+    else
+      bad "merged-tree-mutation-is-caught" \
+          "an --ff-only merge cannot produce the union that fails, so it must stop reporting check-failed (got rc=$mc_rc)"
+    fi
+  fi
+
+  # -------------------------------------------------------------------------
+  # 3. The routing, on the REAL kernel, in an isolated HERMES_HOME.
+  #
+  # `gh`, `claude` and the merged-tree check are stubs that log every call; the
+  # board, the claim, the transitions and the recurrence guard are the installed
+  # Hermes. A parent chunk P and its child C exist throughout, because half of
+  # what an outcome means is what it does to the child (D19.5's native gate).
+  # -------------------------------------------------------------------------
+  local vhome="$TMPROOT/verifier-home" vbin="$TMPROOT/verifier-bin"
+  local vpy="$HOME/.hermes/hermes-agent/venv/bin/python" vsrc="$HOME/.hermes/hermes-agent"
+  local vP vC vdetail vrc vout vfx="$TMPROOT/verifier-fx"
+  if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$vpy" ]; then
+    for c in recommend-only-holds-the-card merge-mode-merges-and-completes \
+             a-red-ci-pr-never-merges bounce-returns-the-same-card \
+             bounce-budget-becomes-an-exception a-hold-is-never-triage \
+             hold-kind-mutation-is-caught disagree-path-survives-a-dispatcher-tick \
+             merge-watcher-completes-a-merged-hold; do
+      skip "$c" "hermes (and its venv python) not installed"
+    done
+  else
+    mkdir -p "$vbin"
+    # A `gh` that answers the three questions the verifier asks and logs the one
+    # command that must never happen by accident.
+    cat > "$vbin/gh" <<'VGH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$VSTUB/gh.log"
+case "$1 $2" in
+  "pr view")
+    case "$*" in
+      *headRefName*) echo '{"headRefName":"chunk/7-sync-engine"}'; exit 0;;
+      *state*) if [ -f "$VSTUB/merged" ]; then
+                 echo '{"state":"MERGED","mergedAt":"2026-09-26T10:00:00Z","mergeCommit":{"oid":"abcdef1234567890"}}'
+               elif [ -f "$VSTUB/closed" ]; then
+                 echo '{"state":"CLOSED","mergedAt":null,"mergeCommit":null}'
+               else
+                 echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'
+               fi; exit 0;;
+    esac;;
+  "repo view") echo '{"url":"https://example.invalid/wielas/proj"}'; exit 0;;
+  "pr merge")  touch "$VSTUB/merged"; echo "merged"; exit 0;;
+esac
+exit 0
+VGH
+    # A `claude -p` whose verdict is chosen by the case, in the exact envelope
+    # the pinned stamping jq reads: is_error, usage, total_cost_usd, session_id
+    # and structured_output. Nothing here touches the pinned region — it only
+    # feeds it (D19.7).
+    cat > "$vbin/claude" <<'VCLAUDE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$VSTUB/claude.log"
+cat > /dev/null    # the prompt is consumed and never echoed
+if [ "${VF_VERDICT:-approve}" = bounce ]; then
+  scores='{"spec_fidelity":1,"scenario_integrity":1,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
+  verdict=bounce
+  findings='[{"dimension":"scenario_integrity","severity":"blocker","evidence":"tests/test_sync.py:41 asserts nothing","action":"assert the merged record count equals 3"}]'
+else
+  scores='{"spec_fidelity":3,"scenario_integrity":3,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
+  verdict=approve
+  findings='[]'
+fi
+jq -n --argjson scores "$scores" --argjson findings "$findings" --arg verdict "$verdict" '
+  { is_error: false, api_error_status: null, session_id: "sess-stub-1",
+    total_cost_usd: 0.02,
+    usage: { input_tokens: 100, cache_creation_input_tokens: 0,
+             cache_read_input_tokens: 0, output_tokens: 20 },
+    structured_output: { schema: "forge.judge.v1", chunk_id: "CHUNK-7",
+      verdict: $verdict, scores: $scores, findings: $findings,
+      nits_as_cards: [], spot_check_suggestion: "run the sync twice" } }'
+VCLAUDE
+    # The merged-tree check, recorded. `merge-check.sh` itself is executed
+    # against real repositories by the cases above; here the outcome is the
+    # input, so the ROUTING is what gets exercised.
+    cat > "$vbin/merge-check" <<'VMC'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$VSTUB/mc.log"
+case "${VF_MERGED_TREE:-pass}" in
+  pass) jq -n '{schema:"forge.mergecheck.v1",result:"pass",evidence:"make check is green on the merged tree",action:null}'; exit 0;;
+  check-failed) jq -n '{schema:"forge.mergecheck.v1",result:"check-failed",evidence:"5 tests fail on the union",action:"merge main into this branch and make the union green"}'; exit 1;;
+  *) jq -n '{schema:"forge.mergecheck.v1",result:"unrunnable",evidence:"stub says unrunnable",action:null}'; exit 3;;
+esac
+VMC
+    chmod +x "$vbin/gh" "$vbin/claude" "$vbin/merge-check"
+
+    _v()   { HERMES_HOME="$vhome" hermes kanban --board vlab "$@"; }
+    _vst() { _v show "$1" --json 2>/dev/null | jq -r '[.task.status,(.task.assignee // "-")] | join("/")'; }
+    _vrid(){ _v show "$1" --json 2>/dev/null | jq -r '.runs | max_by(.id).id'; }
+    _vcards() { _v list --json 2>/dev/null | jq 'length'; }
+    _vclaim_review() {
+      ( cd "$vsrc" && HERMES_HOME="$vhome" HERMES_KANBAN_BOARD=vlab "$vpy" -c "
+from hermes_cli import kanban_db as kb, kanban_db_connect as kbc
+with kbc.connect_closing() as c:
+    raise SystemExit(0 if kb.claim_review_task(c, '$1') is not None else 1)" ) >/dev/null 2>&1
+    }
+    # The lane's half of the same-card protocol (FL3), so the review run the
+    # verifier claims is a real one with a real review_requested envelope.
+    _vhandoff() {
+      local r
+      _v claim "$1" >/dev/null 2>&1; r="$(_vrid "$1")"
+      HERMES_KANBAN_TASK="$1" HERMES_KANBAN_RUN_ID="$r" _v request-review "$1" \
+        --reviewer forge-verifier --summary "implemented CHUNK-7" \
+        --metadata '{"schema":"forge.chunk.v1","pr":"https://example.invalid/wielas/proj/pull/9","codex_model":"gpt-5.6-luna","codex_reasoning_effort":"xhigh","codex_model_source":"rollout"}' \
+        >/dev/null 2>&1
+    }
+    # The verifier, as the dispatcher would run it: claimed on the review run,
+    # with its own id as --chunk.
+    _vrun() {   # extra env=value pairs as arguments
+      local r; _vclaim_review "$vP" || return 9
+      r="$(_vrid "$vP")"
+      printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" \
+        HERMES_HOME="$vhome" HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$r" \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" "$@" \
+        "$REPO_ROOT/$review" https://example.invalid/wielas/proj/pull/9 \
+        --chunk "$vP" --board vlab --fixture "$REPO_ROOT/$prs/pr-9" \
+        > "$vbin/out.json" 2> "$vbin/err.txt"
+      echo $?
+    }
+    _vboard() {   # a fresh board with P and its child C
+      rm -rf "$vhome" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/merged" "$vbin/closed"
+      mkdir -p "$vhome"
+      HERMES_HOME="$vhome" hermes kanban boards create vlab >/dev/null 2>&1
+      vP="$(_v create "CHUNK-7: Sync engine" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+      vC="$(_v create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$vP" --json 2>/dev/null | jq -r '.id')"
+      _vhandoff "$vP"
+    }
+
+    # ---- recommend-only ---------------------------------------------------
+    # D19.3, and the first of the three transitions it had only read: the
+    # verifier's block of its own claimed review run must land in `blocked`
+    # (source phase `review`), with the child still held.
+    vdetail=""; _vboard
+    [ "$(_vst "$vP")" = review/forge-verifier ] || vdetail="$vdetail handoff-did-not-land($(_vst "$vP"))"
+    vrc="$(_vrun)"
+    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
+    jq -e '.action == "recommend" and .created_cards == []' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail envelope-not-a-recommendation($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail card-not-held($(_vst "$vP"))"
+    [ "$(_vst "$vC" | cut -d/ -f1)" = todo ] || vdetail="$vdetail child-released-before-merge($(_vst "$vC"))"
+    [ "$(_vcards)" = 2 ] || vdetail="$vdetail card-count-not-2($(_vcards))"
+    ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail merged-without-merge-mode"
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "blocked") ] | last
+        | (.payload.kind == "needs_input") and (.payload.source_status == "review")
+          and (.payload.reason | startswith("merge-pending: "))
+          and (.payload.reason | test("Decision needed: merge the PR"))
+          and (.payload.reason | test("Reply: merge"))' >/dev/null 2>&1 \
+      || vdetail="$vdetail hold-is-not-a-decision-first-needs_input"
+    # The evidence a human merges on: the model that wrote the diff (F22), and
+    # the merged-tree result, both on the card.
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+        | test("implementer model: gpt-5.6-luna") and test("merged tree: make check is green")' >/dev/null 2>&1 \
+      || vdetail="$vdetail hold-carries-no-evidence"
+    [ -z "$vdetail" ] \
+      && ok "recommend-only-holds-the-card (executed: the review run's own block lands blocked/needs_input from review, child still todo, two cards, nothing merged)" \
+      || bad "recommend-only-holds-the-card" \
+          "an approval in recommend-only must hold this card for the operator and release nothing —$vdetail"
+
+    # ---- merge mode -------------------------------------------------------
+    # Built and tested although it ships off: "a red-CI PR must not merge" only
+    # means something where merging is possible at all.
+    vdetail=""; _vboard
+    vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
+    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
+    jq -e '.action == "merged"' "$vbin/out.json" >/dev/null 2>&1 || vdetail="$vdetail envelope-not-merged"
+    grep -q '^pr merge --squash --delete-branch' "$vbin/gh.log" 2>/dev/null \
+      || vdetail="$vdetail not-squash-and-delete($(grep '^pr merge' "$vbin/gh.log" 2>/dev/null))"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail card-not-done($(_vst "$vP"))"
+    [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released($(_vst "$vC"))"
+    # Fail closed: anything but the exact string `1` is recommend-only.
+    vdetail_fc=""
+    _vboard; vrc="$(_vrun FORGE_VERIFIER_MERGE=true)"
+    grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null && vdetail_fc="merge-mode-opened-by-a-non-1-value"
+    _vboard; vrc="$(_vrun FORGE_VERIFIER_MERGE=)"
+    grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null && vdetail_fc="$vdetail_fc merge-mode-opened-by-an-empty-value"
+    vdetail="$vdetail $vdetail_fc"
+    [ -z "$(printf '%s' "$vdetail" | tr -d ' ')" ] \
+      && ok "merge-mode-merges-and-completes (squash + delete, card done, child released; anything but the exact switch value 1 stays recommend-only)" \
+      || bad "merge-mode-merges-and-completes" \
+          "merge mode must squash-merge, complete the card and release the child, and its absence must fail closed —$vdetail"
+
+    # ---- the gate is the verifier's own CI, because the repo may have none --
+    # ADR-0019's honest weak spot: both product repos are private on a free plan,
+    # `merge-gate.sh` returns UNAVAILABLE, and `gh pr merge` will merge a red PR
+    # without complaint. So a red rollup must die in the gate, with merge mode ON.
+    vdetail=""; rm -rf "$vfx"; mkdir -p "$vfx"
+    cp -R "$REPO_ROOT/$prs/pr-9/." "$vfx/"
+    jq '.statusCheckRollup = [{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"FAILURE","workflowName":"ci","detailsUrl":"https://example.invalid/run/1"}]' \
+      "$REPO_ROOT/$prs/pr-9/pr.json" > "$vfx/pr.json"
+    _vboard
+    vrc="$(printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" \
+        HERMES_HOME="$vhome" HERMES_KANBAN_TASK="$vP" \
+        HERMES_KANBAN_RUN_ID="$( _vclaim_review "$vP" && _vrid "$vP")" \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_VERIFIER_MERGE=1 \
+        "$REPO_ROOT/$review" https://example.invalid/wielas/proj/pull/9 \
+        --chunk "$vP" --board vlab --fixture "$vfx" > "$vbin/out.json" 2>"$vbin/err.txt"; echo $?)"
+    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc"
+    jq -e '.action == "gate-block" and (.metadata.blocks | index("ci-state"))' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail gate-did-not-block-on-ci($(jq -c '.action,.metadata.blocks' "$vbin/out.json" 2>/dev/null | tr '\n' ' '))"
+    ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail RED-CI-WAS-MERGED"
+    ! grep -q . "$vbin/claude.log" 2>/dev/null || vdetail="$vdetail scorer-was-paid-for-a-red-pr"
+    ! grep -q . "$vbin/mc.log" 2>/dev/null || vdetail="$vdetail merged-tree-ran-after-the-gate-blocked"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = ready ] || vdetail="$vdetail card-not-returned($(_vst "$vP"))"
+    [ -z "$vdetail" ] \
+      && ok "a-red-ci-pr-never-merges (merge mode on, UNAVAILABLE repo: the gate blocks on ci-state, no model is spawned, no merge is attempted)" \
+      || bad "a-red-ci-pr-never-merges" \
+          "a red rollup must block in the gate even with merge mode on, and must not reach the scorer, the merged-tree check or gh pr merge —$vdetail"
+
+    # ---- a bounce is the same card, back to its implementer ---------------
+    vdetail=""; _vboard
+    vrc="$(_vrun VF_VERDICT=bounce)"
+    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc"
+    jq -e '.action == "bounce" and (.summary | test("round 1 of 2")) and .created_cards == []' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail envelope-not-a-first-round-bounce($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail not-back-with-the-lane($(_vst "$vP"))"
+    [ "$(_vcards)" = 2 ] || vdetail="$vdetail a-card-was-created($(_vcards))"
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "changes_requested") ] | length == 1' >/dev/null 2>&1 \
+      || vdetail="$vdetail no-changes_requested-event"
+    # The reasons ride the `changes_requested` event's payload — that is where
+    # `lane.sh`'s re-entry reads them (FL3), so that is what must carry them.
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "changes_requested") ] | last
+        | (.payload | tostring)
+        | test("tests/test_sync.py:41") and test("assert the merged record count")
+          and test("implementer model: gpt-5.6-luna")' >/dev/null 2>&1 \
+      || vdetail="$vdetail reason-and-action-not-on-the-card"
+    # And the merged tree is a bounce reason of its own, with no scorer spawned.
+    _vboard; vrc="$(_vrun VF_MERGED_TREE=check-failed)"
+    { [ "$vrc" = 0 ] && [ "$(_vst "$vP")" = ready/forge-codex-lane ] \
+      && ! grep -q . "$vbin/claude.log" 2>/dev/null; } \
+      || vdetail="$vdetail red-union-did-not-bounce-before-the-scorer(rc=$vrc,$(_vst "$vP"))"
+    # An UNRUNNABLE merged-tree check is not a pass and not a bounce: it is
+    # substrate, and it must not transition the card at all.
+    # A claimed review run leaves the card `running` with `source_status=review`
+    # (ADR-0019 D19.3's first transition, executed): substrate means the card is
+    # exactly where the claim left it, with no transition of its own.
+    _vboard; vrc="$(_vrun VF_MERGED_TREE=unrunnable)"
+    { [ "$vrc" = 3 ] && [ "$(_vst "$vP")" = running/forge-verifier ] \
+      && jq -e '(.reason | test("^env: merge-check-unrunnable"))' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail unrunnable-union-was-not-substrate(rc=$vrc,$(_vst "$vP"))"
+    [ -z "$vdetail" ] \
+      && ok "bounce-returns-the-same-card (request-changes to the lane with the reasons on the card, no card created; a red union bounces before the scorer; an unrunnable one is substrate)" \
+      || bad "bounce-returns-the-same-card" \
+          "a bounce must return THIS card to its implementer with actionable reasons and create nothing —$vdetail"
+
+    # ---- FL6: two rounds, then one exception, and the window resets --------
+    # The epic reached "two" by letting the kernel's same-kind recurrence route
+    # the third block to `triage`. Measured above, that route strands a chunk, so
+    # the budget is counted here from `changes_requested` events and the
+    # exception is an ordinary completable block. The window matters as much as
+    # the number: after the operator sends a chunk back, its budget starts again,
+    # or the first bounce of the new round trip re-trips the exception.
+    vdetail=""; _vboard
+    vrc="$(_vrun VF_VERDICT=bounce)"
+    jq -e '.summary | test("round 1 of 2")' "$vbin/out.json" >/dev/null 2>&1 || vdetail="$vdetail round1-not-named"
+    _vhandoff "$vP"; vrc="$(_vrun VF_VERDICT=bounce)"
+    jq -e '.action == "bounce" and (.summary | test("round 2 of 2"))' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail round2-not-a-bounce($(jq -r '.action,.summary' "$vbin/out.json" 2>/dev/null | tr '\n' ' '))"
+    [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail round2-did-not-return-the-card"
+    _vhandoff "$vP"; vrc="$(_vrun VF_VERDICT=bounce)"
+    [ "$vrc" = 0 ] || vdetail="$vdetail exception-rc=$vrc($(tail -1 "$vbin/err.txt"))"
+    jq -e '.action == "exception"' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail third-round-not-an-exception($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
+      || vdetail="$vdetail exception-did-not-hold-the-card($(_vst "$vP"))"
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+        | startswith("bounce-budget: ") and test("Decision needed:") and test("Reply:")' >/dev/null 2>&1 \
+      || vdetail="$vdetail exception-is-not-a-decision-first-block"
+    [ "$(_vcards)" = 2 ] || vdetail="$vdetail exception-created-a-card"
+    # The operator sends it back: the budget starts again.
+    env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" \
+        "operator: the finding was wrong, try again" --board vlab >/dev/null 2>&1 \
+      || vdetail="$vdetail bounce-sh-refused-the-exception"
+    _vhandoff "$vP"; vrc="$(_vrun VF_VERDICT=bounce)"
+    jq -e '.action == "bounce" and (.summary | test("round 1 of 2"))' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail budget-did-not-reset-after-the-operator-sent-it-back($(jq -r '.action,.summary' "$vbin/out.json" 2>/dev/null | tr '\n' ' '))"
+    [ -z "$vdetail" ] \
+      && ok "bounce-budget-becomes-an-exception (two request-changes rounds, then a completable decision-first block; the window restarts when the operator sends it back)" \
+      || bad "bounce-budget-becomes-an-exception" \
+          "FL6 must spend two rounds, then hold the card for the operator, and count only the rounds since the last operator decision —$vdetail"
+
+    # ---- the hold must never become `triage` ------------------------------
+    # The whole sequence, on the real kernel: recommend, the operator disagrees,
+    # the lane repairs, recommend again. Two blocks with no completion between
+    # them, which is exactly what `_route_block` counts as an unblock loop.
+    vdetail=""; _vboard
+    vrc="$(_vrun)"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail first-hold-failed($(_vst "$vP"))"
+    env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" \
+        "operator: I read the diff and the mapping is wrong" --board vlab >/dev/null 2>&1 \
+      || vdetail="$vdetail disagree-failed"
+    [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail not-back-with-the-lane($(_vst "$vP"))"
+    _vhandoff "$vP"; vrc="$(_vrun)"
+    [ "$vrc" = 0 ] || vdetail="$vdetail second-hold-rc=$vrc($(tail -1 "$vbin/err.txt"))"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
+      || vdetail="$vdetail SECOND-HOLD-IS-$(_vst "$vP" | cut -d/ -f1)-NOT-BLOCKED"
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "blocked") ] | last | .payload.kind == "capability"' >/dev/null 2>&1 \
+      || vdetail="$vdetail second-hold-did-not-rotate-its-kind"
+    # …and the card is still completable, which is the only thing the rotation is
+    # for: `complete` is accepted from `blocked` (D19.3's second transition).
+    _v complete "$vP" --result "merged by hand in the test" >/dev/null 2>&1
+    [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail second-hold-was-not-completable"
+    [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released-after-completion"
+    [ -z "$vdetail" ] \
+      && ok "a-hold-is-never-triage (recommend, disagree, repair, recommend again: the second hold rotates to capability, stays blocked, and still completes)" \
+      || bad "a-hold-is-never-triage" \
+          "a second hold on one card must stay a completable block, never the kernel's triage —$vdetail"
+
+    # MUTATION: pin the kind, and the kernel does exactly what its source says.
+    # This is the case that proves the rotation is load-bearing rather than
+    # decorative — and it re-executes D19.3's third unexecuted transition.
+    # A PRIVATE COPY OF THE WHOLE scripts/ DIRECTORY, because the script reaches
+    # its gate through `$HERE/prejudge.sh`: a lone mutant in $TMPROOT would fail
+    # as `gate-unrunnable` and the case would "pass" for the wrong reason.
+    local vmutdir="$TMPROOT/verifier-mutant" vmut
+    rm -rf "$vmutdir"; mkdir -p "$vmutdir"
+    cp -R scripts/. "$vmutdir/"
+    vmut="$vmutdir/prejudge-review.sh"
+    sed -e 's/^next_block_kind() {$/next_block_kind() { echo needs_input; return 0;/' \
+        "$review" > "$vmut"
+    chmod +x "$vmut"
+    if cmp -s "$review" "$vmut"; then
+      bad "hold-kind-mutation-is-caught" \
+          "the mutation changed nothing in $review — next_block_kind moved, so this probe proves nothing (F65)"
+    else
+      vdetail=""; _vboard
+      _vclaim_review "$vP" >/dev/null
+      printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" \
+        HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$(_vrid "$vP")" \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" "$vmut" \
+        https://example.invalid/wielas/proj/pull/9 --chunk "$vP" --board vlab \
+        --fixture "$REPO_ROOT/$prs/pr-9" >/dev/null 2>&1
+      env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" "operator: disagrees" --board vlab >/dev/null 2>&1
+      _vhandoff "$vP"; _vclaim_review "$vP" >/dev/null
+      printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" \
+        HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$(_vrid "$vP")" \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" "$vmut" \
+        https://example.invalid/wielas/proj/pull/9 --chunk "$vP" --board vlab \
+        --fixture "$REPO_ROOT/$prs/pr-9" > "$vbin/mut.json" 2>&1
+      [ "$(_vst "$vP" | cut -d/ -f1)" = triage ] \
+        || vdetail="$vdetail a-pinned-kind-did-not-reach-triage($(_vst "$vP"))"
+      ! _v complete "$vP" --result "merged" >/dev/null 2>&1 \
+        || vdetail="$vdetail triage-was-completable-after-all"
+      jq -e '.action == "substrate-block" and (.reason | test("stranded"))' "$vbin/mut.json" >/dev/null 2>&1 \
+        || vdetail="$vdetail stranding-was-not-reported($(jq -r '.action' "$vbin/mut.json" 2>/dev/null))"
+      [ -z "$vdetail" ] \
+        && ok "hold-kind-mutation-is-caught (a pinned needs_input reaches triage on the real kernel, cannot be completed, and the script reports it as stranded rather than as a hold)" \
+        || bad "hold-kind-mutation-is-caught" \
+            "with the rotation removed the second hold must reach triage, be uncompletable, and be reported —$vdetail"
+    fi
+
+    # ---- the disagree path, under a real dispatcher pass -------------------
+    # `unblock` then `reopen-review` are two writes, and the card is claimable
+    # between them. `bounce.sh` parks it on the non-spawnable sentinel first; a
+    # real `hermes kanban dispatch` in that window must find nothing to spawn,
+    # and the implementer must still come back.
+    vdetail=""; _vboard
+    vrc="$(_vrun)"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail no-hold-to-disagree-with"
+    _v assign "$vP" forge-operator-handoff >/dev/null 2>&1
+    _v unblock "$vP" >/dev/null 2>&1
+    vout="$(_v dispatch 2>&1)"
+    printf '%s' "$vout" | grep -q "Spawned:      0" || vdetail="$vdetail dispatcher-spawned-in-the-window"
+    printf '%s' "$vout" | grep -qi "non-spawnable" || vdetail="$vdetail sentinel-was-not-what-held-it($(printf '%s' "$vout" | tr '\n' ' '))"
+    _v reopen-review "$vP" --reason "operator: rehearsed" >/dev/null 2>&1
+    [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail implementer-not-restored($(_vst "$vP"))"
+    # And the script itself, end to end, on a fresh hold.
+    _vboard; vrc="$(_vrun)"
+    vout="$(env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" \
+             "operator: scenario 3 asserts nothing" --board vlab 2>&1)"; vrc=$?
+    [ "$vrc" = 0 ] || vdetail="$vdetail bounce-sh-rc=$vrc($vout)"
+    [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail bounce-sh-left-it($(_vst "$vP"))"
+    _v show "$vP" --json | jq -e '
+        ([ .comments[]? | .body ] | join("\n") | test("scenario 3 asserts nothing"))
+        and any(.events[]; .kind == "review_reopened")' >/dev/null 2>&1 \
+      || vdetail="$vdetail reason-not-recorded-on-the-card"
+    # A card nobody is holding is not bouncable, and saying so beats writing.
+    vout="$(env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vC" \
+             "operator: wrong card" --board vlab 2>&1)"; vrc=$?
+    { [ "$vrc" = 1 ] && printf '%s' "$vout" | grep -q "a bounce applies to a card the verifier is holding"; } \
+      || vdetail="$vdetail bounced-a-card-nobody-held(rc=$vrc)"
+    [ -z "$vdetail" ] \
+      && ok "disagree-path-survives-a-dispatcher-tick (a real dispatch pass in the window spawns nothing, the implementer is restored, the reason lands, and a card nobody holds is refused)" \
+      || bad "disagree-path-survives-a-dispatcher-tick" \
+          "bounce.sh must park on the sentinel, survive a dispatcher pass, restore the implementer and refuse a card nobody is holding —$vdetail"
+
+    # ---- the merge-watcher ------------------------------------------------
+    # The other half of recommend-only: something has to notice the operator's
+    # merge, and it must not be a model. `complete` from `blocked` is D19.3's
+    # second transition, executed here through the script that depends on it.
+    vdetail=""; _vboard; vrc="$(_vrun)"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail no-hold-to-watch"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"; vrc=$?
+    { [ "$vrc" = 0 ] && [ -z "$vout" ]; } || vdetail="$vdetail open-pr-was-not-silent(rc=$vrc,'$vout')"
+    touch "$vbin/closed"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+    { printf '%s' "$vout" | grep -q "CLOSED without merging" \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
+      || vdetail="$vdetail closed-pr-was-completed-or-unreported($(_vst "$vP"))"
+    rm -f "$vbin/closed"; touch "$vbin/merged"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"; vrc=$?
+    [ "$vrc" = 0 ] || vdetail="$vdetail merged-run-rc=$vrc"
+    printf '%s' "$vout" | grep -q "$vP: done" || vdetail="$vdetail merge-not-reported('$vout')"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail card-not-completed($(_vst "$vP"))"
+    [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released($(_vst "$vC"))"
+    _v show "$vP" --json | jq -e '.task.result | test("merged:") and test("abcdef123456")' >/dev/null 2>&1 \
+      || vdetail="$vdetail merge-commit-not-recorded"
+    # A card blocked for anything else is none of its business. It must be a
+    # `ready` card: `block_task` only ever fires FROM running/ready, so blocking
+    # the held card's `todo` child would silently do nothing and this control
+    # would pass without controlling anything.
+    local vother
+    _vboard
+    vother="$(_v create "CHUNK-9: unrelated" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+    _v block --kind needs_input "$vother" "env: something the lane could not do" >/dev/null 2>&1
+    [ "$(_vst "$vother" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail control-card-not-blocked($(_vst "$vother"))"
+    touch "$vbin/merged"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+    [ "$(_vst "$vother" | cut -d/ -f1)" = blocked ] \
+      || vdetail="$vdetail completed-a-card-that-was-not-a-merge-hold($(_vst "$vother"))"
+    [ -z "$vdetail" ] \
+      && ok "merge-watcher-completes-a-merged-hold (silent while the PR is open, reports a CLOSED one without completing it, completes a merged one with its commit and releases the child, and leaves other blocks alone)" \
+      || bad "merge-watcher-completes-a-merged-hold" \
+          "the watcher must complete only verifier holds whose PR GitHub reports as merged —$vdetail"
+  fi
+}
+wants verifier  && run_verifier_group
 
 # ---------------------------------------------------------------------------
 # sweep/ — durability of what the Forge stamps, and reclamation of what it

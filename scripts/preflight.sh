@@ -600,7 +600,7 @@ PROF=""
 if [ -n "$PROF" ]; then
   info "profiles/assignees visible to the board:"
   printf '%s\n' "$PROF" | sed 's/^/      /' | while read -r l; do say "$l"; done
-  for want in forge-orchestrator forge-codex-lane forge-prejudge forge-digest; do
+  for want in forge-orchestrator forge-codex-lane forge-verifier forge-digest; do
     printf '%s' "$PROF" | grep -q "$want" \
       && pass "profile exists: $want" \
       || warn "profile NOT yet created: $want (its cards will sit stranded in ready)"
