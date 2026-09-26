@@ -482,6 +482,7 @@ closes.
 | S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | done | #74 |
 | S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | #75 |
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | done | #76 |
+| S2b | P6 *(promoted from the parking lot when S3 opened)* | Every bootstrap ended in FATAL on a correct write, so the one signal the operator reads after a deploy had to be ignored | done | #77 |
 | S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending | planned | |
 | S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
 | S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills | planned | |
@@ -686,6 +687,43 @@ is `ready` or `running`; three are dormant (`forge-dependency-probe-20260728`
 one `blocked` and one `todo`, `forge-ladder` one `blocked`), and none moves
 unless someone unblocks it. S3 opens against whichever state the operator
 chose, and its brief should say which.
+
+**P6 (S2 landing). `profiles-bootstrap.sh` reports FATAL on a correct
+write under Hermes 0.21.5.** `hermes config get skills.disabled` now prints
+`⚠ 'skills.disabled' is not a recognized config key — Hermes may not read it`
+on **stderr**, and `verify_config` compares `2>&1` output, so all four
+profiles fail readback with got/want identical apart from that line (operator
+run, 2026-09-26). The key IS still read at runtime
+(`agent/skill_utils.py:308`, `tools/skills_tool.py:168`; the warning comes
+from `hermes_cli/config.py`'s key registry), and `config/lane-skill-scope`
+passes live. The script writes every SOUL and config before it reads back, so
+nothing was skipped. Fix: compare stdout only, and surface stderr without
+comparing it. Until then every bootstrap ends in a FATAL the operator must
+learn to ignore, S3's `forge-prejudge → forge-verifier` rename included.
+
+*Triaged at S3's opening: promoted to row S2b, its own PR ahead of S3, and
+fixed there — `verify_config` reads each key through `cfg_get`, which compares
+stdout and surfaces stderr under a `note (<profile> <key>):` prefix without
+comparing it. Executed offline against a stubbed 0.21.5 by
+`cli/bootstrap-readback-compares-stdout-only`, which also holds the
+fail-closed half: a value that really differs still FATALs. It is in `cli`
+rather than `config` because `config` returns early without a live Hermes and
+is not in CI. The operator trap in the same paragraph was a second finding and
+is split out as P7.*
+
+**P7 (S2 landing, split from P6). The bootstrap records the path it was
+invoked from.** `skills.external_dirs` is written as `$FORGE_DIR/skills`, where
+`FORGE_DIR` is the parent of the script that ran, so the invocation path
+decides what every live profile reads. Running it from `~/dev/forge` pointed
+all four profiles at the dev checkout; running it from `~/dev/forge-runtime`
+writes a form `config/external-dirs` rejects. The one correct form is
+**through `~/.forge/repo/hermes/profiles-bootstrap.sh`**, which is what *§ How
+we run this epic* means by "from the runtime". Nothing asserts this today: the
+live check (`config/external-dirs`, S1b's runtime arm) can only see the result
+after the fact, and it skips wholesale without Hermes. Triage: either an
+offline case that pins the accepted form, or a refusal in the script itself
+when `FORGE_DIR` is not the runtime the `~/.forge/repo` symlink resolves to.
+*Open; not fixed in S2b, whose PR is deliberately P6's fix alone.*
 
 ## Open questions
 
