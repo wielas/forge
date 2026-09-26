@@ -510,6 +510,7 @@ closes.
 | S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | done | #74 |
 | S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | #75 |
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | done | #76 |
+| S2b | P6 *(promoted from the parking lot when S3 opened)* | Every bootstrap ended in FATAL on a correct write, so the one signal the operator reads after a deploy had to be ignored | done | #77 |
 | S3 | FL4, FL6 *(FL5 and FL8 split out at S3's opening)* | The verifier complete, but only recommending | done | #78 |
 | S3b | FL5 *(split from S3)* | The mutation probe is what caught JobApp C21; its replays have to be recovered from the boards first, which is its own half of the work | planned | |
 | S3c | FL8 *(split from S3)* | Nothing bills per token until EN1 configures a cheap implementer, so the cap has nothing to measure before then | planned | |
@@ -751,6 +752,53 @@ follow-up (`hermes kanban specify`/`decompose` where they fit)" and that triage 
 empty at every checkpoint — which needs an auxiliary model configured on whichever
 profile runs it, and means any card that does land in triage is a manual recovery.
 Triage it with MS3/MS5 in S8.
+
+**P6 (S2 landing). `profiles-bootstrap.sh` reports FATAL on a correct
+write under Hermes 0.21.5.** `hermes config get skills.disabled` now prints
+`⚠ 'skills.disabled' is not a recognized config key — Hermes may not read it`
+on **stderr**, and `verify_config` compares `2>&1` output, so all four
+profiles fail readback with got/want identical apart from that line (operator
+run, 2026-09-26). The key IS still read at runtime
+(`agent/skill_utils.py:308`, `tools/skills_tool.py:168`; the warning comes
+from `hermes_cli/config.py`'s key registry), and `config/lane-skill-scope`
+passes live. The script writes every SOUL and config before it reads back, so
+nothing was skipped. Fix: compare stdout only, and surface stderr without
+comparing it. Until then every bootstrap ends in a FATAL the operator must
+learn to ignore, S3's `forge-prejudge → forge-verifier` rename included.
+
+*Triaged at S3's opening: promoted to row S2b, its own PR ahead of S3, and
+fixed there — `verify_config` reads each key through `cfg_get`, which compares
+stdout and surfaces stderr under a `note (<profile> <key>):` prefix without
+comparing it. Executed offline against a stubbed 0.21.5 by
+`cli/bootstrap-readback-compares-stdout-only`, which also holds the
+fail-closed half: a value that really differs still FATALs. It is in `cli`
+rather than `config` because `config` returns early without a live Hermes and
+is not in CI. The operator trap in the same paragraph was a second finding and
+is split out as P7.*
+
+**P7 (S2 landing, split from P6). The bootstrap records the path it was
+invoked from.** `skills.external_dirs` is written as `$FORGE_DIR/skills`, where
+`FORGE_DIR` is the parent of the script that ran, so the invocation path
+decides what every live profile reads. Running it from `~/dev/forge` pointed
+all four profiles at the dev checkout; running it from `~/dev/forge-runtime`
+writes a form `config/external-dirs` rejects. The one correct form is
+**through `~/.forge/repo/hermes/profiles-bootstrap.sh`**, which is what *§ How
+we run this epic* means by "from the runtime". Nothing asserts this today: the
+live check (`config/external-dirs`, S1b's runtime arm) can only see the result
+after the fact, and it skips wholesale without Hermes. Triage: either an
+offline case that pins the accepted form, or a refusal in the script itself
+when `FORGE_DIR` is not the runtime the `~/.forge/repo` symlink resolves to.
+*Open; not fixed in S2b, whose PR is deliberately P6's fix alone.*
+
+**P10 (S3 review). Three edges left open by S3's review fixes.** Each was found
+by reading the code and none has been measured. (1) `--dry-run` promises that no
+board is touched, but a gate-blocked PR routes *before* the dry-run exit. Run
+with a live board, it still makes the `request-changes` transition. (2)
+`merge-check.sh` prepares the clone once, on the head, before `main` is merged
+in. So when `main` changes dependencies, the union can go red for environment
+reasons, and that red reads as `check-failed`, a bounce. (3) The merge-watcher's
+"merged but the card did not complete" line repeats every sweep. That is the
+same noise `merge-watcher-reports-once` removed for a closed PR.
 
 ## Open questions
 
