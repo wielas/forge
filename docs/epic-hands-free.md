@@ -241,14 +241,33 @@ worktree would dirty the tree the implementer resumes on a bounce — then run
 - operator disagrees → `forge bounce <task> "<reason>"`: `unblock` then
   `reopen-review` back-to-back, re-checking the end state because a dispatcher
   tick can land between the two;
-- pass, merge mode → `gh pr merge --squash`, then complete.
+- pass, merge mode → `gh pr merge --squash`, then complete *(since S3's
+  review: if the merge lands and the completion does not, the card is held
+  `merge-pending:` and the merge-watcher completes it)*.
 
-Same-kind re-blocks route to triage at `BLOCK_RECURRENCE_LIMIT=2`, so a chunk
-gets at most two operator disagreements before it becomes an exception.
-*Why:* redglass PR #9's union with post-CHUNK-8 `main` failed 5 tests neither
-branch failed alone. *Done when* fixture-proven, including a red-CI PR on an
-`UNAVAILABLE` repo that must not merge, and the disagree path under a live
-dispatcher.
+~~Same-kind re-blocks route to triage at `BLOCK_RECURRENCE_LIMIT=2`, so a chunk
+gets at most two operator disagreements before it becomes an exception.~~
+**Amended in S3, on measurement:** that route strands the chunk. A card in
+`triage` refuses `complete`, `complete --force`, `promote` and `unblock`, and its
+one CLI exit (`specify`) calls an auxiliary model and returns the card to an
+*implementer*, never to `done` — so a merged PR whose card reached triage can
+never be completed and its children never release (ADR-0019's dated correction).
+The verifier therefore never re-blocks with the last block's kind, and the budget
+is counted by the script from `changes_requested` events. *Why:* redglass PR #9's
+union with post-CHUNK-8 `main` failed 5 tests neither branch failed alone.
+*Done when* fixture-proven, including a red-CI PR on an `UNAVAILABLE` repo that
+must not merge, and the disagree path under a live dispatcher.
+
+*S3's status against that done-when: met, except the last clause, which is met
+**in part**. The red-CI PR is executed with merge mode ON. The disagree path is
+executed on the real kernel, and `bounce.sh`'s own event stream proves it parks on
+the non-spawnable sentinel before it unblocks. What a fixture cannot supply is a
+dispatcher that could actually claim the card: in an isolated `HERMES_HOME` no
+profile is on disk, so nothing is spawnable, and the control — the same window
+without the park — leaves the card in exactly the same place. The remaining clause
+therefore rides run A, and is carried in **S7's row** — the session table is this
+epic's only progress record, so a deferral that lives in prose is a deferral the
+next session will not see.*
 
 **FL5. `forge-verifier` v2 — the mutation probe.** Mutate implementation lines
 inside the diff's hunks (evaluate `mutmut` / `cosmic-ray` before writing one)
@@ -259,7 +278,13 @@ recorded replays of C21 and C17 bounce, an assertion-free PR in the style of
 the July ladder's `t_624586d7` bounces, and redglass's all-3s PRs pass.
 
 **FL6. Bounce budget → exception.** Two bounce rounds, then one decision-first
-exception to the operator. Escalating to a stronger implementer instead
+exception to the operator. *Done when* (**proposed in S3 — this item had no
+done-when**) two `request-changes` rounds on one card are followed by a
+**completable** decision-first block rather than a third bounce, executed on the
+real kernel, and the count is **windowed**: only the rounds since the last
+operator decision (`unblocked` / `review_reopened`) count, so a chunk the
+operator deliberately sends back gets its budget again instead of re-tripping the
+exception on its first bounce. Escalating to a stronger implementer instead
 arrives with EN4 — Hermes `set-model` changes the lane *driver's* model, not the
 implementer's, so tier escalation needs EN1's implementer config first.
 
@@ -268,10 +293,13 @@ sibling's branch-tracking entry in `.git/config`; redglass CHUNK-9 blocked
 because a sibling `git pull` moved `main`. *Done when* fixtures of both pass
 clean and the existing positive cases still fire.
 
-**FL8. Spend caps per board.** An OpenRouter dollar cap and a card-creation
-rate limit per parent; exceeding either parks the board and sends one
-message. FL2 removes the storm's cause; this bounds the next unknown one once
-cheap implementers bill per token.
+**FL8. Spend caps per board** *(moved off S3 in S3 — row S3c, beside EN1/EN4)*.
+An OpenRouter dollar cap and a card-creation rate limit per parent; exceeding
+either parks the board and sends one message. FL2 removes the storm's cause; this
+bounds the next unknown one once cheap implementers bill per token — which is
+EN1's configuration and EN4's ladder. Run A implements on Codex against the
+OpenAI subscription, so until then there is no per-token spend to cap, and a cap
+on a number nothing produces is an unmeasured guard.
 
 **FL9. Quota parking without a waiting worker.** Hermes `schedule` parks a card
 until `unblock` — it has no timer, and `scheduled_at` is not on the CLI. The
@@ -483,11 +511,13 @@ closes.
 | S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | #75 |
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | done | #76 |
 | S2b | P6 *(promoted from the parking lot when S3 opened)* | Every bootstrap ended in FATAL on a correct write, so the one signal the operator reads after a deploy had to be ignored | done | #77 |
-| S3 | FL4, FL5, FL6, FL8 | The verifier complete, but only recommending | planned | |
+| S3 | FL4, FL6 *(FL5 and FL8 split out at S3's opening)* | The verifier complete, but only recommending | done | #78 |
+| S3b | FL5 *(split from S3)* | The mutation probe is what caught JobApp C21; its replays have to be recovered from the boards first, which is its own half of the work | planned | |
+| S3c | FL8 *(split from S3)* | Nothing bills per token until EN1 configures a cheap implementer, so the cap has nothing to measure before then | planned | |
 | S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
 | S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills | planned | |
 | S6 | Plan the new project — operator-led | Scope → architect with spikes → roadmap, three milestones | planned | |
-| S7 | **Run A = milestone 1** | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
+| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
 | S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
 | S10 | EN5, EN1, EN2 | Engine groundwork | planned | |
@@ -670,7 +700,12 @@ chunk rows would therefore be invisible to `make metrics` and to the live
 metadata sweep, and `rubrics/kanban-metadata-schema.md` still states the
 producer rule as "a *completed* `forge-codex-lane` run". This belongs with
 GW6 (S4), which rebuilds `make metrics` around the north-star numbers anyway.
-Before run A, either way.
+Before run A, either way. *S3 adds the other half: a `forge-verifier` run ends in
+`request-changes` or a block, so no verifier envelope rides a `completed` run
+either. S3 renamed the producer and aliased both names in `metrics.sh` and
+`rubrics/run-metadata-contract.json`, so the recorded rows still count — but the
+`outcome = 'completed'` filter is untouched and is GW6's to fix. The rubric's
+producer line now names both profiles.*
 
 **P5 (S2). How S2 lands decides S3's baseline.** S2 changes the lane's SOUL
 and adds two scripts the runtime does not have yet. Until the operator deploys
@@ -686,7 +721,37 @@ that still expects a child card; `prejudge-review.sh` then blocks on its
 is `ready` or `running`; three are dormant (`forge-dependency-probe-20260728`
 one `blocked` and one `todo`, `forge-ladder` one `blocked`), and none moves
 unless someone unblocks it. S3 opens against whichever state the operator
-chose, and its brief should say which.
+chose, and its brief should say which. *Triaged at S3's opening: **closed**. The
+operator deployed S2 before S3 opened — `~/.forge/repo → ~/dev/forge-runtime`,
+whose HEAD read `68724a4`, identical to `main` — so S3's baseline is a deployed
+lane, with `config/soul-in-sync` green and neither S2 preflight FAIL present.
+S3's own landing repeats the same step for the same reason.*
+
+**P9 (S3). Nothing re-verifies a card the operator repaired by hand.** An FL6
+exception leaves the card blocked with the reasons on it. `bounce.sh` gives it
+another machine round, and the merge-watcher now completes it if the PR is merged
+— but a push to the PR branch of a *held* card starts no new review, so the
+evidence behind a merge can be older than the code. While the verifier only
+recommends this is the operator's judgement and nothing is wrong. **It is a hole
+before merge mode is switched on** (D19.3/D19.4), because the flip makes the
+verifier's last verdict the thing that merges. Options: watch the PR's head SHA
+and re-open the review when it moves; or refuse merge mode for a card whose head
+has moved since its verdict (`--match-head-commit` already refuses the merge
+itself, which turns the hole into a failure rather than a silent one). Decide in
+S8, with MS4.
+
+**P8 (S3). Triage needs a model to empty, and it is a dead end for a chunk
+card.** Executed 2026-09-26 in an isolated `HERMES_HOME`: a card in `triage`
+refuses `complete`, `complete --force`, `promote` and `unblock`. Its one CLI exit
+is `hermes kanban specify`, which calls an auxiliary model — it failed here with
+`LLM error: AuxiliaryClientUnavailable` — and lands the card in `todo`, i.e. back
+with an *implementer*, never at `done`. FL4 routes around it (the block kind
+rotates, so a hold never reaches triage) and nothing in the per-chunk flow depends
+on it. **MS5 does.** It says the overseer "promotes, folds or closes each
+follow-up (`hermes kanban specify`/`decompose` where they fit)" and that triage is
+empty at every checkpoint — which needs an auxiliary model configured on whichever
+profile runs it, and means any card that does land in triage is a manual recovery.
+Triage it with MS3/MS5 in S8.
 
 **P6 (S2 landing). `profiles-bootstrap.sh` reports FATAL on a correct
 write under Hermes 0.21.5.** `hermes config get skills.disabled` now prints
@@ -724,6 +789,26 @@ after the fact, and it skips wholesale without Hermes. Triage: either an
 offline case that pins the accepted form, or a refusal in the script itself
 when `FORGE_DIR` is not the runtime the `~/.forge/repo` symlink resolves to.
 *Open; not fixed in S2b, whose PR is deliberately P6's fix alone.*
+
+**P10 (S3 review). Five edges left open by S3's review fixes.** Each was found
+by reading the code and none has been measured. (4) and (5) sit in merge mode,
+which is off, so like P9 they must close before `FORGE_VERIFIER_MERGE=1`. (1) `--dry-run` promises that no
+board is touched, but a gate-blocked PR routes *before* the dry-run exit. Run
+with a live board, it still makes the `request-changes` transition. (2)
+`merge-check.sh` prepares the clone once, on the head, before `main` is merged
+in. So when `main` changes dependencies, the union can go red for environment
+reasons, and that red reads as `check-failed`, a bounce. (3) The merge-watcher's
+"merged but the card did not complete" line repeats every sweep. That is the
+same noise `merge-watcher-reports-once` removed for a closed PR. (4)
+`route_merge` treats any non-zero exit from `gh pr merge` as "nothing merged"
+and never reads the state back. If `gh` exits non-zero after the squash has
+landed (a failed `--delete-branch`, say), the card is blocked
+`other: handoff-integrity`, which the watcher does not sweep. That is the
+stranding the `merged-held` path fixed for a failed completion. The cheap fix
+is to read the state back on a non-zero exit and take the rc-4 path on
+`MERGED`. (5) When the post-merge `merge-pending:` hold itself fails, the
+substrate reason is written to start with `merge-pending:` so the watcher can
+still find it. No case has executed that fallback.
 
 ## Open questions
 

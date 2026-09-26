@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# forge prejudge-review — tier 1's protocol, as a program (ADR-0010).
+# forge prejudge-review — the VERIFIER's protocol, as a program (ADR-0010).
 #
 # ADR-0003: "anything that MUST hold is expressed as a machine gate at the
 # lowest layer that sees every actor." `scripts/prejudge.sh` applied that rule
-# to what tier 1 *decides*. This file applies it to what tier 1 *does*.
+# to what this stage *decides*. This file applies it to what it *does*.
 #
-# Until now the protocol lived in `hermes/profiles/forge-prejudge.SOUL.md`: 404
+# The protocol used to live in `hermes/profiles/forge-prejudge.SOUL.md`: 404
 # lines, of which 144 were executable bash in 11 fenced blocks — a `jq` schema
 # reduction, a `claude -p` invocation, a 15-line stamping `jq`, a
 # create/block/unassign sentinel dance and two `jq -e` read-backs. None of it
@@ -15,10 +15,24 @@
 # three profiles are 27, 29 and 32 lines, because their protocol is an artifact
 # they load rather than prose they re-enact (audit F61).
 #
-# Everything a model must still decide stays with the model, and it is exactly
-# two things: `kanban_complete` and `kanban_block`, which the completion kernel
-# ties to the identity of the running task. This script does the rest and hands
-# back one small JSON envelope naming which terminator to call.
+# WHAT FL4 CHANGED (epic S3, ADR-0019).
+#   * The profile this runs as is `forge-verifier`, not `forge-prejudge`. THE
+#     FILE NAME DELIBERATELY LAGS: the live SOUL, `scripts/preflight.sh` and two
+#     `verify` anchors resolve this path literally, and moving it while the
+#     runtime is mid-deploy would leave a dispatched review pointing at a file
+#     that is not there. Renaming it is its own slice.
+#   * Verification EXECUTES. Stage 1b runs `make check` on the tree the merge
+#     would produce, in a fresh clone (`scripts/merge-check.sh`). Read-and-score
+#     bounced nothing in two product runs; a merged-tree check is what caught
+#     redglass PR #9's five-test union failure.
+#   * ONE CARD (D19.1). There is no judge card and no fix card. Every outcome is
+#     a transition on the chunk's own card: `request-changes` on a fail, a
+#     sticky block on an approval the verifier may only recommend, or — only
+#     once the operator has flipped `FORGE_VERIFIER_MERGE` — the squash merge
+#     itself, then completion.
+#   * The model terminates NOTHING on a routed outcome. The kernel ends the run
+#     as part of the transition, exactly as `request-review` ends the lane's.
+#     Exit 3 is still the model's `kanban_block`, because nothing transitioned.
 #
 # WHAT THIS FILE IS NOT ALLOWED TO DO
 # It does not re-decide anything the gate decided, it does not score, and it
@@ -33,26 +47,41 @@
 # are indented three spaces instead of two: they are pinned bytes carried over
 # from a markdown list item. Do not reindent them. Do not tidy them. If you
 # think the scorer should change, that is ADR-0009 D9.5 — S5's experiment, not
-# an edit.
+# an edit. ADR-0019 D19.7 keeps it for the same reason: retiring the scorer and
+# adding an executing verifier in one change would move two variables at once.
 #
 # Usage:
 #   prejudge-review.sh <pr-url> --chunk <card-id> [--board <slug>]
 #                      [--repo owner/name] [--wait <seconds>]
 #                      [--fixture <dir>] [--dry-run]
-#   ...with the chunk contract on stdin.
+#   ...with the chunk contract on stdin. <card-id> IS the running card.
 #
-# Exit: 0 a routed outcome — read the envelope and `kanban_complete`.
-#       3 a substrate fault — read `.reason` and `kanban_block`.
+# Env:
+#   FORGE_VERIFIER_MERGE=1          merge mode. Absent = recommend-only, which
+#                                   is the default and fails closed.
+#   FORGE_VERIFIER_BOUNCE_BUDGET    rounds before the exception          [2]
+#   FORGE_MERGE_CHECK_BIN           stand in for scripts/merge-check.sh
+#
+# Exit: 0 a routed outcome — the card has already been transitioned; the model
+#         calls NOTHING. Read `.action` for which transition happened:
+#         `bounce` / `gate-block` (request-changes), `recommend` (blocked for
+#         the operator), `exception` (bounce budget spent), `merged` (merge
+#         mode), `merged-held` (merge mode: merged, but the completion did not
+#         take, so the card is held `merge-pending:` for the merge-watcher),
+#         `would-score` (--dry-run).
+#       3 a substrate fault — nothing transitioned. Read `.reason` and
+#         `kanban_block`. Includes a run with no board to transition on
+#         (`env: no-board`), unless it is a --dry-run.
 #       2 a usage error.
 #
-# 1 is deliberately NOT used: a blocked PR is a routed outcome, not a failure of
+# 1 is deliberately NOT used: a bounced PR is a routed outcome, not a failure of
 # this script, and a caller running under `set -e` must not treat a bounce as a
 # crash.
 # =============================================================================
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PR_URL=""; CHUNK=""; BOARD="${HERMES_KANBAN_BOARD:-}"; REPO=""
+PR_URL=""; CHUNK=""; BOARD="${HERMES_KANBAN_BOARD:-}"; REPO=""; chunk_title=""
 WAIT_SECS=600; FIXTURE="${PREJUDGE_FIXTURE:-}"; DRY_RUN=0
 CREATED=()
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
@@ -105,32 +134,49 @@ kanban() { hermes kanban --board "$BOARD" "$@"; }
 board_live() { [ -n "$BOARD" ] && command -v hermes >/dev/null; }
 
 # ---------------------------------------------------------------------------
-# --chunk is derived by a MODEL reading prose out of forge-prejudge.SOUL.md
-# step 1 ("take ... your parent chunk card's id into `chunk`"), and a model
-# reading an id out of prose will get it wrong again — it already did, live,
-# 2026-09-04: a running prejudge task passed ITS OWN id as --chunk, route_tier2
-# parented the tier-2 card under itself, and the misparented chunk (still
-# `running`) drove the card into `todo`, where `block` silently refuses it
-# (see route_tier2 below). Catch what is mechanically catchable BEFORE any
-# card exists, rather than discover it from a failed read-back afterward.
+# --chunk IS THE RUNNING CARD. This guard used to assert the opposite, and it
+# was right until ADR-0019: a chunk card parented a tier-1 child, a MODEL read
+# the parent's id out of prose in the SOUL, and on 2026-09-04 a running prejudge
+# task passed ITS OWN id — route_tier2 parented the tier-2 card under itself and
+# the misparented chunk drove the card into `todo`, where `block` silently
+# refuses it. The fix then was to refuse `--chunk == $HERMES_KANBAN_TASK`.
 #
-# Two shapes, both fail-closed via `substrate` (exit 3, `kanban_block` — a bad
-# hand-off is a fact about how this run was invoked, not a work judgement, so
-# it routes exactly like `env: jq missing` and every other precondition fault
-# in this file, never like a usage error a caller under `set -e` could crash
-# on):
+# D19.1 removes the parent relationship the old guard protected: there is ONE
+# card per chunk for its whole life, the verifier is claimed on that card, and
+# the SOUL passes `$HERMES_KANBAN_TASK`. So the identity that must hold is the
+# inverse, and it is still mechanically checkable BEFORE anything transitions:
 #
-#   1. --chunk IS the running task. A card cannot be its own parent chunk, and
-#      this needs no board access at all — it is why it runs unconditionally,
-#      before board_live is even asked.
-#   2. --chunk's card does not look like a chunk card. The board's convention
-#      (scripts/prejudge.sh's `branch_name` check) is `CHUNK-<id>: <title>`;
-#      anything else — another prejudge card, a bounce fix card, a typo'd id —
-#      is refused by the same `CHUNK-[A-Za-z0-9]*` shape that check uses. This
-#      needs a live board, so it only runs when one is configured.
+#   1. Under a worker, --chunk must BE the running task. Anything else means the
+#      caller reached for another card, and the card this run holds a claim on is
+#      not the card it would transition — the 2026-09-04 shape with the sign
+#      flipped. No board access needed, which is why it runs first.
+#   2. --chunk's card must still LOOK like a chunk card (`CHUNK-<id>: <title>`,
+#      scripts/prejudge.sh's `branch_name` convention). A verifier pointed at a
+#      gate card or a typo'd id is refused. Needs a live board, so it is
+#      conditional on one.
+#
+# Both fail closed through `substrate` (exit 3, `kanban_block`): a bad hand-off
+# is a fact about how this run was invoked, not a judgement on the work, so it
+# routes exactly like `env: jq missing` and never like a usage error a caller
+# under `set -e` could crash on.
 # ---------------------------------------------------------------------------
-[ -z "${HERMES_KANBAN_TASK:-}" ] || [ "$CHUNK" != "$HERMES_KANBAN_TASK" ] || \
-  substrate "env: chunk-identity — --chunk ($CHUNK) is the running task; a card cannot be its own parent chunk"
+[ -z "${HERMES_KANBAN_TASK:-}" ] || [ "$CHUNK" = "$HERMES_KANBAN_TASK" ] || \
+  substrate "env: chunk-identity — --chunk ($CHUNK) is not the running card (${HERMES_KANBAN_TASK}); under ADR-0019 D19.1 the chunk card and the review are the same card"
+
+# NO BOARD, NO ROUTED OUTCOME. Every exit-0 action below is a transition on this
+# card, and the SOUL tells the model to call NOTHING on rc 0. The routers used to
+# `return 0` when the board was unset or `hermes` was missing, so a run with no
+# board reported `bounce` or `recommend` with rc 0 although nothing transitioned:
+# the model called nothing, the card stayed `running`, and the dispatcher reaped
+# it as a crash. So a run that cannot make a transition refuses before it starts,
+# the way `lane.sh` refuses an unset HERMES_KANBAN_BOARD.
+#
+# `--dry-run` is the one deliberate exception: it is the offline rehearsal
+# (`prejudge/review-routes-by-gate-result` and the envelope cases run it with no
+# board at all), and its envelope never claims a transition was made.
+if [ "$DRY_RUN" != 1 ] && ! board_live; then
+  substrate "env: no-board — ${BOARD:+board '$BOARD' is named but hermes is not on PATH}${BOARD:-no --board and no HERMES_KANBAN_BOARD}, so no outcome can be made on this card, and one that cannot be made must not be reported as made"
+fi
 
 if board_live; then
   chunk_title="$(kanban show "$CHUNK" --json 2>/dev/null | jq -r '.task.title // empty' 2>/dev/null)"
@@ -249,6 +295,190 @@ $findings" \
 }
 
 # ---------------------------------------------------------------------------
+# FL4 — the card's own transitions. One card per chunk for its whole life
+# (ADR-0019 D19.1), so every outcome below is a transition ON THIS CARD and
+# nothing creates one. `route_tier2` and `route_bounce` above are no longer
+# called by anything: ADR-0019's Consequences require the replacement to be
+# green in its own slice before the dead machinery is deleted, so they stay
+# defined, and the `prejudge/` cases that lift them stay green, until that
+# slice.
+#
+# WHY A SCRIPT MAKES THEM. The same reason the lane's handoff is a script
+# (FL3): the CLI binds the run id out of the worker's environment, so the
+# transition proves ownership of the live review claim, and no model retypes a
+# board call.
+# ---------------------------------------------------------------------------
+card_json() { kanban show "$CHUNK" --json 2>/dev/null; }
+
+# THE UNBLOCK-LOOP GUARD, AND WHY THIS READS EVENTS RATHER THAN COLUMNS.
+#
+# `_route_block` counts a re-block of the SAME kind as a loop
+# (`kanban_db.py:3325`): `recurrences = prev + 1 if prev_kind == kind`, and at
+# `BLOCK_RECURRENCE_LIMIT = 2` the card is routed to `triage` instead of
+# `blocked`. `block_kind`/`block_recurrences` deliberately survive an `unblock`
+# and are cleared only by `complete_task` (`:3665`, `:2786`).
+#
+# MEASURED 2026-09-26 against the installed kernel in an isolated HERMES_HOME: a
+# card in `triage` refuses `complete`, `complete --force`, `promote` AND
+# `unblock` — "cannot complete … (unknown id or terminal state)", "promote only
+# applies to 'todo' or 'blocked'", "cannot unblock … (not blocked/scheduled?)".
+# Its one CLI exit is `hermes kanban specify`, which calls an auxiliary model
+# (it failed here with `AuxiliaryClientUnavailable`) and lands the card in
+# `todo` — back with an IMPLEMENTER, never at `done`. So a chunk whose PR is
+# merged and whose card reached `triage` can never be completed by the
+# merge-watcher, and its children never release.
+#
+# The sequence that gets there is the ordinary one: a recommend-only approval
+# blocks `needs_input`; the operator disagrees (`bounce.sh` — `unblock` then
+# `reopen-review`); the lane repairs; the verifier approves again. Two
+# `needs_input` blocks with no completion between them.
+#
+# So the verifier never re-blocks with the kind of the last block on this card.
+# `hermes kanban show --json` does not expose those columns at all (measured:
+# absent from `.task`'s keys, and both read `null`), but every `blocked` event's
+# PAYLOAD carries `kind`, so the events are the source of truth. The guard
+# exists to stop a WORKER looping unblock/re-block by itself; a re-block that
+# follows the operator's own `reopen-review` is not that loop, and the
+# alternative is a chunk nothing can finish.
+last_block_kind() {
+  card_json | jq -r '
+    [ .events[]? | select(.kind == "blocked" or .kind == "block_loop_detected") ]
+    | last | .payload.kind // empty' 2>/dev/null
+}
+next_block_kind() {
+  if [ "$(last_block_kind)" = needs_input ]; then echo capability; else echo needs_input; fi
+}
+
+# FL6's budget, counted from the card's own events and WINDOWED.
+#
+# `changes_requested` is the only event a bounce writes, and `request-changes` is
+# not a block, so it never touches the kernel's recurrence counter — the budget
+# is this script's to keep. The window starts at the last operator decision
+# (`unblocked` or `review_reopened`), so a chunk the operator explicitly sent
+# back after an exception gets its budget again instead of re-tripping the
+# exception on its first bounce.
+bounce_rounds() {
+  local n
+  n="$(card_json | jq -r '
+    [ .events[]? | .kind ] as $k
+    | ( [ $k | to_entries[]
+          | select(.value == "unblocked" or .value == "review_reopened") | .key ]
+        | last // -1 ) as $since
+    | [ $k | to_entries[] | select(.key > $since and .value == "changes_requested") ]
+    | length' 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) echo 0;; *) echo "$n";; esac
+}
+
+# A bounce: the SAME card back to its implementer, with the reasons on it. The
+# end state is read back rather than taken from the CLI's word (FL3's rule).
+route_changes() {  # $1=reasons body
+  board_live || return 0
+  kanban request-changes "$CHUNK" "$1" >/dev/null 2>&1 || return 1
+  card_json | jq -e '
+    (.task.status | IN("ready","todo"))
+    and any(.events[]?; .kind == "changes_requested")' >/dev/null || return 1
+}
+
+# WHERE THE VERDICT GOES WHEN THE TRANSITION CANNOT CARRY IT.
+#
+# `hermes kanban complete` and `request-review` take `--metadata`. `block` and
+# `request-changes` DO NOT (measured against the installed CLI: neither help text
+# names the flag). So on every path except a merge, the envelope this script
+# computed — `forge.gate.v1` or `forge.judge.v1`, the rows `scripts/metrics.sh`
+# counts — has no run to ride.
+#
+# It is therefore posted as a card COMMENT under a stable marker, and the
+# merge-watcher passes it back as `--metadata` when it completes the card.
+# Measured: completing a card with no live claim opens a NEW run
+# (`profile = forge-verifier`, `outcome = completed`) and the metadata lands on
+# it, so `rubrics/run-metadata-contract.json`'s `forge-verifier` entry is true of
+# a merged chunk however it was completed.
+#
+# The comment goes on BEFORE the transition: a block ends this run, and evidence
+# that depends on a later write is evidence that can be lost. It never fails the
+# outcome — a verdict that was reached must not be destroyed by a board that
+# would not take a comment.
+VERDICT_MARKER="FORGE-VERDICT-V1"
+stash_envelope() {  # $1=metadata file
+  board_live || return 0
+  [ -s "$1" ] || return 0
+  # ONLY AN ENVELOPE THE CONTRACT ALLOWS THIS PRODUCER TO COMPLETE WITH.
+  # `rubrics/run-metadata-contract.json` maps forge-verifier to forge.gate.v1 and
+  # forge.judge.v1 — and nothing else. The bounce path's metadata file is whatever
+  # produced the bounce, which on the merged-tree arm is a `forge.mergecheck.v1`
+  # object: stashing that would have the merge-watcher complete the card with a
+  # schema the registry does not know, and `metadata-live` exits 1 on it — the
+  # "stop and repair the producer" failure this file already carries a scar from
+  # (Stage 4a). A file that is not stashable simply is not stashed, and the
+  # watcher then completes with a result that says no envelope was stored.
+  #
+  # AND SOMETHING CONTRACTED IS ALWAYS STASHED, because the absence is a violation
+  # too: `metadata-live` counts a completed producer run with null metadata as
+  # `invalid`, exactly like a wrong schema. So an unstashable envelope falls back
+  # to the gate result, which is a `forge.gate.v1` on every path that reaches this
+  # point and is honest about what it says — the gate's own verdict, with the
+  # merged-tree evidence already on the card in the bounce reasons.
+  local file="$1"
+  case "$(jq -r '.schema // ""' "$file" 2>/dev/null)" in
+    forge.gate.v1|forge.judge.v1) ;;
+    *) file="$GATE"
+       case "$(jq -r '.schema // ""' "$file" 2>/dev/null)" in
+         forge.gate.v1|forge.judge.v1) ;;
+         *) return 0;;
+       esac;;
+  esac
+  kanban comment "$CHUNK" "$VERDICT_MARKER
+\`\`\`json
+$(jq -c . "$file" 2>/dev/null || cat "$file")
+\`\`\`" >/dev/null 2>&1 || true
+}
+
+# An approval the verifier may only RECOMMEND (ADR-0019 D19.3). The card is
+# blocked sticky; the operator merges on GitHub; the merge-watcher completes it.
+# Return 2 means the kernel routed the block to `triage` anyway — a hold that
+# was never taken, which must be reported and never reported as a hold.
+route_recommend() {  # $1=reason, already carrying its registry class
+  local kind; kind="$(next_block_kind)"
+  board_live || return 0
+  kanban block --kind "$kind" "$CHUNK" "$1" >/dev/null 2>&1 || return 1
+  case "$(card_json | jq -r '.task.status')" in
+    blocked) return 0;;
+    triage)  return 2;;
+    *)       return 1;;
+  esac
+}
+
+# Merge mode. NOT a configuration this script may choose: it is the operator's
+# switch, flipped once on the flip criterion (D19.3/D19.4), and its ABSENCE is
+# recommend-only. Only the exact string `1` enables it, so a typo, an empty
+# value or an inherited `0` all fail closed to recommending.
+#
+# D19.6 is all three parts: squash, delete the branch, and the merge is read
+# back from GitHub before the card is completed. A `gh pr merge` that exits 0
+# without merging (a race, an unmergeable state) must not complete a card whose
+# work is not on `main`.
+merge_mode() { [ "${FORGE_VERIFIER_MERGE:-}" = 1 ]; }
+# Return 1: nothing was merged. Return 4: `gh pr merge` ACCEPTED the merge and
+# something after it — the read-back or the completion — did not take. The two
+# must not share a code: after a 4 the work is probably on the base branch, and
+# the card has to be left where the merge-watcher will finish it (see the caller).
+route_merge() {  # $1=result summary, $2=metadata file
+  # `--match-head-commit` is not belt-and-braces: without it this merges whatever
+  # the head is NOW, and every stage above read the PR separately over several
+  # minutes. A push in that window would put code on `main` that nothing in this
+  # run verified — on an ungated repo, with no second gate behind it. An empty
+  # VERIFIED_HEAD means the read failed, and a merge that cannot name what it
+  # verified must not happen at all.
+  [ -n "$VERIFIED_HEAD" ] || return 1
+  gh pr merge --squash --delete-branch --match-head-commit "$VERIFIED_HEAD" "$PR_URL" \
+    >/dev/null 2>&1 < /dev/null || return 1
+  gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
+    | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 4
+  kanban complete "$CHUNK" --result "$1" --metadata "$(jq -c . "$2" 2>/dev/null)" >/dev/null 2>&1 || return 4
+  [ "$(card_json | jq -r '.task.status')" = done ] || return 4
+}
+
+# ---------------------------------------------------------------------------
 # WHO WROTE THE DIFF — one line, on the card a human opens before merging (F22).
 #
 # 2026-09-08: the Codex desktop app rewrote `~/.codex/config.toml` to a model
@@ -314,6 +544,74 @@ implementer_model_line() {
   printf '%s\n' "${line:-implementer model: UNREADABLE — the chunk card could not be read, so nothing here names the model that wrote this diff (F22)}"
 }
 
+# GW1's format, as a function rather than as a habit: what happened, what it
+# means, the one decision, the risk, the one reply. No decision, no message.
+decision_message() {  # $1=class  $2=headline  $3=means  $4=decision  $5=risk  $6=reply
+  printf '%s: %s\n\nWhat it means: %s\nDecision needed: %s\nRisk: %s\nReply: %s\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6"
+}
+
+# FL6 — two bounce rounds, then ONE exception, and the exception is a completable
+# block rather than the kernel's `triage`. The epic reached the same number by a
+# different route ("same-kind re-blocks route to triage at
+# BLOCK_RECURRENCE_LIMIT=2"); that route is measured above to be a dead end for a
+# chunk card, so the budget is counted here and the exception is an ordinary
+# sticky block the operator can act on. `FORGE_VERIFIER_BOUNCE_BUDGET` exists so
+# a case can drive the boundary without three round trips; it defaults to 2 and
+# nothing in the pipeline sets it.
+bounce_or_except() {  # $1=reasons  $2=one-line why  $3=metadata file  $4=action [bounce]
+  local rounds budget="${FORGE_VERIFIER_BOUNCE_BUDGET:-2}" rc action="${4:-bounce}"
+  rounds="$(bounce_rounds)"
+  stash_envelope "$3"
+  if [ "$rounds" -lt "$budget" ]; then
+    route_changes "$PR_URL
+
+$(implementer_model_line)
+$2
+
+$1" || substrate "other: handoff-integrity — request-changes did not return this card to its implementer"
+    envelope "$action" "$2 (round $((rounds + 1)) of $budget)" "$3" "" 0
+  fi
+  route_recommend "$(decision_message bounce-budget \
+    "$2 — and this chunk has now used its $budget bounce rounds" \
+    "the verifier bounced it $rounds times with actionable reasons and the work still does not pass; a third machine round is not evidence of anything new" \
+    "repair it yourself, amend the contract, or send it back for another round" \
+    "the card is blocked and its children stay held; nothing is merged" \
+    "fix and push to the PR branch, or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\` to give it another round
+
+$1")"; rc=$?
+  [ "$rc" = 2 ] && substrate "other: handoff-integrity — the exception block was routed to triage, so this chunk is not held for the operator, it is stranded"
+  [ "$rc" = 0 ] || substrate "other: handoff-integrity — the bounce-budget exception did not land as a block"
+  envelope exception "$2 — bounce budget spent after $rounds rounds" "$3" "" 0
+}
+
+# ---------------------------------------------------------------------------
+# Stage 0 — WHICH COMMIT THIS RUN IS ABOUT, read once, before anything looks at
+# the PR.
+#
+# Every stage below asks GitHub separately: the gate reads the CI rollup, the
+# merged-tree check clones, the scorer buys the diff. That is minutes, and a push
+# landing inside it silently re-points each later stage at a different commit. The
+# verdict would then be about a mixture, and in merge mode `gh pr merge` would land
+# whatever the head is at the end — CI never checked by this gate, a diff never
+# read by this scorer.
+#
+# So the head SHA is read HERE, carried to the merged-tree check (`--head-sha`) and
+# to the merge (`--match-head-commit`). If it cannot be read, merge mode refuses to
+# merge (route_merge) rather than merging something it cannot name. Reading it
+# earlier does not close the window — the gate's CI read still happens after this —
+# but it makes a moved head a REFUSED MERGE instead of an unnoticed one, which is
+# the difference between a failure and a defect. P9 owns the rest.
+#
+# In fixture mode it comes out of the recorded `pr.json`, so no dry-run case needs
+# a live `gh`.
+VERIFIED_HEAD=""
+if [ -n "$FIXTURE" ]; then
+  [ -f "$FIXTURE/pr.json" ] && VERIFIED_HEAD="$(jq -r '.headRefOid // empty' "$FIXTURE/pr.json" 2>/dev/null)"
+else
+  VERIFIED_HEAD="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
+fi
+
 # ---------------------------------------------------------------------------
 # Stage 1 — the gate. Before anything is spawned and before a diff is bought.
 # ---------------------------------------------------------------------------
@@ -335,11 +633,9 @@ gate_args=("$PR_URL" --json --wait "$WAIT_SECS")
 # ---------------------------------------------------------------------------
 if [ "$gate_rc" = 1 ]; then
   ids="$(jq -r '.blocks | join(", ")' "$GATE")"
-  route_bounce "$(jq -r '.checks[] | select(.status=="block")
-                  | "- **\(.id)** — \(.evidence)\n  - action: \(.action)"' "$GATE")" \
-               "gate blocked: $ids" \
-    || substrate "other: handoff-integrity — fix card could not be created or verified"
-  envelope gate-block "gate blocked: $ids" "$GATE" "" 0
+  bounce_or_except "$(jq -r '.checks[] | select(.status=="block")
+                      | "- **\(.id)** — \(.evidence)\n  - action: \(.action)"' "$GATE")" \
+                   "gate blocked: $ids" "$GATE" gate-block
 fi
 
 # ---------------------------------------------------------------------------
@@ -414,6 +710,73 @@ if [ "$DRY_RUN" = 1 ]; then
     "gate clear; prompt assembled, ${PROMPT_BYTES}B, no model spawned" \
     "$TMP/dry.json" "" 0
 fi
+
+# ---------------------------------------------------------------------------
+# Stage 1b — `make check` on the tree the merge would produce (ADR-0019 D19.2).
+#
+# It runs AFTER the dry-run exit above, so `--dry-run` still means exactly "the
+# gate ran and the prompt exists, nothing spawned, no board touched", and BEFORE
+# the scorer, which is the only paid stage: a union that does not build is not
+# worth a model's opinion.
+#
+# The clone source is the PR's own repository, read from `gh`, never the cwd —
+# the verifier's workspace is scratch and may hold no clone at all.
+# `FORGE_MERGE_CHECK_BIN` lets a case drive a recorded outcome without a
+# network; `scripts/merge-check.sh`'s own cases execute the real thing against
+# real local repositories.
+#
+# A NOT-PASS RESULT MAY NEVER BECOME AN APPROVAL. `pass` continues to the
+# scorer; `conflict` and `check-failed` are bounces with the script's own action
+# text; anything else — including `skipped`, which is what a fixture run without
+# an override produces — is a substrate fault. "Could not be run" is not a pass
+# (the rule `prejudge/skip-is-distinguishable-from-pass` states for the gate).
+# ---------------------------------------------------------------------------
+MERGE_CHECK_BIN="${FORGE_MERGE_CHECK_BIN:-$HERE/merge-check.sh}"
+MERGED="$TMP/merged-tree.json"
+merge_repo=""; head_ref=""; base_ref=""; clone_url=""
+if [ -n "$FIXTURE" ] && [ -z "${FORGE_MERGE_CHECK_BIN:-}" ]; then
+  jq -n '{schema:"forge.mergecheck.v1", result:"skipped",
+          evidence:"--fixture without FORGE_MERGE_CHECK_BIN: no repository to merge"}' > "$MERGED"
+  merged_rc=3
+else
+  # THE REPOSITORY COMES FROM THE PR URL, NEVER FROM THE CWD. `gh repo view` with
+  # no argument asks git about the working directory and dies with "not a git
+  # repository" — and the verifier's workspace is `scratch`, which holds no clone.
+  # Measured: every real review would have ended here as a substrate fault while
+  # every fixture passed, because a stub answers whatever it is asked. So the
+  # owner/name is derived from the canonical URL (the same URL that gives `gh` its
+  # context everywhere else in this file), and `--repo` still wins when given.
+  merge_repo="$REPO"
+  if [ -z "$merge_repo" ]; then
+    merge_repo="${PR_URL%/pull/*}"; merge_repo="${merge_repo#*://}"
+    merge_repo="${merge_repo#*/}"          # strip the host, leaving owner/name
+  fi
+  # THE BASE IS THE PR'S OWN, NEVER AN ASSUMED `main`. merge-check.sh defaults to
+  # `main`, and this call used to lean on that default: a product repo whose
+  # default branch is `master` got "no origin/main in the clone" on every review
+  # (every card blocked as a substrate fault), and a stacked PR was tested against
+  # a base it will never merge into. An unreadable base fails closed — falling
+  # back to `main` would be that bug again.
+  pr_refs="$(gh pr view "$PR_URL" --json headRefName,baseRefName < /dev/null 2>/dev/null)"
+  head_ref="$(printf '%s' "$pr_refs" | jq -r '.headRefName // empty' 2>/dev/null)"
+  base_ref="$(printf '%s' "$pr_refs" | jq -r '.baseRefName // empty' 2>/dev/null)"
+  clone_url="$(gh repo view "$merge_repo" --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
+  [ -n "$head_ref" ] && [ -n "$base_ref" ] && [ -n "$clone_url" ] \
+    || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, its base branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"
+  # --head-sha pins the union to Stage 0's commit: without it this clones "the
+  # branch", which may have moved since.
+  "$MERGE_CHECK_BIN" --clone-from "$clone_url" --head-ref "$head_ref" --base-ref "$base_ref" \
+    ${VERIFIED_HEAD:+--head-sha "$VERIFIED_HEAD"} > "$MERGED" 2>"$TMP/merged.err"
+  merged_rc=$?
+fi
+merged_result="$(jq -r '.result // "unreadable"' "$MERGED" 2>/dev/null || echo unreadable)"
+case "$merged_result" in
+  pass) ;;
+  conflict|check-failed)
+    bounce_or_except "$(jq -r '"- **merged-tree** — \(.evidence)\n  - action: \(.action // "make the union green and push")"' "$MERGED")" \
+                     "merged tree: $merged_result" "$MERGED";;
+  *) substrate "env: merge-check-unrunnable — $(jq -r '.evidence // "no result object"' "$MERGED" 2>/dev/null | head -c 300) (rc $merged_rc)";;
+esac
 
 # ---------------------------------------------------------------------------
 # Stages 3 and 4 — score, and stamp the provenance the model cannot know about
@@ -645,34 +1008,79 @@ gated="$(jq -c --slurpfile gate "$GATE" '.gate_result = $gate[0]' "$TMP/verdict.
 [ -n "$gated" ] && printf '%s' "$gated" > "$TMP/verdict.json"
 
 # ---------------------------------------------------------------------------
-# Stage 5 — route the result to a card something alive will read.
+# Stage 5 — the card's own terminal transition. No card is created, and the
+# verdict decides which of three transitions happens ON THIS CARD.
+#
+# The implementer line goes FIRST in every body: it is the one fact that decides
+# whether the rest can be trusted, and run 55 approved a diff without it (F22).
 # ---------------------------------------------------------------------------
+EVIDENCE="$(printf '%s\ngate: clear — %s\nmerged tree: %s\nverdict: %s — scores %s\nspot-check: %s' \
+  "$(implementer_model_line)" \
+  "$(jq -r '[.checks[]|select(.status=="warn")|.id]
+     | if length==0 then "no warnings" else "warnings: "+join(", ") end' "$GATE")" \
+  "$(jq -r '.evidence // "not run"' "$MERGED" 2>/dev/null | head -c 300)" \
+  "$SUMMARY" \
+  "$(jq -r '.scores | "\(.spec_fidelity)/\(.scenario_integrity)/\(.architectural_conformance)"
+     + "/\(.scope_discipline)/\(.debt_honesty)/\(.doc_reconciliation)"' "$TMP/verdict.json")" \
+  "$(jq -r '.spot_check_suggestion // "not offered"' "$TMP/verdict.json")")"
+
 case "$VERDICT" in
   approve|approve-with-nits)
-    # The implementer line goes FIRST, above the gate and the scores: it is the
-    # one fact on this card that decides whether the rest of it can be trusted,
-    # and run 55 approved without it. It is composed at the CALL SITE rather
-    # than inside route_tier2 so the bounce path and the lifted-function checks
-    # keep taking exactly the body they always took.
-    route_tier2 "$PR_URL
+    # The merged-tree stage already refused to continue on anything but `pass`;
+    # this re-reads it at the one place an approval is actually granted, because
+    # a stage that returns early is one edit away from not returning early.
+    [ "$(jq -r '.result // "unreadable"' "$MERGED" 2>/dev/null)" = pass ] \
+      || substrate "env: merge-check-unrunnable — no passing merged-tree result, so nothing here may approve"
+    # STASHED BEFORE ANY MERGE, not after it. In merge mode the completion is what
+    # carries the verdict; if the merge lands and the completion does not, the
+    # merge-watcher finishes the card and this comment is the only copy of the
+    # verdict it can attach.
+    stash_envelope "$TMP/verdict.json"
+    if merge_mode; then
+      route_merge "merged by forge-verifier: $SUMMARY" "$TMP/verdict.json"; merge_rc=$?
+      [ "$merge_rc" = 0 ] && envelope merged "$SUMMARY" "$TMP/verdict.json" "" 0
+      [ "$merge_rc" = 4 ] \
+        || substrate "other: handoff-integrity — the squash merge did not take, so nothing was merged"
+      # MERGED, BUT NOT COMPLETED. `gh pr merge` accepted it, so the work is
+      # probably on $base_ref already; the read-back or the completion is what
+      # failed. Exiting 3 here used to make the model block this card
+      # `other: handoff-integrity`, which the merge-watcher does not watch — the PR
+      # was on the base branch and the card and its children were held forever.
+      # So the card is held as a `merge-pending:` hold, which the watcher DOES
+      # watch: it asks GitHub, and completes the card (with the verdict stashed
+      # above) once the PR reads MERGED.
+      route_recommend "$(decision_message merge-pending \
+        "${chunk_title:-this chunk} was squash-merged by the verifier, but this card could not be completed" \
+        "\`gh pr merge\` accepted $PR_URL at ${VERIFIED_HEAD:-an unread head}, and then the read-back from GitHub or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
+        "confirm $PR_URL is merged; if it is not, merge it or send it back" \
+        "until the card completes, its children stay held" \
+        "nothing, if the PR shows MERGED — the merge-watcher completes this card on its next sweep — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
 
-$(implementer_model_line)
-tier-1 gate: clear — $(jq -r '[.checks[]|select(.status=="warn")|.id]
-      | if length==0 then "no warnings" else "warnings: "+join(", ") end' "$GATE")
-tier-1 verdict: $SUMMARY — scores $(jq -r '.scores
-      | "\(.spec_fidelity)/\(.scenario_integrity)/\(.architectural_conformance)"
-      + "/\(.scope_discipline)/\(.debt_honesty)/\(.doc_reconciliation)"' "$TMP/verdict.json")
-spot-check: $(jq -r '.spot_check_suggestion // "not offered"' "$TMP/verdict.json")
-Run /judge, then merge or bounce." \
-      || substrate "other: handoff-integrity — tier-2 card could not be created or verified"
-    envelope approve "$SUMMARY" "$TMP/verdict.json" "" 0;;
+$EVIDENCE")"; recommend_rc=$?
+      [ "$recommend_rc" = 2 ] && substrate "other: handoff-integrity — the post-merge hold was routed to triage, so this merged PR's card is stranded"
+      # If even the hold did not land, the reason the model blocks with verbatim
+      # still starts `merge-pending:` and names the PR, so the watcher finds it.
+      [ "$recommend_rc" = 0 ] \
+        || substrate "merge-pending: $PR_URL was squash-merged by the verifier, but neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged"
+      envelope merged-held "$SUMMARY — merged, and held for the merge-watcher because the completion did not take" "$TMP/verdict.json" "" 0
+    fi
+    route_recommend "$(decision_message merge-pending \
+      "${chunk_title:-this chunk} is verified and NOT merged — the verifier may only recommend" \
+      "the deterministic gate is clear, \`make check\` is green on this branch merged with $base_ref, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
+      "merge the PR, or send it back" \
+      "nothing is merged and this card's children stay held until it is" \
+      "merge $PR_URL on GitHub — the merge-watcher completes this card — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
+
+$EVIDENCE")"; recommend_rc=$?
+    [ "$recommend_rc" = 2 ] && substrate "other: handoff-integrity — the approval block was routed to triage, so this PR is not waiting for the operator, it is stranded"
+    [ "$recommend_rc" = 0 ] || substrate "other: handoff-integrity — the recommend-only block did not land on this card"
+    envelope recommend "$SUMMARY" "$TMP/verdict.json" "" 0;;
   bounce)
-    route_bounce "$(jq -r '.findings[]? |
+    bounce_or_except "$(jq -r '.findings[]? |
         "- **\(.dimension)** (\(.severity)) — \(.evidence)\n  - action: \(.action)"' \
         "$TMP/verdict.json")" \
       "$(jq -r '[.findings[]? | .dimension] | unique | join(", ")' "$TMP/verdict.json")" \
-      || substrate "other: handoff-integrity — fix card could not be created or verified"
-    envelope bounce "$SUMMARY" "$TMP/verdict.json" "" 0;;
+      "$TMP/verdict.json";;
   *)
     substrate "other: judge-envelope — verdict was '$VERDICT', not one of the three";;
 esac

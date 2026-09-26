@@ -114,7 +114,7 @@ skills_allowed_for() {  # $1=profile -> space-separated skill names, or empty
 PROFILES=(
   "forge-orchestrator|Routes forge work: decomposes chunks, links dependencies, assigns lanes. Never implements.|kanban,memory,skills"
   "forge-codex-lane|Implements one chunk contract by driving codex exec in a git worktree, verifies make check, opens the PR.|terminal,file,kanban,memory,skills"
-  "forge-prejudge|Tier-1 PR filter: bounces ci-red, scenario theater and scope creep. Reads diffs, never edits code.|terminal,kanban,memory,skills"
+  "forge-verifier|Verifies one chunk PR on its own card: deterministic gate, make check on the merged tree, then recommend or request changes. Never edits code, never creates cards.|terminal,kanban,memory,skills"
   "forge-digest|Reads the forge boards and sends one short daily status message. Read-only.|kanban,memory"
 )
 

@@ -57,8 +57,7 @@
 #   FORGE_LANE_BASE        the protected branch PRs target            [main]
 #   FORGE_LANE_HEARTBEAT   seconds between card heartbeats            [300]
 #   FORGE_LANE_TICK        seconds between checks of the Codex run      [5]
-#   FORGE_LANE_REVIEWER    the profile the card is handed to  [forge-prejudge]
-#                          (FL4 renames it forge-verifier)
+#   FORGE_LANE_REVIEWER    the profile the card is handed to  [forge-verifier]
 #   FORGE_LANE_SESSION_ROOT  where each card's Codex session id is kept for a
 #                          bounce re-entry          [~/.forge/lane-sessions]
 #
@@ -86,7 +85,7 @@ RUN_ID="${HERMES_KANBAN_RUN_ID:-}"
 BOARD="${HERMES_KANBAN_BOARD:-}"
 BASE="${FORGE_LANE_BASE:-main}"
 HEARTBEAT="${FORGE_LANE_HEARTBEAT:-300}"
-REVIEWER="${FORGE_LANE_REVIEWER:-forge-prejudge}"
+REVIEWER="${FORGE_LANE_REVIEWER:-forge-verifier}"
 SESSION_ROOT="${FORGE_LANE_SESSION_ROOT:-$HOME/.forge/lane-sessions}"
 TICK="${FORGE_LANE_TICK:-5}"
 STARTED="$(date +%s)"
@@ -162,7 +161,12 @@ beat() {   # note — at most once per HEARTBEAT, never fatal
 # ---------------------------------------------------------------------------
 # 1. Read the card. An operator comment overrides the card body — the skill
 # said so for the model's benefit, and it matters just as much to Codex, so
-# every comment not written by a forge-* worker profile rides the contract.
+# every comment not written by a forge-* worker profile rides the contract —
+# EXCEPT the verifier's `FORGE-VERDICT-V1` envelope, which is excluded by its
+# marker rather than by its author. The author is whatever profile the CLI
+# happened to run as (an unprofiled `kanban comment` records `default`), so an
+# author filter alone would let ~2 KB of verdict JSON into the section headed
+# "THEY win" — an operator override the operator never wrote.
 # ---------------------------------------------------------------------------
 kanban show "$TASK" --json > "$TMP/card.json" 2>/dev/null \
   && jq -e '.task.id' "$TMP/card.json" >/dev/null 2>&1 \
@@ -173,13 +177,20 @@ jq -r '.task.body // ""' "$TMP/card.json" > "$TMP/body.md"
   || block "stale-spec: card $TASK has an empty body — there is no contract to implement"
 CHUNK_ID="$(printf '%s' "$TITLE" | sed -n 's/^\(CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*\).*/\1/p')"
 CHUNK_ID="${CHUNK_ID%.}"
-jq -r '[.comments[]? | select((.author // "") | startswith("forge-") | not) | .body]
+jq -r '[.comments[]? | select(((.author // "") | startswith("forge-") | not)
+                              and ((.body // "") | startswith("FORGE-VERDICT-V1") | not)) | .body]
        | if length == 0 then empty else
          "\n---\nOperator comments on this card. Where they disagree with the contract above, THEY win:\n\n"
          + (map("- " + (gsub("\n"; "\n  "))) | join("\n")) end' "$TMP/card.json" > "$TMP/comments.md"
 # A card that was handed off before is a bounce re-entry. The reasons are
 # whatever was recorded since the LATEST handoff: request-changes puts its
 # reason on the event; reopen-review and the verifier put theirs in comments.
+# The verifier also parks its whole verdict envelope on the card as a
+# `FORGE-VERDICT-V1` comment, because `request-changes` takes no `--metadata`
+# (epic FL4). That is a record for the merge-watcher and for metrics, not a
+# reason for Codex: delivering ~2 KB of JSON as review feedback would spend the
+# implementer's context on something it cannot act on. Filtered by the MARKER
+# rather than by author, because the author depends on which profile wrote it.
 # Both are read — reading one would lose the other path's reasons.
 REENTRY=0
 LAST_HANDOFF="$(jq -r '[.events[]? | select(.kind == "review_requested") | .created_at] | max // empty' "$TMP/card.json")"
@@ -188,7 +199,8 @@ if [ -n "$LAST_HANDOFF" ]; then
   jq -r --argjson t "$LAST_HANDOFF" '
     ([.events[]? | select(.kind == "changes_requested" and .created_at >= $t)
                  | .payload.reason // empty]
-     + [.comments[]? | select(.created_at >= $t and (.author // "") != "forge-codex-lane")
+     + [.comments[]? | select(.created_at >= $t and (.author // "") != "forge-codex-lane"
+                              and ((.body // "") | startswith("FORGE-VERDICT-V1") | not))
                      | .body]) | map(select(length > 0)) | .[] | "- " + gsub("\n"; "\n  ")' \
     "$TMP/card.json" > "$TMP/reasons.md"
   [ -s "$TMP/reasons.md" ] \

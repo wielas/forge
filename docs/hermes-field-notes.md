@@ -265,6 +265,49 @@ a positive integer and silently falls through for `0`, negatives and non-numeric
 `kanban.max_in_progress_per_profile` bounds one lane rather than the machine.
 Preflight §4 checks this.
 
+**`triage` is a terminal column for anything you need to finish.** A second
+`block` of the *same kind* on one card routes it to `triage` instead of `blocked`
+(`_route_block`, `BLOCK_RECURRENCE_LIMIT = 2`), and `block_kind` /
+`block_recurrences` survive an `unblock` — only `complete_task` clears them. From
+`triage`, measured 2026-09-26 in an isolated `HERMES_HOME`, the CLI refuses
+`complete`, `complete --force`, `promote` **and** `unblock`:
+
+```
+cannot complete t_… (unknown id or terminal state)
+cannot promote t_…: task t_… is 'triage'; promote only applies to 'todo' or 'blocked'
+cannot unblock t_… (not blocked/scheduled?)
+```
+
+The one exit is `hermes kanban specify`, which calls an **auxiliary model** (here:
+`LLM error: AuxiliaryClientUnavailable`) and lands the card in `todo` — back with
+an implementer, never at `done`. So a card whose work is already merged and whose
+card reached triage cannot be completed, and its children never release. If a
+program blocks the same card twice, it must vary the kind (epic FL4 does; ADR-0019
+carries the reasoning).
+
+**`block` and `request-changes` take no `--metadata`; `complete` and
+`request-review` do.** Anything a reviewer computes and wants queryable later has
+no run to ride on the bounce and hold paths. Completing a card with **no live
+claim** opens a *new* run (`profile` = the completing profile, `outcome =
+completed`) and the metadata lands on that, which is the seam FL4 uses: the
+verdict is stashed as a card comment and re-attached by whatever finally completes
+the card.
+
+**`block_kind` and `block_recurrences` are not in `show --json`.** They are not
+among `.task`'s keys and read `null` if asked for. Every `blocked` event's
+*payload* carries `kind`, `recurrences` and `source_status`, so a script that
+needs them reads the events, never the columns.
+
+**`hermes kanban dispatch` is a real dispatcher pass you can run against an
+isolated `HERMES_HOME`**, which is how a two-write race can be tested rather than
+argued about. A card parked on a non-spawnable assignee comes back as
+`Skipped (non-spawnable assignee — terminal lane, OK)` with `Spawned: 0`.
+
+**A bare `git rev-parse <ref>` echoes its own argument when the ref does not
+exist** (and exits non-zero). `$(git rev-parse origin/nope 2>/dev/null || true)`
+is therefore the *string* `origin/nope`, not empty, and an absent-branch guard
+built on emptiness never fires. Use `rev-parse --verify --quiet`.
+
 ## How things really connect
 
 **Live schema inspection checks every board, by name.** There is no meaningful

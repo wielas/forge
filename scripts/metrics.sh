@@ -358,12 +358,23 @@ WITH
 -- chunk envelope". Identifying them by envelope would be circular: a card with
 -- malformed metadata would drop out of the denominator, and the conformance
 -- count below would silently miss exactly the nonconformance this script
--- exists to detect. So: a completed card that parents a forge-prejudge card,
--- or (fallback, for cards never reviewed) one with a forge-codex-lane run.
+-- exists to detect. So: a completed card that parents a reviewer card, or
+-- (fallback, for cards never reviewed) one with a forge-codex-lane run.
+--
+-- BOTH REVIEWER NAMES COUNT. The profile was renamed forge-prejudge ->
+-- forge-verifier in epic FL4, and the recorded boards this script reads are
+-- full of the old name: matching only the new one would silently empty the
+-- denominator for every run before the rename, which reads as "no chunks" and
+-- not as an error. Under ADR-0019 D19.1 a chunk is reviewed on ITS OWN card and
+-- parents no reviewer card at all, so the first arm is history's arm; the
+-- fallback is what identifies a post-FL3 chunk. P4 (epic parking lot) is the
+-- other half of that and is GW6's work: every arm here still reads only
+-- `completed` runs, and a verifier ends its run in `request-changes` or a block.
 cc(id) AS (
   SELECT DISTINCT t.id FROM tasks t
     JOIN task_links l ON l.parent_id = t.id
-    JOIN task_runs  r ON r.task_id   = l.child_id AND r.profile = 'forge-prejudge'
+    JOIN task_runs  r ON r.task_id   = l.child_id
+                     AND r.profile IN ('forge-prejudge','forge-verifier')
    WHERE t.status = 'done'
   UNION
   SELECT DISTINCT t.id FROM tasks t
@@ -371,12 +382,14 @@ cc(id) AS (
    WHERE t.status = 'done' AND r.profile = 'forge-codex-lane'
 ),
 -- [MEASURED] Tier comes from the PROFILE of the run carrying the verdict, not
--- from the card title. forge-prejudge is the unattended tier-1 filter; every
--- other profile, including the unassigned cards an operator drives by hand, is
--- tier 2. Only canonical forge.judge.v1 counts — that is the point of F3.
+-- from the card title. forge-prejudge and its post-FL4 name forge-verifier are
+-- the unattended tier; every other profile, including the unassigned cards an
+-- operator drives by hand, is tier 2. Only canonical forge.judge.v1 counts —
+-- that is the point of F3.
 v AS (
   SELECT r.task_id,
-         CASE WHEN r.profile = 'forge-prejudge' THEN 1 ELSE 2 END AS tier,
+         CASE WHEN r.profile IN ('forge-prejudge','forge-verifier')
+              THEN 1 ELSE 2 END AS tier,
          json_extract(r.metadata,'$.verdict') AS verdict,
          (json_extract(r.metadata,'$.scores.spec_fidelity')
         + json_extract(r.metadata,'$.scores.scenario_integrity')

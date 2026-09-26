@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "blocked_reason_pattern": "^(stale-spec|failing-prereq|env|ci-red|judge-bounce|gate-misrouted|gate-unrunnable|other): .+",
+  "blocked_reason_pattern": "^(stale-spec|failing-prereq|env|ci-red|judge-bounce|gate-misrouted|gate-unrunnable|merge-pending|bounce-budget|other): [\\s\\S]+",
   "schemas": {
     "forge.chunk.v1": "chunk-handoff.schema.json",
     "forge.gate.v1": "gate-result.schema.json",
@@ -8,10 +8,21 @@
   },
   "profiles": {
     "forge-codex-lane": {
-      "completed": ["forge.chunk.v1"]
+      "completed": [
+        "forge.chunk.v1"
+      ]
     },
     "forge-prejudge": {
-      "completed": ["forge.gate.v1", "forge.judge.v1"]
+      "completed": [
+        "forge.gate.v1",
+        "forge.judge.v1"
+      ]
+    },
+    "forge-verifier": {
+      "completed": [
+        "forge.gate.v1",
+        "forge.judge.v1"
+      ]
     }
   }
 }

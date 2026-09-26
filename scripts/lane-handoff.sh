@@ -49,7 +49,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-TASK="" META="" SUMMARY="" REVIEWER="${FORGE_LANE_REVIEWER:-forge-prejudge}"
+TASK="" META="" SUMMARY="" REVIEWER="${FORGE_LANE_REVIEWER:-forge-verifier}"
 BOARD="${HERMES_KANBAN_BOARD:-}"
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0" >&2; }
 
