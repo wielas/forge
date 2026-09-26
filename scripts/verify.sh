@@ -2386,10 +2386,10 @@ lane/lane-sh-reenters-on-a-bounce  FL3, stubs: same card/branch/PR, red baseline
 lane/bounce-round-trip-on-real-hermes  FL3, real kernel in an isolated HERMES_HOME: handoff, native gate, request-changes, re-entry, approval releases the child
 lane/lane-handoff-is-fail-closed  validates before the transition, reads the end state back, unparks a blocked human-tier card
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
-lane/prejudge-delegates-its-protocol    the SOUL names the script and the script exists (ADR-0010)
-lane/prejudge-terminator-mapping        rc 0 -> kanban_complete, rc 3 -> kanban_block; an outage is not a rejection
+lane/verifier-delegates-its-protocol    the SOUL names the script and the script exists (ADR-0010)
+lane/verifier-terminator-mapping        rc 0 -> call nothing (the program transitioned the card), rc 3 -> kanban_block; an outage is not a rejection
 lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
-lane/prejudge-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
+lane/verifier-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
 lane/codex-model-reaches-the-envelope   executed: lane.sh copies the runner's recorded Codex model into the chunk envelope (F22)
 lane/codex-model-reaches-the-envelope-mutation-is-caught  mutants of lane.sh (dropped source marker, misread record) both redden
 bootstrap/root-only-creates-one-card    a valid graph creates only its unique root
@@ -2513,12 +2513,13 @@ prejudge/stamped-envelope-declares-every-key  no key the schema does not declare
 prejudge/envelope-is-repaired-before-it-is-stored  an absent nits_as_cards is filled and an invented worker_session_id cannot survive
 prejudge/bounce-card-lands-in-the-rejected-worktree  route_bounce's own flags make a card Hermes accepts, in the rejected worktree
 prejudge/tier2-handoff-survives-a-live-parent  route_tier2 creates parentless, blocks, then links — a live (non-done) parent no longer breaks the handoff
-prejudge/tier2-card-names-the-implementer-model  the card a human merges from names the model that wrote the diff, and whether that is evidence (F22)
+prejudge/card-names-the-implementer-model  every card a human reads names the model that wrote the diff, and whether that is evidence (F22)
 prejudge/implementer-model-mutation-is-caught  a line that prints the model and swallows codex_model_source reddens
 prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_model, an empty codex_model_requested and a blank effort all fall to their honest branch, never evidence or a false F22 alarm
 prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 verifier/chunk-is-the-running-card  D19.1: --chunk must BE the running card; a mismatch is substrate before Stage 1
+verifier/the-reviewer-profile-exists  the reviewer lane-handoff.sh names ships a SOUL, is created by the bootstrap, and matches lane.sh's default
 verifier/merged-tree-union-is-executed  real repositories: a red union bounces, a green one passes, a conflict is named, an absent branch or target is unrunnable
 verifier/merged-tree-mutation-is-caught  a fast-forward-only merge builds no union and stops reporting the red one
 verifier/recommend-only-holds-the-card  the review run's own block lands blocked/needs_input from review; the child stays held and nothing merges (D19.3)
@@ -3448,8 +3449,8 @@ LCODEX
     lh_rc="$(_lsh_run STUB_LIMIT_ONCE=1 UV_OFFLINE=1 UV_CACHE_DIR="$lroot/leaked-cache")"
     [ "$lh_rc" = 0 ] || lh_detail="$lh_detail rc=$lh_rc($(_lsh_env .reason))"
     [ "$(_lsh_env .action)" = handed-off ] || lh_detail="$lh_detail action=$(_lsh_env .action)"
-    grep -q '^kanban --board vlane request-review t_lane --reviewer forge-prejudge --summary ' "$lstub/hermes.log"       || lh_detail="$lh_detail no-handoff-with-a-named-reviewer"
-    [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-prejudge ]       || lh_detail="$lh_detail card-not-in-review"
+    grep -q '^kanban --board vlane request-review t_lane --reviewer forge-verifier --summary ' "$lstub/hermes.log"       || lh_detail="$lh_detail no-handoff-with-a-named-reviewer"
+    [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-verifier ]       || lh_detail="$lh_detail card-not-in-review"
     ! grep -q '^kanban --board vlane create' "$lstub/hermes.log" || lh_detail="$lh_detail a-card-was-created"
     [ "$(_lsh_env '.created_cards | length')" = 0 ] || lh_detail="$lh_detail created-cards-not-empty"
     order="$(sed 's/ .*//' "$lstub/calls" 2>/dev/null | tr '\n' ' ')"
@@ -3534,7 +3535,7 @@ LCODEX
       [ "$(grep -c '^gh pr create' "$lstub/gh.log")" = 1 ] || lr_detail="$lr_detail second-pr"
       [ "$(git -C "$lorig" rev-list --count main..chunk/7-sync-engine 2>/dev/null)" = 2 ] \
         || lr_detail="$lr_detail branch-not-extended"
-      [ "$(grep -c 'request-review t_lane --reviewer forge-prejudge' "$lstub/hermes.log")" = 2 ] \
+      [ "$(grep -c 'request-review t_lane --reviewer forge-verifier' "$lstub/hermes.log")" = 2 ] \
         || lr_detail="$lr_detail reviewer-not-named-twice"
       ! grep -q '^kanban --board vlane create' "$lstub/hermes.log" || lr_detail="$lr_detail a-card-was-created"
     else
@@ -3671,7 +3672,7 @@ with kbc.connect_closing() as c:
     rh_run="$(_rh_claim "$rh_p")"
     rh_rc="$(_rh_lane "$rh_run")"
     [ "$rh_rc" = 0 ] || rh_detail="$rh_detail pass1-rc=$rh_rc($(_lsh_env .reason))"
-    [ "$(_rh_status "$rh_p")" = review/forge-prejudge ] || rh_detail="$rh_detail pass1-not-in-review($(_rh_status "$rh_p"))"
+    [ "$(_rh_status "$rh_p")" = review/forge-verifier ] || rh_detail="$rh_detail pass1-not-in-review($(_rh_status "$rh_p"))"
     # The envelope must arrive intact: request_review passes it through the
     # kernel's redaction, and the verifier and /retro read the stored copy.
     [ -n "$(_lsh_env .metadata.pr)" ] \
@@ -3692,7 +3693,7 @@ with kbc.connect_closing() as c:
     rh_run="$(_rh_claim "$rh_p")"
     rh_rc="$(_rh_lane "$rh_run" STUB_FIX_RED=1)"
     [ "$rh_rc" = 0 ] || rh_detail="$rh_detail pass2-rc=$rh_rc($(_lsh_env .reason))"
-    [ "$(_rh_status "$rh_p")" = review/forge-prejudge ] || rh_detail="$rh_detail pass2-not-in-review($(_rh_status "$rh_p"))"
+    [ "$(_rh_status "$rh_p")" = review/forge-verifier ] || rh_detail="$rh_detail pass2-not-in-review($(_rh_status "$rh_p"))"
     grep -q 'resume lane-session-1' "$lstub/codex.last" 2>/dev/null || rh_detail="$rh_detail not-resumed"
     grep -q 'REVIEW-REASON-MARKER' "$lstub/codex.last" 2>/dev/null || rh_detail="$rh_detail reason-not-delivered"
     [ "$(grep -c '^gh pr create' "$lstub/gh.log" 2>/dev/null)" = 1 ] || rh_detail="$rh_detail second-pr"
@@ -3729,7 +3730,7 @@ with kbc.connect_closing() as c:
     jq '.task.status = "blocked" | .task.assignee = "forge-operator-handoff"' "$lstub/cards/t_lane.json" > "$lstub/t.json" \
       && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
     lho_rc="$(_lho HERMES_KANBAN_TASK= HERMES_KANBAN_RUN_ID= "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
-    { [ "$lho_rc" = 0 ] && [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-prejudge ] \
+    { [ "$lho_rc" = 0 ] && [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-verifier ] \
       && [ "$(grep -oE '(unblock|request-review) t_lane' "$lstub/hermes.log" | awk '{ print $1 }' | tr '\n' ' ')" = "unblock request-review " ]; } \
       || lho_detail="$lho_detail human-chunk-not-handed-off(rc=$lho_rc,$(tail -1 "$lroot/lho.out"))"
     if [ -z "$lho_detail" ]; then
@@ -3831,7 +3832,7 @@ with kbc.connect_closing() as c:
   fi
 
   # ---------------------------------------------------------------------
-  # The prejudge SOUL is IDENTITY, not protocol (ADR-0010, audit F61). Only
+  # The verifier SOUL is IDENTITY, not protocol (ADR-0010, audit F61). Only
   # what a model must read and obey is asserted here. Everything the protocol
   # *does* is a program now and is EXECUTED in the prejudge/ group instead.
   #
@@ -3842,29 +3843,33 @@ with kbc.connect_closing() as c:
   # is the strongest argument available that a protocol living in prose can be
   # approximated but not tested (F63).
   # ---------------------------------------------------------------------
-  local soul=hermes/profiles/forge-prejudge.SOUL.md
+  local soul=hermes/profiles/forge-verifier.SOUL.md
   local review=scripts/prejudge-review.sh
 
   if grep -Fq 'scripts/prejudge-review.sh' "$soul" && [ -x "$review" ]; then
-    ok "prejudge-delegates-its-protocol"
+    ok "verifier-delegates-its-protocol"
   else
-    bad "prejudge-delegates-its-protocol" \
+    bad "verifier-delegates-its-protocol" \
         "the SOUL must name $review, and that script must exist and be executable"
   fi
 
-  # The rc -> terminator mapping is the one part that CANNOT move into the
-  # script: only the model holds kanban_complete/kanban_block, which the
-  # completion kernel ties to the identity of the running task. A substrate
-  # fault and a bounce take different terminators on purpose, so that an
-  # outage can never read as a rejection.
-  if grep -Eq '^ *\| 0 \|.*kanban_complete' "$soul" \
+  # THE MAPPING CHANGED IN FL4, AND THE CHANGE IS THE POINT. It used to be
+  # `rc 0 -> kanban_complete`, because tier 1 completed its own child card. Under
+  # ADR-0019 D19.1 the script transitions the CHUNK's card — request-changes, a
+  # block, or a merge and completion — and the kernel ends the run as part of
+  # that transition, exactly as `request-review` ends the lane's. A terminator
+  # called after it would double-write or fail, so rc 0 must map to NOTHING, and
+  # the SOUL has to say so in the row a model reads. rc 3 is still
+  # `kanban_block`: nothing transitioned, so the model is still the only one who
+  # can end the run, and a substrate fault must never read as a rejection.
+  if grep -Eq '^ *\| 0 \|.*\*\*nothing\.\*\*' "$soul" \
+     && ! grep -Eq '^ *\| 0 \|.*kanban_complete' "$soul" \
      && grep -Eq '^ *\| 3 \|.*kanban_block' "$soul" \
-     && grep -Fq 'never report an outage as a rejection' "$soul" \
-     && grep -Fq 'Exiting while still' "$soul"; then
-    ok "prejudge-terminator-mapping"
+     && grep -Fq 'never report an outage as a rejection' "$soul"; then
+    ok "verifier-terminator-mapping"
   else
-    bad "prejudge-terminator-mapping" \
-        "the SOUL must map rc 0 to kanban_complete and rc 3 to kanban_block, and forbid exiting while running"
+    bad "verifier-terminator-mapping" \
+        "the SOUL must map rc 0 to calling nothing (the program transitioned the card) and rc 3 to kanban_block, and must not tell a model to complete on rc 0"
   fi
 
   # The prohibition stays prose because it constrains the model. The
@@ -3882,13 +3887,14 @@ with kbc.connect_closing() as c:
   # six-dimension verdict that existed to make `/retro` count the bounce has no
   # subject left. Five invented dimension scores are the same defect as the
   # zeroed cost object this protocol already refuses to write.
-  if grep -Fq 'forge.gate.v1' "$soul" && grep -Fq 'forge.judge.v1' "$soul" \
-     && grep -Fq 'never manufacture the one that did not' "$soul" \
+  if grep -Fq 'Store what happened, never what' "$soul" \
+     && grep -Fq 'never manufacture the verdict that did not' "$soul" \
      && ! grep -Fq 'all six scores set to zero' "$soul" \
-     && ! grep -Fq 'deterministic sentinel' rubrics/judge-rubric.md; then
-    ok "prejudge-stores-what-happened"
+     && ! grep -Fq 'deterministic sentinel' rubrics/judge-rubric.md \
+     && grep -Fq 'forge.gate.v1' "$review" && grep -Fq 'forge.judge.v1' "$review"; then
+    ok "verifier-stores-what-happened"
   else
-    bad "prejudge-stores-what-happened" \
+    bad "verifier-stores-what-happened" \
         "tier 1 must store forge.gate.v1 on a gate block and forge.judge.v1 on a scored review, and the ci-red zeroed-score sentinel must be gone (ADR-0009 D9.4)"
   fi
 
@@ -6021,7 +6027,7 @@ run_metadata_group() {
   metadata_sweep quoted   's/^[[:space:]]*"\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-setup.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-blast-radius.sh
-  metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-prejudge.SOUL.md
+  metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-verifier.SOUL.md
   metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     skills/forge-lane/SKILL.md
   metadata_sweep block    's/.*block "\([a-z0-9=-]*:\).*/\1/p'      scripts/lane.sh
   metadata_sweep refuse   's/.*refuse "\([a-z0-9=-]*:\).*/\1/p'     scripts/lane-handoff.sh
@@ -6036,7 +6042,7 @@ run_metadata_group() {
   # what a revert would reintroduce, and it is invisible to the rules above.
   legacy="$(grep -lF 'reason_class=' \
               scripts/prejudge-review.sh scripts/lane-setup.sh \
-              scripts/lane-blast-radius.sh hermes/profiles/forge-prejudge.SOUL.md \
+              scripts/lane-blast-radius.sh hermes/profiles/forge-verifier.SOUL.md \
               skills/forge-lane/SKILL.md scripts/lane.sh scripts/lane-handoff.sh 2>/dev/null | tr '\n' ' ')"
 
   for producer in skills/forge-lane/SKILL.md \
@@ -6104,9 +6110,10 @@ run_metadata_live_cases() {
       scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
   sqlite3 "$db" "UPDATE task_runs SET profile='forge-prejudge' WHERE id=2;"
   if [ "$good_rc" = 0 ] \
-     && printf '%s' "$good_out" | grep -Fq 'valid=3 invalid=0 unjudged=0 ignored=2' \
+     && printf '%s' "$good_out" | grep -Fq 'valid=4 invalid=0 unjudged=0 ignored=2' \
      && printf '%s' "$good_out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=1' \
      && printf '%s' "$good_out" | grep -Fq 'profile=forge-prejudge schema=forge.judge.v1 valid=1' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-verifier schema=forge.judge.v1 valid=1' \
      && [ "$rc" = 1 ] \
      && printf '%s' "$out" | grep -Fq 'missing producer=forge-prejudge'; then
     ok "live-valid-counts (profile/schema counts exact; a missing contracted producer exits 1)"
@@ -6138,7 +6145,7 @@ SQL
   local invalid_out="$out" invalid_rc="$rc"
 
   if [ "$invalid_rc" = 1 ] \
-     && printf '%s' "$invalid_out" | grep -Fq 'valid=1 invalid=4 unjudged=0 ignored=2' \
+     && printf '%s' "$invalid_out" | grep -Fq 'valid=2 invalid=4 unjudged=0 ignored=2' \
      && printf '%s' "$invalid_out" | grep -Fq 'invalid task=t_bad_reason run=1' \
      && printf '%s' "$invalid_out" | grep -Fq 'reason="free-form model excuse"'; then
     ok "live-rejects-bad-block-reason (task, run and reason printed)"
@@ -6154,7 +6161,7 @@ SQL
   if [ "$invalid_rc" = 1 ] && [ "$named" = 1 ] \
      && [ "$rc" = 2 ] \
      && printf '%s' "$out" | grep -Fq 'unjudged task=t_unreadable run=7' \
-     && printf '%s' "$out" | grep -Fq 'valid=1 invalid=4 unjudged=1 ignored=2'; then
+     && printf '%s' "$out" | grep -Fq 'valid=2 invalid=4 unjudged=1 ignored=2'; then
     ok "live-classifies-every-bad-row (invalid exits 1; unjudged is named and dominates as exit 2)"
   else
     bad "live-classifies-every-bad-row" \
@@ -7379,18 +7386,28 @@ TABLE
   # The function existing and never being called is the quiet way to lose this.
   # Read the approve arm itself — from the routed verdict to the envelope that
   # ends it — and require the call inside it.
-  im_call="$(awk '/^  approve\|approve-with-nits\)/{a=1} a; a && /^    envelope approve/{exit}' \
-               "$review" | grep -c 'implementer_model_line')"
+  # WHERE THE LINE IS CALLED MOVED IN FL4, AND HAS TO BE ASSERTED ON EVERY PATH.
+  # It used to be composed inside the approve arm, because only the tier-2 card a
+  # human opened before merging needed it. Under ADR-0019 every outcome is a
+  # message the operator or the implementer reads on the chunk's own card, so the
+  # line belongs to all of them: the hold's decision message (through `$EVIDENCE`,
+  # which the approve arm builds), and the bounce body `bounce_or_except` writes.
+  # Two call sites, both required: a card that does not say what wrote the diff is
+  # the 2026-09-08 shape, and run 55 approved exactly such a card.
+  im_call="$(grep -c 'implementer_model_line' "$review")"
+  local im_sites=1
+  awk '/^EVIDENCE=/{a=1} a; a && /^$/{exit}' "$review" | grep -q 'implementer_model_line' || im_sites=0
+  awk '/^bounce_or_except\(\) \{/{a=1} a; a && /^\}/{exit}' "$review" | grep -q 'implementer_model_line' || im_sites=0
   if [ -z "$im_line_diag" ] \
-     && [ "$im_call" -ge 1 ] \
+     && [ "$im_call" -ge 2 ] && [ "$im_sites" = 1 ] \
      && printf '%s' "$im_rollout" | grep -Fq 'source: rollout' \
      && printf '%s' "$im_rollout" | grep -Fq 'WHAT RAN IS NOT WHAT WAS PINNED' \
      && printf '%s' "$im_legacy" | grep -Fq 'NOT RECORDED' \
      && printf '%s' "$im_unreadable" | grep -Fq 'UNREADABLE'; then
-    ok "tier2-card-names-the-implementer-model (4 card shapes; the approve arm calls it)"
+    ok "card-names-the-implementer-model (4 card shapes; the hold's evidence and the bounce body both call it)"
   else
-    bad "tier2-card-names-the-implementer-model" \
-        "the tier-2 card must name the implementer model and its provenance on every shape, and the approve arm must call it (calls=$im_call requested='${im_requested:-nothing}' rollout='${im_rollout:-nothing}' legacy='${im_legacy:-nothing}' unreadable='${im_unreadable:-nothing}'): ${im_line_diag:-}"
+    bad "card-names-the-implementer-model" \
+        "the card must name the implementer model and its provenance on every shape, and both the hold and the bounce must call it (calls=$im_call sites=$im_sites requested='${im_requested:-nothing}' rollout='${im_rollout:-nothing}' legacy='${im_legacy:-nothing}' unreadable='${im_unreadable:-nothing}'): ${im_line_diag:-}"
   fi
 
   # MUTATION: make the source marker unmatchable, so a `requested` run renders
@@ -7529,6 +7546,35 @@ run_verifier_group() {
     && ok "chunk-is-the-running-card (D19.1: the same id passes, a different one is substrate before Stage 1)" \
     || bad "chunk-is-the-running-card" \
         "under a worker --chunk must be \$HERMES_KANBAN_TASK and a mismatch must exit 3 before the gate —$ci_detail"
+
+  # -------------------------------------------------------------------------
+  # 1b. The reviewer the handoff names must be a profile that EXISTS.
+  #
+  # This is the rename's silent failure. `lane-handoff.sh` names the reviewer in a
+  # default; `profiles-bootstrap.sh` is what creates that profile on the host. If
+  # the two ever disagree — a deploy that lands the handoff before the bootstrap
+  # runs, a typo, a profile retired ahead of its callers — the card lands in
+  # `review` assigned to a profile nothing dispatches, and NOTHING ERRORS: Hermes
+  # records a skipped_nonspawnable event and the card sits there until someone
+  # notices (the hazard `hermes/profiles-bootstrap.sh`'s own closing note names).
+  # `make preflight` asks the live host the same question; this asks the checkout,
+  # so a pull request cannot introduce the disagreement in the first place.
+  local rv_reviewer rv_detail=""
+  rv_reviewer="$(sed -n 's/^.*REVIEWER="${FORGE_LANE_REVIEWER:-\([a-z-]*\)}"/\1/p' scripts/lane-handoff.sh | head -1)"
+  [ -n "$rv_reviewer" ] \
+    || rv_detail="$rv_detail no-reviewer-default-found-in-lane-handoff.sh"
+  [ -z "$rv_reviewer" ] || [ -f "hermes/profiles/$rv_reviewer.SOUL.md" ] \
+    || rv_detail="$rv_detail no-SOUL-for-$rv_reviewer"
+  [ -z "$rv_reviewer" ] || grep -Fq "\"$rv_reviewer|" hermes/profiles-bootstrap.sh \
+    || rv_detail="$rv_detail bootstrap-does-not-create-$rv_reviewer"
+  # lane.sh's own default must agree with the handoff's: two defaults for one
+  # name is the same bug with a longer fuse.
+  [ -z "$rv_reviewer" ] || grep -Fq "REVIEWER=\"\${FORGE_LANE_REVIEWER:-$rv_reviewer}\"" scripts/lane.sh \
+    || rv_detail="$rv_detail lane.sh-names-a-different-reviewer"
+  [ -z "$rv_detail" ] \
+    && ok "the-reviewer-profile-exists ($rv_reviewer: a SOUL in hermes/profiles, created by the bootstrap, and lane.sh agrees)" \
+    || bad "the-reviewer-profile-exists" \
+        "the reviewer lane-handoff.sh names must be a profile this repo ships and the bootstrap creates, or a handoff lands on a profile nothing dispatches and nothing errors —$rv_detail"
 
   # -------------------------------------------------------------------------
   # 2. The merged tree, EXECUTED against real repositories.

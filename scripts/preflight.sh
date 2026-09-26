@@ -781,8 +781,17 @@ fi
 # checkout being fine is not the property that matters, and `make verify`
 # already covers that one.
 # ---------------------------------------------------------------------------
+# Since epic FL4 the reviewer's side reaches the same way: the `forge-verifier`
+# SOUL invokes scripts/prejudge-review.sh through ~/.forge/repo, and that script
+# reaches prejudge.sh, verdict.sh and merge-check.sh beside itself. merge-check.sh
+# is the one whose absence would be silent in the worst way — an unrunnable
+# merged-tree check is `substrate`, so the card blocks and the operator meets it
+# as an outage rather than as a verdict. merge-watcher.sh and bounce.sh are the
+# operator's own two commands.
 for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh validate-metadata.py \
-                codex-run.sh quota-window.py codex-progress.py; do
+                codex-run.sh quota-window.py codex-progress.py \
+                prejudge-review.sh prejudge.sh verdict.sh merge-check.sh \
+                merge-watcher.sh bounce.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
@@ -792,7 +801,7 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
     fail "~/.forge/repo/scripts/$_lscript is not executable"
     say  "      chmod +x it in the checkout; an unattended lane cannot repair this."
   else
-    pass "lane protocol '$_lscript' resolves through ~/.forge/repo and is executable"
+    pass "protocol script '$_lscript' resolves through ~/.forge/repo and is executable"
   fi
 done
 

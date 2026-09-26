@@ -361,6 +361,35 @@ route_changes() {  # $1=reasons body
     and any(.events[]?; .kind == "changes_requested")' >/dev/null || return 1
 }
 
+# WHERE THE VERDICT GOES WHEN THE TRANSITION CANNOT CARRY IT.
+#
+# `hermes kanban complete` and `request-review` take `--metadata`. `block` and
+# `request-changes` DO NOT (measured against the installed CLI: neither help text
+# names the flag). So on every path except a merge, the envelope this script
+# computed — `forge.gate.v1` or `forge.judge.v1`, the rows `scripts/metrics.sh`
+# counts — has no run to ride.
+#
+# It is therefore posted as a card COMMENT under a stable marker, and the
+# merge-watcher passes it back as `--metadata` when it completes the card.
+# Measured: completing a card with no live claim opens a NEW run
+# (`profile = forge-verifier`, `outcome = completed`) and the metadata lands on
+# it, so `rubrics/run-metadata-contract.json`'s `forge-verifier` entry is true of
+# a merged chunk however it was completed.
+#
+# The comment goes on BEFORE the transition: a block ends this run, and evidence
+# that depends on a later write is evidence that can be lost. It never fails the
+# outcome — a verdict that was reached must not be destroyed by a board that
+# would not take a comment.
+VERDICT_MARKER="FORGE-VERDICT-V1"
+stash_envelope() {  # $1=metadata file
+  board_live || return 0
+  [ -s "$1" ] || return 0
+  kanban comment "$CHUNK" "$VERDICT_MARKER
+\`\`\`json
+$(jq -c . "$1" 2>/dev/null || cat "$1")
+\`\`\`" >/dev/null 2>&1 || true
+}
+
 # An approval the verifier may only RECOMMEND (ADR-0019 D19.3). The card is
 # blocked sticky; the operator merges on GitHub; the merge-watcher completes it.
 # Return 2 means the kernel routed the block to `triage` anyway — a hold that
@@ -391,7 +420,7 @@ route_merge() {  # $1=result summary, $2=metadata file
   gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
     | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 1
   board_live || return 0
-  kanban complete "$CHUNK" --result "$1" >/dev/null 2>&1 || return 1
+  kanban complete "$CHUNK" --result "$1" --metadata "$(jq -c . "$2" 2>/dev/null)" >/dev/null 2>&1 || return 1
   [ "$(card_json | jq -r '.task.status')" = done ] || return 1
 }
 
@@ -479,6 +508,7 @@ decision_message() {  # $1=class  $2=headline  $3=means  $4=decision  $5=risk  $
 bounce_or_except() {  # $1=reasons  $2=one-line why  $3=metadata file  $4=action [bounce]
   local rounds budget="${FORGE_VERIFIER_BOUNCE_BUDGET:-2}" rc action="${4:-bounce}"
   rounds="$(bounce_rounds)"
+  stash_envelope "$3"
   if [ "$rounds" -lt "$budget" ]; then
     route_changes "$PR_URL
 
@@ -897,10 +927,11 @@ case "$VERDICT" in
     [ "$(jq -r '.result // "unreadable"' "$MERGED" 2>/dev/null)" = pass ] \
       || substrate "env: merge-check-unrunnable — no passing merged-tree result, so nothing here may approve"
     if merge_mode; then
-      route_merge "merged by forge-verifier: $SUMMARY" \
+      route_merge "merged by forge-verifier: $SUMMARY" "$TMP/verdict.json" \
         || substrate "other: handoff-integrity — the squash merge, its read-back, or the completion did not take"
       envelope merged "$SUMMARY" "$TMP/verdict.json" "" 0
     fi
+    stash_envelope "$TMP/verdict.json"
     route_recommend "$(decision_message merge-pending \
       "${chunk_title:-this chunk} is verified and NOT merged — the verifier may only recommend" \
       "the deterministic gate is clear, \`make check\` is green on this branch merged with main, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \

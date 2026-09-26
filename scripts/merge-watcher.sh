@@ -61,6 +61,7 @@ held="$(kanban list --json 2>/dev/null | jq -r '.[]? | select(.status == "blocke
 
 rc=0
 for card in $held; do
+  meta=""
   shown="$(kanban show "$card" --json 2>/dev/null)" || continue
   # The LAST blocked event decides, not any of them: a card bounced for a
   # substrate fault after a hold is no longer a hold.
@@ -83,7 +84,22 @@ for card in $held; do
     MERGED)
       sha="$(printf '%s' "$state" | jq -r '.mergeCommit.oid // "unknown"')"
       [ "$DRY" = 1 ] && { echo "$card: would complete — $pr merged as ${sha:0:12}"; continue; }
-      kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher)" >/dev/null 2>&1
+      # THE VERDICT RIDES THIS COMPLETION. `block` takes no `--metadata`, so the
+      # verifier stashed its envelope as a comment under a stable marker; this is
+      # the only write left that can store it, and completing a card with no live
+      # claim opens a new `forge-verifier` run for it to land on (measured). A
+      # card with no stash still completes — a missing record must not cost a
+      # merge — and then nothing counts it, which is what the absence means.
+      meta="$(printf '%s' "$shown" | jq -r '
+        [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | last | .body // ""' 2>/dev/null \
+        | sed -n '/^```json$/,/^```$/p' | sed '1d;$d')"
+      printf '%s' "$meta" | jq -e 'type == "object"' >/dev/null 2>&1 || meta=""
+      if [ -n "$meta" ]; then
+        kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher)" \
+          --metadata "$meta" >/dev/null 2>&1
+      else
+        kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher; NO stored verdict envelope on this card)" >/dev/null 2>&1
+      fi
       if [ "$(kanban show "$card" --json 2>/dev/null | jq -r '.task.status')" = done ]; then
         echo "$card: done — $pr merged as ${sha:0:12}"
       else

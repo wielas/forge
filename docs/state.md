@@ -259,10 +259,26 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   `scripts/lane.sh` and its handoff `scripts/lane-handoff.sh`: executed end to
   end in the `lane` group (real setup, runner, audit, make and validator; stub
   `hermes`/`gh`/`codex`), and the same-card bounce round trip against the real
-  kernel. No dispatcher-spawned driver has run them yet. **Between S2 and S3 the
-  runtime must not run a live board:** the lane now hands its card to
-  `forge-prejudge` on the same card, and that profile still expects a child
-  card — FL4 (S3) is what teaches the reviewer side.
+  kernel. No dispatcher-spawned driver has run them yet. The S2-only hazard is
+  **gone**: the lane hands its card to `forge-verifier`, and since epic S3 that
+  profile's protocol expects the same card rather than a child (FL4).
+- **The verifier's own card, fixture-proven on the real kernel (epic S3, FL4).**
+  `forge-prejudge` is now `forge-verifier`, and `scripts/prejudge-review.sh`
+  transitions the chunk's own card: `request-changes` on a fail, a sticky block
+  on an approval it may only recommend, or — only under `FORGE_VERIFIER_MERGE=1`,
+  which nothing sets — a squash merge and completion. `scripts/merge-check.sh`
+  runs `make check` on the tree the merge would produce, in a fresh clone, and is
+  executed against real repositories where every branch is green alone and only
+  the union is red. `scripts/merge-watcher.sh` completes a held card once GitHub
+  reports its PR merged; `scripts/bounce.sh` is the operator's disagree path. The
+  12 cases in the `verifier` group run all of it against the installed kernel in
+  an isolated `HERMES_HOME`, including ADR-0019 D19.3's three previously
+  unexecuted transitions. **What that does NOT prove:** no dispatcher has ever
+  spawned `forge-verifier` (the review claim is made through the kernel's own
+  `claim_review_task`, and the reviewer model has never run this protocol), no
+  real PR has been merged by it, merge mode has never been on outside a fixture,
+  and the mutation probe FL5 adds does not exist yet — so an approval today rests
+  on the gate, the merged tree and the `claude -p` scorer only.
 - **Timeout/reclaim and circuit-breaker recovery.** Signal-9 retry is proven;
   stale-heartbeat reclaim and a tripped retry limit are not.
 - **The usage-limit park against a real window.** ADR-0016 shipped
@@ -536,7 +552,7 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 Hermes 0.21.5 · codex-cli 0.156.1 · Claude Code 2.1.281 · gh 2.101.0
 lefthook 2.1.10 · uv 0.12.18 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
-profiles: forge-orchestrator, forge-codex-lane, forge-prejudge,
+profiles: forge-orchestrator, forge-codex-lane, forge-verifier,
           forge-digest (glm-5.3-flash) · codex pinned gpt-5.6-luna xhigh
 ```
 

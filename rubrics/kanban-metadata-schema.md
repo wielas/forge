@@ -208,7 +208,10 @@ merely reading it.
 - Additive top-level keys are allowed and ignored by consumers. Changing a
   required field or an existing meaning requires a `.v2` schema id.
 - A completed `forge-codex-lane` run may emit only `forge.chunk.v1`; a completed
-  `forge-prejudge` run may emit `forge.gate.v1` or `forge.judge.v1`. Null
+  `forge-prejudge` run — and, since epic FL4 renamed the profile, a
+  `forge-verifier` one — may emit `forge.gate.v1` or `forge.judge.v1`. Both
+  names are in `rubrics/run-metadata-contract.json` because the recorded boards
+  hold the old one. Null
   metadata and cross-profile schema ids are invalid.
 - Everything here is also human-scannable in the PR body — the board is a
   mirror, git is the source of truth.

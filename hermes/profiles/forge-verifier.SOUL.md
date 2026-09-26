@@ -30,7 +30,7 @@ printf '%s' "$out" | jq -r '.action, .summary, .reason'
 |---|---|
 | 0 | **nothing.** The program already transitioned this card — a bounce, a hold, or a merge and completion. A terminator here double-writes. |
 | 3 | `kanban_block` with `reason` from the envelope, verbatim |
-| 2 | `kanban_block` with `other: review-usage — <the stderr>` — you called it wrong |
+| 2 | `kanban_block` with `reason="other: review-usage — <the stderr>"` — you called it wrong |
 
 An `rc` 3 is a fact about the substrate, never a judgement on the work. Do not
 retry it as a bounce, and never report an outage as a rejection.

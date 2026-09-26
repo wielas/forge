@@ -102,6 +102,30 @@ that `complete_task` accepts `blocked → done` given a result; and the
 `BLOCK_RECURRENCE_LIMIT=2` triage route. FL4's fixtures must execute those three
 before anything depends on them.
 
+> **Correction, 2026-09-26 (epic S3, FL4).** All three were executed, and the
+> third one changes this decision. `complete_task` does accept `blocked → done`,
+> and the verifier's own block of a claimed review run does land in `blocked`
+> with `unblock` returning it to `review`. But the `BLOCK_RECURRENCE_LIMIT` route
+> is **not usable as this ADR assumed**: a card in `triage` refuses `complete`,
+> `complete --force`, `promote` and `unblock`, and its one CLI exit
+> (`hermes kanban specify`) calls an auxiliary model and lands the card in
+> `todo` — back with an *implementer*, never at `done`. A chunk whose PR is
+> merged and whose card reached triage therefore cannot be completed, and its
+> children never release.
+>
+> Two consequences. First, the verifier **never re-blocks with the kind of the
+> last block on that card**: the kind is read out of the last `blocked` event's
+> payload (the columns are not exposed by `show --json`) and rotated to the other
+> sticky kind on a collision, so an ordinary sequence — recommend, the operator
+> disagrees, the lane repairs, recommend again — stays a completable hold. The
+> recurrence guard exists to stop a *worker* looping unblock/re-block; a re-block
+> that follows the operator's own `reopen-review` is not that loop. Second, the
+> bounce budget of D19.3's paragraph and FL4's text is **counted by the script**,
+> from `changes_requested` events since the last operator decision, and its
+> exception is an ordinary block. `verifier/a-hold-is-never-triage` and
+> `verifier/hold-kind-mutation-is-caught` execute both halves, the second by
+> pinning the kind and showing the card strand.
+
 Merge mode is not a configuration the verifier may choose. It is switched on by
 the operator, once, after the flip criterion below is met.
 
