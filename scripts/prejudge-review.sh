@@ -523,7 +523,7 @@ $1" || substrate "other: handoff-integrity — request-changes did not return th
     "the verifier bounced it $rounds times with actionable reasons and the work still does not pass; a third machine round is not evidence of anything new" \
     "repair it yourself, amend the contract, or send it back for another round" \
     "the card is blocked and its children stay held; nothing is merged" \
-    "fix and push to the PR branch, or \`forge bounce $CHUNK \"<reason>\"\` to give it another round
+    "fix and push to the PR branch, or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\` to give it another round
 
 $1")"; rc=$?
   [ "$rc" = 2 ] && substrate "other: handoff-integrity — the exception block was routed to triage, so this chunk is not held for the operator, it is stranded"
@@ -652,15 +652,28 @@ fi
 # ---------------------------------------------------------------------------
 MERGE_CHECK_BIN="${FORGE_MERGE_CHECK_BIN:-$HERE/merge-check.sh}"
 MERGED="$TMP/merged-tree.json"
+merge_repo=""; head_ref=""; clone_url=""
 if [ -n "$FIXTURE" ] && [ -z "${FORGE_MERGE_CHECK_BIN:-}" ]; then
   jq -n '{schema:"forge.mergecheck.v1", result:"skipped",
           evidence:"--fixture without FORGE_MERGE_CHECK_BIN: no repository to merge"}' > "$MERGED"
   merged_rc=3
 else
+  # THE REPOSITORY COMES FROM THE PR URL, NEVER FROM THE CWD. `gh repo view` with
+  # no argument asks git about the working directory and dies with "not a git
+  # repository" — and the verifier's workspace is `scratch`, which holds no clone.
+  # Measured: every real review would have ended here as a substrate fault while
+  # every fixture passed, because a stub answers whatever it is asked. So the
+  # owner/name is derived from the canonical URL (the same URL that gives `gh` its
+  # context everywhere else in this file), and `--repo` still wins when given.
+  merge_repo="$REPO"
+  if [ -z "$merge_repo" ]; then
+    merge_repo="${PR_URL%/pull/*}"; merge_repo="${merge_repo#*://}"
+    merge_repo="${merge_repo#*/}"          # strip the host, leaving owner/name
+  fi
   head_ref="$(gh pr view "$PR_URL" --json headRefName < /dev/null 2>/dev/null | jq -r '.headRefName // empty')"
-  clone_url="$(gh repo view ${REPO:+"$REPO"} --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
+  clone_url="$(gh repo view "$merge_repo" --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
   [ -n "$head_ref" ] && [ -n "$clone_url" ] \
-    || substrate "env: merge-check-unrunnable — cannot read the PR's head branch or its repository URL from gh"
+    || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"
   "$MERGE_CHECK_BIN" --clone-from "$clone_url" --head-ref "$head_ref" > "$MERGED" 2>"$TMP/merged.err"
   merged_rc=$?
 fi
@@ -937,7 +950,7 @@ case "$VERDICT" in
       "the deterministic gate is clear, \`make check\` is green on this branch merged with main, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
       "merge the PR, or send it back" \
       "nothing is merged and this card's children stay held until it is" \
-      "merge $PR_URL on GitHub — the merge-watcher completes this card — or \`forge bounce $CHUNK \"<reason>\"\`
+      "merge $PR_URL on GitHub — the merge-watcher completes this card — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
 
 $EVIDENCE")"; recommend_rc=$?
     [ "$recommend_rc" = 2 ] && substrate "other: handoff-integrity — the approval block was routed to triage, so this PR is not waiting for the operator, it is stranded"

@@ -55,16 +55,23 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-mergecheck.XXXXXX")" || {
 trap 'rm -rf "$TMP"' EXIT
 REPO="$TMP/repo"; LOG="$TMP/check.log"
 
+# Every check runs through this, never bare: `lane.sh` strips exactly these for
+# exactly this reason, and a verifier that inherits the driver's environment
+# measures the driver, not the tree.
+# A subshell with the variables UNSET, not `env -u`: `eval` and `make` are reached
+# through normal command lookup this way, and `env` cannot exec a shell builtin.
+run_check() { ( unset UV_OFFLINE UV_CACHE_DIR; "$@" ); }
+
 emit() {  # result, evidence, action, exit code
   jq -n --arg result "$1" --arg evidence "$2" --arg action "$3" \
         --arg base "$BASE_REF" --arg head "$HEAD_REF" \
         --arg base_sha "${BASE_SHA:-}" --arg head_sha "${HEAD_SHA:-}" \
-        --arg cmd "$CHECK_CMD" '
+        --arg cmd "$CHECK_CMD" --arg head_alone "${HEAD_ALONE:-not-measured}" '
     { schema: "forge.mergecheck.v1", result: $result,
       base: $base, head: $head,
       base_sha: (if $base_sha == "" then null else $base_sha end),
       head_sha: (if $head_sha == "" then null else $head_sha end),
-      check: $cmd, evidence: $evidence,
+      check: $cmd, head_alone: $head_alone, evidence: $evidence,
       action: (if $action == "" then null else $action end) }'
   exit "$4"
 }
@@ -87,8 +94,39 @@ HEAD_SHA="$(git -C "$REPO" rev-parse --verify --quiet "origin/$HEAD_REF" 2>/dev/
 git -C "$REPO" -c advice.detachedHead=false checkout --quiet "$HEAD_SHA" 2>/dev/null \
   || emit unrunnable "cannot check out $HEAD_REF at $HEAD_SHA" "" 3
 
-# The merge is the point: identity is configured locally so a host without a
-# global git identity can still make the commit.
+# The merge identity is configured locally, so a host with no global git identity
+# can still make the commit. The merge itself happens below, AFTER the head-alone
+# baseline: merging first would make an environment failure indistinguishable from
+# a union failure.
+
+# Nothing is assumed about the project: the command is the argument, and a
+# missing target is UNRUNNABLE, not a failure of the work. `make -n` asks make
+# itself rather than parsing a Makefile.
+case "$CHECK_CMD" in
+  make\ *) git -C "$REPO" rev-parse >/dev/null 2>&1
+           ( cd "$REPO" && run_check make -n ${CHECK_CMD#make } >/dev/null 2>&1 ) \
+             || emit unrunnable "'$CHECK_CMD' has no target in this tree" "" 3;;
+esac
+
+# THE HEAD ALONE IS THE BASELINE, AND IT IS WHY THIS FILE IS ALLOWED TO SAY "the
+# union". Without it, a clone that is red for an ENVIRONMENT reason — dependencies
+# absent on this host, a leaked `UV_OFFLINE`, a test that needs a service — is
+# reported as `check-failed`, which spends a bounce round on something the
+# implementer cannot fix and whose evidence line ("although both pass alone")
+# nothing measured. A red head alone is `unrunnable`: the union cannot be judged
+# from here, and that is a fact about this host, not about the work.
+#
+# The same variables `lane.sh` strips are stripped here, for the same reason: a
+# driver's `UV_OFFLINE=1` or a `UV_CACHE_DIR` pointing at a directory this process
+# cannot write turns every check red at the last moment (S2 measured the leak
+# reaching the lane's own baseline).
+if ! ( cd "$REPO" && run_check eval "$CHECK_CMD" ) >"$LOG" 2>&1; then
+  emit unrunnable \
+    "'$CHECK_CMD' already fails on $HEAD_REF ($HEAD_SHA) BEFORE the merge, in a fresh clone on this host — so the union cannot be judged here and this is not a verdict on the work: $(tail -20 "$LOG" | tr '\n' '|' | head -c 300)" \
+    "" 3
+fi
+HEAD_ALONE=green
+
 git -C "$REPO" -c user.email=verifier@forge.invalid -c user.name=forge-verifier \
     merge --no-edit --no-ff "$BASE_SHA" >"$TMP/merge.log" 2>&1 || {
   conflicts="$(git -C "$REPO" diff --name-only --diff-filter=U | tr '\n' ' ')"
@@ -97,18 +135,9 @@ git -C "$REPO" -c user.email=verifier@forge.invalid -c user.name=forge-verifier 
     "rebase this branch on $BASE_REF, resolve the conflict, and push" 1
 }
 
-# Nothing is assumed about the project: the command is the argument, and a
-# missing target is UNRUNNABLE, not a failure of the work. `make -n` asks make
-# itself rather than parsing a Makefile.
-case "$CHECK_CMD" in
-  make\ *) git -C "$REPO" rev-parse >/dev/null 2>&1
-           ( cd "$REPO" && make -n ${CHECK_CMD#make } >/dev/null 2>&1 ) \
-             || emit unrunnable "'$CHECK_CMD' has no target in the merged tree" "" 3;;
-esac
-
-if ( cd "$REPO" && eval "$CHECK_CMD" ) >"$LOG" 2>&1; then
-  emit pass "$CHECK_CMD is green on $HEAD_REF merged with $BASE_REF ($BASE_SHA)" "" 0
+if ( cd "$REPO" && run_check eval "$CHECK_CMD" ) >"$LOG" 2>&1; then
+  emit pass "$CHECK_CMD is green on $HEAD_REF merged with $BASE_REF ($BASE_SHA), and was green on $HEAD_REF alone first" "" 0
 fi
 emit check-failed \
-  "$CHECK_CMD fails on $HEAD_REF merged with $BASE_REF ($BASE_SHA) although both pass alone: $(tail -20 "$LOG" | tr '\n' '|' | head -c 400)" \
+  "$CHECK_CMD fails on $HEAD_REF merged with $BASE_REF ($BASE_SHA) although it passes on $HEAD_REF alone in this same clone: $(tail -20 "$LOG" | tr '\n' '|' | head -c 400)" \
   "merge $BASE_REF into this branch locally, make the union green, and push" 1

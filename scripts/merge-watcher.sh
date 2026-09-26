@@ -17,6 +17,14 @@
 # operator's step is a SYMLINK there to `~/.forge/repo/scripts/merge-watcher.sh`
 # — never to a dev checkout, which is the same trap as P7's.
 #
+# IT TAKES NO ARGUMENTS FROM CRON, so it cannot require any. `--script` passes a
+# path and nothing else, so with no `--board` this sweeps EVERY board
+# (`hermes kanban boards list`), which is also what an operator running several
+# product boards wants. And nothing but a real finding may reach stdout: under
+# `--no-agent` stdout IS the message delivered to the operator, so a usage text or
+# a diagnostic printed there would be a notification every ten minutes. Usage and
+# every complaint go to stderr; stdout carries card outcomes or nothing.
+#
 # WHAT IT WILL AND WILL NOT TOUCH.
 #   * Only cards it can prove are verifier holds: `blocked`, whose LAST blocked
 #     event carries a `merge-pending:` reason. A card blocked for any other
@@ -41,25 +49,34 @@
 set -uo pipefail
 
 BOARD="${HERMES_KANBAN_BOARD:-}"; DRY=0
-usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
+usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0" >&2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --board)   BOARD="${2:?--board needs a slug}"; shift 2;;
     --dry-run) DRY=1; shift;;
     -h|--help) awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; exit 0;;
-    *) echo "unknown arg: $1" >&2; exit 2;;
+    *) echo "unknown arg: $1" >&2; usagetext; exit 2;;
   esac
 done
-[ -n "$BOARD" ] || { usagetext; exit 2; }
 for need in hermes gh jq; do
   command -v "$need" >/dev/null || { echo "merge-watcher: $need is not on PATH" >&2; exit 3; }
 done
 
-kanban() { hermes kanban --board "$BOARD" "$@"; }
-held="$(kanban list --json 2>/dev/null | jq -r '.[]? | select(.status == "blocked") | .id')" \
-  || { echo "merge-watcher: cannot read board $BOARD" >&2; exit 3; }
+BOARDS="$BOARD"
+if [ -z "$BOARDS" ]; then
+  BOARDS="$(hermes kanban boards list --json 2>/dev/null | jq -r '.[]?.slug // empty' 2>/dev/null)"
+  [ -n "$BOARDS" ] || BOARDS="$(hermes kanban boards list 2>/dev/null \
+    | sed -n 's/^[* ]*\([a-z0-9][a-z0-9_-]*\).*/\1/p')"
+  [ -n "$BOARDS" ] || { echo "merge-watcher: no board given and none could be listed" >&2; exit 3; }
+fi
 
 rc=0
+for BOARD in $BOARDS; do
+sweep_board() {
+kanban() { hermes kanban --board "$BOARD" "$@"; }
+held="$(kanban list --json 2>/dev/null | jq -r '.[]? | select(.status == "blocked") | .id')" \
+  || { echo "merge-watcher: cannot read board $BOARD" >&2; return 3; }
+
 for card in $held; do
   meta=""
   shown="$(kanban show "$card" --json 2>/dev/null)" || continue
@@ -68,7 +85,12 @@ for card in $held; do
   reason="$(printf '%s' "$shown" | jq -r '
     [ .events[]? | select(.kind == "blocked" or .kind == "block_loop_detected") ]
     | last | .payload.reason // ""' 2>/dev/null)"
-  case "$reason" in merge-pending:*) ;; *) continue;; esac
+  # BOTH HOLD CLASSES ARE WATCHABLE. `merge-pending:` is the recommend-only
+  # approval. `bounce-budget:` is FL6's exception — and the operator's answer to
+  # one is often "I fixed it myself and merged it", which leaves exactly the same
+  # merged PR and blocked card. Watching only the first stranded that case: the
+  # PR was merged, the card stayed blocked, and its children stayed held.
+  case "$reason" in merge-pending:*|bounce-budget:*) ;; *) continue;; esac
 
   # The PR is read from the lane's own handoff envelope — the one place it is
   # recorded as data rather than as prose in a message.
@@ -109,5 +131,9 @@ for card in $held; do
       echo "$card: $pr was CLOSED without merging; the card stays blocked (completing it would tell the board this landed)";;
     *) ;;   # still open: silence is the point of --no-agent
   esac
+done
+return 0
+}
+sweep_board || rc=$?
 done
 exit $rc

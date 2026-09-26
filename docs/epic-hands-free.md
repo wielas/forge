@@ -256,6 +256,17 @@ union with post-CHUNK-8 `main` failed 5 tests neither branch failed alone.
 *Done when* fixture-proven, including a red-CI PR on an `UNAVAILABLE` repo that
 must not merge, and the disagree path under a live dispatcher.
 
+*S3's status against that done-when: met, except the last clause, which is met
+**in part**. The red-CI PR is executed with merge mode ON. The disagree path is
+executed on the real kernel, and `bounce.sh`'s own event stream proves it parks on
+the non-spawnable sentinel before it unblocks. What a fixture cannot supply is a
+dispatcher that could actually claim the card: in an isolated `HERMES_HOME` no
+profile is on disk, so nothing is spawnable, and the control — the same window
+without the park — leaves the card in exactly the same place. The remaining clause
+therefore rides run A, where a live gateway and a spawnable profile exist. Stated
+here rather than in the PR only, so the next session does not re-read it as
+proven.*
+
 **FL5. `forge-verifier` v2 — the mutation probe.** Mutate implementation lines
 inside the diff's hunks (evaluate `mutmut` / `cosmic-ray` before writing one)
 within a time budget; surviving mutants become deterministic, actionable

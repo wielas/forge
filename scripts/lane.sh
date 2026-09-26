@@ -179,6 +179,12 @@ jq -r '[.comments[]? | select((.author // "") | startswith("forge-") | not) | .b
 # A card that was handed off before is a bounce re-entry. The reasons are
 # whatever was recorded since the LATEST handoff: request-changes puts its
 # reason on the event; reopen-review and the verifier put theirs in comments.
+# The verifier also parks its whole verdict envelope on the card as a
+# `FORGE-VERDICT-V1` comment, because `request-changes` takes no `--metadata`
+# (epic FL4). That is a record for the merge-watcher and for metrics, not a
+# reason for Codex: delivering ~2 KB of JSON as review feedback would spend the
+# implementer's context on something it cannot act on. Filtered by the MARKER
+# rather than by author, because the author depends on which profile wrote it.
 # Both are read — reading one would lose the other path's reasons.
 REENTRY=0
 LAST_HANDOFF="$(jq -r '[.events[]? | select(.kind == "review_requested") | .created_at] | max // empty' "$TMP/card.json")"
@@ -187,7 +193,8 @@ if [ -n "$LAST_HANDOFF" ]; then
   jq -r --argjson t "$LAST_HANDOFF" '
     ([.events[]? | select(.kind == "changes_requested" and .created_at >= $t)
                  | .payload.reason // empty]
-     + [.comments[]? | select(.created_at >= $t and (.author // "") != "forge-codex-lane")
+     + [.comments[]? | select(.created_at >= $t and (.author // "") != "forge-codex-lane"
+                              and ((.body // "") | startswith("FORGE-VERDICT-V1") | not))
                      | .body]) | map(select(length > 0)) | .[] | "- " + gsub("\n"; "\n  ")' \
     "$TMP/card.json" > "$TMP/reasons.md"
   [ -s "$TMP/reasons.md" ] \

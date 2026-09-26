@@ -273,7 +273,12 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   reports its PR merged; `scripts/bounce.sh` is the operator's disagree path. The
   12 cases in the `verifier` group run all of it against the installed kernel in
   an isolated `HERMES_HOME`, including ADR-0019 D19.3's three previously
-  unexecuted transitions. **What that does NOT prove:** no dispatcher has ever
+  unexecuted transitions. The disagree path's "under a live dispatcher" clause is
+met only in part: `bounce.sh` provably parks on the non-spawnable sentinel before
+it unblocks, and a real `hermes kanban dispatch` pass runs in that window, but in
+an isolated `HERMES_HOME` nothing is spawnable, and the control without the park
+ends in the same place — so the race itself is untested until run A.
+**What that does NOT prove:** no dispatcher has ever
   spawned `forge-verifier` (the review claim is made through the kernel's own
   `claim_review_task`, and the reviewer model has never run this protocol), no
   real PR has been merged by it, merge mode has never been on outside a fixture,

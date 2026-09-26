@@ -2375,7 +2375,7 @@ template/python-pinned            .python-version is stamped and the venv actual
 lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
 lane/scratch-is-board-scoped      run ids are board-local; scratch and audit carry the board, same-board reuse still refuses
 lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_LANE_RUN_KEY instead of recomputing it
-lane/role-boundary-prepended      executed: the contract lane.sh writes carries the body, operator comments and the boundary
+lane/role-boundary-prepended      the contract carries body + operator comments + the boundary, and neither worker chatter nor the verifier's FORGE-VERDICT-V1 envelope
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/terminator-set-is-closed     kanban_request_review/_changes are named forbidden, not merely unlisted
 lane/terminators-match-the-substrate    every terminator the installed Hermes exposes is accounted for in §7 (--with-hermes)
@@ -2562,7 +2562,7 @@ verifier/bounce-returns-the-same-card  request-changes with the reasons on the c
 verifier/bounce-budget-becomes-an-exception  FL6: two rounds, then a completable decision-first block; the window restarts on an operator decision
 verifier/a-hold-is-never-triage  recommend, disagree, repair, recommend again: the second hold rotates kind, stays blocked and still completes
 verifier/hold-kind-mutation-is-caught  a pinned block kind reaches triage on the real kernel, cannot be completed, and is reported as stranded
-verifier/disagree-path-survives-a-dispatcher-tick  bounce.sh parks on the non-spawnable sentinel, a real dispatch pass spawns nothing, the implementer returns
+verifier/disagree-path-parks-before-it-unblocks  bounce.sh's own events show the sentinel park before the unblock; a dispatch pass in the window spawns nothing (smoke, with its control stated); the implementer returns
 verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit, ignores other blocks
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
@@ -3372,7 +3372,8 @@ run_lane_group() {
                    assignee: "forge-codex-lane", body: "Implement the sync engine.\nFROZEN-CONTRACT-MARKER"},
             parents: [], comments: [
               {author: "default", body: "OPERATOR-OVERRIDE-MARKER: use the v2 API", created_at: 1},
-              {author: "forge-prejudge", body: "WORKER-CHATTER-MARKER", created_at: 2}],
+              {author: "forge-verifier", body: "WORKER-CHATTER-MARKER", created_at: 2},
+               {author: "forge-verifier", body: "FORGE-VERDICT-V1\n```json\n{\"schema\":\"forge.judge.v1\"}\n```", created_at: 3}],
             events: [], runs: []}' > "$lstub/cards/t_lane.json"
     cat > "$lstub/bin/hermes" <<'LHERMES'
 #!/usr/bin/env bash
@@ -3516,8 +3517,9 @@ LCODEX
        && printf '%s' "$lcon" | grep -qi 'do NOT push' \
        && printf '%s' "$lcon" | grep -qi 'do NOT read or follow' \
        && printf '%s' "$lcon" | grep -q 'OPERATOR-OVERRIDE-MARKER' \
-       && ! printf '%s' "$lcon" | grep -q 'WORKER-CHATTER-MARKER'; then
-      ok "role-boundary-prepended (executed: the contract Codex received carries the body, the operator's comment and the boundary)"
+       && ! printf '%s' "$lcon" | grep -q 'WORKER-CHATTER-MARKER' \
+       && ! printf '%s' "$lcon" | grep -q 'FORGE-VERDICT-V1'; then
+      ok "role-boundary-prepended (executed: the contract Codex received carries the body and the operator's comment, not worker chatter or the verifier's stashed envelope, plus the boundary)"
     else
       bad "role-boundary-prepended" \
           "the contract lane.sh hands Codex must carry the card body, every operator comment (not worker chatter) and the role boundary (reads are not sandboxed)"
@@ -7710,7 +7712,7 @@ run_verifier_group() {
     for c in recommend-only-holds-the-card merge-mode-merges-and-completes \
              a-red-ci-pr-never-merges bounce-returns-the-same-card \
              bounce-budget-becomes-an-exception a-hold-is-never-triage \
-             hold-kind-mutation-is-caught disagree-path-survives-a-dispatcher-tick \
+             hold-kind-mutation-is-caught disagree-path-parks-before-it-unblocks \
              merge-watcher-completes-a-merged-hold; do
       skip "$c" "hermes (and its venv python) not installed"
     done
@@ -7733,7 +7735,15 @@ case "$1 $2" in
                  echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'
                fi; exit 0;;
     esac;;
-  "repo view") echo '{"url":"https://example.invalid/wielas/proj"}'; exit 0;;
+  "repo view")
+    # Real `gh repo view` with NO repository argument asks git about the cwd and
+    # dies ("not a git repository"). The verifier's workspace is scratch, so that
+    # is the live behaviour — and a stub that answered anyway is exactly why this
+    # shipped broken once. $3 is the owner/name the caller must derive itself.
+    if [ -z "${3:-}" ] || [ "${3#-}" != "$3" ]; then
+      echo "failed to run git: fatal: not a git repository" >&2; exit 1
+    fi
+    printf '{"url":"https://example.invalid/%s"}\n' "$3"; exit 0;;
   "pr merge")  touch "$VSTUB/merged"; echo "merged"; exit 0;;
 esac
 exit 0
@@ -8048,11 +8058,23 @@ with kbc.connect_closing() as c:
             "with the rotation removed the second hold must reach triage, be uncompletable, and be reported —$vdetail"
     fi
 
-    # ---- the disagree path, under a real dispatcher pass -------------------
+    # ---- the disagree path: it parks before it unblocks --------------------
     # `unblock` then `reopen-review` are two writes, and the card is claimable
-    # between them. `bounce.sh` parks it on the non-spawnable sentinel first; a
-    # real `hermes kanban dispatch` in that window must find nothing to spawn,
-    # and the implementer must still come back.
+    # between them. `bounce.sh` parks it on the non-spawnable sentinel first.
+    #
+    # WHAT THIS PROVES, AND WHAT IT DOES NOT. A real `hermes kanban dispatch` pass
+    # runs inside the window and the card survives it — but that arm is a smoke
+    # test, not a discriminator, and the control says so: in an isolated
+    # HERMES_HOME no profile exists on disk, so `hermes kanban assignees` reports
+    # `on_disk: false` for every forge-* name and NOTHING is spawnable. Run
+    # 2026-09-26 without the sentinel park, the card sat at `review/forge-verifier`
+    # after a dispatch pass exactly as it does with it. So the load-bearing
+    # assertion is the ORDER in the card's own event stream — `assigned` to the
+    # sentinel strictly before `unblocked` — plus the kernel's documented
+    # non-spawnable path. A dispatcher that could really claim the card needs a
+    # spawnable profile and a live gateway, which is run A, not a fixture.
+    # (Deleting the park left every other arm here green when it was
+    # mutation-tested; the order assertion is what caught it.)
     vdetail=""; _vboard
     vrc="$(_vrun)"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail no-hold-to-disagree-with"
@@ -8092,8 +8114,8 @@ with kbc.connect_closing() as c:
     { [ "$vrc" = 1 ] && printf '%s' "$vout" | grep -q "a bounce applies to a card the verifier is holding"; } \
       || vdetail="$vdetail bounced-a-card-nobody-held(rc=$vrc)"
     [ -z "$vdetail" ] \
-      && ok "disagree-path-survives-a-dispatcher-tick (a real dispatch pass in the window spawns nothing, the implementer is restored, the reason lands, and a card nobody holds is refused)" \
-      || bad "disagree-path-survives-a-dispatcher-tick" \
+      && ok "disagree-path-parks-before-it-unblocks (the park precedes the unblock in the card's events, a dispatch pass in the window spawns nothing, the implementer is restored, the reason lands, and a card nobody holds is refused)" \
+      || bad "disagree-path-parks-before-it-unblocks" \
           "bounce.sh must park on the sentinel, survive a dispatcher pass, restore the implementer and refuse a card nobody is holding —$vdetail"
 
     # ---- the merge-watcher ------------------------------------------------
@@ -8131,6 +8153,28 @@ with kbc.connect_closing() as c:
     _v show "$vP" --json | jq -e '
         [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | length == 1' >/dev/null 2>&1 \
       || vdetail="$vdetail verdict-was-not-stashed-on-the-card"
+    # CRON PASSES NO ARGUMENTS, so the no-board sweep is the shape that will
+    # actually run: `--script` takes a path and nothing else. And stdout is the
+    # message the operator receives, so a usage text there would be a
+    # notification every ten minutes.
+    _vboard; vrc="$(_vrun)"; touch "$vbin/merged"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" 2>/dev/null)"; vrc=$?
+    { [ "$vrc" = 0 ] && printf '%s' "$vout" | grep -q "$vP: done" \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
+      || vdetail="$vdetail no-board-sweep-did-not-find-the-hold(rc=$vrc,'$vout')"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --nope 2>/dev/null)"; vrc=$?
+    { [ "$vrc" = 2 ] && [ -z "$vout" ]; } \
+      || vdetail="$vdetail usage-reached-stdout(rc=$vrc,'$vout')"
+    # FL6's exception is watchable too: the operator's answer to one is often "I
+    # fixed it and merged it", which leaves the same merged PR and blocked card.
+    _vboard
+    vrc="$(_vrun VF_VERDICT=bounce FORGE_VERIFIER_BOUNCE_BUDGET=0)"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail no-exception-to-watch($(_vst "$vP"))"
+    touch "$vbin/merged"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+    { printf '%s' "$vout" | grep -q "$vP: done" && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
+      || vdetail="$vdetail bounce-budget-hold-was-not-watched($(_vst "$vP"),'$vout')"
+
     # A card blocked for anything else is none of its business. It must be a
     # `ready` card: `block_task` only ever fires FROM running/ready, so blocking
     # the held card's `todo` child would silently do nothing and this control
