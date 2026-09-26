@@ -687,6 +687,25 @@ one `blocked` and one `todo`, `forge-ladder` one `blocked`), and none moves
 unless someone unblocks it. S3 opens against whichever state the operator
 chose, and its brief should say which.
 
+**P6 (S2 landing). `profiles-bootstrap.sh` reports FATAL on a correct
+write under Hermes 0.21.5.** `hermes config get skills.disabled` now prints
+`⚠ 'skills.disabled' is not a recognized config key — Hermes may not read it`
+on **stderr**, and `verify_config` compares `2>&1` output, so all four
+profiles fail readback with got/want identical apart from that line (operator
+run, 2026-09-26). The key IS still read at runtime
+(`agent/skill_utils.py:308`, `tools/skills_tool.py:168`; the warning comes
+from `hermes_cli/config.py`'s key registry), and `config/lane-skill-scope`
+passes live. The script writes every SOUL and config before it reads back, so
+nothing was skipped. Fix: compare stdout only, and surface stderr without
+comparing it. Until then every bootstrap ends in a FATAL the operator must
+learn to ignore, S3's `forge-prejudge → forge-verifier` rename included.
+The same landing surfaced an operator trap: run the bootstrap **through
+`~/.forge/repo/hermes/profiles-bootstrap.sh`**. It records the path it was
+invoked from as `skills.external_dirs`, so running it from `~/dev/forge`
+pointed every live profile at the dev checkout, and running it from
+`~/dev/forge-runtime` writes a form `config/external-dirs` rejects. *Parked by
+the operator for triage at S3's opening.*
+
 ## Open questions
 
 1. ~~Merge method: squash with branch deletion, and `worktree-sweep` after each
