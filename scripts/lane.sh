@@ -161,7 +161,12 @@ beat() {   # note — at most once per HEARTBEAT, never fatal
 # ---------------------------------------------------------------------------
 # 1. Read the card. An operator comment overrides the card body — the skill
 # said so for the model's benefit, and it matters just as much to Codex, so
-# every comment not written by a forge-* worker profile rides the contract.
+# every comment not written by a forge-* worker profile rides the contract —
+# EXCEPT the verifier's `FORGE-VERDICT-V1` envelope, which is excluded by its
+# marker rather than by its author. The author is whatever profile the CLI
+# happened to run as (an unprofiled `kanban comment` records `default`), so an
+# author filter alone would let ~2 KB of verdict JSON into the section headed
+# "THEY win" — an operator override the operator never wrote.
 # ---------------------------------------------------------------------------
 kanban show "$TASK" --json > "$TMP/card.json" 2>/dev/null \
   && jq -e '.task.id' "$TMP/card.json" >/dev/null 2>&1 \
@@ -172,7 +177,8 @@ jq -r '.task.body // ""' "$TMP/card.json" > "$TMP/body.md"
   || block "stale-spec: card $TASK has an empty body — there is no contract to implement"
 CHUNK_ID="$(printf '%s' "$TITLE" | sed -n 's/^\(CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*\).*/\1/p')"
 CHUNK_ID="${CHUNK_ID%.}"
-jq -r '[.comments[]? | select((.author // "") | startswith("forge-") | not) | .body]
+jq -r '[.comments[]? | select(((.author // "") | startswith("forge-") | not)
+                              and ((.body // "") | startswith("FORGE-VERDICT-V1") | not)) | .body]
        | if length == 0 then empty else
          "\n---\nOperator comments on this card. Where they disagree with the contract above, THEY win:\n\n"
          + (map("- " + (gsub("\n"; "\n  "))) | join("\n")) end' "$TMP/card.json" > "$TMP/comments.md"

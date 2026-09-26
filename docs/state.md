@@ -271,7 +271,7 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   executed against real repositories where every branch is green alone and only
   the union is red. `scripts/merge-watcher.sh` completes a held card once GitHub
   reports its PR merged; `scripts/bounce.sh` is the operator's disagree path. The
-  12 cases in the `verifier` group run all of it against the installed kernel in
+  15 cases in the `verifier` group run all of it against the installed kernel in
   an isolated `HERMES_HOME`, including ADR-0019 D19.3's three previously
   unexecuted transitions. The disagree path's "under a live dispatcher" clause is
 met only in part: `bounce.sh` provably parks on the non-spawnable sentinel before

@@ -263,9 +263,9 @@ the non-spawnable sentinel before it unblocks. What a fixture cannot supply is a
 dispatcher that could actually claim the card: in an isolated `HERMES_HOME` no
 profile is on disk, so nothing is spawnable, and the control — the same window
 without the park — leaves the card in exactly the same place. The remaining clause
-therefore rides run A, where a live gateway and a spawnable profile exist. Stated
-here rather than in the PR only, so the next session does not re-read it as
-proven.*
+therefore rides run A, and is carried in **S7's row** — the session table is this
+epic's only progress record, so a deferral that lives in prose is a deferral the
+next session will not see.*
 
 **FL5. `forge-verifier` v2 — the mutation probe.** Mutate implementation lines
 inside the diff's hunks (evaluate `mutmut` / `cosmic-ray` before writing one)
@@ -514,7 +514,7 @@ closes.
 | S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
 | S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills | planned | |
 | S6 | Plan the new project — operator-led | Scope → architect with spikes → roadmap, three milestones | planned | |
-| S7 | **Run A = milestone 1** | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
+| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
 | S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
 | S10 | EN5, EN1, EN2 | Engine groundwork | planned | |

@@ -565,6 +565,33 @@ $1")"; rc=$?
 }
 
 # ---------------------------------------------------------------------------
+# Stage 0 — WHICH COMMIT THIS RUN IS ABOUT, read once, before anything looks at
+# the PR.
+#
+# Every stage below asks GitHub separately: the gate reads the CI rollup, the
+# merged-tree check clones, the scorer buys the diff. That is minutes, and a push
+# landing inside it silently re-points each later stage at a different commit. The
+# verdict would then be about a mixture, and in merge mode `gh pr merge` would land
+# whatever the head is at the end — CI never checked by this gate, a diff never
+# read by this scorer.
+#
+# So the head SHA is read HERE, carried to the merged-tree check (`--head-sha`) and
+# to the merge (`--match-head-commit`). If it cannot be read, merge mode refuses to
+# merge (route_merge) rather than merging something it cannot name. Reading it
+# earlier does not close the window — the gate's CI read still happens after this —
+# but it makes a moved head a REFUSED MERGE instead of an unnoticed one, which is
+# the difference between a failure and a defect. P9 owns the rest.
+#
+# In fixture mode it comes out of the recorded `pr.json`, so no dry-run case needs
+# a live `gh`.
+VERIFIED_HEAD=""
+if [ -n "$FIXTURE" ]; then
+  [ -f "$FIXTURE/pr.json" ] && VERIFIED_HEAD="$(jq -r '.headRefOid // empty' "$FIXTURE/pr.json" 2>/dev/null)"
+else
+  VERIFIED_HEAD="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
+fi
+
+# ---------------------------------------------------------------------------
 # Stage 1 — the gate. Before anything is spawned and before a diff is bought.
 # ---------------------------------------------------------------------------
 GATE="$TMP/gate.json"
@@ -685,7 +712,7 @@ fi
 # ---------------------------------------------------------------------------
 MERGE_CHECK_BIN="${FORGE_MERGE_CHECK_BIN:-$HERE/merge-check.sh}"
 MERGED="$TMP/merged-tree.json"
-merge_repo=""; head_ref=""; clone_url=""; VERIFIED_HEAD=""
+merge_repo=""; head_ref=""; clone_url=""
 if [ -n "$FIXTURE" ] && [ -z "${FORGE_MERGE_CHECK_BIN:-}" ]; then
   jq -n '{schema:"forge.mergecheck.v1", result:"skipped",
           evidence:"--fixture without FORGE_MERGE_CHECK_BIN: no repository to merge"}' > "$MERGED"
@@ -704,16 +731,13 @@ else
     merge_repo="${merge_repo#*/}"          # strip the host, leaving owner/name
   fi
   head_ref="$(gh pr view "$PR_URL" --json headRefName < /dev/null 2>/dev/null | jq -r '.headRefName // empty')"
-  # THE SHA THIS RUN VERIFIED, read once and carried to the merge. Each stage asks
-  # GitHub separately — the gate, the merged-tree check, the scorer — and a push
-  # landing during the scorer's minutes would leave `gh pr merge` merging a head
-  # nothing in this run ever looked at. `--match-head-commit` makes the merge fail
-  # instead (see route_merge).
-  VERIFIED_HEAD="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
   clone_url="$(gh repo view "$merge_repo" --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
   [ -n "$head_ref" ] && [ -n "$clone_url" ] \
     || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"
-  "$MERGE_CHECK_BIN" --clone-from "$clone_url" --head-ref "$head_ref" > "$MERGED" 2>"$TMP/merged.err"
+  # --head-sha pins the union to Stage 0's commit: without it this clones "the
+  # branch", which may have moved since.
+  "$MERGE_CHECK_BIN" --clone-from "$clone_url" --head-ref "$head_ref" \
+    ${VERIFIED_HEAD:+--head-sha "$VERIFIED_HEAD"} > "$MERGED" 2>"$TMP/merged.err"
   merged_rc=$?
 fi
 merged_result="$(jq -r '.result // "unreadable"' "$MERGED" 2>/dev/null || echo unreadable)"

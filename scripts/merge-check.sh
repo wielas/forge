@@ -44,11 +44,13 @@ CLONE_FROM=""; HEAD_REF=""; BASE_REF="main"; CHECK_CMD="make check"
 # the project has no such target, overridable, and `--no-setup` for a caller that
 # has its own arrangement.
 SETUP_CMD="${FORGE_MERGE_SETUP_CMD-make setup}"
+HEAD_SHA_WANT=""
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --clone-from) CLONE_FROM="${2:?--clone-from needs a url or path}"; shift 2;;
     --head-ref)   HEAD_REF="${2:?--head-ref needs a branch}"; shift 2;;
+    --head-sha)   HEAD_SHA_WANT="${2:?--head-sha needs a sha}"; shift 2;;
     --base-ref)   BASE_REF="${2:?--base-ref needs a branch}"; shift 2;;
     --check-cmd)  CHECK_CMD="${2:?--check-cmd needs a command}"; shift 2;;
     --setup-cmd)  SETUP_CMD="${2:?--setup-cmd needs a command}"; shift 2;;
@@ -74,7 +76,7 @@ REPO="$TMP/repo"; LOG="$TMP/check.log"
 run_check() { ( unset UV_OFFLINE UV_CACHE_DIR; "$@" ); }
 
 emit() {  # result, evidence, action, exit code
-  jq -n --arg result "$1" --arg evidence "$2" --arg action "$3" --arg setup "${SETUP_CMD:-none}" \
+  jq -n --arg result "$1" --arg evidence "$2" --arg action "$3" --arg setup "${SETUP_CMD:-none}" --arg head_moved "${HEAD_MOVED:-}" \
         --arg base "$BASE_REF" --arg head "$HEAD_REF" \
         --arg base_sha "${BASE_SHA:-}" --arg head_sha "${HEAD_SHA:-}" \
         --arg cmd "$CHECK_CMD" --arg head_alone "${HEAD_ALONE:-not-measured}" '
@@ -82,7 +84,9 @@ emit() {  # result, evidence, action, exit code
       base: $base, head: $head,
       base_sha: (if $base_sha == "" then null else $base_sha end),
       head_sha: (if $head_sha == "" then null else $head_sha end),
-      check: $cmd, setup: $setup, head_alone: $head_alone, evidence: $evidence,
+      check: $cmd, setup: $setup, head_alone: $head_alone,
+      head_moved: (if $head_moved == "" then null else $head_moved end),
+      evidence: $evidence,
       action: (if $action == "" then null else $action end) }'
   exit "$4"
 }
@@ -135,6 +139,20 @@ BASE_SHA="$(git -C "$REPO" rev-parse --verify --quiet "origin/$BASE_REF" 2>/dev/
 HEAD_SHA="$(git -C "$REPO" rev-parse --verify --quiet "origin/$HEAD_REF" 2>/dev/null || true)"
 [ -n "$BASE_SHA" ] || emit unrunnable "no origin/$BASE_REF in the clone" "" 3
 [ -n "$HEAD_SHA" ] || emit unrunnable "no origin/$HEAD_REF in the clone — was the branch deleted?" "" 3
+
+# --head-sha PINS THE UNION TO ONE COMMIT. The caller read the PR's head once and
+# every stage of its review is about that commit; cloning "the branch" instead
+# would judge whatever landed since, and the verdict would be about a mixture. A
+# head that has MOVED is not an error here — it is a fact the caller must see, so
+# it is reported rather than quietly followed.
+if [ -n "$HEAD_SHA_WANT" ] && [ "$HEAD_SHA_WANT" != "$HEAD_SHA" ]; then
+  if git -C "$REPO" cat-file -e "$HEAD_SHA_WANT^{commit}" 2>/dev/null; then
+    HEAD_MOVED="$HEAD_SHA"; HEAD_SHA="$HEAD_SHA_WANT"
+  else
+    emit unrunnable \
+      "the commit this review is about ($HEAD_SHA_WANT) is not in $HEAD_REF any more — origin/$HEAD_REF is $HEAD_SHA, so the branch was force-pushed or rewritten mid-review" "" 3
+  fi
+fi
 
 git -C "$REPO" -c advice.detachedHead=false checkout --quiet "$HEAD_SHA" 2>/dev/null \
   || emit unrunnable "cannot check out $HEAD_REF at $HEAD_SHA" "" 3
