@@ -288,6 +288,18 @@ ends in the same place — so the race itself is untested until run A.
   real PR has been merged by it, merge mode has never been on outside a fixture,
   and the mutation probe FL5 adds does not exist yet — so an approval today rests
   on the gate, the merged tree and the `claude -p` scorer only.
+- **The north-star numbers and the daily digest, live (epic S4, GW6/GW2).**
+  `make metrics` now opens with the epic's north-star block, and
+  `scripts/digest.sh` renders the operator's daily message, with every card
+  waiting on the operator in the one decision-first format
+  (`scripts/decision-message.sh`, GW1). Both are exact against checked-in
+  boards in the post-FL3 shape (`metrics/`, `digest/`). What that does NOT
+  prove:
+  - No live post-FL3 board exists yet, so no real run has been measured by
+    these numbers.
+  - PR open → merge is a board proxy, not GitHub's timestamps.
+  - The digest has never been delivered by `hermes cron --no-agent`. Its
+    done-when — a week of digests read from a phone — rides run A.
 - **Timeout/reclaim and circuit-breaker recovery.** Signal-9 retry is proven;
   stale-heartbeat reclaim and a tripped retry limit are not.
 - **The usage-limit park against a real window.** ADR-0016 shipped

@@ -207,7 +207,8 @@ what the existing source can see.
 
 ### 6. Implementer model — which model actually wrote the diff
 
-**Definition:** the completed chunk runs in the period, split into four buckets
+**Definition:** the chunk handoff runs in the period — `completed` before epic
+FL3, `review_requested` since (epic P4) — split into four buckets
 that **partition** that denominator: `from_rollout`, `requested_only`,
 `unverified` (a model with no source marker) and `unrecorded` (no model named at
 all). `by_model` carries one row per distinct model/effort/source/requested

@@ -31,8 +31,10 @@ the cutoff are counted as `ignored` and are never normalized or validated.
 The command routes through `scripts/board-snapshot.sh`; the live WAL database
 is copied but never opened. From the snapshot it checks:
 
-- every post-cutoff `outcome=completed` run from a profile registered in
-  `run-metadata-contract.json`;
+- every post-cutoff `outcome=completed` or `outcome=review_requested` run from
+  a profile registered in `run-metadata-contract.json` — since epic FL3 the lane
+  hands its chunk to same-card review and never completes the card, so its
+  envelope rides the `review_requested` run (epic P4);
 - presence of every registered producer profile after the cutoff; and
 - every post-cutoff `blocked` event carrying a run id, which is the board's
   durable marker that the reason came from a worker rather than a manual block.
@@ -207,7 +209,8 @@ merely reading it.
 ## Rules
 - Additive top-level keys are allowed and ignored by consumers. Changing a
   required field or an existing meaning requires a `.v2` schema id.
-- A completed `forge-codex-lane` run may emit only `forge.chunk.v1`; a completed
+- A `forge-codex-lane` handoff run — `completed` before epic FL3,
+  `review_requested` since — may emit only `forge.chunk.v1`; a completed
   `forge-prejudge` run — and, since epic FL4 renamed the profile, a
   `forge-verifier` one — may emit `forge.gate.v1` or `forge.judge.v1`. Both
   names are in `rubrics/run-metadata-contract.json` because the recorded boards

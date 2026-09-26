@@ -2,6 +2,46 @@
   "board": "metrics-fixture",
   "since": null,
   "until": null,
+  "north_star": {
+    "chunks": 3,
+    "merged": {
+      "total": 0,
+      "by_verifier": 0,
+      "by_operator": 0,
+      "unrecorded": 3
+    },
+    "merged_without_operator": {
+      "count": 0,
+      "of": 0,
+      "rate": null
+    },
+    "operator_actions": {
+      "total": 4,
+      "touches": 4,
+      "merges": 0,
+      "per_merged_chunk": null,
+      "method": "operator touches (below) plus one per merge the operator made; judge sessions and GitHub-only actions are not on the board and are not counted"
+    },
+    "pr_open_to_merge_hours": {
+      "n": 0,
+      "median": null,
+      "max": null,
+      "method": "first review_requested event to the completed event, on merged chunk cards — a board proxy: the merge-watcher completes an operator merge on its next sweep"
+    },
+    "cards_per_chunk": {
+      "cards": 13,
+      "chunks": 3,
+      "rate": "4.33"
+    },
+    "human_implemented": {
+      "count": 1,
+      "of": 3
+    },
+    "not_yet_measurable": [
+      "defects the milestone probe catches before the operator does — no probe exists until MS2",
+      "architect estimate vs actual cost per milestone — no estimate is recorded until PL2"
+    ]
+  },
   "chunk_cards": 3,
   "verdicts": {
     "total": 7,
@@ -234,6 +274,6 @@
     "comments": 2,
     "unblocks": 2,
     "touches": 4,
-    "method": "comments by an author that never ran as a profile on this board, plus every unblocked event (the event records no actor)"
+    "method": "comments by an author that never ran as a profile on this board, except the merge-watcher's FORGE-WATCHER-NOTIFIED markers, plus every unblocked event (the event records no actor)"
   }
 }

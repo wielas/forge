@@ -53,6 +53,10 @@
 #               driven through recorded API response shapes                    (F79)
 #   docs/       the reconciled launch ledger and operator contract: dispositions,
 #               bounded cleanup, preserved history, and one next command
+#   digest/     the daily digest and the one decision-first format (GW1, GW2):
+#               the message a fixture board produces, exactly; silence when
+#               nothing happened; an unreadable board named, never quiet; and a
+#               decision entry for every block class the contract registers
 #   quota/      the usage-limit park: which window a run waits on, and that the
 #               lane resumes the same Codex session rather than restarting it.
 #               Fixtures and a stubbed codex only — spends nothing   (ADR-0016)
@@ -87,11 +91,11 @@ while [ $# -gt 0 ]; do
     --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|gate|docs|quota|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap gate docs quota manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap gate docs digest quota manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -2562,6 +2566,10 @@ commission/an-unrecognised-require-gate-is-refused  any other REQUIRE_GATE value
 bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes rather than the command stub
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
+metrics/post-fl3-board-numbers-exact  the one-card-per-chunk board reproduces its own exact expectation, envelopes on review_requested runs included (P4)
+metrics/north-star-numbers          GW6: merged without the operator, operator actions per merged chunk, PR open->merge, cards per chunk, human-implemented — each a count with its denominator
+metrics/north-star-mutation-is-caught  a watcher completion read as a verifier merge, or the watcher's own marker read as an operator touch, reddens
+metrics/text-leads-with-the-north-star  the text report's first section is the north-star block, numeral for numeral with the JSON
 metrics/driver-usage-joins-exact-session  session totals and every per-model row come from worker_session_id
 metrics/driver-usage-shared-session-counts-once multiple runs retain mappings without charging one session twice
 metrics/driver-usage-missing-id-is-unjudged  a completed chunk run without worker_session_id is not zero usage
@@ -2681,11 +2689,11 @@ verifier/bounce-budget-becomes-an-exception  FL6: two rounds, then a completable
 verifier/a-hold-is-never-triage  recommend, disagree, repair, recommend again: the second hold rotates kind, stays blocked and still completes
 verifier/hold-kind-mutation-is-caught  a pinned block kind reaches triage on the real kernel, cannot be completed, and is reported as stranded
 verifier/disagree-path-parks-before-it-unblocks  bounce.sh's own events show the sentinel park before the unblock; a dispatch pass in the window spawns nothing (smoke, with its control stated); the implementer returns
-verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit, ignores other blocks
+verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit and says so on stderr only (GW1), ignores other blocks
 verifier/merged-tree-restores-the-tree-before-merging  a setup that rewrites a tracked file main also changed is still a green union; a merge git refuses with no conflicted path is unrunnable, never a conflict
 verifier/merged-tree-uses-the-prs-base  merge-check is given the PR's own baseRefName and the hold names it; an unreadable base is substrate, never an assumed main
 verifier/merge-mode-survives-a-failed-completion  merged but the completion or read-back failed: the card is held merge-pending with the verdict stashed, and the merge-watcher completes it
-verifier/merge-watcher-reports-once  a closed PR and a hold with no PR url reach stdout once per hold; a GitHub read failure goes to stderr only
+verifier/merge-watcher-reports-once  a closed PR, a hold with no PR url and a merge whose card will not complete reach stdout once per hold, decision-first (GW1, P10(3)); a GitHub read failure goes to stderr only
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
 sweep/dest-refuses-traversal-past-a-missing-component  `..` through a dir that does not exist yet still lands in /tmp
@@ -2828,6 +2836,13 @@ quota/codex-pin-is-passed-not-inherited   `codex exec` AND `codex exec resume` e
 quota/codex-pin-on-the-fresh-branch-mutation-is-caught  a runner that pins only the resume call turns this group red
 quota/codex-pin-on-the-resume-branch-mutation-is-caught  a runner that pins only the first call turns this group red
 quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
+digest/fixture-message-exact        two fixture boards, a quiet one and an archived one produce one exact message: landed, in flight, waiting on you decision-first, spend
+digest/silent-when-nothing-happened a board with nothing landed, in flight or waiting prints nothing and exits 0 — under --no-agent that is no notification
+digest/an-unreadable-board-is-named a board that cannot be read is named on stdout and exits 3; it is never reported as quiet
+digest/is-read-only                 the boards read are byte-identical, sidecars included, before and after
+digest/every-block-class-has-a-decision  every class in the contract's blocked_reason_pattern has a decision entry, and every entry is a registered class (GW1)
+digest/a-missing-decision-is-caught  a formatter with one class entry deleted reddens and names the class
+digest/one-formatter                the verifier, the merge-watcher and the digest all source scripts/decision-message.sh, and nothing else defines decision_message
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 docs/the-open-epic-is-discoverable  CLAUDE.md and state.md both route a cold session to the epic and its § How we run this epic (Q4)
 manifest/makefile-syntax-list-is-complete  every tracked *.sh outside templates/ is named in the Makefile's bash -n list
@@ -5022,6 +5037,44 @@ live_schema_report() { # $1=boards root $2=snapshot root; TSV board/status/detai
              -print 2>/dev/null | LC_ALL=C sort)
 }
 
+# GW6 — the epic's north-star numbers, judged by ONE function so the mutation
+# case below reddens exactly what the positive case passes (the same shape as
+# implementer_model_diagnostic above).
+#
+# The tuple is the fixture's own arithmetic, written out in
+# scripts/fixtures/metrics-board-fl3.sql beside the rows that produce it:
+# three chunks merged, one by the verifier and two by the operator; operator
+# actions are one comment, one unblock and those two merges; PR open -> merge is
+# 2 h, 5 h and 1 h; six cards over three chunks; one chunk implemented by hand.
+# The headline pair is checked FIRST and alone, so a board whose watcher
+# completions read as verifier merges is named for what it is: the one number
+# the flip criterion turns on (ADR-0019 D19.4), reported as a success.
+north_star_diagnostic() { # $1=metrics JSON file; 0 = the numbers are the fixture's
+  local json="$1" got want
+  [ -s "$json" ] || {
+    printf 'no metrics JSON at %s — the check went blind, which is not a pass (F65)\n' "$json"
+    return 1; }
+  jq -e '.north_star | type == "object"' "$json" >/dev/null 2>&1 || {
+    printf '%s carries no north_star object — the check went blind, which is not a pass (F65)\n' "$json"
+    return 1; }
+  got="$(jq -c '.north_star.merged_without_operator | [.count, .of, .rate]' "$json" 2>/dev/null)"
+  [ "$got" = '[1,3,"0.33"]' ] || {
+    printf 'merged without the operator is %s, want [1,3,"0.33"] — a merge the operator made is being reported as the machine'"'"'s, or the reverse\n' "${got:-nothing}"
+    return 1; }
+  got="$(jq -c '.north_star | [
+      .chunks,
+      [.merged.total, .merged.by_verifier, .merged.by_operator, .merged.unrecorded],
+      [.operator_actions.total, .operator_actions.touches, .operator_actions.merges, .operator_actions.per_merged_chunk],
+      [.pr_open_to_merge_hours.n, .pr_open_to_merge_hours.median, .pr_open_to_merge_hours.max],
+      [.cards_per_chunk.cards, .cards_per_chunk.chunks, .cards_per_chunk.rate],
+      [.human_implemented.count, .human_implemented.of]]' "$json" 2>/dev/null)"
+  want='[3,[3,1,2,0],[4,2,2,"1.33"],[3,"2.00","5.00"],[6,3,"2.00"],[1,3]]'
+  [ "$got" = "$want" ] || {
+    printf 'north-star numbers are %s, want %s\n' "${got:-nothing}" "$want"
+    return 1; }
+  return 0
+}
+
 run_metrics_group() {
   group metrics
   local ms=scripts/metrics.sh fx=scripts/fixtures/metrics-board.sql
@@ -5135,6 +5188,78 @@ METRICS_STATE_SQL
     ok "fixture-numbers-exact ($(jq -r '.verdicts.total' "$exp") verdicts, every field)"
   else
     bad "fixture-numbers-exact" "$(head -12 "$TMPROOT/metrics.diff" | tr '\n' ' ')"
+  fi
+
+  # ---- the board the epic's flow leaves behind (ADR-0019, epic P4, GW6) ----
+  # A second board, not more rows in the first: metrics-board.sql is the
+  # child-card era and pins every bucket that era can reach. This one is what
+  # run A produces — one card per chunk, the envelope on a `review_requested`
+  # run, the verdict on the chunk's own card — and the north-star numbers are
+  # read off it. Its profile state is absent on purpose (see the fixture).
+  local fl3_fx=scripts/fixtures/metrics-board-fl3.sql
+  local fl3_exp=scripts/fixtures/metrics-fl3-expected.json
+  local fl3_db="$home/boards/metrics-fl3/kanban.db" ns_detail=""
+  mkdir -p "$(dirname "$fl3_db")"
+  if ! sqlite3 "$fl3_db" < "$fl3_fx" >/dev/null 2>"$TMPROOT/fl3-fixture.log"; then
+    bad "post-fl3-board-numbers-exact" "fixture would not load: $(tail -2 "$TMPROOT/fl3-fixture.log" | tr '\n' ' ')"
+  else
+    HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+      "$ms" metrics-fl3 --json > "$TMPROOT/metrics-fl3.json" 2>&1
+    if diff -u "$fl3_exp" "$TMPROOT/metrics-fl3.json" > "$TMPROOT/metrics-fl3.diff" 2>&1; then
+      ok "post-fl3-board-numbers-exact ($(jq -r '.envelope.total' "$fl3_exp") chunk envelopes on review_requested runs, every field)"
+    else
+      bad "post-fl3-board-numbers-exact" "$(head -12 "$TMPROOT/metrics-fl3.diff" | tr '\n' ' ')"
+    fi
+    if ns_detail="$(north_star_diagnostic "$TMPROOT/metrics-fl3.json")"; then
+      ok "north-star-numbers (merged without the operator $(jq -r '.north_star.merged_without_operator | "\(.rate) (\(.count)/\(.of))"' "$TMPROOT/metrics-fl3.json"), operator actions per merged chunk $(jq -r '.north_star.operator_actions.per_merged_chunk' "$TMPROOT/metrics-fl3.json"))"
+    else
+      bad "north-star-numbers" "$ns_detail"
+    fi
+
+    # The two ways this number lies, each on a copy: the watcher's completion of
+    # an operator merge read as the verifier's merge (the flip criterion then
+    # passes on a run the operator merged by hand), and the watcher's own
+    # FORGE-WATCHER-NOTIFIED comment read as an operator touch. Both must redden
+    # the SAME diagnostic the positive case passes.
+    local mut_home="$TMPROOT/ns-mutant/kanban" mut_db mut_detail=""
+    mut_db="$mut_home/boards/metrics-fl3/kanban.db"
+    mkdir -p "$(dirname "$mut_db")"
+    _ns_mutant() { # $1=SQL applied to a fresh copy; 0 = the diagnostic passes on it
+      rm -f "$mut_db" "$mut_db-wal" "$mut_db-shm"
+      sqlite3 "$mut_db" < "$fl3_fx" >/dev/null 2>&1 && sqlite3 "$mut_db" "$1" >/dev/null 2>&1
+      HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$mut_home" \
+        "$ms" metrics-fl3 --json > "$TMPROOT/metrics-fl3-mut.json" 2>/dev/null
+      north_star_diagnostic "$TMPROOT/metrics-fl3-mut.json" >/dev/null
+    }
+    _ns_mutant "UPDATE tasks SET result='merged by forge-verifier: approve' WHERE id='t_ca';" \
+      && mut_detail="$mut_detail watcher-completion-read-as-a-verifier-merge-passed"
+    # The same comment without the marker IS an operator touch, so the count
+    # must move; with a different marker-led body it must not. Together they
+    # prove the exclusion is keyed on the marker, not on the author.
+    _ns_mutant "UPDATE task_comments SET body='merging this one' WHERE author='default';" \
+      && mut_detail="$mut_detail an-unmarked-comment-was-not-counted"
+    _ns_mutant "UPDATE task_comments SET body='FORGE-WATCHER-NOTIFIED other (hold 2)' WHERE author='default';" \
+      || mut_detail="$mut_detail a-marker-comment-was-counted-as-an-operator-touch"
+    [ -z "$mut_detail" ] \
+      && ok "north-star-mutation-is-caught (a watcher completion read as a verifier merge reddens; the watcher's marker is not an operator touch, and the same comment without it is)" \
+      || bad "north-star-mutation-is-caught" "each mutant must redden the diagnostic the positive case passes, and the control must not —$mut_detail"
+
+    # The text report LEADS with these (GW6): its first section, numeral for
+    # numeral with the JSON — a second jq program is a second place to be wrong.
+    HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$home" \
+      "$ms" metrics-fl3 > "$TMPROOT/metrics-fl3.txt" 2>&1
+    local first_section
+    first_section="$(awk 'NR > 2 && /^$/ { exit } NR > 2' "$TMPROOT/metrics-fl3.txt")"
+    ns_detail=""
+    printf '%s\n' "$first_section" | head -1 | grep -q '^north star' || ns_detail="$ns_detail first-section-is-not-the-north-star('$(printf '%s' "$first_section" | head -1)')"
+    printf '%s\n' "$first_section" | grep -q 'merged without the operator  0.33 (1/3)' || ns_detail="$ns_detail merged-without-operator-line"
+    printf '%s\n' "$first_section" | grep -q 'operator actions per merged chunk  1.33 (4 = 2 board touches + 2 merges, over 3 merged)' || ns_detail="$ns_detail operator-actions-line"
+    printf '%s\n' "$first_section" | grep -q 'PR open -> merge  median 2.00 h · max 5.00 h over 3' || ns_detail="$ns_detail latency-line"
+    printf '%s\n' "$first_section" | grep -q 'cards per chunk  2.00 (6 cards / 3 chunks)' || ns_detail="$ns_detail cards-per-chunk-line"
+    printf '%s\n' "$first_section" | grep -q 'human-implemented chunks  1 of 3' || ns_detail="$ns_detail human-implemented-line"
+    [ -z "$ns_detail" ] \
+      && ok "text-leads-with-the-north-star" \
+      || bad "text-leads-with-the-north-star" "the text report must open with the north-star block, agreeing with the JSON —$ns_detail"
   fi
 
   local driver_exact driver_shared driver_missing driver_profile driver_cost
@@ -6271,8 +6396,8 @@ run_metadata_live_cases() {
       scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
   sqlite3 "$db" "UPDATE task_runs SET profile='forge-prejudge' WHERE id=2;"
   if [ "$good_rc" = 0 ] \
-     && printf '%s' "$good_out" | grep -Fq 'valid=4 invalid=0 unjudged=0 ignored=2' \
-     && printf '%s' "$good_out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=1' \
+     && printf '%s' "$good_out" | grep -Fq 'valid=5 invalid=0 unjudged=0 ignored=2' \
+     && printf '%s' "$good_out" | grep -Fq 'profile=forge-codex-lane schema=forge.chunk.v1 valid=2' \
      && printf '%s' "$good_out" | grep -Fq 'profile=forge-prejudge schema=forge.judge.v1 valid=1' \
      && printf '%s' "$good_out" | grep -Fq 'profile=forge-verifier schema=forge.judge.v1 valid=1' \
      && [ "$rc" = 1 ] \
@@ -6306,7 +6431,7 @@ SQL
   local invalid_out="$out" invalid_rc="$rc"
 
   if [ "$invalid_rc" = 1 ] \
-     && printf '%s' "$invalid_out" | grep -Fq 'valid=2 invalid=4 unjudged=0 ignored=2' \
+     && printf '%s' "$invalid_out" | grep -Fq 'valid=3 invalid=4 unjudged=0 ignored=2' \
      && printf '%s' "$invalid_out" | grep -Fq 'invalid task=t_bad_reason run=1' \
      && printf '%s' "$invalid_out" | grep -Fq 'reason="free-form model excuse"'; then
     ok "live-rejects-bad-block-reason (task, run and reason printed)"
@@ -6322,7 +6447,7 @@ SQL
   if [ "$invalid_rc" = 1 ] && [ "$named" = 1 ] \
      && [ "$rc" = 2 ] \
      && printf '%s' "$out" | grep -Fq 'unjudged task=t_unreadable run=7' \
-     && printf '%s' "$out" | grep -Fq 'valid=2 invalid=4 unjudged=1 ignored=2'; then
+     && printf '%s' "$out" | grep -Fq 'valid=3 invalid=4 unjudged=1 ignored=2'; then
     ok "live-classifies-every-bad-row (invalid exits 1; unjudged is named and dominates as exit 2)"
   else
     bad "live-classifies-every-bad-row" \
@@ -8572,11 +8697,16 @@ VWRAP
     # actually run: `--script` takes a path and nothing else. And stdout is the
     # message the operator receives, so a usage text there would be a
     # notification every ten minutes.
+    #
+    # A MERGE IT COMPLETES IS NOT A MESSAGE (epic GW1: no decision, no message).
+    # The operator made that merge; the digest reports it under "landed". So the
+    # completion is asserted on the board and on stderr, and stdout must be EMPTY.
     _vboard; vrc="$(_vrun)"; touch "$vbin/merged"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" 2>/dev/null)"; vrc=$?
-    { [ "$vrc" = 0 ] && printf '%s' "$vout" | grep -q "$vP: done" \
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" 2>"$vbin/mw.err")"; vrc=$?
+    { [ "$vrc" = 0 ] && grep -q "$vP: done" "$vbin/mw.err" \
       && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
       || vdetail="$vdetail no-board-sweep-did-not-find-the-hold(rc=$vrc,'$vout')"
+    [ -z "$vout" ] || vdetail="$vdetail a-completed-merge-reached-stdout('$vout')"
     vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --nope 2>/dev/null)"; vrc=$?
     { [ "$vrc" = 2 ] && [ -z "$vout" ]; } \
       || vdetail="$vdetail usage-reached-stdout(rc=$vrc,'$vout')"
@@ -8631,6 +8761,13 @@ VWRAP
     vdetail=""; _vboard; vrc="$(_vrun)"; touch "$vbin/closed"
     vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     printf '%s' "$vout" | grep -q "$vP: .*CLOSED without merging" || vdetail="$vdetail closed-not-reported-at-all('$vout')"
+    # ... and in the one decision-first format (GW1), with a reply naming the card.
+    { printf '%s\n' "$vout" | grep -q '^merge-pending: ' \
+      && printf '%s\n' "$vout" | grep -q '^What it means: ' \
+      && printf '%s\n' "$vout" | grep -q '^Decision needed: ' \
+      && printf '%s\n' "$vout" | grep -q '^Risk: ' \
+      && printf '%s\n' "$vout" | grep -q "^Reply: .*bounce.sh $vP"; } \
+      || vdetail="$vdetail closed-finding-is-not-decision-first('$(printf '%s' "$vout" | head -3 | tr '\n' ' ')')"
     vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     [ -z "$vout" ] || vdetail="$vdetail closed-reported-again('$vout')"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail closed-pr-card-moved($(_vst "$vP"))"
@@ -8648,13 +8785,25 @@ VWRAP
     { [ -z "$vout" ] && [ "$vrc" = 1 ] && grep -q "$vP: cannot read" "$vbin/mw.err"; } \
       || vdetail="$vdetail github-outage-reached-stdout(rc=$vrc,'$vout')"
     rm -f "$vbin/state-down"
+    # MERGED, BUT THE CARD WOULD NOT COMPLETE — the same rule (epic P10(3)): the
+    # card stays blocked with the same reason, so this was a message every sweep.
+    # The lab's wrapper refuses only `kanban complete`.
+    rm -f "$vbin/closed"; touch "$vbin/merged"
+    vout="$(env PATH="$vwrap:$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"; vrc=$?
+    { [ "$vrc" = 1 ] && printf '%s' "$vout" | grep -q "$vP: .*is merged but the card did not complete" \
+      && printf '%s\n' "$vout" | grep -q '^Decision needed: complete the card by hand'; } \
+      || vdetail="$vdetail not-completed-not-reported-decision-first(rc=$vrc,'$(printf '%s' "$vout" | head -2 | tr '\n' ' ')')"
+    vout="$(env PATH="$vwrap:$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    [ -z "$vout" ] || vdetail="$vdetail not-completed-reported-again('$(printf '%s' "$vout" | head -1)')"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail refused-completion-moved-the-card($(_vst "$vP"))"
+    rm -f "$vbin/merged"
     # A NEW hold on the same card is a new finding: bounce it, re-hold it, close it.
     env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" "operator: again" --board vlab >/dev/null 2>&1
     _vhandoff "$vP"; vrc="$(_vrun)"; touch "$vbin/closed"
     vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     printf '%s' "$vout" | grep -q "$vP: .*CLOSED without merging" || vdetail="$vdetail a-new-hold-was-silenced-by-the-old-marker('$vout')"
     [ -z "$vdetail" ] \
-      && ok "merge-watcher-reports-once (a closed PR and a url-less hold reach stdout once per hold, a new hold is reported afresh, and a GitHub outage goes to stderr only)" \
+      && ok "merge-watcher-reports-once (a closed PR, a url-less hold and a merge whose card will not complete reach stdout once per hold, decision-first; a new hold is reported afresh, and a GitHub outage goes to stderr only)" \
       || bad "merge-watcher-reports-once" \
           "under --no-agent stdout is the operator's notification, so a standing finding must reach it once and a diagnostic never —$vdetail"
   fi
@@ -11456,6 +11605,119 @@ QPIN
   fi
 }
 wants quota     && run_quota_group
+
+# ===========================================================================
+# digest/ — the daily digest and the one decision-first format (epic GW1, GW2).
+#
+# Under `hermes cron … --no-agent` the digest's stdout IS the operator's
+# message and nothing rephrases it, so this group diffs the whole message
+# against a checked-in expectation. It runs offline: boards are checked-in SQL
+# under an isolated HERMES_HOME, TZ is pinned to UTC so "the day" is the same
+# instant on every host, and the spend line comes from the real metrics.sh.
+# ===========================================================================
+
+# Every class the contract's blocked_reason_pattern registers must have a
+# decision entry, and every entry must be a registered class. $1=formatter file.
+# Blind is not a pass: a pattern that yields no classes, or a formatter that
+# yields no entries, fails.
+decision_classes_diagnostic() {
+  local fmt="$1" registered answered missing extra
+  registered="$(jq -r '.blocked_reason_pattern' rubrics/run-metadata-contract.json 2>/dev/null \
+    | sed -n 's/^\^(\([a-z|-]*\)):.*/\1/p' | tr '|' '\n' | sort)"
+  [ -n "$registered" ] || { echo "no classes could be read out of blocked_reason_pattern — the check went blind (F65)"; return 1; }
+  answered="$(bash -c '. "$1" && decision_classes' _ "$fmt" 2>/dev/null | sort)"
+  [ -n "$answered" ] || { echo "$fmt answers no class at all — the check went blind (F65)"; return 1; }
+  missing="$(comm -23 <(printf '%s\n' "$registered") <(printf '%s\n' "$answered") | tr '\n' ' ')"
+  extra="$(comm -13 <(printf '%s\n' "$registered") <(printf '%s\n' "$answered") | tr '\n' ' ')"
+  [ -z "$missing$extra" ] || {
+    echo "registered with no decision: ${missing:-none}; decisions for no registered class: ${extra:-none}"; return 1; }
+  # And each entry really answers four lines through the function the digest calls.
+  local c n
+  for c in $answered; do
+    n="$(bash -c '. "$1" && class_decision "$2"' _ "$fmt" "$c" 2>/dev/null | grep -c .)"
+    [ "$n" = 4 ] || { echo "class_decision $c yields $n non-empty lines, want 4 (means, decision, risk, reply)"; return 1; }
+  done
+  return 0
+}
+
+run_digest_group() {
+  group digest
+  for tool in sqlite3 jq; do
+    command -v "$tool" >/dev/null 2>&1 || { skip "fixture-message-exact" "$tool not on PATH"; return; }
+  done
+  local ds=scripts/digest.sh root="$TMPROOT/digest" out rc detail
+  local kb="$root/hermes/kanban/boards"
+  mkdir -p "$kb/digest-fixture" "$kb/metrics-fl3" "$kb/quiet" "$kb/_archived/old-1"
+  sqlite3 "$kb/digest-fixture/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  sqlite3 "$kb/metrics-fl3/kanban.db" < scripts/fixtures/metrics-board-fl3.sql >/dev/null 2>&1
+  # An archived board full of waiting cards: Hermes moved it out of the way,
+  # so it must not speak.
+  sqlite3 "$kb/_archived/old-1/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  # A board whose only card finished long ago: nothing to say, so nothing said.
+  sqlite3 "$kb/quiet/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  sqlite3 "$kb/quiet/kanban.db" "DELETE FROM tasks WHERE id <> 't_d7';" >/dev/null 2>&1
+  _dg() { TZ=UTC HERMES_HOME="$root/hermes" "$REPO_ROOT/$ds" "$@"; }
+
+  local before after
+  before="$(for b in digest-fixture metrics-fl3 quiet; do db_source_fingerprint "$kb/$b/kanban.db"; done)"
+  out="$(_dg --day 2026-07-28 2>"$root/err")"; rc=$?
+  after="$(for b in digest-fixture metrics-fl3 quiet; do db_source_fingerprint "$kb/$b/kanban.db"; done)"
+  printf '%s\n' "$out" > "$root/out.txt"
+  if [ "$rc" = 0 ] && diff -u scripts/fixtures/digest-expected.txt "$root/out.txt" > "$root/diff" 2>&1; then
+    ok "fixture-message-exact ($(grep -c '^Decision needed: ' "$root/out.txt") decisions waiting, every line)"
+  else
+    bad "fixture-message-exact" "rc=$rc $(head -14 "$root/diff" | tr '\n' ' ') $(head -3 "$root/err" | tr '\n' ' ')"
+  fi
+  [ -n "$before" ] && [ "$before" = "$after" ] \
+    && ok "is-read-only" \
+    || bad "is-read-only" "a board or one of its sidecars changed while the digest read it"
+
+  out="$(_dg --board quiet --day 2026-07-28 2>/dev/null)"; rc=$?
+  { [ "$rc" = 0 ] && [ -z "$out" ]; } \
+    && ok "silent-when-nothing-happened" \
+    || bad "silent-when-nothing-happened" "a quiet board must print nothing and exit 0 (rc=$rc): $(printf '%s' "$out" | head -2 | tr '\n' ' ')"
+
+  mkdir -p "$kb/broken"; printf 'not sqlite\n' > "$kb/broken/kanban.db"
+  out="$(_dg --board broken --board quiet --day 2026-07-28 2>/dev/null)"; rc=$?
+  { [ "$rc" = 3 ] && printf '%s' "$out" | grep -q '^== broken ==' \
+    && printf '%s' "$out" | grep -q 'UNREADABLE'; } \
+    && ok "an-unreadable-board-is-named" \
+    || bad "an-unreadable-board-is-named" "an unreadable board must be named on stdout with exit 3, never read as quiet (rc=$rc): $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+  rm -rf "$kb/broken"
+
+  if detail="$(decision_classes_diagnostic scripts/decision-message.sh)"; then
+    ok "every-block-class-has-a-decision ($(bash -c '. scripts/decision-message.sh && decision_classes' | grep -c .) classes)"
+  else
+    bad "every-block-class-has-a-decision" "$detail"
+  fi
+  # The mutant: the same formatter with the `ci-red` entry deleted.
+  awk '/^    ci-red\) printf/{skip=1} skip && /;;$/{skip=0; next} !skip' scripts/decision-message.sh > "$root/dm-mutant.sh"
+  if detail="$(decision_classes_diagnostic "$root/dm-mutant.sh")"; then
+    bad "a-missing-decision-is-caught" "a formatter with no ci-red entry passed"
+  elif printf '%s' "$detail" | grep -q 'registered with no decision: ci-red'; then
+    ok "a-missing-decision-is-caught"
+  else
+    bad "a-missing-decision-is-caught" "the mutant reddened for the wrong reason: $detail"
+  fi
+
+  # ONE FORMATTER. Each producer that speaks to the operator sources it, and no
+  # file under scripts/ defines its own copy. Zero producers found is a fail.
+  local p found=0 defs
+  detail=""
+  for p in prejudge-review.sh merge-watcher.sh digest.sh; do
+    [ -f "scripts/$p" ] || { detail="$detail $p-missing"; continue; }
+    found=$((found + 1))
+    grep -Eq '^[[:space:]]*\. "?\$[^"]*/decision-message\.sh"?' "scripts/$p" \
+      || detail="$detail $p-does-not-source-the-formatter"
+  done
+  [ "$found" -gt 0 ] || detail="$detail no-producer-found"
+  defs="$(grep -lE '^[[:space:]]*decision_message\(\)' scripts/*.sh 2>/dev/null | grep -v '^scripts/decision-message.sh$' | tr '\n' ' ')"
+  [ -z "$defs" ] || detail="$detail second-definition-in:$defs"
+  [ -z "$detail" ] \
+    && ok "one-formatter ($found producers source scripts/decision-message.sh)" \
+    || bad "one-formatter" "every message to the operator goes through one formatter —$detail"
+}
+wants digest    && run_digest_group
 
 # ---------------------------------------------------------------------------
 # manifest/ — `--list` is a hand-maintained catalogue, and nothing compared it

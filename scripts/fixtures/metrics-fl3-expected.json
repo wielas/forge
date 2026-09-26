@@ -1,0 +1,156 @@
+{
+  "board": "metrics-fl3",
+  "since": null,
+  "until": null,
+  "north_star": {
+    "chunks": 3,
+    "merged": {
+      "total": 3,
+      "by_verifier": 1,
+      "by_operator": 2,
+      "unrecorded": 0
+    },
+    "merged_without_operator": {
+      "count": 1,
+      "of": 3,
+      "rate": "0.33"
+    },
+    "operator_actions": {
+      "total": 4,
+      "touches": 2,
+      "merges": 2,
+      "per_merged_chunk": "1.33",
+      "method": "operator touches (below) plus one per merge the operator made; judge sessions and GitHub-only actions are not on the board and are not counted"
+    },
+    "pr_open_to_merge_hours": {
+      "n": 3,
+      "median": "2.00",
+      "max": "5.00",
+      "method": "first review_requested event to the completed event, on merged chunk cards — a board proxy: the merge-watcher completes an operator merge on its next sweep"
+    },
+    "cards_per_chunk": {
+      "cards": 6,
+      "chunks": 3,
+      "rate": "2.00"
+    },
+    "human_implemented": {
+      "count": 1,
+      "of": 3
+    },
+    "not_yet_measurable": [
+      "defects the milestone probe catches before the operator does — no probe exists until MS2",
+      "architect estimate vs actual cost per milestone — no estimate is recorded until PL2"
+    ]
+  },
+  "chunk_cards": 3,
+  "verdicts": {
+    "total": 3,
+    "unattributed": 0,
+    "by_verdict": {
+      "approve": 3
+    }
+  },
+  "tiers": [
+    {
+      "tier": 1,
+      "verdicts": 3,
+      "bounce_verdicts": 0,
+      "mean_d13": "2.89",
+      "chunks_judged": 3,
+      "chunks_bounced": 0,
+      "bounce_rate": "0.00"
+    }
+  ],
+  "mean_d13_all": "2.89",
+  "gate": {
+    "runs": 0,
+    "blocked": 0,
+    "clear": 0,
+    "block_rate": null,
+    "by_check": {}
+  },
+  "reason_class": [
+    {
+      "class": "merge-pending",
+      "count": 4,
+      "documented": true
+    }
+  ],
+  "forge_block_v1": 0,
+  "envelope": {
+    "flat": 4,
+    "nested": 0,
+    "neither": 0,
+    "total": 4
+  },
+  "implementer_model": {
+    "runs": 4,
+    "unrecorded": 1,
+    "from_rollout": 3,
+    "requested_only": 0,
+    "unverified": 0,
+    "by_model": [
+      {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "xhigh",
+        "source": "rollout",
+        "requested": null,
+        "runs": 3
+      }
+    ]
+  },
+  "driver_usage": {
+    "coverage": {
+      "eligible": 3,
+      "joined": 0,
+      "unjudged": 3,
+      "rate": "0.00"
+    },
+    "totals": {
+      "api_calls": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    },
+    "cost": {
+      "estimated_usd": null,
+      "estimated_sessions": 0,
+      "actual_usd": null,
+      "actual_sessions": 0
+    },
+    "limitations": [],
+    "unjudged": [
+      {
+        "run_id": 1,
+        "task_id": "t_ca",
+        "profile": "forge-codex-lane",
+        "worker_session_id": null,
+        "reason": "missing-worker-session-id"
+      },
+      {
+        "run_id": 2,
+        "task_id": "t_cb",
+        "profile": "forge-codex-lane",
+        "worker_session_id": null,
+        "reason": "missing-worker-session-id"
+      },
+      {
+        "run_id": 3,
+        "task_id": "t_cb",
+        "profile": "forge-codex-lane",
+        "worker_session_id": null,
+        "reason": "missing-worker-session-id"
+      }
+    ],
+    "shared_attribution": [],
+    "sessions": []
+  },
+  "operator": {
+    "comments": 1,
+    "unblocks": 1,
+    "touches": 2,
+    "method": "comments by an author that never ran as a profile on this board, except the merge-watcher's FORGE-WATCHER-NOTIFIED markers, plus every unblocked event (the event records no actor)"
+  }
+}

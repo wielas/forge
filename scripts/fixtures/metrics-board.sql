@@ -25,7 +25,9 @@ PRAGMA journal_mode=wal;
 CREATE TABLE tasks (
     id           TEXT PRIMARY KEY,
     title        TEXT NOT NULL,
+    assignee     TEXT,
     status       TEXT NOT NULL,
+    result       TEXT,
     created_at   INTEGER NOT NULL,
     completed_at INTEGER
 );

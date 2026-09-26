@@ -1,0 +1,61 @@
+Forge digest — 2026-07-28
+
+== digest-fixture ==
+Landed (1)
+- CHUNK-6: Model — https://example/pull/6 (t_d6)
+In flight: 1 running · 1 waiting on parents
+- running: CHUNK-10: Docs (t_d4)
+Waiting on you (3)
+
+— t_d1 · CHUNK-7: Sync engine
+merge-pending: CHUNK-7: Sync engine is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, and the scorer reached approve 3/3/3. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://example/pull/7 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_d1 "<reason>" --board digest-fixture`
+
+— t_d2 · CHUNK-8: Exporter
+env: codex usage limit — waited past FORGE_QUOTA_MAX_WAIT (park record: .forge/park-1.json)
+
+What it means: the host could not do something the run needs — a tool, the remote, a workspace, or a usage limit past its wait
+Decision needed: repair what the reason names
+Risk: nothing was merged; the card holds until it is unblocked
+Reply: fix it, then `hermes kanban --board digest-fixture unblock t_d2`
+
+— t_d3 · CHUNK-9: CLI
+other: tier-2 operator review required: run /judge, then merge or bounce
+
+What it means: something outside the known block classes stopped this card
+Decision needed: read the reason and decide
+Risk: unknown — the card holds until someone looks
+Reply: `hermes kanban --board digest-fixture show t_d3`
+
+Spend: driver actual n/a · estimated n/a — 0/1 runs joined. Codex quota is not metered here.
+
+== metrics-fl3 ==
+Landed (3)
+- CHUNK-1: merged by the operator — https://example/pull/1 (t_ca)
+- CHUNK-3: implemented by hand — https://example/pull/3 (t_cc)
+- CHUNK-2: bounced once, then merged by the verifier — https://example/pull/2 (t_cb)
+In flight: 1 in review
+- in review: CHUNK-4: in review (t_cd)
+Waiting on you (2)
+
+— t_ce · CHUNK-5: held for the operator's merge
+merge-pending: CHUNK-5 is verified and NOT merged
+
+What it means: the verifier passed this chunk and may only recommend, so the merge is yours
+Decision needed: merge the PR, or send it back
+Risk: its children stay held until it merges
+Reply: merge the PR on GitHub — the merge-watcher completes the card — or `~/.forge/repo/scripts/bounce.sh t_ce "<reason>" --board metrics-fl3`
+
+— t_tr · follow-up: a verifier nit
+other: the card is in triage, which no script can complete (epic P8)
+
+What it means: something outside the known block classes stopped this card
+Decision needed: read the reason and decide
+Risk: unknown — the card holds until someone looks
+Reply: `hermes kanban --board metrics-fl3 show t_tr`
+
+Spend: driver actual n/a · estimated n/a — 0/3 runs joined. Codex quota is not metered here.
