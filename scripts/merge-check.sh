@@ -206,11 +206,31 @@ if ! ( cd "$REPO" && run_check eval "$CHECK_CMD" ) >"$LOG" 2>&1; then
 fi
 HEAD_ALONE=green
 
+# RESTORE THE TRACKED TREE BEFORE THE MERGE. Setup and the head-alone check ran in
+# this same clone, and either may rewrite a tracked file — a lockfile, generated
+# code, formatter output. If `main` changed that file too, `git merge` refuses
+# ("local changes would be overwritten"), and that used to be reported as a
+# `conflict`: a bounce round the implementer cannot act on. `reset --hard` puts
+# every tracked file back at the head commit. There is deliberately NO `git
+# clean`: `-x` would delete the ignored environment setup built (`.venv`,
+# `node_modules`) and turn the union check red for environment reasons, and
+# even `-d` deletes an unignored one. An untracked file that still blocks the
+# merge is caught by the classification below instead.
+git -C "$REPO" reset --quiet --hard "$HEAD_SHA" >>"$TMP/merge.log" 2>&1 || emit unrunnable "cannot restore the tree to $HEAD_REF ($HEAD_SHA) after the head-alone check, so no merge was attempted: $(tail -3 "$TMP/merge.log" | tr '\n' '|' | head -c 300)" "" 3
+
 git -C "$REPO" -c user.email=verifier@forge.invalid -c user.name=forge-verifier \
-    merge --no-edit --no-ff "$BASE_SHA" >"$TMP/merge.log" 2>&1 || {
-  conflicts="$(git -C "$REPO" diff --name-only --diff-filter=U | tr '\n' ' ')"
+    merge --no-edit --no-ff "$BASE_SHA" >>"$TMP/merge.log" 2>&1 || {
+  conflicts="$(git -C "$REPO" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+  # A MERGE THAT FAILED WITH NO CONFLICTED PATH IS NOT A CONFLICT. git refused for
+  # a reason of its own — a dirty or locked tree, an untracked file in the way —
+  # and nothing about that is the implementer's to fix. Reporting it as
+  # `conflict` spends a bounce round on an instruction ("resolve the conflict")
+  # that names no file and has nothing to resolve.
+  [ -n "$conflicts" ] || emit unrunnable \
+    "git refused to merge $BASE_REF ($BASE_SHA) into $HEAD_REF ($HEAD_SHA) with no conflicted path, so this is not a conflict in the work: $(tail -5 "$TMP/merge.log" | tr '\n' '|' | head -c 300)" \
+    "" 3
   emit conflict \
-    "merging $BASE_REF ($BASE_SHA) into $HEAD_REF ($HEAD_SHA) conflicts in: ${conflicts:-<see merge output>}" \
+    "merging $BASE_REF ($BASE_SHA) into $HEAD_REF ($HEAD_SHA) conflicts in: $conflicts" \
     "rebase this branch on $BASE_REF, resolve the conflict, and push" 1
 }
 

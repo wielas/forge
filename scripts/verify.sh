@@ -2550,6 +2550,7 @@ prejudge/card-names-the-implementer-model  every card a human reads names the mo
 prejudge/implementer-model-mutation-is-caught  a line that prints the model and swallows codex_model_source reddens
 prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_model, an empty codex_model_requested and a blank effort all fall to their honest branch, never evidence or a false F22 alarm
 prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
+prejudge/review-refuses-without-a-board  no board, or no hermes, is substrate before the gate — never a routed outcome with rc 0 that transitioned nothing
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 verifier/chunk-is-the-running-card  D19.1: --chunk must BE the running card; a mismatch is substrate before Stage 1
 verifier/the-reviewer-profile-exists  the reviewer lane-handoff.sh names ships a SOUL, is created by the bootstrap, and matches lane.sh's default
@@ -2566,6 +2567,10 @@ verifier/a-hold-is-never-triage  recommend, disagree, repair, recommend again: t
 verifier/hold-kind-mutation-is-caught  a pinned block kind reaches triage on the real kernel, cannot be completed, and is reported as stranded
 verifier/disagree-path-parks-before-it-unblocks  bounce.sh's own events show the sentinel park before the unblock; a dispatch pass in the window spawns nothing (smoke, with its control stated); the implementer returns
 verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit, ignores other blocks
+verifier/merged-tree-restores-the-tree-before-merging  a setup that rewrites a tracked file main also changed is still a green union; a merge git refuses with no conflicted path is unrunnable, never a conflict
+verifier/merged-tree-uses-the-prs-base  merge-check is given the PR's own baseRefName and the hold names it; an unreadable base is substrate, never an assumed main
+verifier/merge-mode-survives-a-failed-completion  merged but the completion or read-back failed: the card is held merge-pending with the verdict stashed, and the merge-watcher completes it
+verifier/merge-watcher-reports-once  a closed PR and a hold with no PR url reach stdout once per hold; a GitHub read failure goes to stderr only
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
 sweep/dest-refuses-traversal-past-a-missing-component  `..` through a dir that does not exist yet still lands in /tmp
@@ -6912,6 +6917,35 @@ FROZEN_FEATURE
         "$review must route a gate block to a bounce carrying the forge.gate.v1 object and no verdict"
   fi
 
+  # NO BOARD, NO ROUTED OUTCOME. The same gate-blocked PR as above, WITHOUT
+  # --dry-run: every rc-0 action is a transition on the card, and the SOUL tells
+  # the model to call nothing on rc 0. The routers used to `return 0` with no
+  # board, so this exact run reported `gate-block` rc 0 having transitioned
+  # nothing — the card stayed `running` and was reaped as a crash. It must be
+  # substrate (rc 3, `env:`), before the gate. Both halves of "no board": nothing
+  # named, and a board named with no `hermes` to reach it. The gate-blocked PR is
+  # chosen deliberately: it returns before the scorer, so even a regression here
+  # cannot spend a token.
+  local nb_out nb_rc nb_detail="" nb_bin="$TMPROOT/no-board-bin"
+  nb_out="$(printf '%s' "$contract" | env -u HERMES_KANBAN_TASK HERMES_KANBAN_BOARD= \
+        "$review" https://example.invalid/pull/8 --chunk t_fixture --fixture "$prs/pr-8" 2>/dev/null)"
+  nb_rc=$?
+  { [ "$nb_rc" = 3 ] && printf '%s' "$nb_out" | jq -e '.action == "substrate-block"
+        and (.reason | test("^env: no-board")) and (.metadata == null)' >/dev/null 2>&1; } \
+    || nb_detail="$nb_detail unset-board(rc=$nb_rc,$(printf '%s' "$nb_out" | jq -c '{action,reason}' 2>/dev/null | head -c 160))"
+  rm -rf "$nb_bin"; mkdir -p "$nb_bin"; ln -s "$(command -v jq)" "$nb_bin/jq"
+  nb_out="$(printf '%s' "$contract" | env -u HERMES_KANBAN_TASK PATH="$nb_bin:/usr/bin:/bin" \
+        "$REPO_ROOT/$review" https://example.invalid/pull/8 --chunk t_fixture --board vlab \
+        --fixture "$REPO_ROOT/$prs/pr-8" 2>/dev/null)"
+  nb_rc=$?
+  { [ "$nb_rc" = 3 ] && printf '%s' "$nb_out" | jq -e '.action == "substrate-block"
+        and (.reason | test("^env: no-board")) and (.reason | test("hermes is not on PATH"))' >/dev/null 2>&1; } \
+    || nb_detail="$nb_detail no-hermes(rc=$nb_rc,$(printf '%s' "$nb_out" | jq -c '{action,reason}' 2>/dev/null | head -c 160))"
+  [ -z "$nb_detail" ] \
+    && ok "review-refuses-without-a-board (no board and no hermes are both substrate before the gate; --dry-run stays the offline rehearsal)" \
+    || bad "review-refuses-without-a-board" \
+        "a run that cannot transition the card must exit 3, never report a routed outcome with rc 0 —$nb_detail"
+
   # The envelope is the entire contract between the program and the model, so
   # every field the terminator needs must be present and typed.
   local c9
@@ -7786,6 +7820,51 @@ MCCGH
   fi
 
   # -------------------------------------------------------------------------
+  # 2c. The clone the merge happens in is the clone setup and the head-alone
+  # check already ran in. A setup that rewrites a TRACKED file — a lockfile,
+  # generated code — which `main` also changed made `git merge` refuse ("local
+  # changes would be overwritten"), with no conflicted path, and that was
+  # reported as `conflict`: a bounce round nobody could act on. Here setup
+  # rewrites gen.txt, `main` changes gen.txt, the branch never touches it, and
+  # the union is green — so the only honest answer is `pass`.
+  #
+  # The second arm runs a copy with the restore deleted, which makes git refuse
+  # exactly as it used to. What that copy must then report is `unrunnable`: a
+  # refused merge with no conflicted path is not a conflict in the work. That
+  # keeps the classification asserted even while the restore makes it rare.
+  local mcd="$TMPROOT/merge-check-dirty" mcd_detail="" mcd_mut="$mcroot/no-restore.sh"
+  rm -rf "$mcd"; mkdir -p "$mcd"
+  (
+    set -e
+    cd "$mcd"; git init -q .
+    git config user.email v@forge.invalid; git config user.name verify
+    git symbolic-ref HEAD refs/heads/main
+    printf 'setup:\n\t@echo regenerated-by-setup > gen.txt\ncheck:\n\t@true\n' > Makefile
+    printf 'v1\n' > gen.txt; git add -A; git commit -qm base
+    git checkout -qb feature; printf 'a note\n' > note.txt; git add -A
+    git commit -qm 'feature: a file nothing else touches'
+    git checkout -q main; printf 'v2\n' > gen.txt
+    git commit -qam 'main: gen.txt moves on'
+  ) >/dev/null 2>&1 || mcd_detail="$mcd_detail fixture-repo-not-built"
+  mc_out="$("$mc" --clone-from "$mcd" --head-ref feature 2>/dev/null)"; mc_rc=$?
+  { [ "$mc_rc" = 0 ] && printf '%s' "$mc_out" | jq -e '.result == "pass" and .setup == "make setup"' >/dev/null 2>&1; } \
+    || mcd_detail="$mcd_detail setup-dirtied-tree-was-not-a-pass(rc=$mc_rc,$(printf '%s' "$mc_out" | jq -c '{result,evidence}' 2>/dev/null | head -c 200))"
+  sed -e 's/^git -C "\$REPO" reset --quiet --hard .*$/: restore deleted by verify/' "$mc" > "$mcd_mut"
+  chmod +x "$mcd_mut"
+  if cmp -s "$mc" "$mcd_mut"; then
+    mcd_detail="$mcd_detail the-restore-mutation-changed-nothing-(it-moved;-this-arm-proves-nothing,-F65)"
+  else
+    mc_out="$("$mcd_mut" --clone-from "$mcd" --head-ref feature 2>/dev/null)"; mc_rc=$?
+    { [ "$mc_rc" = 3 ] && printf '%s' "$mc_out" | jq -e '.result == "unrunnable"
+          and (.evidence | test("no conflicted path"))' >/dev/null 2>&1; } \
+      || mcd_detail="$mcd_detail refused-merge-without-conflicts-was-not-unrunnable(rc=$mc_rc,$(printf '%s' "$mc_out" | jq -r .result 2>/dev/null))"
+  fi
+  [ -z "$mcd_detail" ] \
+    && ok "merged-tree-restores-the-tree-before-merging (a setup that rewrites a tracked file main also changed is still a green union; with the restore removed, git's refusal is unrunnable, not a conflict)" \
+    || bad "merged-tree-restores-the-tree-before-merging" \
+        "$mc must merge into the head commit's own tree, and must never call a merge git refused without a conflicted path a conflict —$mcd_detail"
+
+  # -------------------------------------------------------------------------
   # 3. The routing, on the REAL kernel, in an isolated HERMES_HOME.
   #
   # `gh`, `claude` and the merged-tree check are stubs that log every call; the
@@ -7801,7 +7880,8 @@ MCCGH
              a-red-ci-pr-never-merges bounce-returns-the-same-card \
              bounce-budget-becomes-an-exception a-hold-is-never-triage \
              hold-kind-mutation-is-caught disagree-path-parks-before-it-unblocks \
-             merge-watcher-completes-a-merged-hold; do
+             merge-watcher-completes-a-merged-hold merged-tree-uses-the-prs-base \
+             merge-mode-survives-a-failed-completion merge-watcher-reports-once; do
       skip "$c" "hermes (and its venv python) not installed"
     done
   else
@@ -7814,9 +7894,13 @@ printf '%s\n' "$*" >> "$VSTUB/gh.log"
 case "$1 $2" in
   "pr view")
     case "$*" in
-      *headRefName*) echo '{"headRefName":"chunk/7-sync-engine"}'; exit 0;;
+      # The base is the case's to choose ($VSTUB/base), so a case can prove the
+      # verifier passes the PR's OWN base on rather than an assumed `main`.
+      *headRefName*) printf '{"headRefName":"chunk/7-sync-engine","baseRefName":"%s"}\n' \
+                       "$(cat "$VSTUB/base" 2>/dev/null || echo main)"; exit 0;;
       *headRefOid*)  printf '{"headRefOid":"%s"}\n' "$(cat "$VSTUB/head" 2>/dev/null || echo feedfacecafebabe0123456789abcdef01234567)"; exit 0;;
-      *state*) if [ -f "$VSTUB/merged" ]; then
+      *state*) [ -f "$VSTUB/state-down" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+               if [ -f "$VSTUB/merged" ]; then
                  echo '{"state":"MERGED","mergedAt":"2026-09-26T10:00:00Z","mergeCommit":{"oid":"abcdef1234567890"}}'
                elif [ -f "$VSTUB/closed" ]; then
                  echo '{"state":"CLOSED","mergedAt":null,"mergeCommit":null}'
@@ -7924,7 +8008,8 @@ with kbc.connect_closing() as c:
       echo $?
     }
     _vboard() {   # a fresh board with P and its child C
-      rm -rf "$vhome" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/merged" "$vbin/closed"
+      rm -rf "$vhome" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/merged" "$vbin/closed" \
+             "$vbin/base" "$vbin/state-down"
       mkdir -p "$vhome"
       # The live head starts equal to the one the recorded PR carries, because in
       # fixture mode Stage 0 reads `pr.json` — so that is the commit this review is
@@ -7967,6 +8052,33 @@ with kbc.connect_closing() as c:
       && ok "recommend-only-holds-the-card (executed: the review run's own block lands blocked/needs_input from review, child still todo, two cards, nothing merged)" \
       || bad "recommend-only-holds-the-card" \
           "an approval in recommend-only must hold this card for the operator and release nothing —$vdetail"
+
+    # ---- the union is built against the PR's OWN base ----------------------
+    # merge-check.sh defaults to `main`, and the verifier used to lean on that
+    # default: a repo whose default branch is `master` blocked every review as
+    # "no origin/main in the clone", and a stacked PR was checked against a base
+    # it will never merge into. The base here is `master`, so a verifier that
+    # passes nothing on — or says "merged with main" on the hold — is caught.
+    vdetail=""; _vboard; printf 'master\n' > "$vbin/base"
+    vrc="$(_vrun)"
+    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
+    grep -q -- '--base-ref master' "$vbin/mc.log" 2>/dev/null \
+      || vdetail="$vdetail merge-check-not-given-the-prs-base($(cat "$vbin/mc.log" 2>/dev/null))"
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+        | test("merged with master") and (test("merged with main") | not)' >/dev/null 2>&1 \
+      || vdetail="$vdetail hold-does-not-name-the-base-it-was-checked-against"
+    # A base that cannot be read fails closed. Falling back to `main` is the bug.
+    _vboard; : > "$vbin/base"
+    vrc="$(_vrun)"
+    { [ "$vrc" = 3 ] && [ "$(_vst "$vP")" = running/forge-verifier ] \
+      && jq -e '(.reason | test("^env: merge-check-unrunnable"))' "$vbin/out.json" >/dev/null 2>&1 \
+      && ! grep -q . "$vbin/mc.log" 2>/dev/null; } \
+      || vdetail="$vdetail unreadable-base-was-not-substrate(rc=$vrc,$(_vst "$vP"))"
+    [ -z "$vdetail" ] \
+      && ok "merged-tree-uses-the-prs-base (merge-check gets the PR's baseRefName and the hold names it; an unreadable base is substrate, not an assumed main)" \
+      || bad "merged-tree-uses-the-prs-base" \
+          "the merged tree must be the PR's head merged with the PR's own base —$vdetail"
 
     # ---- merge mode -------------------------------------------------------
     # Built and tested although it ships off: "a red-CI PR must not merge" only
@@ -8011,6 +8123,62 @@ with kbc.connect_closing() as c:
       && ok "merge-mode-merges-and-completes (squash + delete, card done, child released; anything but the exact switch value 1 stays recommend-only)" \
       || bad "merge-mode-merges-and-completes" \
           "merge mode must squash-merge, complete the card and release the child, and its absence must fail closed —$vdetail"
+
+    # ---- merged, but the completion did not take ---------------------------
+    # `gh pr merge` succeeded and the read-back or `kanban complete` failed. That
+    # used to exit 3, the model blocked the card `other: handoff-integrity`, and
+    # the merge-watcher — which watches only `merge-pending:`/`bounce-budget:` —
+    # never looked at it: the PR was on the base branch and the card and its
+    # children were held forever, with the verdict lost because nothing had
+    # stashed it. Now the card is held `merge-pending:` with the verdict stashed,
+    # and the REAL merge-watcher finishes it. Two ways in: a `hermes` wrapper that
+    # refuses only `complete`, and a GitHub read-back that fails.
+    local vwrap="$TMPROOT/verifier-wrap" vreal vmode
+    vreal="$(command -v hermes)"
+    rm -rf "$vwrap"; mkdir -p "$vwrap"
+    cat > "$vwrap/hermes" <<VWRAP
+#!/usr/bin/env bash
+[ "\$1 \$4" = "kanban complete" ] && { echo "wrapper: complete refused" >&2; exit 1; }
+exec "$vreal" "\$@"
+VWRAP
+    chmod +x "$vwrap/hermes"
+    vdetail=""
+    for vmode in complete-refused readback-failed; do
+      _vboard
+      if [ "$vmode" = complete-refused ]; then
+        vrc="$(_vrun FORGE_VERIFIER_MERGE=1 PATH="$vwrap:$vbin:$PATH")"
+      else
+        touch "$vbin/state-down"; vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
+      fi
+      [ "$vrc" = 0 ] || vdetail="$vdetail $vmode:rc=$vrc($(jq -r .reason "$vbin/out.json" 2>/dev/null | head -c 120))"
+      jq -e '.action == "merged-held"' "$vbin/out.json" >/dev/null 2>&1 \
+        || vdetail="$vdetail $vmode:envelope-not-merged-held($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+      grep -q '^pr merge --squash' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail $vmode:nothing-was-merged"
+      [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail $vmode:card-not-held($(_vst "$vP"))"
+      [ "$(_vst "$vC" | cut -d/ -f1)" = todo ] || vdetail="$vdetail $vmode:child-released-early($(_vst "$vC"))"
+      _v show "$vP" --json | jq -e '
+          [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+          | startswith("merge-pending: ") and test("squash-merged by the verifier")' >/dev/null 2>&1 \
+        || vdetail="$vdetail $vmode:hold-is-not-a-merge-pending-hold"
+      _v show "$vP" --json | jq -e '
+          [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | length == 1' >/dev/null 2>&1 \
+        || vdetail="$vdetail $vmode:verdict-not-stashed-before-the-merge"
+      # The watcher, unwrapped and with GitHub back, finishes what the verifier could not.
+      rm -f "$vbin/state-down"
+      vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+      [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail $vmode:watcher-did-not-complete($(_vst "$vP"),'$vout')"
+      [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail $vmode:child-never-released($(_vst "$vC"))"
+      _v show "$vP" --json | jq -r '
+          [ .runs[] | select(.outcome == "completed") ] | last | .metadata // empty' \
+        > "$vbin/completed-meta.json" 2>/dev/null
+      { jq -e '.schema == "forge.judge.v1"' "$vbin/completed-meta.json" >/dev/null 2>&1 \
+        && ./scripts/validate-metadata.py --profile forge-verifier "$vbin/completed-meta.json" >/dev/null 2>&1; } \
+        || vdetail="$vdetail $vmode:verdict-did-not-reach-the-completion($(jq -r '.schema // "none"' "$vbin/completed-meta.json" 2>/dev/null))"
+    done
+    [ -z "$vdetail" ] \
+      && ok "merge-mode-survives-a-failed-completion (complete refused, or the read-back down: the card is held merge-pending with the verdict stashed, and the merge-watcher completes it with that verdict)" \
+      || bad "merge-mode-survives-a-failed-completion" \
+          "a merge that landed must leave its card where the merge-watcher will finish it, with the verdict it can attach —$vdetail"
 
     # ---- the gate is the verifier's own CI, because the repo may have none --
     # ADR-0019's honest weak spot: both product repos are private on a free plan,
@@ -8337,6 +8505,43 @@ with kbc.connect_closing() as c:
       && ok "merge-watcher-completes-a-merged-hold (silent while the PR is open, reports a CLOSED one without completing it, completes a merged one with its commit and releases the child, and leaves other blocks alone)" \
       || bad "merge-watcher-completes-a-merged-hold" \
           "the watcher must complete only verifier holds whose PR GitHub reports as merged —$vdetail"
+
+    # ---- a standing finding is reported ONCE -------------------------------
+    # Under `--no-agent` stdout IS the operator's notification, and a closed PR
+    # or a hold with no PR url leaves the card blocked with the same reason — so
+    # printing it every sweep is a message every ten minutes, forever. stdout is
+    # captured ALONE here (2>/dev/null): the case above merges the streams and
+    # cannot tell a notification from a diagnostic.
+    local vnourl
+    vdetail=""; _vboard; vrc="$(_vrun)"; touch "$vbin/closed"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    printf '%s' "$vout" | grep -q "$vP: .*CLOSED without merging" || vdetail="$vdetail closed-not-reported-at-all('$vout')"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    [ -z "$vout" ] || vdetail="$vdetail closed-reported-again('$vout')"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail closed-pr-card-moved($(_vst "$vP"))"
+    rm -f "$vbin/closed"
+    # A hold with no PR url anywhere on it: the same rule.
+    vnourl="$(_v create "CHUNK-9: held with no PR" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+    _v block --kind needs_input "$vnourl" "merge-pending: a hold that names no pull request" >/dev/null 2>&1
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    printf '%s' "$vout" | grep -q "$vnourl: held for merge but no PR url" || vdetail="$vdetail no-url-not-reported-at-all('$vout')"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    [ -z "$vout" ] || vdetail="$vdetail no-url-reported-again('$vout')"
+    # GitHub unreadable is a diagnostic, not a finding: stderr, and a non-zero exit.
+    touch "$vbin/state-down"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>"$vbin/mw.err")"; vrc=$?
+    { [ -z "$vout" ] && [ "$vrc" = 1 ] && grep -q "$vP: cannot read" "$vbin/mw.err"; } \
+      || vdetail="$vdetail github-outage-reached-stdout(rc=$vrc,'$vout')"
+    rm -f "$vbin/state-down"
+    # A NEW hold on the same card is a new finding: bounce it, re-hold it, close it.
+    env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" "operator: again" --board vlab >/dev/null 2>&1
+    _vhandoff "$vP"; vrc="$(_vrun)"; touch "$vbin/closed"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    printf '%s' "$vout" | grep -q "$vP: .*CLOSED without merging" || vdetail="$vdetail a-new-hold-was-silenced-by-the-old-marker('$vout')"
+    [ -z "$vdetail" ] \
+      && ok "merge-watcher-reports-once (a closed PR and a url-less hold reach stdout once per hold, a new hold is reported afresh, and a GitHub outage goes to stderr only)" \
+      || bad "merge-watcher-reports-once" \
+          "under --no-agent stdout is the operator's notification, so a standing finding must reach it once and a diagnostic never —$vdetail"
   fi
 }
 wants verifier  && run_verifier_group

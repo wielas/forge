@@ -66,9 +66,12 @@
 #         calls NOTHING. Read `.action` for which transition happened:
 #         `bounce` / `gate-block` (request-changes), `recommend` (blocked for
 #         the operator), `exception` (bounce budget spent), `merged` (merge
-#         mode), `would-score` (--dry-run).
+#         mode), `merged-held` (merge mode: merged, but the completion did not
+#         take, so the card is held `merge-pending:` for the merge-watcher),
+#         `would-score` (--dry-run).
 #       3 a substrate fault — nothing transitioned. Read `.reason` and
-#         `kanban_block`.
+#         `kanban_block`. Includes a run with no board to transition on
+#         (`env: no-board`), unless it is a --dry-run.
 #       2 a usage error.
 #
 # 1 is deliberately NOT used: a bounced PR is a routed outcome, not a failure of
@@ -159,6 +162,21 @@ board_live() { [ -n "$BOARD" ] && command -v hermes >/dev/null; }
 # ---------------------------------------------------------------------------
 [ -z "${HERMES_KANBAN_TASK:-}" ] || [ "$CHUNK" = "$HERMES_KANBAN_TASK" ] || \
   substrate "env: chunk-identity — --chunk ($CHUNK) is not the running card (${HERMES_KANBAN_TASK}); under ADR-0019 D19.1 the chunk card and the review are the same card"
+
+# NO BOARD, NO ROUTED OUTCOME. Every exit-0 action below is a transition on this
+# card, and the SOUL tells the model to call NOTHING on rc 0. The routers used to
+# `return 0` when the board was unset or `hermes` was missing, so a run with no
+# board reported `bounce` or `recommend` with rc 0 although nothing transitioned:
+# the model called nothing, the card stayed `running`, and the dispatcher reaped
+# it as a crash. So a run that cannot make a transition refuses before it starts,
+# the way `lane.sh` refuses an unset HERMES_KANBAN_BOARD.
+#
+# `--dry-run` is the one deliberate exception: it is the offline rehearsal
+# (`prejudge/review-routes-by-gate-result` and the envelope cases run it with no
+# board at all), and its envelope never claims a transition was made.
+if [ "$DRY_RUN" != 1 ] && ! board_live; then
+  substrate "env: no-board — ${BOARD:+board '$BOARD' is named but hermes is not on PATH}${BOARD:-no --board and no HERMES_KANBAN_BOARD}, so no outcome can be made on this card, and one that cannot be made must not be reported as made"
+fi
 
 if board_live; then
   chunk_title="$(kanban show "$CHUNK" --json 2>/dev/null | jq -r '.task.title // empty' 2>/dev/null)"
@@ -440,6 +458,10 @@ route_recommend() {  # $1=reason, already carrying its registry class
 # without merging (a race, an unmergeable state) must not complete a card whose
 # work is not on `main`.
 merge_mode() { [ "${FORGE_VERIFIER_MERGE:-}" = 1 ]; }
+# Return 1: nothing was merged. Return 4: `gh pr merge` ACCEPTED the merge and
+# something after it — the read-back or the completion — did not take. The two
+# must not share a code: after a 4 the work is probably on the base branch, and
+# the card has to be left where the merge-watcher will finish it (see the caller).
 route_merge() {  # $1=result summary, $2=metadata file
   # `--match-head-commit` is not belt-and-braces: without it this merges whatever
   # the head is NOW, and every stage above read the PR separately over several
@@ -451,10 +473,9 @@ route_merge() {  # $1=result summary, $2=metadata file
   gh pr merge --squash --delete-branch --match-head-commit "$VERIFIED_HEAD" "$PR_URL" \
     >/dev/null 2>&1 < /dev/null || return 1
   gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
-    | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 1
-  board_live || return 0
-  kanban complete "$CHUNK" --result "$1" --metadata "$(jq -c . "$2" 2>/dev/null)" >/dev/null 2>&1 || return 1
-  [ "$(card_json | jq -r '.task.status')" = done ] || return 1
+    | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 4
+  kanban complete "$CHUNK" --result "$1" --metadata "$(jq -c . "$2" 2>/dev/null)" >/dev/null 2>&1 || return 4
+  [ "$(card_json | jq -r '.task.status')" = done ] || return 4
 }
 
 # ---------------------------------------------------------------------------
@@ -712,7 +733,7 @@ fi
 # ---------------------------------------------------------------------------
 MERGE_CHECK_BIN="${FORGE_MERGE_CHECK_BIN:-$HERE/merge-check.sh}"
 MERGED="$TMP/merged-tree.json"
-merge_repo=""; head_ref=""; clone_url=""
+merge_repo=""; head_ref=""; base_ref=""; clone_url=""
 if [ -n "$FIXTURE" ] && [ -z "${FORGE_MERGE_CHECK_BIN:-}" ]; then
   jq -n '{schema:"forge.mergecheck.v1", result:"skipped",
           evidence:"--fixture without FORGE_MERGE_CHECK_BIN: no repository to merge"}' > "$MERGED"
@@ -730,13 +751,21 @@ else
     merge_repo="${PR_URL%/pull/*}"; merge_repo="${merge_repo#*://}"
     merge_repo="${merge_repo#*/}"          # strip the host, leaving owner/name
   fi
-  head_ref="$(gh pr view "$PR_URL" --json headRefName < /dev/null 2>/dev/null | jq -r '.headRefName // empty')"
+  # THE BASE IS THE PR'S OWN, NEVER AN ASSUMED `main`. merge-check.sh defaults to
+  # `main`, and this call used to lean on that default: a product repo whose
+  # default branch is `master` got "no origin/main in the clone" on every review
+  # (every card blocked as a substrate fault), and a stacked PR was tested against
+  # a base it will never merge into. An unreadable base fails closed — falling
+  # back to `main` would be that bug again.
+  pr_refs="$(gh pr view "$PR_URL" --json headRefName,baseRefName < /dev/null 2>/dev/null)"
+  head_ref="$(printf '%s' "$pr_refs" | jq -r '.headRefName // empty' 2>/dev/null)"
+  base_ref="$(printf '%s' "$pr_refs" | jq -r '.baseRefName // empty' 2>/dev/null)"
   clone_url="$(gh repo view "$merge_repo" --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
-  [ -n "$head_ref" ] && [ -n "$clone_url" ] \
-    || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"
+  [ -n "$head_ref" ] && [ -n "$base_ref" ] && [ -n "$clone_url" ] \
+    || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, its base branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"
   # --head-sha pins the union to Stage 0's commit: without it this clones "the
   # branch", which may have moved since.
-  "$MERGE_CHECK_BIN" --clone-from "$clone_url" --head-ref "$head_ref" \
+  "$MERGE_CHECK_BIN" --clone-from "$clone_url" --head-ref "$head_ref" --base-ref "$base_ref" \
     ${VERIFIED_HEAD:+--head-sha "$VERIFIED_HEAD"} > "$MERGED" 2>"$TMP/merged.err"
   merged_rc=$?
 fi
@@ -1002,15 +1031,42 @@ case "$VERDICT" in
     # a stage that returns early is one edit away from not returning early.
     [ "$(jq -r '.result // "unreadable"' "$MERGED" 2>/dev/null)" = pass ] \
       || substrate "env: merge-check-unrunnable — no passing merged-tree result, so nothing here may approve"
-    if merge_mode; then
-      route_merge "merged by forge-verifier: $SUMMARY" "$TMP/verdict.json" \
-        || substrate "other: handoff-integrity — the squash merge, its read-back, or the completion did not take"
-      envelope merged "$SUMMARY" "$TMP/verdict.json" "" 0
-    fi
+    # STASHED BEFORE ANY MERGE, not after it. In merge mode the completion is what
+    # carries the verdict; if the merge lands and the completion does not, the
+    # merge-watcher finishes the card and this comment is the only copy of the
+    # verdict it can attach.
     stash_envelope "$TMP/verdict.json"
+    if merge_mode; then
+      route_merge "merged by forge-verifier: $SUMMARY" "$TMP/verdict.json"; merge_rc=$?
+      [ "$merge_rc" = 0 ] && envelope merged "$SUMMARY" "$TMP/verdict.json" "" 0
+      [ "$merge_rc" = 4 ] \
+        || substrate "other: handoff-integrity — the squash merge did not take, so nothing was merged"
+      # MERGED, BUT NOT COMPLETED. `gh pr merge` accepted it, so the work is
+      # probably on $base_ref already; the read-back or the completion is what
+      # failed. Exiting 3 here used to make the model block this card
+      # `other: handoff-integrity`, which the merge-watcher does not watch — the PR
+      # was on the base branch and the card and its children were held forever.
+      # So the card is held as a `merge-pending:` hold, which the watcher DOES
+      # watch: it asks GitHub, and completes the card (with the verdict stashed
+      # above) once the PR reads MERGED.
+      route_recommend "$(decision_message merge-pending \
+        "${chunk_title:-this chunk} was squash-merged by the verifier, but this card could not be completed" \
+        "\`gh pr merge\` accepted $PR_URL at ${VERIFIED_HEAD:-an unread head}, and then the read-back from GitHub or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
+        "confirm $PR_URL is merged; if it is not, merge it or send it back" \
+        "until the card completes, its children stay held" \
+        "nothing, if the PR shows MERGED — the merge-watcher completes this card on its next sweep — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
+
+$EVIDENCE")"; recommend_rc=$?
+      [ "$recommend_rc" = 2 ] && substrate "other: handoff-integrity — the post-merge hold was routed to triage, so this merged PR's card is stranded"
+      # If even the hold did not land, the reason the model blocks with verbatim
+      # still starts `merge-pending:` and names the PR, so the watcher finds it.
+      [ "$recommend_rc" = 0 ] \
+        || substrate "merge-pending: $PR_URL was squash-merged by the verifier, but neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged"
+      envelope merged-held "$SUMMARY — merged, and held for the merge-watcher because the completion did not take" "$TMP/verdict.json" "" 0
+    fi
     route_recommend "$(decision_message merge-pending \
       "${chunk_title:-this chunk} is verified and NOT merged — the verifier may only recommend" \
-      "the deterministic gate is clear, \`make check\` is green on this branch merged with main, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
+      "the deterministic gate is clear, \`make check\` is green on this branch merged with $base_ref, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
       "merge the PR, or send it back" \
       "nothing is merged and this card's children stay held until it is" \
       "merge $PR_URL on GitHub — the merge-watcher completes this card — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`

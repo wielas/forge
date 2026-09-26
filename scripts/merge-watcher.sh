@@ -36,6 +36,15 @@
 #     work was abandoned; `done` would tell the board it landed.
 #   * OPEN -> nothing, silently.
 #
+# A FINDING IS REPORTED ONCE, NOT EVERY SWEEP. A closed PR, or a hold with no PR
+# url on it, is a standing condition: the card stays blocked with the same
+# reason, so printing it on every sweep is a notification every ten minutes,
+# forever. Each is printed once per hold and then recorded as a
+# `FORGE-WATCHER-NOTIFIED` comment on the card (the one write it makes besides
+# `complete`); a NEW hold on the same card is a new finding and is reported
+# again. A GitHub read that fails is not a finding about the card at all —
+# usually a transient outage — so it goes to stderr, like every diagnostic.
+#
 # `complete` is accepted from `blocked` — measured on the installed kernel
 # (`kanban_db.py:2723`, `WHERE status IN ('running','ready','blocked','review')`),
 # and executed by `verifier/merge-watcher-completes-a-merged-hold`.
@@ -74,11 +83,24 @@ rc=0
 for BOARD in $BOARDS; do
 sweep_board() {
 kanban() { hermes kanban --board "$BOARD" "$@"; }
+# $1=card  $2=what this finding is about  $3=message. Reads $shown and $hold.
+notify_once() {
+  local marker="FORGE-WATCHER-NOTIFIED $2 (hold $hold)"
+  if printf '%s' "$shown" | jq -e --arg m "$marker" \
+       'any(.comments[]?; .body == $m or (.body | startswith($m + "\n")))' >/dev/null 2>&1; then
+    echo "$1: $3 (already reported for this hold)" >&2; return 0
+  fi
+  echo "$1: $3"
+  [ "$DRY" = 1 ] && return 0
+  kanban comment "$1" "$marker
+$3" >/dev/null 2>&1 \
+    || echo "merge-watcher: could not record that $1 was reported, so it will be reported again" >&2
+}
 held="$(kanban list --json 2>/dev/null | jq -r '.[]? | select(.status == "blocked") | .id')" \
   || { echo "merge-watcher: cannot read board $BOARD" >&2; return 3; }
 
 for card in $held; do
-  meta=""
+  meta=""; hold=""
   shown="$(kanban show "$card" --json 2>/dev/null)" || continue
   # The LAST blocked event decides, not any of them: a card bounced for a
   # substrate fault after a hold is no longer a hold.
@@ -91,6 +113,10 @@ for card in $held; do
   # merged PR and blocked card. Watching only the first stranded that case: the
   # PR was merged, the card stayed blocked, and its children stayed held.
   case "$reason" in merge-pending:*|bounce-budget:*) ;; *) continue;; esac
+  # Which hold this is: a card re-held after a bounce is a new finding. Events
+  # carry no id and second-resolution timestamps, so the count is the key.
+  hold="$(printf '%s' "$shown" | jq -r '
+    [ .events[]? | select(.kind == "blocked" or .kind == "block_loop_detected") ] | length' 2>/dev/null)"
 
   # The PR is read from the lane's own handoff envelope — the one place it is
   # recorded as data rather than as prose in a message.
@@ -98,10 +124,10 @@ for card in $held; do
     [ .runs[]? | select(.outcome == "review_requested")
       | (.metadata.pr // empty) ] | last // ""' 2>/dev/null)"
   [ -n "$pr" ] || pr="$(printf '%s' "$reason" | grep -oE 'https://[^ ]*/pull/[0-9]+' | head -1)"
-  [ -n "$pr" ] || { echo "$card: held for merge but no PR url on the card — nothing to watch"; rc=1; continue; }
+  [ -n "$pr" ] || { notify_once "$card" "no-pr" "held for merge but no PR url on the card — nothing to watch"; rc=1; continue; }
 
   state="$(gh pr view "$pr" --json state,mergedAt,mergeCommit < /dev/null 2>/dev/null)" || {
-    echo "$card: cannot read $pr from GitHub"; rc=1; continue; }
+    echo "merge-watcher: $card: cannot read $pr from GitHub" >&2; rc=1; continue; }
   case "$(printf '%s' "$state" | jq -r '.state')" in
     MERGED)
       sha="$(printf '%s' "$state" | jq -r '.mergeCommit.oid // "unknown"')"
@@ -128,7 +154,7 @@ for card in $held; do
         echo "$card: $pr is merged but the card did not complete — it needs a look"; rc=1
       fi;;
     CLOSED)
-      echo "$card: $pr was CLOSED without merging; the card stays blocked (completing it would tell the board this landed)";;
+      notify_once "$card" "closed $pr" "$pr was CLOSED without merging; the card stays blocked (completing it would tell the board this landed)";;
     *) ;;   # still open: silence is the point of --no-agent
   esac
 done
