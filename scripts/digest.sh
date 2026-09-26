@@ -46,7 +46,15 @@
 # =============================================================================
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)" \
+# Resolve through symlinks FIRST: cron runs this as a symlink under
+# ~/.hermes/scripts/, and the siblings live beside the TARGET. A loop, not
+# `readlink -f`, which the bash 3.2 / older macOS userland may not have.
+_self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in /*) _self="$_link";; *) _self="$(dirname "$_self")/$_link";; esac
+done
+HERE="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" \
   || { echo "digest: script directory cannot be resolved" >&2; exit 2; }
 # shellcheck source=decision-message.sh
 . "$HERE/decision-message.sh" || { echo "digest: cannot source decision-message.sh" >&2; exit 2; }

@@ -78,7 +78,15 @@ for need in hermes gh jq; do
   command -v "$need" >/dev/null || { echo "merge-watcher: $need is not on PATH" >&2; exit 3; }
 done
 # shellcheck source=decision-message.sh
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+# Resolve through symlinks FIRST: cron runs this as a symlink under
+# ~/.hermes/scripts/, and the siblings live beside the TARGET. A loop, not
+# `readlink -f`, which the bash 3.2 / older macOS userland may not have.
+_self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in /*) _self="$_link";; *) _self="$(dirname "$_self")/$_link";; esac
+done
+HERE="$(cd "$(dirname "$_self")" && pwd -P)"
 . "$HERE/decision-message.sh" 2>/dev/null \
   && declare -F decision_message >/dev/null \
   || { echo "merge-watcher: decision-message.sh is missing beside this script" >&2; exit 3; }

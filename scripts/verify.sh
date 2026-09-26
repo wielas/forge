@@ -2689,7 +2689,7 @@ verifier/bounce-budget-becomes-an-exception  FL6: two rounds, then a completable
 verifier/a-hold-is-never-triage  recommend, disagree, repair, recommend again: the second hold rotates kind, stays blocked and still completes
 verifier/hold-kind-mutation-is-caught  a pinned block kind reaches triage on the real kernel, cannot be completed, and is reported as stranded
 verifier/disagree-path-parks-before-it-unblocks  bounce.sh's own events show the sentinel park before the unblock; a dispatch pass in the window spawns nothing (smoke, with its control stated); the implementer returns
-verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit and says so on stderr only (GW1), ignores other blocks
+verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit and says so on stderr only (GW1), ignores other blocks; metrics.sh reads that real-kernel board as one operator merge with zero operator touches (GW6)
 verifier/merged-tree-restores-the-tree-before-merging  a setup that rewrites a tracked file main also changed is still a green union; a merge git refuses with no conflicted path is unrunnable, never a conflict
 verifier/merged-tree-uses-the-prs-base  merge-check is given the PR's own baseRefName and the hold names it; an unreadable base is substrate, never an assumed main
 verifier/merge-mode-survives-a-failed-completion  merged but the completion or read-back failed: the card is held merge-pending with the verdict stashed, and the merge-watcher completes it
@@ -2843,6 +2843,7 @@ digest/is-read-only                 the boards read are byte-identical, sidecars
 digest/every-block-class-has-a-decision  every class in the contract's blocked_reason_pattern has a decision entry, and every entry is a registered class (GW1)
 digest/a-missing-decision-is-caught  a formatter with one class entry deleted reddens and names the class
 digest/one-formatter                the verifier, the merge-watcher and the digest all source scripts/decision-message.sh, and nothing else defines decision_message
+digest/cron-symlinks-reach-their-siblings  the digest and the merge-watcher, run through a symlink in another directory as `hermes cron --script` does, still find the scripts beside their target
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 docs/the-open-epic-is-discoverable  CLAUDE.md and state.md both route a cold session to the epic and its § How we run this epic (Q4)
 manifest/makefile-syntax-list-is-complete  every tracked *.sh outside templates/ is named in the Makefile's bash -n list
@@ -5043,9 +5044,11 @@ live_schema_report() { # $1=boards root $2=snapshot root; TSV board/status/detai
 #
 # The tuple is the fixture's own arithmetic, written out in
 # scripts/fixtures/metrics-board-fl3.sql beside the rows that produce it:
-# three chunks merged, one by the verifier and two by the operator; operator
-# actions are one comment, one unblock and those two merges; PR open -> merge is
-# 2 h, 5 h and 1 h; six cards over three chunks; one chunk implemented by hand.
+# four chunks, three merged — one by the verifier and two by the operator —
+# and one completed by hand with no merge recorded; operator actions are one
+# comment, one unblock and those two merges; PR open -> merge is 2 h, 5 h and
+# 1 h; eight cards over four chunks (a judge card run under claude-interactive
+# is a card, not a chunk); two chunks implemented by hand.
 # The headline pair is checked FIRST and alone, so a board whose watcher
 # completions read as verifier merges is named for what it is: the one number
 # the flip criterion turns on (ADR-0019 D19.4), reported as a success.
@@ -5068,7 +5071,7 @@ north_star_diagnostic() { # $1=metrics JSON file; 0 = the numbers are the fixtur
       [.pr_open_to_merge_hours.n, .pr_open_to_merge_hours.median, .pr_open_to_merge_hours.max],
       [.cards_per_chunk.cards, .cards_per_chunk.chunks, .cards_per_chunk.rate],
       [.human_implemented.count, .human_implemented.of]]' "$json" 2>/dev/null)"
-  want='[3,[3,1,2,0],[4,2,2,"1.33"],[3,"2.00","5.00"],[6,3,"2.00"],[1,3]]'
+  want='[4,[3,1,2,1],[4,2,2,"1.33"],[3,"2.00","5.00"],[8,4,"2.00"],[2,4]]'
   [ "$got" = "$want" ] || {
     printf 'north-star numbers are %s, want %s\n' "${got:-nothing}" "$want"
     return 1; }
@@ -5255,8 +5258,8 @@ METRICS_STATE_SQL
     printf '%s\n' "$first_section" | grep -q 'merged without the operator  0.33 (1/3)' || ns_detail="$ns_detail merged-without-operator-line"
     printf '%s\n' "$first_section" | grep -q 'operator actions per merged chunk  1.33 (4 = 2 board touches + 2 merges, over 3 merged)' || ns_detail="$ns_detail operator-actions-line"
     printf '%s\n' "$first_section" | grep -q 'PR open -> merge  median 2.00 h · max 5.00 h over 3' || ns_detail="$ns_detail latency-line"
-    printf '%s\n' "$first_section" | grep -q 'cards per chunk  2.00 (6 cards / 3 chunks)' || ns_detail="$ns_detail cards-per-chunk-line"
-    printf '%s\n' "$first_section" | grep -q 'human-implemented chunks  1 of 3' || ns_detail="$ns_detail human-implemented-line"
+    printf '%s\n' "$first_section" | grep -q 'cards per chunk  2.00 (8 cards / 4 chunks)' || ns_detail="$ns_detail cards-per-chunk-line"
+    printf '%s\n' "$first_section" | grep -q 'human-implemented chunks  2 of 4' || ns_detail="$ns_detail human-implemented-line"
     [ -z "$ns_detail" ] \
       && ok "text-leads-with-the-north-star" \
       || bad "text-leads-with-the-north-star" "the text report must open with the north-star block, agreeing with the JSON —$ns_detail"
@@ -6310,7 +6313,9 @@ run_metadata_group() {
   # The two classes FL4 added are passed to `decision_message` as a bare first
   # argument, so none of the rules above can see them: a class the registry does
   # not carry would reach a card unswept. This rule is their producer form.
-  metadata_sweep decision 's/.*decision_message \([a-z-]*\).*/\1:/p'       scripts/prejudge-review.sh
+  # A class starts with a letter: `declare -F decision_message >/dev/null` (the
+  # check that the shared formatter was sourced, GW1) must not sweep as "".
+  metadata_sweep decision 's/.*decision_message \([a-z][a-z-]*\).*/\1:/p' scripts/prejudge-review.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-setup.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-blast-radius.sh
   metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-verifier.SOUL.md
@@ -8674,6 +8679,39 @@ VWRAP
     [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released($(_vst "$vC"))"
     _v show "$vP" --json | jq -e '.task.result | test("merged:") and test("abcdef123456")' >/dev/null 2>&1 \
       || vdetail="$vdetail merge-commit-not-recorded"
+    # THE NORTH STAR, READ OFF THE REAL KERNEL (epic GW6). The metrics fixture
+    # for this flow (scripts/fixtures/metrics-board-fl3.sql) was written from
+    # reading Hermes's source, and P4 was exactly a source-reading mismatch. So
+    # the board this lab just drove — a real handoff, a real verifier hold, a
+    # real watcher completion — is read by the real metrics.sh, and must say:
+    # one chunk, merged by the OPERATOR, one PR-open->merge interval, its
+    # envelope counted flat, and ZERO operator touches, because nobody touched
+    # it: the watcher's FORGE-WATCHER-NOTIFIED comment is not one, and
+    # completing from `blocked` must not have written an `unblocked` event.
+    #
+    # ONE THING IS RESTORED, ON A COPY. The kernel authors a comment as the
+    # profile the writer runs as (hermes_cli/profiles.py current_profile_name),
+    # and the dispatcher pins HERMES_PROFILE_NAME on every worker it spawns. The
+    # lab runs the verifier OUTSIDE a dispatcher, so its `BLOCKED: …` and
+    # `FORGE-VERDICT-V1` comments carry the host's name instead of
+    # `forge-verifier` — which the metrics would rightly count as a human. The
+    # copy gets the author a spawned verifier would have written; the watcher's
+    # comment keeps the lab's, because cron really does run it as the host.
+    local nsk="$vbin/ns-kanban"
+    rm -rf "$nsk"; mkdir -p "$nsk/boards/vlab"
+    cp "$(HERMES_HOME="$vhome" "$REPO_ROOT/scripts/board-snapshot.sh" "$vhome/kanban/boards/vlab/kanban.db" "$vbin/ns-snap" 2>/dev/null)" \
+       "$nsk/boards/vlab/kanban.db" 2>/dev/null
+    sqlite3 "$nsk/boards/vlab/kanban.db" \
+      "UPDATE task_comments SET author='forge-verifier'
+        WHERE body LIKE 'BLOCKED: merge-pending:%' OR body LIKE 'FORGE-VERDICT-V1%';" 2>/dev/null
+    HERMES_HOME="$vhome" HERMES_KANBAN_HOME="$nsk" "$REPO_ROOT/scripts/metrics.sh" vlab --json > "$vbin/ns.json" 2>"$vbin/ns.err" \
+      || vdetail="$vdetail metrics-could-not-read-the-lab-board($(head -1 "$vbin/ns.err"))"
+    jq -e '.north_star.chunks == 1
+           and .north_star.merged.by_operator == 1 and .north_star.merged.by_verifier == 0
+           and .north_star.pr_open_to_merge_hours.n == 1
+           and .envelope.flat == 1 and .envelope.neither == 0
+           and .north_star.operator_actions.touches == 0' "$vbin/ns.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail north-star-misreads-the-real-kernel($(jq -c '[.north_star.chunks, .north_star.merged, .north_star.pr_open_to_merge_hours.n, .envelope, .operator.comments, .operator.unblocks]' "$vbin/ns.json" 2>/dev/null | head -c 300))"
     # THE VERDICT HAS TO END UP ON A RUN. `block` takes no --metadata, so the
     # verifier stashed the envelope as a comment and this completion is the only
     # write that can store it. Without this assertion the whole stash/attach path
@@ -11716,6 +11754,35 @@ run_digest_group() {
   [ -z "$detail" ] \
     && ok "one-formatter ($found producers source scripts/decision-message.sh)" \
     || bad "one-formatter" "every message to the operator goes through one formatter —$detail"
+
+  # CRON RUNS A SYMLINK. `hermes cron --script` takes a path under
+  # ~/.hermes/scripts/, and the operator's step for both cron jobs is a symlink
+  # there to ~/.forge/repo/scripts/<name>. A script that finds its siblings by
+  # `dirname "${BASH_SOURCE[0]}"` then looks in ~/.hermes/scripts/ — and since
+  # GW1 both of these source decision-message.sh, so the first deploy would have
+  # silently killed the live watcher. Every other case runs them by their real
+  # path, which is exactly why none of them could see it.
+  local cron="$root/cron-scripts" cstub="$root/cron-stub"
+  mkdir -p "$cron" "$cstub"
+  ln -sf "$REPO_ROOT/scripts/digest.sh" "$cron/forge-digest.sh"
+  ln -sf "$REPO_ROOT/scripts/merge-watcher.sh" "$cron/forge-merge-watcher.sh"
+  # hermes lists one board with no held card on it; gh is never reached.
+  cat > "$cstub/hermes" <<'CRON_STUB'
+#!/usr/bin/env bash
+case "$*" in *"boards list"*) echo '[{"slug":"cron-lab"}]';; *) echo '[]';; esac
+CRON_STUB
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$cstub/gh"
+  chmod +x "$cstub/hermes" "$cstub/gh"
+  detail=""
+  out="$(cd "$root" && TZ=UTC HERMES_HOME="$root/hermes" bash "$cron/forge-digest.sh" --day 2026-07-28 2>"$root/cron.err")"; rc=$?
+  { [ "$rc" = 0 ] && [ "$out" = "$(cat scripts/fixtures/digest-expected.txt)" ]; } \
+    || detail="$detail digest-through-a-symlink(rc=$rc,$(head -1 "$root/cron.err"))"
+  out="$(cd "$root" && PATH="$cstub:$PATH" bash "$cron/forge-merge-watcher.sh" 2>"$root/cron.err")"; rc=$?
+  { [ "$rc" = 0 ] && [ -z "$out" ]; } \
+    || detail="$detail merge-watcher-through-a-symlink(rc=$rc,$(head -1 "$root/cron.err"))"
+  [ -z "$detail" ] \
+    && ok "cron-symlinks-reach-their-siblings" \
+    || bad "cron-symlinks-reach-their-siblings" "a cron job runs the script through a symlink, so it must find its siblings beside the symlink's TARGET —$detail"
 }
 wants digest    && run_digest_group
 

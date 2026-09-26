@@ -35,8 +35,9 @@
 --
 --   * t_cd is in review and t_ce is held for a merge: neither is done, so
 --     neither is a merged chunk — but both are cards, and so is t_tr, a
---     follow-up in triage. Cards per chunk counts all six over the three
---     chunks created and finished here.
+--     follow-up in triage. t_ch is a fourth chunk, human-tier and pre-FL3 in
+--     shape, which records no merge; t_jx is a judge card that must not be
+--     one. Cards per chunk is eight over four.
 --
 --   * One comment is the merge-watcher's FORGE-WATCHER-NOTIFIED marker, written
 --     from cron as the host's default profile. It is not an operator action, and
@@ -94,7 +95,17 @@ INSERT INTO tasks (id, title, assignee, status, result, created_at, completed_at
    'merged: https://example/pull/3 as 111111111111 (completed by merge-watcher)', 1785200000, 1785208800),
   ('t_cd', 'CHUNK-4: in review', 'forge-verifier', 'review', NULL, 1785200000, NULL),
   ('t_ce', 'CHUNK-5: held for the operator''s merge', 'forge-verifier', 'blocked', NULL, 1785200000, NULL),
-  ('t_tr', 'follow-up: a verifier nit', NULL, 'triage', NULL, 1785200000, NULL);
+  ('t_tr', 'follow-up: a verifier nit', NULL, 'triage', NULL, 1785200000, NULL),
+  -- The pre-FL3 human-tier shape, measured on redglass-run-1: parked on the
+  -- `forge-operator-handoff` sentinel, completed by hand, assignee cleared. No
+  -- lane run, no reviewer, no review_requested — only that run's profile says
+  -- it is a chunk. It records no merge, so it is in `unrecorded` and in no rate.
+  ('t_ch', 'CHUNK-6: an operator chunk, completed by hand', NULL, 'done',
+   'done by hand', 1785200000, 1785215000),
+  -- And the false positive that arm produced on redglass-run-1 before it
+  -- required the title shape: a child-era tier-2 judge card, run under the same
+  -- `claude-interactive` profile. A card, not a chunk.
+  ('t_jx', 'judge: t_ch', NULL, 'done', 'approve', 1785200000, 1785216000);
 
 INSERT INTO task_links (parent_id, child_id) VALUES ('t_ca', 't_cd');
 
@@ -127,7 +138,10 @@ INSERT INTO task_runs (task_id, profile, status, started_at, ended_at, outcome, 
   ('t_cc','forge-verifier','blocked',1785205300,1785205400,'blocked',NULL),
   ('t_cc','forge-verifier','done',1785208800,1785208800,'completed',
    '{"schema":"forge.judge.v1","verdict":"approve","scores":{"spec_fidelity":3,"scenario_integrity":2,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}}'),
-  ('t_ce','forge-verifier','blocked',1785212000,1785212100,'blocked',NULL);
+  ('t_ce','forge-verifier','blocked',1785212000,1785212100,'blocked',NULL),
+  ('t_ch','forge-operator-handoff','blocked',1785200050,1785200060,'blocked',NULL),
+  ('t_ch',NULL,'done',1785215000,1785215000,'completed','{"freeform":"operator result"}'),
+  ('t_jx','claude-interactive','done',1785215500,1785216000,'completed','{"freeform":"judged by hand"}');
 
 -- PR open is the FIRST review_requested event (the lane hands off right after
 -- `gh pr create`, and a bounce re-enters the same PR); merged is the completed

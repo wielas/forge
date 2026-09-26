@@ -34,9 +34,11 @@ Reply: `hermes kanban --board digest-fixture show t_d3`
 Spend: driver actual n/a · estimated n/a — 0/1 runs joined. Codex quota is not metered here.
 
 == metrics-fl3 ==
-Landed (3)
+Landed (5)
 - CHUNK-1: merged by the operator — https://example/pull/1 (t_ca)
 - CHUNK-3: implemented by hand — https://example/pull/3 (t_cc)
+- CHUNK-6: an operator chunk, completed by hand — no PR recorded (t_ch)
+- judge: t_ch — no PR recorded (t_jx)
 - CHUNK-2: bounced once, then merged by the verifier — https://example/pull/2 (t_cb)
 In flight: 1 in review
 - in review: CHUNK-4: in review (t_cd)

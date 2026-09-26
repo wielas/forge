@@ -374,7 +374,13 @@ from a phone.
 digest. It runs as `hermes cron … --no-agent --script`, and its stdout is the
 message, as with the merge-watcher. A relaying model can still restate a
 number, and "numbers come from scripts, never from a model" leaves it nothing
-else to do (P11).*
+else to do (P11).* *Read-only against the live host, 2026-09-26: the first
+message would be 12 KB (275 lines), because six dormant boards still hold 29
+cards waiting on the operator. Redglass alone has 15, 13 of them in triage.
+Hermes's Telegram sender chunks at 4096 UTF-16 units
+(`tools/send_message_senders.py`). That was read in the source, not executed,
+so a long digest arrives as several messages rather than failing. Archiving
+finished boards before the cron is wired is the operator's call.*
 
 **GW3. Replies act through allowlisted scripts** — accept/redirect/park a
 milestone, merge or bounce in recommend-only mode, switch the implementer,

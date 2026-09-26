@@ -3,12 +3,12 @@
   "since": null,
   "until": null,
   "north_star": {
-    "chunks": 3,
+    "chunks": 4,
     "merged": {
       "total": 3,
       "by_verifier": 1,
       "by_operator": 2,
-      "unrecorded": 0
+      "unrecorded": 1
     },
     "merged_without_operator": {
       "count": 1,
@@ -29,20 +29,20 @@
       "method": "first review_requested event to the completed event, on merged chunk cards — a board proxy: the merge-watcher completes an operator merge on its next sweep"
     },
     "cards_per_chunk": {
-      "cards": 6,
-      "chunks": 3,
+      "cards": 8,
+      "chunks": 4,
       "rate": "2.00"
     },
     "human_implemented": {
-      "count": 1,
-      "of": 3
+      "count": 2,
+      "of": 4
     },
     "not_yet_measurable": [
       "defects the milestone probe catches before the operator does — no probe exists until MS2",
       "architect estimate vs actual cost per milestone — no estimate is recorded until PL2"
     ]
   },
-  "chunk_cards": 3,
+  "chunk_cards": 4,
   "verdicts": {
     "total": 3,
     "unattributed": 0,
@@ -80,12 +80,12 @@
   "envelope": {
     "flat": 4,
     "nested": 0,
-    "neither": 0,
-    "total": 4
+    "neither": 1,
+    "total": 5
   },
   "implementer_model": {
-    "runs": 4,
-    "unrecorded": 1,
+    "runs": 5,
+    "unrecorded": 2,
     "from_rollout": 3,
     "requested_only": 0,
     "unverified": 0,

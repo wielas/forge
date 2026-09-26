@@ -373,9 +373,17 @@ WITH
 -- implementer handed a card to same-card review (FL3), so a done card carrying
 -- one IS a chunk — including a human-tier chunk handed off from an interactive
 -- session, which has no lane run and parents no reviewer card, and was invisible
--- to both arms above. And a done card assigned `forge-operator-handoff` is a
--- human-tier chunk by construction: board-bootstrap.sh gives that assignee to
--- interactive chunks and to nothing else, and before FL3 nothing re-assigned it.
+-- to both arms above. And a done card that carries either name a human-tier
+-- chunk is given — `forge-operator-handoff`, which board-bootstrap.sh assigns to
+-- interactive chunks, or `claude-interactive`, the roadmap's lane name for them
+-- — on its assignee OR on any run is a human-tier chunk. Both places, because
+-- measured on redglass-run-1 (2026-09-26): CHUNK-4 and CHUNK-13 kept the name
+-- only on a `forge-operator-handoff` run (completion cleared the assignee), and
+-- CHUNK-15..19 only on a `claude-interactive` assignee. Without this arm the
+-- board read 12 chunks, 0 of them human, where the epic counts 20 and 8.
+-- The arm also requires the bootstrap's title shape, `CHUNK-<id>: …` (the
+-- heading of the chunk file): the tier-2 judge cards of that era ran under
+-- `claude-interactive` too, and without it the same board read 28 chunks.
 cc(id) AS (
   SELECT DISTINCT t.id FROM tasks t
     JOIN task_links l ON l.parent_id = t.id
@@ -391,8 +399,14 @@ cc(id) AS (
     JOIN task_runs r ON r.task_id = t.id
    WHERE t.status = 'done' AND r.outcome = 'review_requested'
   UNION
-  SELECT t.id FROM tasks t
-   WHERE t.status = 'done' AND t.assignee = 'forge-operator-handoff'
+  SELECT DISTINCT t.id FROM tasks t
+    LEFT JOIN task_runs r ON r.task_id = t.id
+   WHERE t.status = 'done'
+     AND (t.assignee IN ('forge-operator-handoff','claude-interactive')
+          OR r.profile IN ('forge-operator-handoff','claude-interactive'))
+     AND t.title GLOB 'CHUNK-[A-Za-z0-9]*'
+     AND instr(t.title, ': ') > 7
+     AND substr(t.title, 7, instr(t.title, ': ') - 7) NOT GLOB '*[^A-Za-z0-9._-]*'
 ),
 -- THE IMPLEMENTER'S HANDOFF RUNS — the ones that carry `forge.chunk.v1` (epic
 -- P4). Before FL3 the lane COMPLETED its card, so the envelope rode a
