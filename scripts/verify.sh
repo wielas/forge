@@ -1572,6 +1572,14 @@ run_config_group() {
       else
         bad "soul-in-sync/$p" "live SOUL differs from git — run ./hermes/profiles-bootstrap.sh"
       fi
+    else
+      # A live profile this repo no longer ships. FL4 renamed forge-prejudge, and
+      # a rename leaves the old profile ON THE HOST, still spawnable, still
+      # holding whatever SOUL it was last given. Saying so is the point: the
+      # retirement is the operator's, after a board snapshot shows nothing left in
+      # review for it, and until then this case would otherwise vanish.
+      skip "soul-in-sync/$p" \
+        "this host runs profile '$p' and this repo no longer ships hermes/profiles/$p.SOUL.md — it keeps whatever identity it was last given; retire it once no card is in review for it"
     fi
 
     # The live half of the driver pin. Same failure shape as soul-in-sync: the
@@ -1597,6 +1605,31 @@ run_config_group() {
             "live model.default is '$live', $PIN_FILE pins '$want' — run ./hermes/profiles-bootstrap.sh"
       fi
     fi
+  done
+
+  # THE OTHER DIRECTION, AND WHY IT IS HERE. The loop above walks the LIVE
+  # profiles, so `soul-in-sync/<p>` is emitted only for a profile that exists on
+  # this host. When a slice SHIPS a new profile — FL4 renamed forge-prejudge to
+  # forge-verifier — the repo gains a SOUL the host does not have yet, and the
+  # per-profile arm simply does not run: no case, nothing red, and the count in
+  # the closing comparison falls by one instead of saying anything. That is the
+  # blind-not-red shape CLAUDE.md warns about, observed on exactly this rename.
+  #
+  # It is a SKIP with the consequence stated, not a failure: between the merge
+  # and `./hermes/profiles-bootstrap.sh` this is the expected state, and the
+  # operator's own `make preflight` is what refuses it (it asks
+  # `hermes kanban assignees`, where a profile nothing dispatches is the hazard).
+  # A skip that names the consequence cannot be mistaken for a pass, and it keeps
+  # the case VISIBLE in the group either way.
+  local shipped shipped_name
+  for shipped in hermes/profiles/*.SOUL.md; do
+    [ -f "$shipped" ] || continue
+    shipped_name="$(basename "$shipped" .SOUL.md)"
+    case " $(printf '%s' "$profs" | tr '\n' ' ') " in
+      *" $shipped_name "*) continue;;   # already judged by the loop above
+    esac
+    skip "soul-in-sync/$shipped_name" \
+      "this repo ships hermes/profiles/$shipped_name.SOUL.md and this host has no such profile — nothing loads that identity until ./hermes/profiles-bootstrap.sh runs, and a card handed to it would sit in review with a skipped_nonspawnable event"
   done
 
   # F13: the unattended lane must not have the interactive ceremonies loaded.
@@ -8040,6 +8073,19 @@ with kbc.connect_closing() as c:
         ([ .comments[]? | .body ] | join("\n") | test("scenario 3 asserts nothing"))
         and any(.events[]; .kind == "review_reopened")' >/dev/null 2>&1 \
       || vdetail="$vdetail reason-not-recorded-on-the-card"
+    # THE SENTINEL PARK IS ASSERTED IN THE SCRIPT'S OWN EVENT STREAM, not only in
+    # the hand-driven rehearsal above. Deleting the park from bounce.sh left every
+    # other arm of this case green when it was mutation-tested — the rehearsal
+    # proves the KERNEL behaves, and this proves the SCRIPT uses it. The order is
+    # the property: `assigned` to the sentinel must come BEFORE `unblocked`,
+    # because a park after the unblock protects nothing.
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "assigned" or .kind == "unblocked" or .kind == "review_reopened") ]
+        | map(select(.kind != "assigned" or .payload.assignee == "forge-operator-handoff"))
+        | map(.kind) | index("assigned") as $a
+        | index("unblocked") as $u
+        | ($a != null) and ($u != null) and ($a < $u)' >/dev/null 2>&1 \
+      || vdetail="$vdetail bounce-sh-did-not-park-on-the-sentinel-before-unblocking"
     # A card nobody is holding is not bouncable, and saying so beats writing.
     vout="$(env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vC" \
              "operator: wrong card" --board vlab 2>&1)"; vrc=$?
@@ -8071,6 +8117,20 @@ with kbc.connect_closing() as c:
     [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released($(_vst "$vC"))"
     _v show "$vP" --json | jq -e '.task.result | test("merged:") and test("abcdef123456")' >/dev/null 2>&1 \
       || vdetail="$vdetail merge-commit-not-recorded"
+    # THE VERDICT HAS TO END UP ON A RUN. `block` takes no --metadata, so the
+    # verifier stashed the envelope as a comment and this completion is the only
+    # write that can store it. Without this assertion the whole stash/attach path
+    # could be deleted and every other arm here would still pass, while
+    # `make metrics` would count zero reviews — which is the F3/P4 shape.
+    _v show "$vP" --json | jq -e '
+        [ .runs[] | select(.outcome == "completed") ] | last
+        | (.profile == "forge-verifier")
+          and (.metadata.schema == "forge.judge.v1")
+          and (.metadata.scores.spec_fidelity == 3)' >/dev/null 2>&1 \
+      || vdetail="$vdetail verdict-envelope-did-not-reach-a-run"
+    _v show "$vP" --json | jq -e '
+        [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | length == 1' >/dev/null 2>&1 \
+      || vdetail="$vdetail verdict-was-not-stashed-on-the-card"
     # A card blocked for anything else is none of its business. It must be a
     # `ready` card: `block_task` only ever fires FROM running/ready, so blocking
     # the held card's `todo` child would silently do nothing and this control
