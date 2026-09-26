@@ -165,26 +165,55 @@ disabled_skills_for() {  # $1=profile
 }
 
 # Read back through the CLI, not the file, so we verify what the RUNTIME sees.
+#
+# STDOUT IS THE VALUE; STDERR IS COMMENTARY. This used to capture `2>&1` for
+# every key, which made the CLI's diagnostics part of the value being compared.
+# Hermes 0.21.5 prints
+#
+#   ⚠ 'skills.disabled' is not a recognized config key — Hermes may not read it
+#
+# on stderr from `hermes_cli/config.py`'s key registry, and the key IS still
+# read at runtime (`agent/skill_utils.py:308`, `tools/skills_tool.py:168`;
+# `config/lane-skill-scope` passes live against it). So all four profiles failed
+# readback with got and want identical apart from that line, and every bootstrap
+# ended in the FATAL below on a run that had written every SOUL and config
+# correctly — a FATAL the operator has to learn to ignore, which is the state in
+# which a real one stops being read (epic P6, operator run 2026-09-26).
+#
+# The fail-closed property is unchanged and does not rest on stderr: a wrong
+# value is wrong on stdout, and a CLI that dies without printing one leaves
+# `got` empty, which matches no `want` here. Stderr is surfaced rather than
+# discarded — a diagnostic nobody sees is the other half of the same failure —
+# but it is never compared.
+cfg_get() {  # $1=profile $2=key -> the value on stdout; stderr surfaced, never compared
+  local err out
+  err="$(mktemp "${TMPDIR:-/tmp}/forge-cfgget.XXXXXX")"
+  out="$(hermes -p "$1" config get "$2" 2>"$err")" || true
+  [ -s "$err" ] && sed "s|^|  note ($1 $2): |" "$err" >&2
+  rm -f "$err"
+  printf '%s' "$out"
+}
+
 verify_config() {  # $1=name $2=model $3=comma-separated toolsets
   local name="$1" model="$2" tools="$3" got want rc=0
-  got=$(hermes -p "$name" config get model.default 2>&1) || true
+  got=$(cfg_get "$name" model.default)
   [ "$got" = "$model" ] || { echo "  FAIL model.default: got '$got' want '$model'" >&2; rc=1; }
 
   want=$(printf -- '- %s\n' ${tools//,/ })
-  got=$(hermes -p "$name" config get toolsets 2>&1) || true
+  got=$(cfg_get "$name" toolsets)
   [ "$got" = "$want" ] || { echo "  FAIL toolsets: got '$got' want '$want'" >&2; rc=1; }
 
-  got=$(hermes -p "$name" config get skills.external_dirs 2>&1) || true
+  got=$(cfg_get "$name" skills.external_dirs)
   [ "$got" = "- $FORGE_DIR/skills" ] || { echo "  FAIL skills.external_dirs: got '$got'" >&2; rc=1; }
 
   want=$(printf -- '- %s\n' $(disabled_skills_for "$name"))
-  got=$(hermes -p "$name" config get skills.disabled 2>&1) || true
+  got=$(cfg_get "$name" skills.disabled)
   [ "$got" = "$want" ] || { echo "  FAIL skills.disabled: got '$got' want '$want'" >&2; rc=1; }
 
-  got=$(hermes -p "$name" config get skills.write_approval 2>&1) || true
+  got=$(cfg_get "$name" skills.write_approval)
   [ "$got" = "true" ] || { echo "  FAIL skills.write_approval: got '$got' want 'true'" >&2; rc=1; }
 
-  got=$(hermes -p "$name" config get terminal.timeout 2>&1) || true
+  got=$(cfg_get "$name" terminal.timeout)
   [ "$got" = "$TERMINAL_TIMEOUT" ] || { echo "  FAIL terminal.timeout: got '$got' want '$TERMINAL_TIMEOUT'" >&2; rc=1; }
 
   return $rc

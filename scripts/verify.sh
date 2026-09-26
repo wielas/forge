@@ -912,7 +912,13 @@ run_cli_group() {
     hermes/profiles-bootstrap.sh || skill_policy=0
   grep -Fq 'echo "  write_approval: true"' hermes/profiles-bootstrap.sh \
     || skill_policy=0
-  grep -Fq 'config get skills.write_approval' hermes/profiles-bootstrap.sh \
+  # Re-anchored for epic P6: the readback now goes through `cfg_get`, which
+  # compares stdout and merely surfaces stderr. What this arm asserts is
+  # unchanged — that the generated write_approval is read back at all — so the
+  # anchor moves to the call that does it rather than to the CLI words it used
+  # to spell out. `cfg_get` is the only reader in that file, and it names the
+  # key, so a readback that stopped happening still reddens here.
+  grep -Fq 'cfg_get "$name" skills.write_approval' hermes/profiles-bootstrap.sh \
     || skill_policy=0
   grep -Fq '[ "$got" = "true" ]' hermes/profiles-bootstrap.sh \
     || skill_policy=0
@@ -1015,6 +1021,113 @@ run_cli_group() {
     else
       bad "model-pin-documented-mutation-is-caught" \
           "a bootstrap that stops composing \$FORGE_PIN_ROUTER/\$FORGE_PIN_DRIVER must be refused as wrong-shape (got rc=$shape_mut_rc '$shape_mut_diag'), and one hardcoding the pin value must be refused as literal (got rc=$literal_mut_rc '$literal_mut_diag')"
+    fi
+  fi
+
+  # ---- P6: the readback compares stdout; stderr is surfaced, not compared ---
+  # Hermes 0.21.5 answers `config get skills.disabled` with the value on stdout
+  # and `⚠ 'skills.disabled' is not a recognized config key` on stderr, from a
+  # key registry that is not the runtime reader (`agent/skill_utils.py:308`).
+  # `verify_config` captured `2>&1`, so all four profiles failed readback on a
+  # run that had written every file correctly, and every bootstrap ended in
+  # FATAL — measured by the operator on 2026-09-26, landing epic S2.
+  #
+  # This case exists in the `cli` group, not `config`, for the reason
+  # model-pin-documented is here: `config` returns early without a live Hermes
+  # and is not in CI, so the one assertion that could catch this on a pull
+  # request would never run. It drives the REAL tracked script — the whole
+  # thing, from `profile create` to the FATAL — against a `hermes` stub that
+  # answers `config get` out of the file the script has just written and
+  # reproduces 0.21.5's stderr. Grepping for `2>` would assert the shape of the
+  # code; what has to hold is that a correct write ends in exit 0 and a wrong
+  # one still ends in FATAL.
+  local pb_lab="$TMPROOT/bootstrap-readback" pb_out pb_rc pb_detail=""
+  _pb_stub() {  # $1=bin dir -> a `hermes` that reads back what was written
+    mkdir -p "$1"
+    cat > "$1/hermes" <<'PBHERMES'
+#!/usr/bin/env bash
+# Hermes 0.21.5, as far as profiles-bootstrap.sh can tell: `config get` answers
+# from the profile's config.yaml, and skills.disabled also warns on stderr.
+prof=""
+while [ $# -gt 0 ]; do
+  case "$1" in -p) prof="${2:-}"; shift 2;; *) break;; esac
+done
+case "${1:-} ${2:-}" in
+  "profile create") mkdir -p "$HERMES_HOME/profiles/${3:-}"; exit 0;;
+esac
+[ "${1:-}" = config ] && [ "${2:-}" = get ] || exit 0
+key="${3:-}"; cfg="$HERMES_HOME/profiles/$prof/config.yaml"
+[ "$key" = skills.disabled ] && \
+  printf "⚠ '%s' is not a recognized config key — Hermes may not read it\n" "$key" >&2
+if [ -n "${PB_WRONG_KEY:-}" ] && [ "$key" = "$PB_WRONG_KEY" ]; then
+  printf '%s\n' "${PB_WRONG_VALUE:-}"; exit 0
+fi
+[ -f "$cfg" ] || exit 0
+awk -v want="$key" '
+  /^[a-z_]+:$/            { top=$0; sub(/:$/,"",top); nest=""; next }
+  /^  #/                  { next }
+  /^  - /                 { if (want == top) { sub(/^  /,""); print } next }
+  /^  [a-z_]+: /          { k=$1; sub(/:$/,"",k); v=$0; sub(/^  [a-z_]+: /,"",v)
+                            if (want == top "." k) print v
+                            nest=""; next }
+  /^  [a-z_]+:$/          { nest=$0; sub(/^  /,"",nest); sub(/:$/,"",nest); next }
+  /^    - /               { if (want == top "." nest) { sub(/^    /,""); print } next }
+' "$cfg"
+PBHERMES
+    chmod +x "$1/hermes"
+  }
+
+  rm -rf "$pb_lab"; _pb_stub "$pb_lab/bin"
+  pb_out="$(env PATH="$pb_lab/bin:$PATH" HERMES_HOME="$pb_lab/clean" \
+            bash hermes/profiles-bootstrap.sh 2>&1)"; pb_rc=$?
+  [ "$pb_rc" = 0 ] || pb_detail="$pb_detail correct-write-still-fatal(rc=$pb_rc)"
+  [ "$(printf '%s\n' "$pb_out" | grep -c '^  verified: ')" = 4 ] \
+    || pb_detail="$pb_detail not-all-four-profiles-verified"
+  printf '%s' "$pb_out" | grep -Fq 'not a recognized config key' \
+    || pb_detail="$pb_detail stderr-swallowed"
+  printf '%s' "$pb_out" | grep -Fq 'note (forge-codex-lane skills.disabled):' \
+    || pb_detail="$pb_detail stderr-not-attributed-to-a-profile-and-key"
+  printf '%s' "$pb_out" | grep -Fq 'READBACK FAILED' \
+    && pb_detail="$pb_detail readback-failed-on-a-correct-write"
+
+  # Fail-closed, unchanged: a value that really differs on stdout still FATALs.
+  # Without this arm, "compare stdout only" would be satisfied by comparing
+  # nothing at all.
+  pb_out="$(env PATH="$pb_lab/bin:$PATH" HERMES_HOME="$pb_lab/wrong" \
+            PB_WRONG_KEY=terminal.timeout PB_WRONG_VALUE=180 \
+            bash hermes/profiles-bootstrap.sh 2>&1)"; pb_rc=$?
+  [ "$pb_rc" != 0 ] || pb_detail="$pb_detail wrong-value-exited-zero"
+  printf '%s' "$pb_out" | grep -Fq "FAIL terminal.timeout: got '180' want '1800'" \
+    || pb_detail="$pb_detail wrong-value-not-named"
+  printf '%s' "$pb_out" | grep -Fq 'FATAL: at least one profile' \
+    || pb_detail="$pb_detail wrong-value-did-not-fatal"
+
+  [ -z "$pb_detail" ] \
+    && ok "bootstrap-readback-compares-stdout-only (real script, stubbed 0.21.5: a correct write verifies four profiles and surfaces the warning; a wrong value still FATALs)" \
+    || bad "bootstrap-readback-compares-stdout-only" \
+        "hermes/profiles-bootstrap.sh must verify a correct write while surfacing stderr, and still FATAL on a real mismatch —$pb_detail"
+
+  # MUTATION: put the merge back. This is the only thing that proves the arms
+  # above are measuring the redirect rather than passing by accident, and the
+  # defect it reintroduces is the one the operator actually hit.
+  local pb_mut="$pb_lab/mut" pb_mut_script="$pb_lab/mut/hermes/profiles-bootstrap.sh" s
+  mkdir -p "$pb_mut/hermes" "$pb_mut/scripts" "$pb_mut/skills"
+  cp scripts/model-pins.sh "$pb_mut/scripts/model-pins.sh"
+  for s in $(cd skills && ls -d */ 2>/dev/null | tr -d '/'); do mkdir -p "$pb_mut/skills/$s"; done
+  sed 's|2>"$err"|2>\&1|' hermes/profiles-bootstrap.sh > "$pb_mut_script"
+  if cmp -s hermes/profiles-bootstrap.sh "$pb_mut_script"; then
+    bad "bootstrap-readback-mutation-is-caught" \
+        "the mutation changed nothing in hermes/profiles-bootstrap.sh — the redirect it targets moved, so this probe proves nothing (F65)"
+  else
+    pb_out="$(env PATH="$pb_lab/bin:$PATH" HERMES_HOME="$pb_lab/mut-home" \
+              bash "$pb_mut_script" 2>&1)"; pb_rc=$?
+    if [ "$pb_rc" != 0 ] \
+       && printf '%s' "$pb_out" | grep -Fq 'FAIL skills.disabled' \
+       && printf '%s' "$pb_out" | grep -Fq 'FATAL: at least one profile'; then
+      ok "bootstrap-readback-mutation-is-caught (re-merging stderr into the value FATALs on a correct write again)"
+    else
+      bad "bootstrap-readback-mutation-is-caught" \
+          "a bootstrap comparing 2>&1 must fail skills.disabled readback against a 0.21.5 that warns (got rc=$pb_rc)"
     fi
   fi
 
@@ -2284,6 +2397,8 @@ cli/model-pin-documented-mutation-is-caught  a bootstrap that stops composing th
 cli/model-pin-file-is-data-not-code  every pin line is a plain quoted assignment, so sourcing it executes nothing
 cli/model-pin-file-data-not-code-mutation-is-caught  a command-substitution pin line, and a truncated file, are both reported
 cli/model-pin-file-unreadable-mutation-is-caught  a pin file that cannot be read is bad, never skip (F65)
+cli/bootstrap-readback-compares-stdout-only  the real bootstrap verifies a correct write under a 0.21.5 that warns on stderr, and still FATALs on a wrong value (P6)
+cli/bootstrap-readback-mutation-is-caught  re-merging stderr into the compared value FATALs on a correct write again
 cli/codex-pin-mutation-is-caught   a pin file disagreeing with the prose names both values
 cli/codex-pin-documented          the pin file, forge-lane §4 and state.md agree without reading live config (F36)
 cli/set-model-applies-and-reads-back  APPLY=1 writes all three sites and satisfies this group's own extractions
