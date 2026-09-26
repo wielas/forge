@@ -36,6 +36,13 @@
 #     work was abandoned; `done` would tell the board it landed.
 #   * OPEN -> nothing, silently.
 #
+# NO DECISION, NO MESSAGE (epic GW1). stdout carries only what the operator must
+# decide, each in the one decision-first format (scripts/decision-message.sh):
+# a closed PR, a hold with no PR to watch, a merged PR whose card would not
+# complete. A merge this script completes is NOT a message — the operator made
+# it, and the daily digest reports it under "landed" — so it goes to stderr
+# with every other diagnostic.
+#
 # A FINDING IS REPORTED ONCE, NOT EVERY SWEEP. A closed PR, or a hold with no PR
 # url on it, is a standing condition: the card stays blocked with the same
 # reason, so printing it on every sweep is a notification every ten minutes,
@@ -70,6 +77,19 @@ done
 for need in hermes gh jq; do
   command -v "$need" >/dev/null || { echo "merge-watcher: $need is not on PATH" >&2; exit 3; }
 done
+# shellcheck source=decision-message.sh
+# Resolve through symlinks FIRST: cron runs this as a symlink under
+# ~/.hermes/scripts/, and the siblings live beside the TARGET. A loop, not
+# `readlink -f`, which the bash 3.2 / older macOS userland may not have.
+_self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in /*) _self="$_link";; *) _self="$(dirname "$_self")/$_link";; esac
+done
+HERE="$(cd "$(dirname "$_self")" && pwd -P)"
+. "$HERE/decision-message.sh" 2>/dev/null \
+  && declare -F decision_message >/dev/null \
+  || { echo "merge-watcher: decision-message.sh is missing beside this script" >&2; exit 3; }
 
 BOARDS="$BOARD"
 if [ -z "$BOARDS" ]; then
@@ -84,13 +104,15 @@ for BOARD in $BOARDS; do
 sweep_board() {
 kanban() { hermes kanban --board "$BOARD" "$@"; }
 # $1=card  $2=what this finding is about  $3=message. Reads $shown and $hold.
+# The message is decision-first (GW1) and several lines long; the marker is its
+# first line's key, so a standing finding is still recognised on the next sweep.
 notify_once() {
   local marker="FORGE-WATCHER-NOTIFIED $2 (hold $hold)"
   if printf '%s' "$shown" | jq -e --arg m "$marker" \
        'any(.comments[]?; .body == $m or (.body | startswith($m + "\n")))' >/dev/null 2>&1; then
-    echo "$1: $3 (already reported for this hold)" >&2; return 0
+    echo "$1: $2 (already reported for this hold)" >&2; return 0
   fi
-  echo "$1: $3"
+  printf '%s\n' "$3"
   [ "$DRY" = 1 ] && return 0
   kanban comment "$1" "$marker
 $3" >/dev/null 2>&1 \
@@ -100,7 +122,7 @@ held="$(kanban list --json 2>/dev/null | jq -r '.[]? | select(.status == "blocke
   || { echo "merge-watcher: cannot read board $BOARD" >&2; return 3; }
 
 for card in $held; do
-  meta=""; hold=""
+  meta=""; hold=""; hclass=""
   shown="$(kanban show "$card" --json 2>/dev/null)" || continue
   # The LAST blocked event decides, not any of them: a card bounced for a
   # substrate fault after a hold is no longer a hold.
@@ -124,7 +146,13 @@ for card in $held; do
     [ .runs[]? | select(.outcome == "review_requested")
       | (.metadata.pr // empty) ] | last // ""' 2>/dev/null)"
   [ -n "$pr" ] || pr="$(printf '%s' "$reason" | grep -oE 'https://[^ ]*/pull/[0-9]+' | head -1)"
-  [ -n "$pr" ] || { notify_once "$card" "no-pr" "held for merge but no PR url on the card — nothing to watch"; rc=1; continue; }
+  hclass="${reason%%:*}"
+  [ -n "$pr" ] || { notify_once "$card" "no-pr" "$(decision_message "$hclass" \
+      "$card: held for merge but no PR url on the card — nothing to watch" \
+      "the verifier held this card for a merge, but neither its handoff nor its hold names a pull request, so nothing will ever complete it" \
+      "find the PR, or send the chunk back" \
+      "the card and its children stay held indefinitely" \
+      "merge the PR and \`hermes kanban --board $BOARD complete $card --result \"merged: <pr>\"\`, or \`~/.forge/repo/scripts/bounce.sh $card \"<reason>\" --board $BOARD\`")"; rc=1; continue; }
 
   state="$(gh pr view "$pr" --json state,mergedAt,mergeCommit < /dev/null 2>/dev/null)" || {
     echo "merge-watcher: $card: cannot read $pr from GitHub" >&2; rc=1; continue; }
@@ -149,12 +177,24 @@ for card in $held; do
         kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher; NO stored verdict envelope on this card)" >/dev/null 2>&1
       fi
       if [ "$(kanban show "$card" --json 2>/dev/null | jq -r '.task.status')" = done ]; then
-        echo "$card: done — $pr merged as ${sha:0:12}"
+        echo "$card: done — $pr merged as ${sha:0:12}" >&2
       else
-        echo "$card: $pr is merged but the card did not complete — it needs a look"; rc=1
+        # Reported ONCE per hold (epic P10(3)): the card stays blocked with the
+        # same reason, so without the marker this was a message every sweep.
+        notify_once "$card" "not-completed $pr" "$(decision_message "$hclass" \
+          "$card: $pr is merged but the card did not complete" \
+          "the work is on the base branch, and the board still holds the card, so its children are not released" \
+          "complete the card by hand" \
+          "every child of this chunk waits until it is done" \
+          "\`hermes kanban --board $BOARD complete $card --result \"merged: $pr\"\`")"; rc=1
       fi;;
     CLOSED)
-      notify_once "$card" "closed $pr" "$pr was CLOSED without merging; the card stays blocked (completing it would tell the board this landed)";;
+      notify_once "$card" "closed $pr" "$(decision_message "$hclass" \
+        "$card: $pr was CLOSED without merging" \
+        "the PR was abandoned, so the card stays blocked — completing it would tell the board this landed" \
+        "reopen and merge it, or send the chunk back" \
+        "the card and its children stay held" \
+        "reopen and merge $pr, or \`~/.forge/repo/scripts/bounce.sh $card \"<reason>\" --board $BOARD\`")";;
     *) ;;   # still open: silence is the point of --no-agent
   esac
 done

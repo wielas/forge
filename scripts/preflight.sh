@@ -787,11 +787,13 @@ fi
 # is the one whose absence would be silent in the worst way — an unrunnable
 # merged-tree check is `substrate`, so the card blocks and the operator meets it
 # as an outage rather than as a verdict. merge-watcher.sh and bounce.sh are the
-# operator's own two commands.
+# operator's own two commands. Since epic GW1 the verifier and the watcher both
+# source decision-message.sh beside themselves, and refuse to run without it;
+# digest.sh is the one the daily cron runs (GW2).
 for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh validate-metadata.py \
                 codex-run.sh quota-window.py codex-progress.py \
                 prejudge-review.sh prejudge.sh verdict.sh merge-check.sh \
-                merge-watcher.sh bounce.sh; do
+                merge-watcher.sh bounce.sh decision-message.sh digest.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"

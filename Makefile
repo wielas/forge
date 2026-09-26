@@ -1,5 +1,5 @@
 # forge repo-level commands
-.PHONY: install new validate verify preflight metrics metadata-live prejudge worktree-sweep roadmap-check commission
+.PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check commission
 
 verify:                        ## execute this repo's own claims (see scripts/verify.sh)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
@@ -7,6 +7,13 @@ verify:                        ## execute this repo's own claims (see scripts/ve
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
 	@test -n "$(BOARD)" || { echo "usage: make metrics BOARD=<slug> [SINCE=YYYY-MM-DD] [UNTIL=YYYY-MM-DD]"; exit 1; }
 	./scripts/metrics.sh $(BOARD) $(if $(SINCE),--since $(SINCE),) $(if $(UNTIL),--until $(UNTIL),)
+
+# The same message `hermes cron … --no-agent` delivers each morning (epic GW2):
+# landed, in flight, waiting on you — decision-first — and spend, per live board.
+# Read-only. Empty output means nothing landed, nothing is in flight and nothing
+# waits on you.
+digest:                        ## make digest [BOARD=<slug>] [DAY=YYYY-MM-DD] — the daily digest, read-only
+	./scripts/digest.sh $(if $(BOARD),--board $(BOARD),) $(if $(DAY),--day $(DAY),)
 
 metadata-live:                 ## make metadata-live BOARD=<slug> SINCE=<RFC3339> — opt-in completed-run contract sweep
 	./scripts/metadata-live.sh "$(BOARD)" --since "$(SINCE)"
@@ -112,7 +119,8 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/metadata-live.sh scripts/commission.sh scripts/model-pins.sh \
 	  scripts/set-model.sh scripts/acceptance-freeze.sh scripts/verdict.sh \
 	  scripts/prejudge-review.sh scripts/merge-check.sh \
-	  scripts/merge-watcher.sh scripts/bounce.sh
+	  scripts/merge-watcher.sh scripts/bounce.sh \
+	  scripts/decision-message.sh scripts/digest.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which
 	@# diffs it against `git ls-files '*.sh'` outside templates/. That template

@@ -300,7 +300,7 @@ def validate_batch(contract: dict[str, Any], path_arg: str, since: float) -> int
 
     missing = sorted(set(contract["profiles"]) - seen_profiles)
     for profile in missing:
-        print(f"missing producer={profile}: no post-cutoff completed run")
+        print(f"missing producer={profile}: no post-cutoff completed or review_requested run")
 
     print(
         "valid={valid} invalid={invalid} unjudged={unjudged} ignored={ignored}".format(

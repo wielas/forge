@@ -546,10 +546,12 @@ implementer_model_line() {
 
 # GW1's format, as a function rather than as a habit: what happened, what it
 # means, the one decision, the risk, the one reply. No decision, no message.
-decision_message() {  # $1=class  $2=headline  $3=means  $4=decision  $5=risk  $6=reply
-  printf '%s: %s\n\nWhat it means: %s\nDecision needed: %s\nRisk: %s\nReply: %s\n' \
-    "$1" "$2" "$3" "$4" "$5" "$6"
-}
+# It lives in one file shared with the merge-watcher and the digest, so the
+# operator reads one shape whoever is speaking; an unreadable copy is a
+# substrate fault, because every hold this script makes is written through it.
+# shellcheck source=decision-message.sh
+. "$HERE/decision-message.sh" 2>/dev/null && declare -F decision_message >/dev/null \
+  || substrate "env: decision-message.sh is missing beside prejudge-review.sh — no hold could be written in the operator's format"
 
 # FL6 — two bounce rounds, then ONE exception, and the exception is a completable
 # block rather than the kernel's `triage`. The epic reached the same number by a

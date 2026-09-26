@@ -352,12 +352,35 @@ message: what happened (one line), what it means, the one decision needed or
 "none", risk, the one reply. No decision, no message. *Why:* judge card
 `t_7ad8d58e` is gate jargon, then a spot-check concluding "not a defect",
 then "Run /judge, then merge or bounce."
+*Done when* (**proposed in S4 — this item had none**) one formatter,
+`scripts/decision-message.sh`, renders every message the machine sends the
+operator: the verifier's holds and exception, the merge-watcher's findings,
+and the digest's waiting-on-you entries. Every block class the contract
+registers has a decision entry there. The merge-watcher's stdout carries only
+decisions. *S4: met, executed by `digest/every-block-class-has-a-decision`,
+`digest/one-formatter` and the `verifier` group's watcher cases. A lane block
+stays one `<class>: <reason>` line, because other programs parse it; the digest
+expands it from the class table. A completed merge is no longer a watcher
+message: the operator made it, and the digest reports it under* landed.
 
 **GW2. The daily digest, wired.** `forge-digest` has existed since July and was
 never scheduled. A script computes the content — landed (PR links), in flight,
 waiting on you, spend — and the profile relays it via `hermes cron` to
 Telegram. *Done when* a week of digests lets the operator tell a run's state
 from a phone.
+*S4: `scripts/digest.sh` is built and its whole message is fixture-exact
+(`digest/`). The done-when needs a live week, so it is carried in **S7's row**.
+**Decided in S4, departing from the Roles table:** no profile relays the
+digest. It runs as `hermes cron … --no-agent --script`, and its stdout is the
+message, as with the merge-watcher. A relaying model can still restate a
+number, and "numbers come from scripts, never from a model" leaves it nothing
+else to do (P11).* *Read-only against the live host, 2026-09-26: the first
+message would be 12 KB (275 lines), because six dormant boards still hold 29
+cards waiting on the operator. Redglass alone has 15, 13 of them in triage.
+Hermes's Telegram sender chunks at 4096 UTF-16 units
+(`tools/send_message_senders.py`). That was read in the source, not executed,
+so a long digest arrives as several messages rather than failing. Archiving
+finished boards before the cron is wired is the operator's call.*
 
 **GW3. Replies act through allowlisted scripts** — accept/redirect/park a
 milestone, merge or bounce in recommend-only mode, switch the implementer,
@@ -376,6 +399,20 @@ the operator.
 
 **GW6. North-star metrics in `make metrics`**, before run A, so the first run
 is measured by the numbers this epic is judged on.
+*Done when* (**proposed in S4 — this item had none**) `make metrics` leads with
+the north-star block, and each number is a count with its denominator, or `n/a`
+with a reason. The block is computed exactly from a board in the post-FL3
+shape, and P4's envelopes are visible to both `metrics.sh` and
+`metadata-live.sh`. *S4: met — `metrics/post-fl3-board-numbers-exact`,
+`metrics/north-star-numbers`, `metrics/north-star-mutation-is-caught`,
+`metrics/text-leads-with-the-north-star`, `metadata/live-valid-counts`.*
+- *Who merged* is read from `tasks.result`, which only two producers write on a
+  merge: the verifier in merge mode and the merge-watcher.
+- *PR open → merge* is a board proxy: the first `review_requested` event to the
+  `completed` event, labelled as such.
+- The two *tracked* rows are reported as not yet measurable. There is no probe
+  until MS2 and no estimate until PL2.
+- The retro log's generated row does not carry the block yet (P12).
 
 ## Track EN — engines
 
@@ -514,10 +551,11 @@ closes.
 | S3 | FL4, FL6 *(FL5 and FL8 split out at S3's opening)* | The verifier complete, but only recommending | done | #78 |
 | S3b | FL5 *(split from S3)* | The mutation probe is what caught JobApp C21; its replays have to be recovered from the boards first, which is its own half of the work | planned | |
 | S3c | FL8 *(split from S3)* | Nothing bills per token until EN1 configures a cheap implementer, so the cap has nothing to measure before then | planned | |
-| S4 | GW1, GW2, GW4, GW6, WL3 | Runs become observable and start with one command | planned | |
+| S4 | GW6, GW1, GW2 *(GW4 and WL3 split out at S4's opening; P4 and P10(3) folded in)* | Runs become observable: run A is measured by GW6's numbers, and the operator merges it from a phone off GW2's digest | done | #79 |
+| S4b | GW4, WL3 *(split from S4)*; P7 triaged with WL3 | Runs start with one command and the graph is visible — convenience, neither changes what run A measures | planned | |
 | S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills | planned | |
 | S6 | Plan the new project — operator-led | Scope → architect with spikes → roadmap, three milestones | planned | |
-| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
+| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
 | S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
 | S10 | EN5, EN1, EN2 | Engine groundwork | planned | |
@@ -681,7 +719,9 @@ proven and say so where the claim is made.
 
 
 **P3 (S2). `lane/terminators-match-the-substrate` has been blind since
-Hermes 0.21.5.** Under `--with-hermes` it fails with
+Hermes 0.21.5.** *Triaged at S4's opening: **left open**. It is independent of
+S4 and blind only under `--with-hermes`; promote it when the `lane` group next
+changes.* Under `--with-hermes` it fails with
 `toolsets-source-yielded-no-kanban-tools`: upstream moved the kanban tool list
 out of the `"kanban": {"tools": [...]}` literal into a module-level list
 passed to a `_ts(...)` helper (`~/.hermes/hermes-agent/toolsets.py`, lines
@@ -692,7 +732,13 @@ designed. Checked by hand for S2: the four terminators in that list
 (`complete`, `block`, `request_review`, `request_changes`) are all named in
 the new `forge-lane` §2. Fix: re-point the reader at the list, not the literal.
 
-**P4 (S2). Metrics cannot see chunk envelopes after FL3.** Since FL3 a chunk's
+**P4 (S2). Metrics cannot see chunk envelopes after FL3.** *Triaged at S4's
+opening: **folded into GW6** and fixed there. `metrics.sh` reads a chunk's
+handoff runs (`completed` or `review_requested`, never a reviewer's) and
+attributes a verdict to the chunk's own card first. `metadata-live.sh`
+projects `review_requested` runs, and the rubric's producer rule names both
+outcomes. The cases that fail on the old filter are
+`metrics/post-fl3-board-numbers-exact` and `metadata/live-valid-counts`.* Since FL3 a chunk's
 `forge.chunk.v1` rides its `review_requested` run, not a completion.
 `scripts/metrics.sh` (lines 471, 515, 564) and `scripts/metadata-live.sh`
 (line 108) read only `task_runs.outcome = 'completed'`. The next live run's
@@ -777,7 +823,8 @@ is not in CI. The operator trap in the same paragraph was a second finding and
 is split out as P7.*
 
 **P7 (S2 landing, split from P6). The bootstrap records the path it was
-invoked from.** `skills.external_dirs` is written as `$FORGE_DIR/skills`, where
+invoked from.** *Triaged at S4's opening: **moved to S4b**, with WL3, whose
+`forge run` has to reach the runtime the same way.* `skills.external_dirs` is written as `$FORGE_DIR/skills`, where
 `FORGE_DIR` is the parent of the script that ran, so the invocation path
 decides what every live profile reads. Running it from `~/dev/forge` pointed
 all four profiles at the dev checkout; running it from `~/dev/forge-runtime`
@@ -790,7 +837,11 @@ offline case that pins the accepted form, or a refusal in the script itself
 when `FORGE_DIR` is not the runtime the `~/.forge/repo` symlink resolves to.
 *Open; not fixed in S2b, whose PR is deliberately P6's fix alone.*
 
-**P10 (S3 review). Five edges left open by S3's review fixes.** Each was found
+**P10 (S3 review). Five edges left open by S3's review fixes.** *Triaged at S4's
+opening: (3) is **folded into GW1** and fixed. "Merged but the card did not
+complete" is now reported once per hold, decision-first, executed by
+`verifier/merge-watcher-reports-once`. (1) and (2) are untouched by S4 and stay
+open. (4) and (5) sit in merge mode and stay with P9 in S8.* Each was found
 by reading the code and none has been measured. (4) and (5) sit in merge mode,
 which is off, so like P9 they must close before `FORGE_VERIFIER_MERGE=1`. (1) `--dry-run` promises that no
 board is touched, but a gate-blocked PR routes *before* the dry-run exit. Run
@@ -809,6 +860,24 @@ is to read the state back on a non-zero exit and take the rc-4 path on
 `MERGED`. (5) When the post-merge `merge-pending:` hold itself fails, the
 substrate reason is written to start with `merge-pending:` so the watcher can
 still find it. No case has executed that fallback.
+
+**P11 (S4). The `forge-digest` profile no longer has a job.** GW2's digest
+runs under `hermes cron --no-agent`, so no model reads the boards or relays the
+message. The `forge-digest` SOUL still tells a model to `kanban_list` and
+compose the numbers, and the Roles table still lists a "cheap model relaying
+script output". Neither was ever scheduled, so nothing runs it today. The
+profile, its SOUL and the Roles row should go together, once run A's week of
+digests confirms nothing wants a model there. Changing a SOUL is a
+`profiles-bootstrap.sh` step, so S4 left it alone. Triage with WL retirement
+(S13), or earlier if the operator would rather not keep an idle profile.
+
+**P12 (S4). The retro log's generated row has no north-star cell.** GW6 says
+`/retro` *and* `make metrics` lead with the north-star numbers. S4 did the
+second. `metrics.sh --markdown-row` still emits the nine columns
+`docs/retro-metrics.md` defines, and `metrics/markdown-row-has-operator-and-driver-cells`
+pins that header. Adding a column is a change to the retro log's format, and
+WL5 (S13) retargets `/retro` at these numbers anyway. Until then the retro
+reads them from `make metrics`' first section.
 
 ## Open questions
 

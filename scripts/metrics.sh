@@ -367,9 +367,23 @@ WITH
 -- denominator for every run before the rename, which reads as "no chunks" and
 -- not as an error. Under ADR-0019 D19.1 a chunk is reviewed on ITS OWN card and
 -- parents no reviewer card at all, so the first arm is history's arm; the
--- fallback is what identifies a post-FL3 chunk. P4 (epic parking lot) is the
--- other half of that and is GW6's work: every arm here still reads only
--- `completed` runs, and a verifier ends its run in `request-changes` or a block.
+-- fallback is what identifies a post-FL3 lane chunk.
+--
+-- TWO MORE ARMS, both epic P4/GW6. A `review_requested` run exists only where an
+-- implementer handed a card to same-card review (FL3), so a done card carrying
+-- one IS a chunk — including a human-tier chunk handed off from an interactive
+-- session, which has no lane run and parents no reviewer card, and was invisible
+-- to both arms above. And a done card that carries either name a human-tier
+-- chunk is given — `forge-operator-handoff`, which board-bootstrap.sh assigns to
+-- interactive chunks, or `claude-interactive`, the roadmap's lane name for them
+-- — on its assignee OR on any run is a human-tier chunk. Both places, because
+-- measured on redglass-run-1 (2026-09-26): CHUNK-4 and CHUNK-13 kept the name
+-- only on a `forge-operator-handoff` run (completion cleared the assignee), and
+-- CHUNK-15..19 only on a `claude-interactive` assignee. Without this arm the
+-- board read 12 chunks, 0 of them human, where the epic counts 20 and 8.
+-- The arm also requires the bootstrap's title shape, `CHUNK-<id>: …` (the
+-- heading of the chunk file): the tier-2 judge cards of that era ran under
+-- `claude-interactive` too, and without it the same board read 28 chunks.
 cc(id) AS (
   SELECT DISTINCT t.id FROM tasks t
     JOIN task_links l ON l.parent_id = t.id
@@ -380,6 +394,35 @@ cc(id) AS (
   SELECT DISTINCT t.id FROM tasks t
     JOIN task_runs r ON r.task_id = t.id
    WHERE t.status = 'done' AND r.profile = 'forge-codex-lane'
+  UNION
+  SELECT DISTINCT t.id FROM tasks t
+    JOIN task_runs r ON r.task_id = t.id
+   WHERE t.status = 'done' AND r.outcome = 'review_requested'
+  UNION
+  SELECT DISTINCT t.id FROM tasks t
+    LEFT JOIN task_runs r ON r.task_id = t.id
+   WHERE t.status = 'done'
+     AND (t.assignee IN ('forge-operator-handoff','claude-interactive')
+          OR r.profile IN ('forge-operator-handoff','claude-interactive'))
+     AND t.title GLOB 'CHUNK-[A-Za-z0-9]*'
+     AND instr(t.title, ': ') > 7
+     AND substr(t.title, 7, instr(t.title, ': ') - 7) NOT GLOB '*[^A-Za-z0-9._-]*'
+),
+-- THE IMPLEMENTER'S HANDOFF RUNS — the ones that carry `forge.chunk.v1` (epic
+-- P4). Before FL3 the lane COMPLETED its card, so the envelope rode a
+-- `completed` run; since FL3 it rides the `review_requested` run the lane's
+-- `request-review` closes, and every reader filtering on `completed` alone saw
+-- zero chunk envelopes on a post-FL3 board. Both outcomes count.
+--
+-- The reviewer's runs are excluded by profile, because since D19.1 they sit on
+-- the SAME card: the verifier's completion carries `forge.judge.v1`, and
+-- counting it here would report every verified chunk as a malformed chunk
+-- envelope in the `neither` bucket.
+hr AS (
+  SELECT r.* FROM task_runs r JOIN cc ON cc.id = r.task_id
+   WHERE r.outcome IN ('completed','review_requested')
+     AND COALESCE(r.profile,'') NOT IN ('forge-prejudge','forge-verifier')
+     AND r.started_at >= :since AND r.started_at < :until
 ),
 -- [MEASURED] Tier comes from the PROFILE of the run carrying the verdict, not
 -- from the card title. forge-prejudge and its post-FL4 name forge-verifier are
@@ -401,8 +444,11 @@ v AS (
 -- A verdict lives on the review card; the bounce belongs to the chunk it
 -- reviewed. That is usually the review card's parent, but at least one tier-2
 -- card on forge-ladder hangs off the tier-1 card instead, so look two hops up.
+-- Since ADR-0019 D19.1 the verdict is on the chunk card ITSELF, which is the
+-- first thing tried: a verifier run on a chunk card has no parent to walk to.
 va AS (
   SELECT v.*, COALESCE(
+      (SELECT v.task_id WHERE v.task_id IN (SELECT id FROM cc)),
       (SELECT l.parent_id FROM task_links l
         WHERE l.child_id = v.task_id AND l.parent_id IN (SELECT id FROM cc)),
       (SELECT l2.parent_id FROM task_links l1
@@ -480,9 +526,7 @@ env AS (
            WHEN json_extract(r.metadata,'$.schema') = 'forge.chunk.v1'      THEN 'flat'
            WHEN json_extract(r.metadata,'$."forge.chunk.v1"') IS NOT NULL   THEN 'nested'
            ELSE 'neither' END AS shape
-    FROM task_runs r JOIN cc ON cc.id = r.task_id
-   WHERE r.outcome = 'completed'
-     AND r.started_at >= :since AND r.started_at < :until
+    FROM hr r
 ),
 -- WHICH MODEL WROTE THE DIFF (F22). Every other model column in this report —
 -- `driver_usage` below, its `sessions[].model`, its per-model rows — comes from
@@ -524,9 +568,7 @@ im AS (
     CASE WHEN json_type(r.metadata,'$.codex_model_requested') = 'text'
               AND trim(json_extract(r.metadata,'$.codex_model_requested')) <> ''
          THEN json_extract(r.metadata,'$.codex_model_requested') END AS requested
-    FROM task_runs r JOIN cc ON cc.id = r.task_id
-   WHERE r.outcome = 'completed'
-     AND r.started_at >= :since AND r.started_at < :until
+    FROM hr r
 ),
 -- forge.block.v1 does not exist and never has: kanban_block takes no metadata
 -- parameter, so nothing can carry it (audit F26). The class is whatever leading
@@ -556,29 +598,133 @@ rc AS (
 -- cannot do better (audit F31): an author that never ran as a profile here is
 -- taken to be a human, and `unblocked` events record no actor at all (payload
 -- is NULL on every one), so they are counted as manual by construction.
+--
+-- One author test is not enough since FL4. The merge-watcher runs from cron as
+-- the host's default profile, which never runs a card, and writes one
+-- `FORGE-WATCHER-NOTIFIED` comment per finding; by author alone every one of
+-- them is an operator action. The marker is excluded by body, because it is the
+-- only thing on that comment a script wrote on purpose.
 ops AS (
   SELECT (SELECT COUNT(*) FROM task_comments
            WHERE author NOT IN (SELECT DISTINCT profile FROM task_runs WHERE profile IS NOT NULL)
+             AND body NOT LIKE 'FORGE-WATCHER-NOTIFIED%'
              AND created_at >= :since AND created_at < :until) AS comments,
          (SELECT COUNT(*) FROM task_events WHERE kind = 'unblocked'
              AND created_at >= :since AND created_at < :until) AS unblocks
 ),
 -- Candidate chunk runs for the second-substrate join. Keep this private list in
 -- the base JSON until shell code snapshots the exact profile state databases.
--- Only completed, profiled runs are eligible: operator rows have no driver, and
--- unfinished workers have no completed telemetry to judge.
+-- Only finished handoff runs (hr: completed, or review_requested since FL3) with
+-- a profile are eligible: operator rows have no driver, and unfinished workers
+-- have no telemetry to judge.
 du AS (
   SELECT r.id AS run_id, r.task_id, r.profile,
          CASE WHEN json_type(r.metadata,'$.worker_session_id') = 'text'
                     AND trim(json_extract(r.metadata,'$.worker_session_id')) <> ''
               THEN json_extract(r.metadata,'$.worker_session_id') ELSE NULL END
            AS worker_session_id
-    FROM task_runs r JOIN cc ON cc.id = r.task_id
-   WHERE r.outcome = 'completed' AND r.profile IS NOT NULL
-     AND r.started_at >= :since AND r.started_at < :until
+    FROM hr r
+   WHERE r.profile IS NOT NULL
+),
+-- ===========================================================================
+-- GW6 — THE NORTH STAR. The numbers the hands-free epic is judged on
+-- (docs/epic-hands-free.md § North-star metrics), each a count with its
+-- denominator so it can be recomputed rather than trusted. They lead the
+-- report because they are what a run is FOR; everything below them explains
+-- them.
+--
+-- WHO MERGED is read from `tasks.result`, which exactly two producers write on
+-- a merged chunk: the verifier in merge mode (`merged by forge-verifier: …`,
+-- scripts/prejudge-review.sh route_merge) and the merge-watcher completing a
+-- card whose PR the OPERATOR merged on GitHub (`merged: <pr> as <sha>
+-- (completed by merge-watcher…)`). A done chunk with neither is `unrecorded` —
+-- every chunk of the child-card era, and anything completed by hand — and is
+-- counted in no rate, because nothing on the board says who merged it. One
+-- known misreading, merge mode only (off until the flip): a verifier merge
+-- whose completion failed is finished by the watcher and reads as the
+-- operator's. It errs toward the operator, which is the safe side of the flip
+-- criterion.
+-- ===========================================================================
+ns_chunks AS (
+  SELECT t.id FROM tasks t JOIN cc ON cc.id = t.id
+   WHERE t.created_at >= :since AND t.created_at < :until
+),
+mc AS (
+  SELECT t.id,
+         CASE WHEN t.result LIKE 'merged by forge-verifier:%' THEN 'verifier'
+              WHEN t.result LIKE 'merged: %'
+               AND t.result LIKE '%(completed by merge-watcher%' THEN 'operator'
+         END AS merger,
+         -- PR OPEN is the card's FIRST review_requested event: the lane hands
+         -- off right after `gh pr create`, and a bounce re-enters the same PR.
+         -- MERGED is its completion: the watcher's sweep (at most one interval
+         -- late) or the verifier's own merge. A proxy read off the board, not
+         -- GitHub's timestamps, and labelled as one in `method`.
+         (SELECT MIN(e.created_at) FROM task_events e
+           WHERE e.task_id = t.id AND e.kind = 'review_requested') AS pr_open,
+         (SELECT MAX(e.created_at) FROM task_events e
+           WHERE e.task_id = t.id AND e.kind = 'completed') AS merged_at
+    FROM tasks t JOIN cc ON cc.id = t.id
+   WHERE t.completed_at >= :since AND t.completed_at < :until
+),
+lat AS (
+  SELECT merged_at - pr_open AS s FROM mc
+   WHERE merger IS NOT NULL AND pr_open IS NOT NULL AND merged_at >= pr_open
+),
+-- SQLite has no MEDIAN: the middle one (odd) or the middle two (even), averaged.
+-- On an empty set the OFFSET is 0 and AVG over nothing is NULL, which stays NULL.
+lat_med AS (
+  SELECT AVG(s) AS m FROM (SELECT s FROM lat ORDER BY s
+          LIMIT 2 - (SELECT COUNT(*) FROM lat) % 2
+         OFFSET ((SELECT COUNT(*) FROM lat) - 1) / 2)
+),
+ns AS (
+  SELECT (SELECT COUNT(*) FROM ns_chunks) AS chunks,
+         (SELECT COUNT(*) FROM mc WHERE merger IS NOT NULL) AS merged,
+         (SELECT COUNT(*) FROM mc WHERE merger = 'verifier') AS by_verifier,
+         (SELECT COUNT(*) FROM mc WHERE merger = 'operator') AS by_operator,
+         (SELECT COUNT(*) FROM mc WHERE merger IS NULL) AS unrecorded,
+         (SELECT comments + unblocks FROM ops) AS touches,
+         (SELECT COUNT(*) FROM tasks
+           WHERE created_at >= :since AND created_at < :until) AS cards,
+         -- Human-implemented: a chunk no lane ever ran on.
+         (SELECT COUNT(*) FROM ns_chunks c
+           WHERE NOT EXISTS (SELECT 1 FROM task_runs r
+                              WHERE r.task_id = c.id AND r.profile = 'forge-codex-lane')) AS human,
+         (SELECT COUNT(*) FROM lat) AS lat_n,
+         (SELECT m FROM lat_med) AS lat_median,
+         (SELECT MAX(s) FROM lat) AS lat_max
 )
 SELECT json_object(
   'board', NULL, 'since', NULL, 'until', NULL,
+  'north_star', (SELECT json_object(
+     'chunks', chunks,
+     'merged', json_object('total', merged, 'by_verifier', by_verifier,
+                           'by_operator', by_operator, 'unrecorded', unrecorded),
+     'merged_without_operator', json_object('count', by_verifier, 'of', merged,
+        'rate', CASE WHEN merged = 0 THEN NULL
+                     ELSE printf('%.2f', 1.0 * by_verifier / merged) END),
+     'operator_actions', json_object('total', touches + by_operator,
+        'touches', touches, 'merges', by_operator,
+        'per_merged_chunk', CASE WHEN merged = 0 THEN NULL
+                                 ELSE printf('%.2f', 1.0 * (touches + by_operator) / merged) END,
+        'method', 'operator touches (below) plus one per merge the operator made; '
+               || 'judge sessions and GitHub-only actions are not on the board and are not counted'),
+     'pr_open_to_merge_hours', json_object('n', lat_n,
+        'median', CASE WHEN lat_median IS NULL THEN NULL
+                       ELSE printf('%.2f', lat_median / 3600.0) END,
+        'max', CASE WHEN lat_max IS NULL THEN NULL
+                    ELSE printf('%.2f', lat_max / 3600.0) END,
+        'method', 'first review_requested event to the completed event, on merged chunk cards — '
+               || 'a board proxy: the merge-watcher completes an operator merge on its next sweep'),
+     'cards_per_chunk', json_object('cards', cards, 'chunks', chunks,
+        'rate', CASE WHEN chunks = 0 THEN NULL
+                     ELSE printf('%.2f', 1.0 * cards / chunks) END),
+     'human_implemented', json_object('count', human, 'of', chunks),
+     'not_yet_measurable', json_array(
+        'defects the milestone probe catches before the operator does — no probe exists until MS2',
+        'architect estimate vs actual cost per milestone — no estimate is recorded until PL2'))
+     FROM ns),
   'chunk_cards', (SELECT COUNT(*) FROM cc),
   'verdicts', json_object(
      'total', (SELECT COUNT(*) FROM va),
@@ -640,6 +786,7 @@ SELECT json_object(
   'operator', (SELECT json_object('comments', comments, 'unblocks', unblocks,
                  'touches', comments + unblocks,
                  'method', 'comments by an author that never ran as a profile on this board, '
+                        || 'except the merge-watcher''s FORGE-WATCHER-NOTIFIED markers, '
                         || 'plus every unblocked event (the event records no actor)') FROM ops)
 );
 SQL_BODY
@@ -719,6 +866,29 @@ markdown-row)
 text)
   render "$JSON" '
     "forge metrics — board \(.board)   period \(.since // "(board start)") .. \(.until // "(now)")",
+    "",
+    # GW6: the numbers the hands-free epic is judged on come FIRST. Every one is
+    # printed with its denominator, and an absent one says why it is absent.
+    (.north_star as $n
+     | "north star — what the epic is judged on (docs/epic-hands-free.md); \($n.chunks) chunk cards, \($n.merged.total) with a recorded merge",
+       "  merged without the operator  "
+         + (if $n.merged_without_operator.rate == null then "n/a — no chunk card recorded who merged it"
+            else "\($n.merged_without_operator.rate) (\($n.merged_without_operator.count)/\($n.merged_without_operator.of))" end),
+       "  operator actions per merged chunk  "
+         + (if $n.operator_actions.per_merged_chunk == null then "n/a — no merged chunk to divide by (\($n.operator_actions.total) actions)"
+            else "\($n.operator_actions.per_merged_chunk) (\($n.operator_actions.total) = \($n.operator_actions.touches) board touches + \($n.operator_actions.merges) merges, over \($n.merged.total) merged)" end),
+       "  PR open -> merge  "
+         + (if $n.pr_open_to_merge_hours.n == 0 then "n/a — no merged chunk card carries a review_requested event"
+            else "median \($n.pr_open_to_merge_hours.median) h · max \($n.pr_open_to_merge_hours.max) h over \($n.pr_open_to_merge_hours.n)" end),
+       "  cards per chunk  "
+         + (if $n.cards_per_chunk.rate == null then "n/a — 0 chunk cards (\($n.cards_per_chunk.cards) cards)"
+            else "\($n.cards_per_chunk.rate) (\($n.cards_per_chunk.cards) cards / \($n.cards_per_chunk.chunks) chunks)" end),
+       "  human-implemented chunks  \($n.human_implemented.count) of \($n.human_implemented.of)",
+       (if $n.merged.unrecorded > 0
+        then "  \($n.merged.unrecorded) done chunk card(s) record no merge — pre-FL4 cards, or completed by hand — and are in no rate above"
+        else empty end),
+       "  method: \($n.operator_actions.method); PR open -> merge is \($n.pr_open_to_merge_hours.method)",
+       ($n.not_yet_measurable[] | "  not yet measurable: \(.)")),
     "",
     "tier-1 gate — stage 1, a program (ADR-0009); blocks cost zero model tokens and are NOT bounces",
     (if .gate.runs == 0 then "  no forge.gate.v1 results in period"

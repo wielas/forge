@@ -105,7 +105,10 @@ WITH projected AS (
            'metadata', r.metadata
          ) AS row
     FROM task_runs r
-   WHERE r.outcome = 'completed'
+   -- `review_requested` is the lane's handoff since epic FL3: the chunk envelope
+   -- rides the run `request-review` closes, and the lane never completes the
+   -- card. Reading `completed` alone missed every post-FL3 chunk (epic P4).
+   WHERE r.outcome IN ('completed','review_requested')
   UNION ALL
   SELECT e.created_at AS at, 1 AS kind_order, e.task_id AS task, e.run_id AS run,
          json_object(

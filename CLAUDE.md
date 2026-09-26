@@ -44,8 +44,8 @@ between docs by reasoning about it — run the suite and believe the result.
 - `make validate` — frontmatter + `bash -n`. Cheap, syntactic only.
 - `make verify` — the conformance suite; executes this repo's claims. `SUITES=` to
   narrow (groups: cli, config, substrate, template, lane, bootstrap, commission,
-  metrics, metadata, prejudge, verifier, sweep, roadmap, gate, docs, quota,
-  manifest).
+  metrics, metadata, prejudge, verifier, sweep, roadmap, gate, docs, digest,
+  quota, manifest).
 - `make verify WITH_CODEX=1` — **spends tokens** on live sandbox probes. Not casual.
 - `make preflight` — read-only revalidation of the mini before unattended work.
 - `make prejudge PR=<url|number>` — tier-1 stage 1. Exit 1 = block, exit 2 = the gate

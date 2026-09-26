@@ -45,6 +45,14 @@ VALUES
   (3, 't_old_nested', 'forge-codex-lane', 'done', 1786233540, 1786233580,
    'completed',
    '{"forge.chunk.v1":{"chunk_id":"CHUNK-OLD"}}'),
+  -- Since epic FL3 the lane hands a chunk to same-card review, so its envelope
+  -- rides the `review_requested` run that `request-review` closes, and the card
+  -- is never COMPLETED by the lane at all. Epic P4: a sweep reading only
+  -- `outcome = completed` never saw this row, and a board of nothing but
+  -- post-FL3 chunks read as "missing producer=forge-codex-lane".
+  (11, 't_chunk_fl3', 'forge-codex-lane', 'review', 1786234200, 1786234260,
+   'review_requested',
+   '{"schema":"forge.chunk.v1","chunk_id":"CHUNK-6","project":"metadata-live-fixture","branch":"chunk/6-same-card","pr":"https://github.com/example/metadata-live-fixture/pull/6","lane":"forge-codex-lane","scenarios":{"added":3,"passing":3,"feature_files":["tests/features/chunk_6.feature"]},"check":{"green":true,"coverage_pct":100},"files_changed":4,"lines_changed":120,"decisions":[],"debt":[],"card_proposals":[],"docs_reconciled":[],"duration_min":15,"worker":"codex/gpt-5.6-luna xhigh"}'),
   -- Completed runs from profiles outside the producer registry are unrelated
   -- to this sweep and do not enter any of its four counts.
   (4, 't_other_profile', 'default', 'done', 1786233900, 1786233960,
