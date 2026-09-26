@@ -384,9 +384,34 @@ VERDICT_MARKER="FORGE-VERDICT-V1"
 stash_envelope() {  # $1=metadata file
   board_live || return 0
   [ -s "$1" ] || return 0
+  # ONLY AN ENVELOPE THE CONTRACT ALLOWS THIS PRODUCER TO COMPLETE WITH.
+  # `rubrics/run-metadata-contract.json` maps forge-verifier to forge.gate.v1 and
+  # forge.judge.v1 — and nothing else. The bounce path's metadata file is whatever
+  # produced the bounce, which on the merged-tree arm is a `forge.mergecheck.v1`
+  # object: stashing that would have the merge-watcher complete the card with a
+  # schema the registry does not know, and `metadata-live` exits 1 on it — the
+  # "stop and repair the producer" failure this file already carries a scar from
+  # (Stage 4a). A file that is not stashable simply is not stashed, and the
+  # watcher then completes with a result that says no envelope was stored.
+  #
+  # AND SOMETHING CONTRACTED IS ALWAYS STASHED, because the absence is a violation
+  # too: `metadata-live` counts a completed producer run with null metadata as
+  # `invalid`, exactly like a wrong schema. So an unstashable envelope falls back
+  # to the gate result, which is a `forge.gate.v1` on every path that reaches this
+  # point and is honest about what it says — the gate's own verdict, with the
+  # merged-tree evidence already on the card in the bounce reasons.
+  local file="$1"
+  case "$(jq -r '.schema // ""' "$file" 2>/dev/null)" in
+    forge.gate.v1|forge.judge.v1) ;;
+    *) file="$GATE"
+       case "$(jq -r '.schema // ""' "$file" 2>/dev/null)" in
+         forge.gate.v1|forge.judge.v1) ;;
+         *) return 0;;
+       esac;;
+  esac
   kanban comment "$CHUNK" "$VERDICT_MARKER
 \`\`\`json
-$(jq -c . "$1" 2>/dev/null || cat "$1")
+$(jq -c . "$file" 2>/dev/null || cat "$file")
 \`\`\`" >/dev/null 2>&1 || true
 }
 
@@ -416,7 +441,15 @@ route_recommend() {  # $1=reason, already carrying its registry class
 # work is not on `main`.
 merge_mode() { [ "${FORGE_VERIFIER_MERGE:-}" = 1 ]; }
 route_merge() {  # $1=result summary, $2=metadata file
-  gh pr merge --squash --delete-branch "$PR_URL" >/dev/null 2>&1 < /dev/null || return 1
+  # `--match-head-commit` is not belt-and-braces: without it this merges whatever
+  # the head is NOW, and every stage above read the PR separately over several
+  # minutes. A push in that window would put code on `main` that nothing in this
+  # run verified — on an ungated repo, with no second gate behind it. An empty
+  # VERIFIED_HEAD means the read failed, and a merge that cannot name what it
+  # verified must not happen at all.
+  [ -n "$VERIFIED_HEAD" ] || return 1
+  gh pr merge --squash --delete-branch --match-head-commit "$VERIFIED_HEAD" "$PR_URL" \
+    >/dev/null 2>&1 < /dev/null || return 1
   gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
     | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 1
   board_live || return 0
@@ -652,7 +685,7 @@ fi
 # ---------------------------------------------------------------------------
 MERGE_CHECK_BIN="${FORGE_MERGE_CHECK_BIN:-$HERE/merge-check.sh}"
 MERGED="$TMP/merged-tree.json"
-merge_repo=""; head_ref=""; clone_url=""
+merge_repo=""; head_ref=""; clone_url=""; VERIFIED_HEAD=""
 if [ -n "$FIXTURE" ] && [ -z "${FORGE_MERGE_CHECK_BIN:-}" ]; then
   jq -n '{schema:"forge.mergecheck.v1", result:"skipped",
           evidence:"--fixture without FORGE_MERGE_CHECK_BIN: no repository to merge"}' > "$MERGED"
@@ -671,6 +704,12 @@ else
     merge_repo="${merge_repo#*/}"          # strip the host, leaving owner/name
   fi
   head_ref="$(gh pr view "$PR_URL" --json headRefName < /dev/null 2>/dev/null | jq -r '.headRefName // empty')"
+  # THE SHA THIS RUN VERIFIED, read once and carried to the merge. Each stage asks
+  # GitHub separately — the gate, the merged-tree check, the scorer — and a push
+  # landing during the scorer's minutes would leave `gh pr merge` merging a head
+  # nothing in this run ever looked at. `--match-head-commit` makes the merge fail
+  # instead (see route_merge).
+  VERIFIED_HEAD="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
   clone_url="$(gh repo view "$merge_repo" --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
   [ -n "$head_ref" ] && [ -n "$clone_url" ] \
     || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"

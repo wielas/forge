@@ -2554,6 +2554,8 @@ prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict
 verifier/chunk-is-the-running-card  D19.1: --chunk must BE the running card; a mismatch is substrate before Stage 1
 verifier/the-reviewer-profile-exists  the reviewer lane-handoff.sh names ships a SOUL, is created by the bootstrap, and matches lane.sh's default
 verifier/merged-tree-union-is-executed  real repositories: a red union bounces, a green one passes, a conflict is named, an absent branch or target is unrunnable
+verifier/merged-tree-prepares-a-real-project  a stamped python-service, cloned from outside any repo: make setup then a green union; an unbuildable tree is unrunnable
+verifier/merged-tree-clones-private-repos-through-gh  an owner/name reaches gh repo clone, a local path reaches git, and neither hangs on a credential prompt
 verifier/merged-tree-mutation-is-caught  a fast-forward-only merge builds no union and stops reporting the red one
 verifier/recommend-only-holds-the-card  the review run's own block lands blocked/needs_input from review; the child stays held and nothing merges (D19.3)
 verifier/merge-mode-merges-and-completes  squash + delete-branch, card done, child released; anything but the exact switch value 1 stays recommend-only (D19.6)
@@ -6060,6 +6062,10 @@ run_metadata_group() {
   metadata_sweep substrate 's/.*substrate "\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
   metadata_sweep json     's/.*"reason":"\([a-z0-9=-]*:\).*/\1/p'   scripts/prejudge-review.sh
   metadata_sweep quoted   's/^[[:space:]]*"\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
+  # The two classes FL4 added are passed to `decision_message` as a bare first
+  # argument, so none of the rules above can see them: a class the registry does
+  # not carry would reach a card unswept. This rule is their producer form.
+  metadata_sweep decision 's/.*decision_message \([a-z-]*\).*/\1:/p'       scripts/prejudge-review.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-setup.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-blast-radius.sh
   metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-verifier.SOUL.md
@@ -6087,7 +6093,7 @@ run_metadata_group() {
   done
   grep -Fq 'run-metadata-contract.json' scripts/metrics.sh || reason_ok=0
   if [ "$reason_ok" = 1 ] && [ -z "$silent" ] && [ -z "$legacy" ]; then
-    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 9 producer rules)"
+    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 10 producer rules)"
   else
     bad "blocked-reason-contract" \
         "${silent:+no class matched in:$silent — the sweep went blind, not green; }${legacy:+the retired reason-class form is back in: $legacy; }a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"
@@ -7679,6 +7685,88 @@ run_verifier_group() {
     || bad "merged-tree-union-is-executed" \
         "$mc must build the union and judge it, and never report an unrunnable check as a pass —$mc_detail"
 
+  # -------------------------------------------------------------------------
+  # 2b. A fresh clone is not a built tree, and a private repo is not a public one.
+  #
+  # Two failures that only a real project and a real host show, both measured
+  # 2026-09-26 while writing this:
+  #   * `lane-setup.sh` runs `make setup` before it will look at `make check`.
+  #     Without the same preparation, a fresh clone of a real project fails every
+  #     check for environment reasons — and since a red head-alone baseline is
+  #     `unrunnable`, that means every review BLOCKS.
+  #   * `git clone` cannot read a private repository on this host
+  #     ("could not read Username for 'https://github.com'"), and both product
+  #     repos in the epic's ledger are private. A GitHub source therefore goes
+  #     through `gh repo clone`, which uses the credential the lane already
+  #     pushes with; a local path still goes through git.
+  # -------------------------------------------------------------------------
+  local mcp_detail="" mcp_out mcp_rc mcp_dest="$TMPROOT/merge-check-project"
+  if ! command -v uvx >/dev/null 2>&1; then
+    skip "merged-tree-prepares-a-real-project" "uvx not on PATH (the template cannot be stamped)"
+  else
+    if ! uvx copier copy --defaults --data project_name="merge-probe" \
+          templates/python-service "$mcp_dest" >"$TMPROOT/mcp-copier.log" 2>&1; then
+      bad "merged-tree-prepares-a-real-project" \
+          "copier could not stamp the template: $(tail -2 "$TMPROOT/mcp-copier.log" | tr '\n' ' ')"
+    else
+      (
+        set -e
+        cd "$mcp_dest"
+        git init -q -b main; git config user.email v@forge.invalid; git config user.name verify
+        git add -A; git commit -qm base
+        git checkout -qb feature; printf '# a note from the branch\n' > branch-note.md
+        git add -A; git commit -qm 'feature: a file nothing else touches'
+        git checkout -q main; printf '# a note from main\n' > main-note.md
+        git add -A; git commit -qm 'main: a file nothing else touches'
+      ) >/dev/null 2>&1 || mcp_detail="$mcp_detail stamped-repo-not-built"
+      # From a directory that is NOT a git repository, the way the verifier runs.
+      mcp_out="$( cd "$TMPROOT" && "$REPO_ROOT/$mc" --clone-from "$mcp_dest" --head-ref feature 2>/dev/null )"
+      mcp_rc=$?
+      [ "$mcp_rc" = 0 ] || mcp_detail="$mcp_detail real-project-rc=$mcp_rc"
+      printf '%s' "$mcp_out" | jq -e '.result == "pass" and .setup == "make setup"
+          and .head_alone == "green"' >/dev/null 2>&1 \
+        || mcp_detail="$mcp_detail real-project-not-prepared-and-green($(printf '%s' "$mcp_out" | jq -c '{result,setup}' 2>/dev/null))"
+      # A tree whose setup cannot run is UNRUNNABLE, never a verdict on the work.
+      mcp_out="$( cd "$TMPROOT" && "$REPO_ROOT/$mc" --clone-from "$mcp_dest" --head-ref feature \
+                    --setup-cmd 'false' 2>/dev/null )"; mcp_rc=$?
+      { [ "$mcp_rc" = 3 ] && printf '%s' "$mcp_out" | jq -e '.result == "unrunnable"
+            and (.evidence | test("environment cannot be built"))' >/dev/null 2>&1; } \
+        || mcp_detail="$mcp_detail unbuildable-tree-was-not-unrunnable(rc=$mcp_rc)"
+      [ -z "$mcp_detail" ] \
+        && ok "merged-tree-prepares-a-real-project (a stamped python-service, cloned from outside any repo: make setup then a green union; an unbuildable tree is unrunnable)" \
+        || bad "merged-tree-prepares-a-real-project" \
+            "$mc must prepare a fresh clone the way lane-setup does and judge the union of a real project —$mcp_detail"
+    fi
+  fi
+
+  # The clone path a private repository needs. `gh` is a logging stub here: what
+  # is asserted is WHICH tool is reached for which source, because the difference
+  # is the difference between a review and an outage on every private repo.
+  local mcc_bin="$TMPROOT/merge-check-bin" mcc_detail=""
+  rm -rf "$mcc_bin"; mkdir -p "$mcc_bin"
+  # It only has to record what it was asked to do: whether the clone then succeeds
+  # is `merge-check.sh`'s ordinary unrunnable path, and not what this arm is about.
+  cat > "$mcc_bin/gh" <<'MCCGH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MCC_LOG"
+exit 1
+MCCGH
+  chmod +x "$mcc_bin/gh"
+  env PATH="$mcc_bin:$PATH" MCC_LOG="$mcc_bin/gh.log" \
+    "$mc" --clone-from wielas/example --head-ref feature >/dev/null 2>&1
+  grep -q '^repo clone wielas/example' "$mcc_bin/gh.log" 2>/dev/null \
+    || mcc_detail="$mcc_detail owner-name-did-not-go-through-gh"
+  : > "$mcc_bin/gh.log"
+  env PATH="$mcc_bin:$PATH" MCC_LOG="$mcc_bin/gh.log" \
+    "$mc" --clone-from "$mcorg" --head-ref green >/dev/null 2>&1
+  [ ! -s "$mcc_bin/gh.log" ] || mcc_detail="$mcc_detail local-path-was-sent-through-gh($(cat "$mcc_bin/gh.log"))"
+  grep -Fq 'GIT_TERMINAL_PROMPT=0' "$mc" \
+    || mcc_detail="$mcc_detail no-GIT_TERMINAL_PROMPT-guard"
+  [ -z "$mcc_detail" ] \
+    && ok "merged-tree-clones-private-repos-through-gh (an owner/name reaches gh repo clone, a local path reaches git, and neither may hang on a credential prompt)" \
+    || bad "merged-tree-clones-private-repos-through-gh" \
+        "git clone cannot read a private repo, so a GitHub source must go through gh and a prompt must never block a worker —$mcc_detail"
+
   # MUTATION: the one-line version of this check that does not work. Merging
   # fast-forward-only never builds a union at all, so redglass PR #9 passes.
   local mc_mut="$mcroot/ff-only.sh"
@@ -7727,6 +7815,7 @@ case "$1 $2" in
   "pr view")
     case "$*" in
       *headRefName*) echo '{"headRefName":"chunk/7-sync-engine"}'; exit 0;;
+      *headRefOid*)  echo '{"headRefOid":"feedfacecafebabe0123456789abcdef01234567"}'; exit 0;;
       *state*) if [ -f "$VSTUB/merged" ]; then
                  echo '{"state":"MERGED","mergedAt":"2026-09-26T10:00:00Z","mergeCommit":{"oid":"abcdef1234567890"}}'
                elif [ -f "$VSTUB/closed" ]; then
@@ -7759,7 +7848,11 @@ cat > /dev/null    # the prompt is consumed and never echoed
 if [ "${VF_VERDICT:-approve}" = bounce ]; then
   scores='{"spec_fidelity":1,"scenario_integrity":1,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
   verdict=bounce
-  findings='[{"dimension":"scenario_integrity","severity":"blocker","evidence":"tests/test_sync.py:41 asserts nothing","action":"assert the merged record count equals 3"}]'
+  # `severity` is an ENUM (nit|fix|block) and `dimension` is one too. This stub
+  # said "blocker" until the completion-metadata assertion below rejected the
+  # stored envelope: a stub that emits what the schema forbids tests the routing
+  # against a verdict no real scorer could produce.
+  findings='[{"dimension":"scenario_integrity","severity":"block","evidence":"tests/test_sync.py:41 asserts nothing","action":"assert the merged record count equals 3"}]'
 else
   scores='{"spec_fidelity":3,"scenario_integrity":3,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
   verdict=approve
@@ -7869,8 +7962,12 @@ with kbc.connect_closing() as c:
     vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
     [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
     jq -e '.action == "merged"' "$vbin/out.json" >/dev/null 2>&1 || vdetail="$vdetail envelope-not-merged"
-    grep -q '^pr merge --squash --delete-branch' "$vbin/gh.log" 2>/dev/null \
-      || vdetail="$vdetail not-squash-and-delete($(grep '^pr merge' "$vbin/gh.log" 2>/dev/null))"
+    # D19.6's three parts, AND the SHA this run verified: each stage read the PR
+    # separately, so a merge that does not pin the head can land a push that
+    # arrived while the scorer was thinking — unverified code, on an ungated repo.
+    grep -q '^pr merge --squash --delete-branch --match-head-commit feedfacecafebabe0123456789abcdef01234567' \
+      "$vbin/gh.log" 2>/dev/null \
+      || vdetail="$vdetail not-squash-delete-and-pinned-head($(grep '^pr merge' "$vbin/gh.log" 2>/dev/null))"
     [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail card-not-done($(_vst "$vP"))"
     [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released($(_vst "$vC"))"
     # Fail closed: anything but the exact string `1` is recommend-only.
@@ -8153,6 +8250,11 @@ with kbc.connect_closing() as c:
     _v show "$vP" --json | jq -e '
         [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | length == 1' >/dev/null 2>&1 \
       || vdetail="$vdetail verdict-was-not-stashed-on-the-card"
+    _v show "$vP" --json | jq -r '
+        [ .runs[] | select(.outcome == "completed") ] | last | .metadata // empty' \
+      > "$vbin/completed-meta.json" 2>/dev/null
+    ./scripts/validate-metadata.py --profile forge-verifier "$vbin/completed-meta.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail hold-completion-metadata-violates-the-contract"
     # CRON PASSES NO ARGUMENTS, so the no-board sweep is the shape that will
     # actually run: `--script` takes a path and nothing else. And stdout is the
     # message the operator receives, so a usage text there would be a
@@ -8168,12 +8270,25 @@ with kbc.connect_closing() as c:
     # FL6's exception is watchable too: the operator's answer to one is often "I
     # fixed it and merged it", which leaves the same merged PR and blocked card.
     _vboard
-    vrc="$(_vrun VF_VERDICT=bounce FORGE_VERIFIER_BOUNCE_BUDGET=0)"
+    vrc="$(_vrun VF_MERGED_TREE=check-failed FORGE_VERIFIER_BOUNCE_BUDGET=0)"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail no-exception-to-watch($(_vst "$vP"))"
     touch "$vbin/merged"
     vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
     { printf '%s' "$vout" | grep -q "$vP: done" && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
       || vdetail="$vdetail bounce-budget-hold-was-not-watched($(_vst "$vP"),'$vout')"
+    # WHATEVER THE WATCHER COMPLETES WITH MUST SATISFY THE REGISTRY, on both hold
+    # classes. `metadata-live` counts a completed producer run as `invalid` for a
+    # schema outside the contract AND for no metadata at all, and it exits 1 —
+    # "stop and repair the producer", at the root checkpoint of a finished run.
+    # The bounce that produced this exception was the merged-tree arm, whose own
+    # envelope is `forge.mergecheck.v1` and is NOT a completion schema for this
+    # profile, so this arm is the one that catches a stash that forwards it.
+    _v show "$vP" --json | jq -r '
+        [ .runs[] | select(.outcome == "completed") ] | last | .metadata // empty' \
+      > "$vbin/completed-meta.json" 2>/dev/null
+    { [ -s "$vbin/completed-meta.json" ] \
+      && ./scripts/validate-metadata.py --profile forge-verifier "$vbin/completed-meta.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail exception-completion-metadata-violates-the-contract($(jq -r '.schema // "none"' "$vbin/completed-meta.json" 2>/dev/null))"
 
     # A card blocked for anything else is none of its business. It must be a
     # `ready` card: `block_task` only ever fires FROM running/ready, so blocking

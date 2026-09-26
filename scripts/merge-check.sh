@@ -25,7 +25,8 @@
 #
 # Usage:
 #   merge-check.sh --clone-from <url|path> --head-ref <branch>
-#                  [--base-ref <branch>] [--check-cmd <cmd>] [--json]
+#                  [--base-ref <branch>] [--check-cmd <cmd>]
+#                  [--setup-cmd <cmd>|--no-setup] [--json]
 #
 # Exit: 0 the merged tree is green.
 #       1 the merge conflicts, or the merged tree fails its check (actionable).
@@ -35,6 +36,14 @@
 set -uo pipefail
 
 CLONE_FROM=""; HEAD_REF=""; BASE_REF="main"; CHECK_CMD="make check"
+# A FRESH CLONE IS NOT A BUILT TREE. `lane-setup.sh` runs `make setup` before it
+# will even look at `make check`, and calls a setup failure `env:` — the
+# environment cannot be built — precisely because an unbuilt tree fails every
+# check for reasons that have nothing to do with the diff. This script runs in a
+# clone nobody has prepared, so it prepares it the same way. Skipped silently when
+# the project has no such target, overridable, and `--no-setup` for a caller that
+# has its own arrangement.
+SETUP_CMD="${FORGE_MERGE_SETUP_CMD-make setup}"
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,6 +51,8 @@ while [ $# -gt 0 ]; do
     --head-ref)   HEAD_REF="${2:?--head-ref needs a branch}"; shift 2;;
     --base-ref)   BASE_REF="${2:?--base-ref needs a branch}"; shift 2;;
     --check-cmd)  CHECK_CMD="${2:?--check-cmd needs a command}"; shift 2;;
+    --setup-cmd)  SETUP_CMD="${2:?--setup-cmd needs a command}"; shift 2;;
+    --no-setup)   SETUP_CMD=""; shift;;
     --json)       shift;;   # accepted and ignored: the result is always JSON
     -h|--help)    awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
@@ -63,7 +74,7 @@ REPO="$TMP/repo"; LOG="$TMP/check.log"
 run_check() { ( unset UV_OFFLINE UV_CACHE_DIR; "$@" ); }
 
 emit() {  # result, evidence, action, exit code
-  jq -n --arg result "$1" --arg evidence "$2" --arg action "$3" \
+  jq -n --arg result "$1" --arg evidence "$2" --arg action "$3" --arg setup "${SETUP_CMD:-none}" \
         --arg base "$BASE_REF" --arg head "$HEAD_REF" \
         --arg base_sha "${BASE_SHA:-}" --arg head_sha "${HEAD_SHA:-}" \
         --arg cmd "$CHECK_CMD" --arg head_alone "${HEAD_ALONE:-not-measured}" '
@@ -71,7 +82,7 @@ emit() {  # result, evidence, action, exit code
       base: $base, head: $head,
       base_sha: (if $base_sha == "" then null else $base_sha end),
       head_sha: (if $head_sha == "" then null else $head_sha end),
-      check: $cmd, head_alone: $head_alone, evidence: $evidence,
+      check: $cmd, setup: $setup, head_alone: $head_alone, evidence: $evidence,
       action: (if $action == "" then null else $action end) }'
   exit "$4"
 }
@@ -79,8 +90,42 @@ command -v jq >/dev/null || { echo '{"schema":"forge.mergecheck.v1","result":"un
 
 # A shallow clone cannot be merged against an arbitrary base, so this is a full
 # one. `--no-tags` keeps it to the two refs that matter.
-git clone --quiet --no-tags "$CLONE_FROM" "$REPO" 2>"$TMP/clone.err" \
-  || emit unrunnable "clone of $CLONE_FROM failed: $(tr -d '\n' < "$TMP/clone.err" | head -c 200)" "" 3
+#
+# THROUGH `gh` WHEN THE SOURCE IS A GITHUB REPOSITORY, because `git clone` cannot
+# read a private one. Measured 2026-09-26 on this host:
+#
+#   $ GIT_TERMINAL_PROMPT=0 git clone https://github.com/wielas/vault x
+#   fatal: could not read Username for 'https://github.com': terminal prompts disabled
+#
+# The osxkeychain helper holds no git credential for github.com — `gh` keeps its
+# token elsewhere — and BOTH product repos in the ledger are private. So a plain
+# `git clone` would make every review on a private repo `unrunnable`, i.e. every
+# card blocks on an outage. `gh repo clone` uses gh's own auth and is the same
+# credential the lane already pushes with. A local path (a fixture, or a mirror)
+# still goes through git.
+#
+# GIT_TERMINAL_PROMPT=0 on both paths: a missing credential must fail in seconds,
+# not sit on a username prompt until `terminal.timeout` kills the worker 1800s
+# later with the card still `running`.
+gh_repo=""
+case "$CLONE_FROM" in
+  https://github.com/*) gh_repo="${CLONE_FROM#https://github.com/}"; gh_repo="${gh_repo%.git}";;
+  git@github.com:*)     gh_repo="${CLONE_FROM#git@github.com:}";     gh_repo="${gh_repo%.git}";;
+  */*) case "$CLONE_FROM" in
+         /*|./*|../*|*://*) ;;                   # a path or another host: git
+         *) gh_repo="$CLONE_FROM";;              # bare owner/name
+       esac;;
+esac
+case "$gh_repo" in */*/*) gh_repo="";; esac      # not an owner/name after all
+
+if [ -n "$gh_repo" ] && command -v gh >/dev/null; then
+  GIT_TERMINAL_PROMPT=0 gh repo clone "$gh_repo" "$REPO" -- --quiet --no-tags \
+    >"$TMP/clone.err" 2>&1 \
+    || emit unrunnable "gh repo clone $gh_repo failed: $(tr -d '\n' < "$TMP/clone.err" | head -c 200)" "" 3
+else
+  GIT_TERMINAL_PROMPT=0 git clone --quiet --no-tags "$CLONE_FROM" "$REPO" 2>"$TMP/clone.err" \
+    || emit unrunnable "clone of $CLONE_FROM failed: $(tr -d '\n' < "$TMP/clone.err" | head -c 200)" "" 3
+fi
 git -C "$REPO" fetch --quiet origin "$BASE_REF" "$HEAD_REF" 2>/dev/null || true
 # `--verify --quiet`, never a bare rev-parse: a bare one ECHOES the unresolved
 # argument on stdout and exits non-zero, so `origin/nope` comes back as the
@@ -93,6 +138,22 @@ HEAD_SHA="$(git -C "$REPO" rev-parse --verify --quiet "origin/$HEAD_REF" 2>/dev/
 
 git -C "$REPO" -c advice.detachedHead=false checkout --quiet "$HEAD_SHA" 2>/dev/null \
   || emit unrunnable "cannot check out $HEAD_REF at $HEAD_SHA" "" 3
+
+# PREPARE THE TREE BEFORE JUDGING IT, and classify a build failure as UNRUNNABLE:
+# a host that cannot install this project's dependencies has said nothing about
+# the work. `make -n` asks make whether the target exists rather than parsing a
+# Makefile, so a project without one simply skips this.
+if [ -n "$SETUP_CMD" ]; then
+  case "$SETUP_CMD" in
+    make\ *) ( cd "$REPO" && run_check make -n ${SETUP_CMD#make } >/dev/null 2>&1 ) || SETUP_CMD="";;
+  esac
+fi
+if [ -n "$SETUP_CMD" ]; then
+  ( cd "$REPO" && run_check eval "$SETUP_CMD" ) >"$TMP/setup.log" 2>&1 \
+    || emit unrunnable \
+         "'$SETUP_CMD' failed in a fresh clone of $HEAD_REF — the environment cannot be built here, so nothing below is a verdict on the work: $(tail -10 "$TMP/setup.log" | tr '\n' '|' | head -c 300)" \
+         "" 3
+fi
 
 # The merge identity is configured locally, so a host with no global git identity
 # can still make the commit. The merge itself happens below, AFTER the head-alone

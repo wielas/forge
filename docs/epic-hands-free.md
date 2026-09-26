@@ -724,6 +724,19 @@ whose HEAD read `68724a4`, identical to `main` — so S3's baseline is a deploye
 lane, with `config/soul-in-sync` green and neither S2 preflight FAIL present.
 S3's own landing repeats the same step for the same reason.*
 
+**P9 (S3). Nothing re-verifies a card the operator repaired by hand.** An FL6
+exception leaves the card blocked with the reasons on it. `bounce.sh` gives it
+another machine round, and the merge-watcher now completes it if the PR is merged
+— but a push to the PR branch of a *held* card starts no new review, so the
+evidence behind a merge can be older than the code. While the verifier only
+recommends this is the operator's judgement and nothing is wrong. **It is a hole
+before merge mode is switched on** (D19.3/D19.4), because the flip makes the
+verifier's last verdict the thing that merges. Options: watch the PR's head SHA
+and re-open the review when it moves; or refuse merge mode for a card whose head
+has moved since its verdict (`--match-head-commit` already refuses the merge
+itself, which turns the hole into a failure rather than a silent one). Decide in
+S8, with MS4.
+
 **P8 (S3). Triage needs a model to empty, and it is a dead end for a chunk
 card.** Executed 2026-09-26 in an isolated `HERMES_HOME`: a card in `triage`
 refuses `complete`, `complete --force`, `promote` and `unblock`. Its one CLI exit
