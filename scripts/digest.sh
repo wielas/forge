@@ -118,6 +118,15 @@ SELECT json_object(
                               WHERE e.task_id = t.id AND e.kind IN ('blocked','block_loop_detected')
                               ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS reason
                        FROM tasks t WHERE t.status IN ('blocked','triage')
+                        -- A milestone gate (epic MS1) is held from the moment the
+                        -- board is bootstrapped, but it asks nothing until every
+                        -- chunk it closes is done. Before that it is not waiting
+                        -- on the operator, and GW1 says no decision, no message.
+                        AND NOT (t.title GLOB 'GATE-*' AND t.status = 'blocked'
+                                 AND EXISTS (SELECT 1 FROM task_links l
+                                               JOIN tasks p ON p.id = l.parent_id
+                                              WHERE l.child_id = t.id
+                                                AND p.status NOT IN ('done','archived')))
                       ORDER BY t.id))
 );
 SQL

@@ -300,6 +300,28 @@ ends in the same place — so the race itself is untested until run A.
   - PR open → merge is a board proxy, not GitHub's timestamps.
   - The digest has never been delivered by `hermes cron --no-agent`. Its
     done-when — a week of digests read from a phone — rides run A.
+- **Planning with milestones and gates, live (epic S5; PL1–PL4, MS1, MS2's
+  declaration).** `scripts/plan-check.sh` executes what `/scope` and
+  `/architect` promise:
+  - an ambition dial and a numeric complexity budget;
+  - delight and gold-plating passes, and a non-empty out-of-scope list;
+  - a feasibility ledger whose spikes exist and whose kept estimate fits the
+    budget.
+
+  `roadmap-check.sh` holds the roadmap to that budget and to the ledger's
+  estimate, and checks gates, tiers and a spec budget. `acceptance-freeze.sh`
+  freezes each gate's `forge.probe.v1` declaration and its inputs, and maps
+  multi-record fixtures to `@multi-record` scenarios. `board-bootstrap.sh`
+  creates a `GATE-<milestone>` card, held for the operator, between two
+  milestones. All of this is fixture-exact (`roadmap/`, `bootstrap/`,
+  `metrics/`, `digest/`). The opt-in `bootstrap/real-hermes-gate-holds-the-next-milestone`
+  runs it on the installed kernel in an isolated `HERMES_HOME`: a held gate
+  keeps the next milestone `todo` after its own milestone is done, and
+  completing it from `blocked` releases it. What that does NOT prove:
+  - No project has been planned with these skills. That is S6.
+  - Nothing executes a declared probe. The runner and the redglass replay are
+    S5b, so until then a gate's probe is run by hand.
+  - No tier but `strong` and `human` has an implementer (EN1).
 - **Timeout/reclaim and circuit-breaker recovery.** Signal-9 retry is proven;
   stale-heartbeat reclaim and a tripped retry limit are not.
 - **The usage-limit park against a real window.** ADR-0016 shipped

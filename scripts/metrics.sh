@@ -723,7 +723,7 @@ SELECT json_object(
      'human_implemented', json_object('count', human, 'of', chunks),
      'not_yet_measurable', json_array(
         'defects the milestone probe catches before the operator does — no probe exists until MS2',
-        'architect estimate vs actual cost per milestone — no estimate is recorded until PL2'))
+        'architect estimate vs actual cost per milestone — the estimate rides each GATE card since PL2, and the comparison arrives with the checkpoint (MS4)'))
      FROM ns),
   'chunk_cards', (SELECT COUNT(*) FROM cc),
   'verdicts', json_object(

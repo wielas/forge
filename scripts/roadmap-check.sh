@@ -41,6 +41,12 @@
 #   touches       warn   <= 6 DECLARABLE paths per chunk (F55 exemption applies)
 #   scenarios     warn   <= 5 scenarios, one Given/When/Then each (F11)
 #   lane          warn   claude-interactive, or a real Hermes assignee
+#   gates         warn   one GATE-<milestone> node per milestone, closing exactly
+#                        its chunks, gating the next milestone (epic MS1)
+#   tier          warn   every chunk has a tier an implementer exists for (PL3)
+#   budget        warn   the plan fits the scope's complexity budget (PL1)
+#   estimate      warn   the gates carry the feasibility ledger's estimate (PL2/PL3)
+#   spec-budget   warn   each contract and the ROADMAP.md index within budget (PL3)
 #
 # THE THRESHOLDS ARE THE ROADMAP SKILL'S OWN NUMBERS and are not tunable here.
 # `skills/roadmap/SKILL.md` says "<= ~400 lines changed, <= ~6 files, <= 5 BDD
@@ -156,6 +162,8 @@ SCHEMA_ERRORS="$(jq -r '
     # `json.dump` of a dict holding None is the obvious way to produce it.
     elif ($e.lane != null) and ($e.lane | type) != "string" then
       "\($e.id): lane \($e.lane | tojson) is a \($e.lane | type), not a string"
+    elif ($e.tier != null) and ($e.tier | type) != "string" then
+      "\($e.id): tier \($e.tier | tojson) is a \($e.tier | type), not a string"
     elif ($e.depends_on != null) and ($e.depends_on | type) != "array" then
       "\($e.id): depends_on \($e.depends_on | tojson) is a \($e.depends_on | type), not an array"
     elif ($e.depends_on != null) and ([$e.depends_on[] | select(type != "string")] | length) > 0 then
@@ -184,7 +192,14 @@ RESULTS="$TMP/results.tsv"; : > "$RESULTS"
 # run has not passed (F5).
 emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >> "$RESULTS"; }
 
-IDS="$(jq -r '.[].id' "$GRAPH")"
+# A GATE-<milestone> node is a milestone gate (epic MS1), not a chunk: it has no
+# feature, no Touches and no scenarios, and the implementer lane never runs it.
+# Every chunk-content check below reads IDS, which is chunks only; the checks
+# about the graph as a whole — bijection, the lane — read ALL_IDS.
+ALL_IDS="$(jq -r '.[].id' "$GRAPH")"
+IDS="$(printf '%s\n' "$ALL_IDS" | grep -v '^GATE-' || true)"
+GATE_IDS="$(printf '%s\n' "$ALL_IDS" | grep '^GATE-' || true)"
+LANE_IMPLEMENTER="${FORGE_LANE_ASSIGNEE:-forge-codex-lane}"
 
 # ---------------------------------------------------------------------------
 # 1. graph ids <-> docs/chunks/*.md, bijective. board-bootstrap.sh checks the
@@ -195,9 +210,9 @@ IDS="$(jq -r '.[].id' "$GRAPH")"
 bijection() {
   local files missing orphan dangling
   files="$(ls -1 "$CHUNKDIR" 2>/dev/null | sed -n 's/\.md$//p' | sort)"
-  missing="$(comm -23 <(printf '%s\n' "$IDS" | sort) <(printf '%s\n' "$files"))"
-  orphan="$(comm -13 <(printf '%s\n' "$IDS" | sort) <(printf '%s\n' "$files"))"
-  dangling="$(jq -r --argjson ids "$(printf '%s\n' "$IDS" | jq -R . | jq -s .)" \
+  missing="$(comm -23 <(printf '%s\n' "$ALL_IDS" | sort) <(printf '%s\n' "$files"))"
+  orphan="$(comm -13 <(printf '%s\n' "$ALL_IDS" | sort) <(printf '%s\n' "$files"))"
+  dangling="$(jq -r --argjson ids "$(printf '%s\n' "$ALL_IDS" | jq -R . | jq -s .)" \
       '.[] | .id as $c | (.depends_on // [])[] | select(. as $d | $ids | index($d) | not)
        | "\($c) -> \(.)"' "$GRAPH" | sort -u)"
   local n=0 detail=""
@@ -205,7 +220,7 @@ bijection() {
   [ -n "$orphan" ] && { detail="$detail; files with no id: $(printf '%s' "$orphan" | tr '\n' ' ')"; n=$((n+1)); }
   [ -n "$dangling" ] && { detail="$detail; depends_on names an unknown id: $(printf '%s' "$dangling" | tr '\n' ' ')"; n=$((n+1)); }
   if [ "$n" = 0 ]; then
-    emit bijection pass "$(printf '%s\n' "$IDS" | grep -c .) id(s), each with exactly one docs/chunks/<id>.md"
+    emit bijection pass "$(printf '%s\n' "$ALL_IDS" | grep -c .) id(s), each with exactly one docs/chunks/<id>.md"
   else
     emit bijection warn "graph.json and docs/chunks/ disagree${detail}" \
       "make the two sets equal: add the missing docs/chunks/<id>.md files, add the orphan files to graph.json, and correct any depends_on entry naming an id the graph does not define — board-bootstrap.sh exits 1 on the first of these it reaches, after it has already created cards"
@@ -325,7 +340,8 @@ Scenarios
 Out of scope
 Done when
 Lane
-Risk'
+Risk
+Multi-record fixtures'
 
 # A contract's value for one **Field:**, up to the next ` · ` separator or EOL.
 field_value() {  # $1=file $2=field
@@ -652,7 +668,7 @@ lane() {
     [ "$l" = "claude-interactive" ] && continue
     printf '%s\n' "$known" | grep -qxF "$l" || unknown="$unknown $id($l),"
   done <<EOF
-$IDS
+$ALL_IDS
 EOF
   if [ -z "$unknown" ]; then
     emit lane pass "$seen lane(s), each claude-interactive or a known assignee (per $src)"
@@ -662,15 +678,276 @@ EOF
   fi
 }
 
+# ---------------------------------------------------------------------------
+# 10. Milestones are gate cards (epic MS1).
+#
+# A milestone used to be a label in prose. Nothing stopped the next milestone
+# starting while the last one was wrong — redglass's CHUNK-15.0 probe found the
+# core gates fail-open in code that had already been built on. A gate node makes
+# the milestone a card: its parents are the milestone's chunks, the next
+# milestone's chunks depend on it, and `_parents_satisfied` holds them natively
+# until the gate is done. The gate carries the milestone's probe (MS2) and its
+# estimate (PL2), which is what the checkpoint compares actual cost with.
+#
+# Each finding names the gate or milestone, because a gate whose parents are not
+# exactly its milestone's chunks either releases the next milestone early or
+# never releases it.
+# ---------------------------------------------------------------------------
+GATE_FIELDS='Milestone
+Probe
+Estimate
+Lane'
+
+# GATE-M1 -> tests/probes/gate_m1.json — the same derivation acceptance-freeze
+# uses for a chunk's feature path, so the path is never a free choice.
+gate_probe_path() { printf 'tests/probes/%s.json' "$(printf '%s' "$1" | tr 'A-Z-' 'a-z_')"; }
+
+# milestone <TAB> chunk id, one line per chunk contract that names a milestone.
+MS_TSV="$TMP/milestones.tsv"; : > "$MS_TSV"
+while IFS= read -r id; do
+  [ -n "$id" ] && [ -f "$CHUNKDIR/$id.md" ] || continue
+  m="$(field_value "$CHUNKDIR/$id.md" Milestone | tr -d '`' | tr -d ' ')"
+  [ -n "$m" ] && printf '%s\t%s\n' "$m" "$id" >> "$MS_TSV"
+done <<EOF
+$IDS
+EOF
+# Milestones in plan order: M<n> sorts by n. A name not of that form sorts last
+# and is reported by `gates`, which needs the order to find "the next one".
+MILESTONES="$(cut -f1 "$MS_TSV" | sort -u \
+  | awk '{ n = ($0 ~ /^M[0-9]+$/) ? substr($0, 2) + 0 : 999999; print n "\t" $0 }' \
+  | sort -n -k1,1 | cut -f2)"
+
+gate_has_ancestor() {  # $1=node $2=ancestor -> exit 0 when $2 is upstream of $1
+  jq -e --arg c "$1" --arg g "$2" '
+    (map({key: .id, value: (.depends_on // [])}) | from_entries) as $d
+    | {seen: [], frontier: ($d[$c] // [])}
+    | until(.frontier | length == 0;
+            ((.seen + .frontier) | unique) as $s
+            | {seen: $s, frontier: ([.frontier[] | ($d[.] // [])[]] | unique - $s)})
+    | .seen | index($g) != null' "$GRAPH" >/dev/null 2>&1
+}
+
+gates() {
+  local g m f name want got lane_ problems="" prev="" id
+  if [ -z "$MILESTONES" ] && [ -z "$GATE_IDS" ]; then
+    emit gates skip "no chunk names a milestone and the graph has no gate node, so there is nothing to gate"
+    return
+  fi
+  for m in $MILESTONES; do
+    case "$m" in M[0-9]*) ;; *) problems="$problems milestone '$m' is not named M<n>;";; esac
+    printf '%s\n' "$GATE_IDS" | grep -qxF "GATE-$m" || problems="$problems $m has no GATE-$m node;"
+  done
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    m="${g#GATE-}"
+    want="$(awk -F'\t' -v m="$m" '$1==m{print $2}' "$MS_TSV" | sort)"
+    got="$(jq -r --arg id "$g" '.[] | select(.id == $id) | (.depends_on // [])[]' "$GRAPH" | sort)"
+    if [ -z "$want" ]; then
+      problems="$problems $g gates milestone $m, which no chunk names;"
+    elif [ "$got" != "$want" ]; then
+      problems="$problems $g closes [$(printf '%s' "$got" | tr '\n' ' ' | sed 's/ $//')] but milestone $m is [$(printf '%s' "$want" | tr '\n' ' ' | sed 's/ $//')];"
+    fi
+    lane_="$(jq -r --arg id "$g" '.[] | select(.id == $id) | (.lane // "")' "$GRAPH")"
+    # Held for the operator is the only gate route until something runs one:
+    # the probe runner (epic S5b), then the overseer (S8). board-bootstrap.sh
+    # refuses any other lane before a board exists; this says so at plan time.
+    if [ "$lane_" = "$LANE_IMPLEMENTER" ]; then
+      problems="$problems $g is assigned to $LANE_IMPLEMENTER, which would run it as a chunk;"
+    elif [ -n "$lane_" ] && [ "$lane_" != claude-interactive ]; then
+      problems="$problems $g is assigned to $lane_, but no profile runs a gate card yet;"
+    fi
+    f="$CHUNKDIR/$g.md"
+    [ -f "$f" ] || continue   # bijection names it
+    while IFS= read -r name; do
+      grep -qF -- "**$name:**" "$f" || problems="$problems $g misses **$name:**;"
+    done <<< "$GATE_FIELDS"
+    got="$(field_value "$f" Milestone | tr -d '` ')"
+    [ -z "$got" ] || [ "$got" = "$m" ] || problems="$problems $g says Milestone $got, its id says $m;"
+    got="$(field_value "$f" Probe | tr -d '` ')"
+    [ -z "$got" ] || [ "$got" = "$(gate_probe_path "$g")" ] || \
+      problems="$problems $g declares probe $got, expected $(gate_probe_path "$g");"
+    got="$(field_value "$f" Estimate)"
+    [ -z "$got" ] || printf '%s' "$got" | grep -Eqx '[0-9]+ chunks?' || \
+      problems="$problems $g estimate '$got' is not '<n> chunks';"
+  done <<EOF
+$GATE_IDS
+EOF
+  # Each milestone after the first waits for the one before it: every chunk of
+  # milestone N has GATE-M(N-1) upstream. One missing edge and a chunk of M2 is
+  # dispatched while M1 is still unverified — the whole point of the gate.
+  for m in $MILESTONES; do
+    if [ -n "$prev" ] && printf '%s\n' "$GATE_IDS" | grep -qxF "GATE-$prev"; then
+      for id in $(awk -F'\t' -v m="$m" '$1==m{print $2}' "$MS_TSV"); do
+        gate_has_ancestor "$id" "GATE-$prev" || problems="$problems $id ($m) does not wait for GATE-$prev;"
+      done
+    fi
+    prev="$m"
+  done
+  if [ -z "$problems" ]; then
+    emit gates pass "$(printf '%s\n' "$GATE_IDS" | grep -c .) gate(s) for milestone(s) $(printf '%s' "$MILESTONES" | tr '\n' ' ' | sed 's/ $//'), each closing exactly its chunks and each gating the next"
+  else
+    problems="${problems# }"
+    emit gates warn "${problems%;}" \
+      "give every milestone M<n> one GATE-M<n> node in graph.json whose depends_on is exactly that milestone's chunks, make each chunk of the next milestone depend on it, assign it claude-interactive (held for the operator — board-bootstrap.sh refuses any other gate lane), and write docs/chunks/GATE-M<n>.md with Milestone, Probe ($(gate_probe_path GATE-M1) for M1), Estimate ('<n> chunks') and Lane"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 11. Tier (epic PL3). `lane` is the card's assignee; `tier` is what kind of
+# implementer the chunk is sized and budgeted for. Only two exist before EN1:
+# `strong` (Codex, through the lane) and `human`. `cheap` and `local` are
+# accepted words with nothing behind them yet, so a chunk given one would be
+# dispatched to a model nobody has configured — a warning, not a routing.
+# ---------------------------------------------------------------------------
+tier() {
+  local id t l m notier="" unrouted="" invalid="" mismatch="" humans over=""
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    t="$(jq -r --arg id "$id" '.[] | select(.id == $id) | (.tier // "")' "$GRAPH")"
+    l="$(jq -r --arg id "$id" '.[] | select(.id == $id) | (.lane // "")' "$GRAPH")"
+    case "$t" in
+      "") notier="$notier $id,"; continue;;
+      strong|human) ;;
+      cheap|local) unrouted="$unrouted $id($t),";;
+      *) invalid="$invalid $id($t),"; continue;;
+    esac
+    if [ "$t" = human ] && [ "$l" != claude-interactive ]; then
+      mismatch="$mismatch $id(human on $l),"
+    elif [ "$t" != human ] && [ "$l" = claude-interactive ]; then
+      mismatch="$mismatch $id($t on claude-interactive),"
+    fi
+  done <<EOF
+$IDS
+EOF
+  # The north-star target: at most one human-implemented chunk per milestone.
+  for m in $MILESTONES; do
+    humans="$(awk -F'\t' -v m="$m" '$1==m{print $2}' "$MS_TSV" | while IFS= read -r id; do
+      jq -r --arg id "$id" '.[] | select(.id == $id and .tier == "human") | .id' "$GRAPH"; done | grep -c . || true)"
+    [ "$humans" -gt 1 ] && over="$over $m($humans),"
+  done
+  if [ -z "$notier$unrouted$invalid$mismatch$over" ]; then
+    emit tier pass "$(printf '%s\n' "$IDS" | grep -c .) chunk(s), each strong or human, human exactly where the lane is claude-interactive, at most one human chunk per milestone"
+    return
+  fi
+  local ev=""
+  [ -n "$notier" ] && ev="$ev no tier:${notier%,};"
+  [ -n "$invalid" ] && ev="$ev not a tier:${invalid%,};"
+  [ -n "$unrouted" ] && ev="$ev no implementer exists for this tier until EN1:${unrouted%,};"
+  [ -n "$mismatch" ] && ev="$ev tier and lane disagree:${mismatch%,};"
+  [ -n "$over" ] && ev="$ev more than one human chunk in:${over%,};"
+  ev="${ev# }"
+  emit tier warn "${ev%;}" \
+    "give every chunk \"tier\": \"strong\" (lane forge-codex-lane) or \"human\" (lane claude-interactive) in graph.json. Keep human for a chunk whose decision genuinely needs the operator — the target is at most one per milestone"
+}
+
+# ---------------------------------------------------------------------------
+# 12/13. The scope's budget and the architect's estimate, carried (PL1, PL2).
+# The numbers come from `plan-check.sh --facts`, the one parser of
+# docs/REQUIREMENTS.md and docs/feasibility.md. Absent is null there and SKIP
+# here — a plan with no budget has not been budgeted, which is not the same as
+# fitting one.
+# ---------------------------------------------------------------------------
+FACTS=""
+[ -x "$HERE/plan-check.sh" ] && FACTS="$("$HERE/plan-check.sh" "$PROJECT" --facts 2>/dev/null)" || FACTS=""
+fact() { printf '%s' "$FACTS" | jq -r "$1" 2>/dev/null; }
+
+budget() {
+  local bc bm nc nm ev=""
+  if [ -z "$FACTS" ]; then
+    emit budget skip "plan-check.sh --facts could not run beside this script, so no budget was read"
+    return
+  fi
+  bc="$(fact '.budget.chunks // empty')"; bm="$(fact '.budget.milestones // empty')"
+  if [ -z "$bc" ]; then
+    emit budget skip "docs/REQUIREMENTS.md declares no readable **Complexity budget:** — run plan-check.sh --stage scope"
+    return
+  fi
+  nc="$(printf '%s\n' "$IDS" | grep -c . || true)"
+  nm="$(printf '%s\n' "$MILESTONES" | grep -c . || true)"
+  [ "$nc" -gt "$bc" ] && ev="$ev $nc chunk(s) against a budget of $bc;"
+  [ "$nm" -gt "$bm" ] && ev="$ev $nm milestone(s) against a budget of $bm;"
+  if [ -z "$ev" ]; then
+    emit budget pass "$nc chunk(s) in $nm milestone(s), within the scope budget of $bc in $bm"
+  else
+    ev="${ev# }"
+    emit budget warn "the plan exceeds the scope's complexity budget: ${ev%;}" \
+      "cut or defer until the plan fits, or go back to /scope and raise the budget there with the operator — do not plan past a number the operator signed off"
+  fi
+}
+
+estimate() {
+  local kept g e sum=0 per=""
+  if [ -z "$FACTS" ] || [ -z "$(fact '.ledger.kept_chunks // empty')" ]; then
+    emit estimate skip "no readable docs/feasibility.md ledger — run plan-check.sh --stage architect"
+    return
+  fi
+  if [ -z "$GATE_IDS" ]; then
+    emit estimate skip "no gate node, so no milestone carries an estimate — see gates"
+    return
+  fi
+  kept="$(fact '.ledger.kept_chunks')"
+  while IFS= read -r g; do
+    [ -n "$g" ] && [ -f "$CHUNKDIR/$g.md" ] || continue
+    e="$(field_value "$CHUNKDIR/$g.md" Estimate | sed -n 's/^\([0-9][0-9]*\) chunks*$/\1/p')"
+    [ -n "$e" ] || continue   # gates reports the malformed estimate
+    sum=$((sum + e))
+    per="$per ${g#GATE-} planned $(awk -F'\t' -v m="${g#GATE-}" '$1==m' "$MS_TSV" | grep -c . || true)/estimated $e,"
+  done <<EOF
+$GATE_IDS
+EOF
+  if [ "$sum" = "$kept" ]; then
+    emit estimate pass "the gates carry the ledger's estimate of $kept chunk(s):${per%,}"
+  else
+    emit estimate warn "estimated by the gates: $sum chunk(s); by the feasibility ledger's kept rows: $kept —${per%,}" \
+      "carry the ledger's estimate into the gates' Estimate fields, or re-estimate in docs/feasibility.md and record why. The milestone checkpoint compares actual cost with these numbers, so the two must be one estimate"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 14. Spec budget (PL3). Every lane re-reads its contract, and an implementer
+# told the plan lives in docs/ROADMAP.md reads that too — JobApp's was 94 KB and
+# redglass's 85 KB, because the roadmap skill made it a second copy of every
+# contract. It is now an index, and both have a byte budget stated in the skill.
+# ---------------------------------------------------------------------------
+SPEC_BYTES_MAX=6000
+ROADMAP_BYTES_MAX=16000
+spec_budget() {
+  local id n over="" rmap="" rn
+  while IFS= read -r id; do
+    [ -n "$id" ] && [ -f "$CHUNKDIR/$id.md" ] || continue
+    n="$(wc -c < "$CHUNKDIR/$id.md" | tr -d ' ')"
+    [ "$n" -gt "$SPEC_BYTES_MAX" ] && over="$over $id($n),"
+  done <<EOF
+$ALL_IDS
+EOF
+  for rn in "$PROJECT/docs/ROADMAP.md" "$PROJECT/ROADMAP.md"; do
+    [ -f "$rn" ] || continue
+    n="$(wc -c < "$rn" | tr -d ' ')"
+    [ "$n" -gt "$ROADMAP_BYTES_MAX" ] && rmap="${rn#"$PROJECT"/} is $n bytes"
+    break
+  done
+  if [ -z "$over" ] && [ -z "$rmap" ]; then
+    emit spec-budget pass "every contract within $SPEC_BYTES_MAX bytes; the ROADMAP.md index, if any, within $ROADMAP_BYTES_MAX"
+    return
+  fi
+  local ev=""
+  [ -n "$over" ] && ev="$ev contracts over $SPEC_BYTES_MAX bytes:${over%,};"
+  [ -n "$rmap" ] && ev="$ev $rmap, over $ROADMAP_BYTES_MAX;"
+  ev="${ev# }"
+  emit spec-budget warn "${ev%;}" \
+    "move rationale out of the contract into an ADR or the decision log and link it, or split the chunk; keep ROADMAP.md an index of one line per chunk and gate — the contract in docs/chunks/ is the only full text"
+}
+
 bijection; acyclic; single_root; reachable
 fields; serves; touches; scenarios; lane
+gates; tier; budget; estimate; spec_budget
 
 # ---------------------------------------------------------------------------
 # Output. No metadata envelope: this runs before a board exists, so there is no
 # card to attach one to, and inventing a `forge.*` schema for a result nothing
 # stores would be a shape with no consumer.
 # ---------------------------------------------------------------------------
-printf 'forge roadmap-check — %s  (%s chunk(s))\n\n' "$PROJECT" "$(printf '%s\n' "$IDS" | grep -c .)"
+printf 'forge roadmap-check — %s  (%s chunk(s), %s gate(s))\n\n' "$PROJECT" "$(printf '%s\n' "$IDS" | grep -c . || true)" "$(printf '%s\n' "$GATE_IDS" | grep -c . || true)"
 while IFS=$'\t' read -r id status evidence action; do
   [ "$VERBOSE" = 1 ] || [ "$status" != pass ] || { printf '  %-6s %s\n' "PASS" "$id"; continue; }
   printf '  %-6s %s\n         %s\n' "$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')" "$id" "$evidence"

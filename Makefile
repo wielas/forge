@@ -1,5 +1,5 @@
 # forge repo-level commands
-.PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check commission
+.PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check plan-check commission
 
 verify:                        ## execute this repo's own claims (see scripts/verify.sh)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
@@ -39,6 +39,10 @@ prejudge:                      ## make prejudge PR=<url|number> [REPO=owner/name
 # time, and every time after the money was spent. A gate that blocks everything
 # is not a filter either, so this warns; blocking is a later recorded decision
 # taken after a real roadmap has been fixed until it passes.
+plan-check:                    ## make plan-check PROJECT=<abs-path> STAGE=scope|architect — what /scope and /architect promise
+	@test -n "$(PROJECT)" && test -n "$(STAGE)" || { echo "usage: make plan-check PROJECT=<abs-path> STAGE=scope|architect"; exit 1; }
+	./scripts/plan-check.sh "$(PROJECT)" --stage "$(STAGE)"
+
 roadmap-check:                 ## make roadmap-check PROJECT=<abs-path> — the sizing rules, at plan time; advisory
 	@test -n "$(PROJECT)" || { echo "usage: make roadmap-check PROJECT=<abs-path> [VERBOSE=1]"; exit 1; }
 	./scripts/roadmap-check.sh "$(PROJECT)" $(if $(VERBOSE),--verbose,)
@@ -120,7 +124,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/set-model.sh scripts/acceptance-freeze.sh scripts/verdict.sh \
 	  scripts/prejudge-review.sh scripts/merge-check.sh \
 	  scripts/merge-watcher.sh scripts/bounce.sh \
-	  scripts/decision-message.sh scripts/digest.sh
+	  scripts/decision-message.sh scripts/digest.sh scripts/plan-check.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which
 	@# diffs it against `git ls-files '*.sh'` outside templates/. That template
