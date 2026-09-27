@@ -2564,11 +2564,16 @@ commission/every-report-states-its-posture  every report names its posture, deri
 commission/require-gate-restores-the-refusal  REQUIRE_GATE=1 restores the strict posture for a repo you expect gated
 commission/an-unrecognised-require-gate-is-refused  any other REQUIRE_GATE value is refused, never reinterpreted
 bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes rather than the command stub
+bootstrap/gate-is-a-held-card-closing-its-milestone  a gate is created blocked, unassigned, lane-free, parented on its milestone (MS1)
+bootstrap/next-milestone-waits-for-the-gate  the next milestone's chunk is created todo with the gate as its parent
+bootstrap/a-misrouted-gate-is-refused-before-any-board  a gate on the implementer lane or with no parent FATALs before init
+bootstrap/real-hermes-gate-holds-the-next-milestone  opt-in: the real kernel holds the next milestone behind a held gate
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/post-fl3-board-numbers-exact  the one-card-per-chunk board reproduces its own exact expectation, envelopes on review_requested runs included (P4)
 metrics/north-star-numbers          GW6: merged without the operator, operator actions per merged chunk, PR open->merge, cards per chunk, human-implemented — each a count with its denominator
 metrics/north-star-mutation-is-caught  a watcher completion read as a verifier merge, or the watcher's own marker read as an operator touch, reddens
+metrics/a-gate-is-a-card-not-a-chunk  a done GATE-M1 adds one card and no chunk, merge or human-implemented chunk (MS1)
 metrics/text-leads-with-the-north-star  the text report's first section is the north-star block, numeral for numeral with the JSON
 metrics/driver-usage-joins-exact-session  session totals and every per-model row come from worker_session_id
 metrics/driver-usage-shared-session-counts-once multiple runs retain mappings without charging one session twice
@@ -2767,6 +2772,43 @@ roadmap/acceptance-matches-contract      every generated Given/When/Then step ma
 roadmap/real-source-is-planned           arbitrary declared sources map exactly to their @real-source scenarios
 roadmap/freeze-is-deterministic           sorted repo-relative paths map to the feature bytes' SHA-256 digests
 roadmap/missing-feature-is-named          freeze refuses atomically and names the chunk plus expected path
+roadmap/gates-every-milestone-has-a-gate  a milestone with no GATE-<milestone> node is named (epic MS1)
+roadmap/gates-close-exactly-their-milestone  a gate whose parents are not its milestone's chunks releases the next one early
+roadmap/gates-hold-the-next-milestone    a chunk of M2 that does not wait for GATE-M1 is named
+roadmap/gates-never-go-to-the-implementer  a gate on the implementer lane would be run as a chunk
+roadmap/gates-declare-their-probe-path   the probe path is derived from the gate id, never a free choice
+roadmap/a-gate-is-not-a-chunk            the chunk-content checks do not read a gate as a chunk missing twelve fields
+roadmap/tier-is-required                 every chunk carries a tier in graph.json (epic PL3)
+roadmap/tier-cheap-has-no-implementer-yet  cheap/local have no implementer until EN1, so they warn
+roadmap/tier-human-means-interactive     tier and lane agree: human exactly where the lane is claude-interactive
+roadmap/estimate-carries-the-ledger      the gates' estimates add up to the feasibility ledger's kept estimate (PL2/PL3)
+roadmap/spec-budget-caps-a-contract      a contract over the skill's byte budget is named
+roadmap/spec-budget-caps-the-roadmap-index  a ROADMAP.md over the index budget is named
+roadmap/multi-record-fixtures-is-a-contract-field  a contract without the field is missing a field (PL4)
+roadmap/budget-caps-the-plan             a plan past the scope's complexity budget warns (PL1)
+roadmap/budget-absent-is-a-skip-not-a-pass  no budget declared is an unchecked plan, not a fitting one
+roadmap/plan-check-good-plan-is-clear    the good plan clears plan-check's scope and architect stages
+roadmap/scope-requires-ambition          REQUIREMENTS.md without the ambition dial fails (PL1)
+roadmap/scope-requires-a-numeric-budget  a complexity budget that is not two numbers fails
+roadmap/scope-requires-delight           no delight pass fails
+roadmap/delight-cites-a-defined-requirement  a delight item citing an FR the doc never defines fails
+roadmap/scope-requires-gold-plating-pass  no recorded gold-plating pass fails
+roadmap/scope-requires-out-of-scope      an empty out-of-scope list fails
+roadmap/ledger-spike-must-exist          a proven verdict whose spikes/ directory is absent fails (PL2)
+roadmap/ledger-row-needs-a-call          a row whose call is not keep/cut/defer/swap fails
+roadmap/ledger-must-fit-the-scope-budget  a kept estimate over the scope's budget sends the architect back to scope
+roadmap/architect-requires-decisions-for-you  no decisions-for-you list fails
+roadmap/plan-check-unrunnable-is-exit-2  a missing project or ledger is exit 2, not a finding or a pass
+roadmap/planning-skills-delegate-to-plan-check  /scope and /architect name the checker via ~/.forge/repo (ADR-0003)
+roadmap/spec-budget-is-the-skills-own-number  the byte budgets have not drifted from skills/roadmap/SKILL.md
+roadmap/probe-is-frozen-with-its-inputs  a gate freezes its forge.probe.v1 file and every input file (MS2)
+roadmap/probe-needs-an-adversarial-case  a probe with no adversarial case is refused
+roadmap/probe-realistic-needs-many-records  a realistic case of one record is refused
+roadmap/probe-run-names-its-input        a run argv that never names {input} is refused
+roadmap/probe-input-must-exist           a probe input that does not exist is refused
+roadmap/missing-probe-is-named           a gate with no probe names its expected path
+roadmap/a-weakened-probe-is-refused-at-review  --check-base refuses a changed probe or probe fixture (ADR-0014)
+roadmap/multi-record-fixture-is-planned  declared fixtures map exactly to @multi-record scenarios, each >= 2 records (PL4)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
 gate/classic-protection-is-a-gate         classic protection carrying both halves is GATED (exit 0)
 gate/required-contexts-are-checked-by-name  a gate missing a named context reports missing=, not gated
@@ -2839,10 +2881,11 @@ quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one 
 digest/fixture-message-exact        two fixture boards, a quiet one and an archived one produce one exact message: landed, in flight, waiting on you decision-first, spend
 digest/silent-when-nothing-happened a board with nothing landed, in flight or waiting prints nothing and exits 0 — under --no-agent that is no notification
 digest/an-unreadable-board-is-named a board that cannot be read is named on stdout and exits 3; it is never reported as quiet
+digest/a-gate-speaks-only-when-its-milestone-is-done  a held gate is silent while a chunk it closes is open, and decision-first once all are done
 digest/is-read-only                 the boards read are byte-identical, sidecars included, before and after
 digest/every-block-class-has-a-decision  every class in the contract's blocked_reason_pattern has a decision entry, and every entry is a registered class (GW1)
 digest/a-missing-decision-is-caught  a formatter with one class entry deleted reddens and names the class
-digest/one-formatter                the verifier, the merge-watcher and the digest all source scripts/decision-message.sh, and nothing else defines decision_message
+digest/one-formatter                the verifier, the merge-watcher, the digest and the board bootstrap all source scripts/decision-message.sh, and nothing else defines decision_message
 digest/cron-symlinks-reach-their-siblings  the digest and the merge-watcher, run through a symlink in another directory as `hermes cron --script` does, still find the scripts beside their target
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 docs/the-open-epic-is-discoverable  CLAUDE.md and state.md both route a cold session to the epic and its § How we run this epic (Q4)
@@ -4168,6 +4211,39 @@ BOOTSTRAP_GRAPH
 ]
 BOOTSTRAP_GRAPH
         ;;
+      gates)
+        # Epic MS1: two milestones, the second held behind GATE-M1.
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1","CHUNK-2"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["GATE-M1"]}
+]
+BOOTSTRAP_GRAPH
+        printf '### GATE-M1: Milestone 1 gate
+' > "$root/docs/chunks/GATE-M1.md"
+        ;;
+      gate-on-lane)
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"GATE-M1","lane":"forge-codex-lane","depends_on":["CHUNK-1"]}
+]
+BOOTSTRAP_GRAPH
+        printf '### GATE-M1: Milestone 1 gate
+' > "$root/docs/chunks/GATE-M1.md"
+        ;;
+      gate-parentless)
+        cat > "$root/docs/chunks/graph.json" <<'BOOTSTRAP_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":[]}
+]
+BOOTSTRAP_GRAPH
+        printf '### GATE-M1: Milestone 1 gate
+' > "$root/docs/chunks/GATE-M1.md"
+        ;;
       bad-space)
         printf '%s\n' '[{"id":"CHUNK 1","lane":"forge-codex-lane","depends_on":[]}]' \
           > "$root/docs/chunks/graph.json"
@@ -4378,6 +4454,13 @@ case "${1:-}" in
         # Stickiness is the EVENT, not the status: only a real block call
         # writes it, and recompute_ready re-promotes a card that lacks it.
         : > "$state/$cid.blocked"
+        # The reason is the positional after the card id: what the operator
+        # reads on the card and in the digest.
+        seen=0
+        for arg in "$@"; do
+          if [ "$seen" = 1 ]; then printf '%s' "$arg" > "$state/$cid.reason"; break; fi
+          [ "$arg" = "$cid" ] && seen=1
+        done
         exit 0
         ;;
       assign)
@@ -4520,6 +4603,52 @@ HERMES_STUB
         "an interactive chunk whose parent is not done must end blocked, unassigned, with a sticky blocked event and its parent edge; exit $ic_rc, status '$(cat "$ichild/state/$ic_card.status" 2>/dev/null)', assignee '$(cat "$ichild/state/$ic_card.assignee" 2>/dev/null)', parents '$(cat "$ichild/state/$ic_card.parents" 2>/dev/null | tr '\n' ' ')': $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
   fi
 
+  # -- epic MS1: a milestone gate is a held card between two milestones -------
+  local gates="$TMPROOT/bootstrap-gates" g_rc g_card g_c1 g_c2 g_c3 g_detail=""
+  _bootstrap_fixture "$gates" gates
+  out="$(_bootstrap_run "$gates" full 2>&1)"; g_rc=$?
+  g_card="$(awk -F '\t' '$1=="stage-GATE-M1"{print $2}' "$gates/state/keys.tsv" 2>/dev/null)"
+  g_c1="$(awk -F '\t' '$1=="stage-CHUNK-1"{print $2}' "$gates/state/keys.tsv" 2>/dev/null)"
+  g_c2="$(awk -F '\t' '$1=="stage-CHUNK-2"{print $2}' "$gates/state/keys.tsv" 2>/dev/null)"
+  g_c3="$(awk -F '\t' '$1=="stage-CHUNK-3"{print $2}' "$gates/state/keys.tsv" 2>/dev/null)"
+  [ "$g_rc" = 0 ] && [ -n "$g_card" ] || g_detail="$g_detail exit=$g_rc($(printf '%s' "$out" | tail -2 | tr '\n' ' '))"
+  [ "$(cat "$gates/state/$g_card.status" 2>/dev/null)" = blocked ] && [ -f "$gates/state/$g_card.blocked" ] \
+    || g_detail="$g_detail gate-not-sticky-blocked"
+  [ -z "$(cat "$gates/state/$g_card.assignee" 2>/dev/null)" ] || g_detail="$g_detail gate-assigned"
+  [ "$(sort "$gates/state/$g_card.parents" 2>/dev/null | tr '\n' ' ')" = "$(printf '%s\n%s\n' "$g_c1" "$g_c2" | sort | tr '\n' ' ')" ] \
+    || g_detail="$g_detail gate-parents($(tr '\n' ' ' < "$gates/state/$g_card.parents" 2>/dev/null))"
+  grep 'stage-GATE-M1' "$gates/state/commands.log" | grep -q -e '--skill' -e '--branch' -e '--workspace' \
+    && g_detail="$g_detail gate-created-as-a-lane-card"
+  grep -Fq 'Decision needed: ' "$gates/state/$g_card.reason" 2>/dev/null \
+    && grep -Fq "complete $g_card --result" "$gates/state/$g_card.reason" 2>/dev/null \
+    && grep -Fq 'tests/probes/gate_m1.json' "$gates/state/$g_card.reason" 2>/dev/null \
+    || g_detail="$g_detail reason-not-decision-first($(head -1 "$gates/state/$g_card.reason" 2>/dev/null))"
+  if [ -z "$g_detail" ]; then ok "gate-is-a-held-card-closing-its-milestone"
+  else bad "gate-is-a-held-card-closing-its-milestone" \
+      "GATE-M1 must be created blocked, unassigned, with no lane flags, parented on its milestone's chunks, holding a decision-first reason:$g_detail"; fi
+  if [ "$g_rc" = 0 ] && [ -n "$g_c3" ] \
+     && [ "$(cat "$gates/state/$g_c3.parents" 2>/dev/null)" = "$g_card" ] \
+     && [ "$(cat "$gates/state/$g_c3.status" 2>/dev/null)" = todo ]; then
+    ok "next-milestone-waits-for-the-gate"
+  else
+    bad "next-milestone-waits-for-the-gate" \
+        "CHUNK-3 must be created todo with GATE-M1's card as its one parent; parents '$(tr '\n' ' ' < "$gates/state/$g_c3.parents" 2>/dev/null)', status '$(cat "$gates/state/$g_c3.status" 2>/dev/null)'"
+  fi
+  local gshape gbad="" gdir
+  for gshape in gate-on-lane gate-parentless; do
+    gdir="$TMPROOT/bootstrap-$gshape"
+    _bootstrap_fixture "$gdir" "$gshape"
+    out="$(_bootstrap_run "$gdir" full 2>&1)"; rc=$?
+    if [ "$rc" = 0 ] || ! printf '%s' "$out" | grep -Fq 'GATE-M1' \
+       || grep -q ' create ' "$gdir/state/commands.log" 2>/dev/null \
+       || grep -q '^init' "$gdir/state/commands.log" 2>/dev/null; then
+      gbad="$gbad $gshape(exit $rc)"
+    fi
+  done
+  if [ -z "$gbad" ]; then ok "a-misrouted-gate-is-refused-before-any-board"
+  else bad "a-misrouted-gate-is-refused-before-any-board" \
+      "a gate on the implementer lane, or with no parent, must FATAL naming it before init or any create:$gbad"; fi
+
   local scoped="$TMPROOT/bootstrap-scoped" root_rc full_bad_rc
   _bootstrap_fixture "$scoped" normal
   _bootstrap_run "$scoped" --root-only 1 >/dev/null 2>&1; root_rc=$?
@@ -4602,6 +4731,57 @@ REAL_BOOTSTRAP_GRAPH
     else
       bad "real-hermes-root-and-extension" \
           "actual Hermes did not preserve the staged root and atomic edge; exits $rc/$full_rc, cards ${staged_count:-?}/${final_count:-?}: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
+    fi
+  fi
+
+  # Epic MS1 on the real kernel. The stub above models `_parents_satisfied`; this
+  # asks Hermes itself. A held gate must keep the next milestone in `todo` after
+  # its own milestone is done, and completing the gate from `blocked` must release
+  # it. If the kernel re-promoted the gate, or refused blocked -> done, the gate
+  # would either wave the next milestone through or strand it — silently.
+  if [ "$WITH_HERMES" != 1 ]; then
+    skip "real-hermes-gate-holds-the-next-milestone" "needs --with-hermes (isolated host integration)"
+  elif ! command -v hermes >/dev/null 2>&1; then
+    skip "real-hermes-gate-holds-the-next-milestone" "hermes not on PATH"
+  else
+    local rg="$TMPROOT/bootstrap-real-gate" rg_project rg_home rg_db rg_c1 rg_gate rg_c2 rg_detail="" rg_q
+    rg_project="$rg/project"; rg_home="$rg/hermes-home"
+    mkdir -p "$rg_project/docs/chunks" "$rg_home"
+    git -C "$rg_project" init -q
+    cat > "$rg_project/docs/chunks/graph.json" <<'REAL_GATE_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"default","depends_on":[]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-2","lane":"default","depends_on":["GATE-M1"]}
+]
+REAL_GATE_GRAPH
+    printf '### CHUNK-1: real root\n' > "$rg_project/docs/chunks/CHUNK-1.md"
+    printf '### GATE-M1: real gate\n' > "$rg_project/docs/chunks/GATE-M1.md"
+    printf '### CHUNK-2: real next milestone\n' > "$rg_project/docs/chunks/CHUNK-2.md"
+    out="$(cd "$rg_project" && HERMES_HOME="$rg_home" \
+      FORGE_LANE_ASSIGNEE=default "$bootstrap" gate-real 2>&1)"; rc=$?
+    rg_db="$rg_home/kanban/boards/gate-real/kanban.db"
+    rg_q() { sqlite3 "$rg_db" "$1" 2>/dev/null; }
+    rg_c1="$(rg_q "SELECT id FROM tasks WHERE idempotency_key='gate-real-CHUNK-1';")"
+    rg_gate="$(rg_q "SELECT id FROM tasks WHERE idempotency_key='gate-real-GATE-M1';")"
+    rg_c2="$(rg_q "SELECT id FROM tasks WHERE idempotency_key='gate-real-CHUNK-2';")"
+    [ "$rc" = 0 ] && [ -n "$rg_gate" ] || rg_detail="$rg_detail bootstrap(exit $rc: $(printf '%s' "$out" | tail -2 | tr '\n' ' '))"
+    [ "$(rg_q "SELECT status || '/' || COALESCE(assignee,'') FROM tasks WHERE id='$rg_gate';")" = "blocked/" ] \
+      || rg_detail="$rg_detail gate-created-as($(rg_q "SELECT status || '/' || COALESCE(assignee,'') FROM tasks WHERE id='$rg_gate';"))"
+    HERMES_HOME="$rg_home" hermes kanban --board gate-real complete "$rg_c1" --result "merged: fixture" >/dev/null 2>&1 \
+      || rg_detail="$rg_detail chunk-1-would-not-complete"
+    [ "$(rg_q "SELECT status FROM tasks WHERE id='$rg_gate';")" = blocked ] \
+      || rg_detail="$rg_detail gate-left-blocked-when-its-milestone-finished($(rg_q "SELECT status FROM tasks WHERE id='$rg_gate';"))"
+    [ "$(rg_q "SELECT status FROM tasks WHERE id='$rg_c2';")" = todo ] \
+      || rg_detail="$rg_detail next-milestone-released-past-a-held-gate($(rg_q "SELECT status FROM tasks WHERE id='$rg_c2';"))"
+    HERMES_HOME="$rg_home" hermes kanban --board gate-real complete "$rg_gate" --result "probe: fixture" >/dev/null 2>&1 \
+      || rg_detail="$rg_detail gate-would-not-complete-from-blocked"
+    [ "$(rg_q "SELECT status FROM tasks WHERE id='$rg_c2';")" = ready ] \
+      || rg_detail="$rg_detail completing-the-gate-did-not-release($(rg_q "SELECT status FROM tasks WHERE id='$rg_c2';"))"
+    if [ -z "$rg_detail" ]; then
+      ok "real-hermes-gate-holds-the-next-milestone (isolated board: held gate keeps CHUNK-2 todo; completing it releases CHUNK-2)"
+    else
+      bad "real-hermes-gate-holds-the-next-milestone" "on the real kernel:$rg_detail"
     fi
   fi
 }
@@ -5246,6 +5426,32 @@ METRICS_STATE_SQL
     [ -z "$mut_detail" ] \
       && ok "north-star-mutation-is-caught (a watcher completion read as a verifier merge reddens; the watcher's marker is not an operator touch, and the same comment without it is)" \
       || bad "north-star-mutation-is-caught" "each mutant must redden the diagnostic the positive case passes, and the control must not —$mut_detail"
+
+    # Epic MS1: a milestone gate is a CARD — the target reads "1 plus one gate
+    # card per milestone" — but not a chunk. Counted as one, a gate completed by
+    # the operator would read as a human-implemented chunk and dilute every
+    # per-chunk rate run A is judged on.
+    rm -f "$mut_db" "$mut_db-wal" "$mut_db-shm"
+    local gate_detail=""
+    if sqlite3 "$mut_db" < "$fl3_fx" >/dev/null 2>&1 \
+       && sqlite3 "$mut_db" "INSERT INTO tasks (id, title, assignee, status, result, created_at, completed_at)
+            VALUES ('t_gate', 'GATE-M1: Milestone 1', NULL, 'done', 'probe: pass', 1785200000, 1785207300);
+          INSERT INTO task_links (parent_id, child_id) VALUES ('t_ca', 't_gate');" >/dev/null 2>&1; then
+      HERMES_HOME="$hermes_root" HERMES_KANBAN_HOME="$mut_home" \
+        "$ms" metrics-fl3 --json > "$TMPROOT/metrics-fl3-gate.json" 2>/dev/null
+      jq -e --slurpfile base "$TMPROOT/metrics-fl3.json" '
+          .north_star.chunks == $base[0].north_star.chunks
+          and .north_star.human_implemented == $base[0].north_star.human_implemented
+          and .north_star.merged == $base[0].north_star.merged
+          and .north_star.cards_per_chunk.cards == $base[0].north_star.cards_per_chunk.cards + 1' \
+          "$TMPROOT/metrics-fl3-gate.json" >/dev/null 2>&1 \
+        || gate_detail="numbers moved: $(jq -c '.north_star | {chunks, human_implemented, cards: .cards_per_chunk.cards}' "$TMPROOT/metrics-fl3-gate.json" 2>/dev/null)"
+    else
+      gate_detail="the gate row would not load"
+    fi
+    [ -z "$gate_detail" ] \
+      && ok "a-gate-is-a-card-not-a-chunk (a done GATE-M1 adds one card and no chunk, merge or human chunk)" \
+      || bad "a-gate-is-a-card-not-a-chunk" "$gate_detail"
 
     # The text report LEADS with these (GW6): its first section, numeral for
     # numeral with the JSON — a second jq program is a second place to be wrong.
@@ -9701,6 +9907,128 @@ GJSON")" || { bad "null-is-the-same-as-an-absent-key" "the mutation itself faile
         "a null lane/depends_on must be treated as absent (warn), not rejected as unparseable: exit $dn_rc, lane '$(_rc_status "$dnull" lane)'"
   fi
 
+  # -- epic MS1: a milestone is a gate card -----------------------------------
+  # The good plan has two milestones and a gate for each. Each case below breaks
+  # one property a gate must have, and `gates` must name it before any card.
+  local _gj="jq"
+  _rc_case gates-every-milestone-has-a-gate \
+    "$_gj 'map(select(.id != \"GATE-M2\"))' docs/chunks/graph.json > g && mv g docs/chunks/graph.json && rm docs/chunks/GATE-M2.md" \
+    gates warn
+  _rc_case gates-close-exactly-their-milestone \
+    "$_gj '(.[]|select(.id==\"GATE-M1\")|.depends_on) = [\"CHUNK-1\"]' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    gates warn
+  _rc_case gates-hold-the-next-milestone \
+    "$_gj '(.[]|select(.id==\"CHUNK-3\")|.depends_on) = [\"CHUNK-1\",\"CHUNK-2\"]' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    gates warn
+  _rc_case gates-never-go-to-the-implementer \
+    "$_gj '(.[]|select(.id==\"GATE-M1\")|.lane) = \"forge-codex-lane\"' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    gates warn
+  _rc_case gates-declare-their-probe-path \
+    "sed -i.bak 's#tests/probes/gate_m1.json#tests/probes/anything.json#' docs/chunks/GATE-M1.md && rm -f docs/chunks/*.bak" \
+    gates warn
+  # A gate is not a chunk: it carries none of a chunk's twelve fields, and the
+  # content checks must not read it as a chunk that is missing all of them.
+  if [ "$(_rc_status "$good" fields)" = pass ] && [ "$(_rc_status "$good" scenarios)" = pass ] \
+     && [ "$(_rc_status "$good" gates)" = pass ]; then
+    ok "a-gate-is-not-a-chunk"
+  else
+    bad "a-gate-is-not-a-chunk" \
+        "the good plan's gates made fields/scenarios/gates report $(_rc_status "$good" fields)/$(_rc_status "$good" scenarios)/$(_rc_status "$good" gates), expected pass"
+  fi
+
+  # -- epic PL3: tier, estimate, spec budget ------------------------------------
+  _rc_case tier-is-required \
+    "$_gj '(.[]|select(.id==\"CHUNK-1\")) |= del(.tier)' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    tier warn
+  _rc_case tier-cheap-has-no-implementer-yet \
+    "$_gj '(.[]|select(.id==\"CHUNK-1\")|.tier) = \"cheap\"' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    tier warn
+  _rc_case tier-human-means-interactive \
+    "$_gj '(.[]|select(.id==\"CHUNK-1\")|.tier) = \"human\"' docs/chunks/graph.json > g && mv g docs/chunks/graph.json" \
+    tier warn
+  _rc_case estimate-carries-the-ledger \
+    "sed -i.bak 's/^- \*\*Estimate:\*\* 1 chunk$/- **Estimate:** 2 chunks/' docs/chunks/GATE-M2.md && rm -f docs/chunks/*.bak" \
+    estimate warn
+  _rc_case spec-budget-caps-a-contract \
+    "printf '%7000s' x >> docs/chunks/CHUNK-1.md" \
+    spec-budget warn
+  _rc_case spec-budget-caps-the-roadmap-index \
+    "printf '%17000s' x >> docs/ROADMAP.md" \
+    spec-budget warn
+  _rc_case multi-record-fixtures-is-a-contract-field \
+    "sed -i.bak '/\*\*Multi-record fixtures:\*\*/d' docs/chunks/CHUNK-3.md && rm -f docs/chunks/*.bak" \
+    fields warn
+
+  # -- epic PL1/PL2 through roadmap-check: the scope's budget binds the plan ----
+  _rc_case budget-caps-the-plan \
+    "sed -i.bak 's/^\*\*Complexity budget:\*\* 2 milestones, 4 chunks$/**Complexity budget:** 2 milestones, 2 chunks/' docs/REQUIREMENTS.md && rm -f docs/*.bak" \
+    budget warn
+  _rc_case budget-absent-is-a-skip-not-a-pass \
+    "sed -i.bak '/Complexity budget/d' docs/REQUIREMENTS.md && rm -f docs/*.bak" \
+    budget skip
+
+  # -- epic PL1/PL2: plan-check, the scope and architect stages ----------------
+  # Each field the scope skill promises is removed from the good plan once, and
+  # plan-check must fail THAT check and exit 1. A check that passes a document
+  # missing its own field is a skill claim nothing executes (ADR-0003).
+  local pc="$REPO_ROOT/scripts/plan-check.sh"
+  _pc_case() {  # $1=name $2=stage $3=snippet $4=check $5=expected status
+    local d out rc got
+    d="$(_rc_mutate "$1" "$3")" || { bad "$1" "the mutation itself failed to apply"; return; }
+    out="$("$pc" "$d" --stage "$2" 2>&1)"; rc=$?
+    got="$(printf '%s\n' "$out" | awk -v id="$4" '$2==id{print tolower($1)}')"
+    if [ "$got" = "$5" ] && { [ "$5" != fail ] || [ "$rc" = 1 ]; }; then ok "$1"
+    else bad "$1" "$4 reported '$got' (exit $rc), expected '$5' with the defect reintroduced"; fi
+  }
+  local pc_rc_s pc_rc_a
+  "$pc" "$good" --stage scope >/dev/null 2>&1; pc_rc_s=$?
+  "$pc" "$good" --stage architect >/dev/null 2>&1; pc_rc_a=$?
+  if [ "$pc_rc_s" = 0 ] && [ "$pc_rc_a" = 0 ]; then ok "plan-check-good-plan-is-clear"
+  else bad "plan-check-good-plan-is-clear" "the good plan must clear both stages (scope exit $pc_rc_s, architect exit $pc_rc_a)"; fi
+  _pc_case scope-requires-ambition scope \
+    "sed -i.bak '/^\*\*Ambition:\*\*/d' docs/REQUIREMENTS.md && rm -f docs/*.bak" ambition fail
+  _pc_case scope-requires-a-numeric-budget scope \
+    "sed -i.bak 's/^\*\*Complexity budget:\*\*.*/**Complexity budget:** small/' docs/REQUIREMENTS.md && rm -f docs/*.bak" budget fail
+  _pc_case scope-requires-delight scope \
+    "sed -i.bak '/^## Delight/,/^## Gold/{/^## Gold/!d;}' docs/REQUIREMENTS.md && rm -f docs/*.bak" delight fail
+  _pc_case delight-cites-a-defined-requirement scope \
+    "sed -i.bak 's/^- FR-5 — the digest pastes/- FR-9 — the digest pastes/' docs/REQUIREMENTS.md && rm -f docs/*.bak" delight fail
+  _pc_case scope-requires-gold-plating-pass scope \
+    "sed -i.bak '/^## Gold-plating pass/,/^## Out/{/^## Out/!d;}' docs/REQUIREMENTS.md && rm -f docs/*.bak" gold-plating fail
+  _pc_case scope-requires-out-of-scope scope \
+    "sed -i.bak '/^## Out of scope/,/^## Open/{/^## Open/!d;}' docs/REQUIREMENTS.md && rm -f docs/*.bak" out-of-scope fail
+  _pc_case ledger-spike-must-exist architect \
+    "rm -r spikes/wal-snapshot" rows fail
+  _pc_case ledger-row-needs-a-call architect \
+    "sed -i.bak 's/| one Codex chunk | keep |$/| one Codex chunk | maybe |/' docs/feasibility.md && rm -f docs/*.bak" rows fail
+  _pc_case ledger-must-fit-the-scope-budget architect \
+    "sed -i.bak 's/^\*\*Complexity budget:\*\* 2 milestones, 4 chunks$/**Complexity budget:** 2 milestones, 2 chunks/' docs/REQUIREMENTS.md && rm -f docs/*.bak" budget-fit fail
+  _pc_case architect-requires-decisions-for-you architect \
+    "sed -i.bak '/^## Decisions for you/,\$d' docs/feasibility.md && rm -f docs/*.bak" decisions fail
+  if "$pc" "$TMPROOT/no-such-project-dir" --stage scope >/dev/null 2>&1; then
+    bad "plan-check-unrunnable-is-exit-2" "a missing project exited 0"
+  elif [ "$?" = 2 ] && { d="$(_rc_mutate pc-no-ledger "rm docs/feasibility.md")"; "$pc" "$d" --stage architect >/dev/null 2>&1; [ "$?" = 2 ]; }; then
+    ok "plan-check-unrunnable-is-exit-2"
+  else bad "plan-check-unrunnable-is-exit-2" "a missing project or ledger must exit 2, not report a finding or a pass"; fi
+
+  # ADR-0003 for the two skills this slice made executable: each names the
+  # checker through ~/.forge/repo, and the checker exists.
+  local sk sk_bad=""
+  for sk in scope architect; do
+    grep -q "~/\.forge/repo/scripts/plan-check\.sh .* --stage $sk" "skills/$sk/SKILL.md" || sk_bad="$sk_bad $sk"
+  done
+  if [ -z "$sk_bad" ] && [ -x "$pc" ]; then ok "planning-skills-delegate-to-plan-check"
+  else bad "planning-skills-delegate-to-plan-check" "skills must name ~/.forge/repo/scripts/plan-check.sh <project> --stage <stage>:$sk_bad"; fi
+
+  # The spec budget is the roadmap skill's own number, as the caps are.
+  if grep -q "^SPEC_BYTES_MAX=$(sed -n 's/.*contract of at most \([0-9][0-9]*\) bytes.*/\1/p' skills/roadmap/SKILL.md | head -1)\$" "$rc" \
+     && grep -q "^ROADMAP_BYTES_MAX=$(sed -n 's/.*index of at most \([0-9][0-9]*\) bytes.*/\1/p' skills/roadmap/SKILL.md | head -1)\$" "$rc"; then
+    ok "spec-budget-is-the-skills-own-number"
+  else
+    bad "spec-budget-is-the-skills-own-number" \
+        "roadmap-check.sh's SPEC_BYTES_MAX/ROADMAP_BYTES_MAX must equal the numbers skills/roadmap/SKILL.md states ('contract of at most N bytes', 'index of at most N bytes')"
+  fi
+
   # -- the properties of the check itself --
   # Warn-first is the shipped decision (F53), not an accident, and an exit
   # status is how a caller would find out. A plan full of findings still exits
@@ -9925,6 +10253,136 @@ AF_FEATURE
       bad "missing-feature-is-named" \
           "a missing feature must name CHUNK-6 and its expected path without rewriting the last good manifest (exit $af_rc: ${af_out:-no diagnostic})"
     fi
+
+    # -- epic MS1/MS2: a gate freezes its probe, not a feature ----------------
+    # The same one-chunk plan plus GATE-M1 and its forge.probe.v1 declaration:
+    # one realistic case over a three-record corpus, one adversarial mutation of
+    # it that must be rejected.
+    _gate_probe_fixture() { # $1=fixture root
+      _acceptance_fixture "$1"
+      cat > "$1/docs/chunks/graph.json" <<'AF_GRAPH'
+[
+  {"id":"CHUNK-6","lane":"claude-interactive","tier":"human","depends_on":[]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-6"]}
+]
+AF_GRAPH
+      printf '### GATE-M1: Milestone 1\n- **Milestone:** M1\n- **Probe:** `tests/probes/gate_m1.json`\n- **Estimate:** 1 chunk\n- **Lane:** claude-interactive\n' \
+        > "$1/docs/chunks/GATE-M1.md"
+      mkdir -p "$1/tests/probes/gate_m1/corpus" "$1/tests/probes/gate_m1/relabelled"
+      printf 'a\nb\nc\n' > "$1/tests/probes/gate_m1/corpus/records.txt"
+      printf 'a\nb\nforeign\n' > "$1/tests/probes/gate_m1/relabelled/records.txt"
+      cat > "$1/tests/probes/gate_m1.json" <<'AF_PROBE'
+{
+  "probe": "forge.probe.v1",
+  "milestone": "M1",
+  "cases": [
+    {"name": "three matching records advance", "kind": "realistic", "records": 3,
+     "input": "tests/probes/gate_m1/corpus",
+     "run": ["python3", "-m", "reader", "{input}"],
+     "expect": {"exit": 0, "stdout": "advance"}},
+    {"name": "a relabelled record is rejected", "kind": "adversarial",
+     "input": "tests/probes/gate_m1/relabelled",
+     "run": ["python3", "-m", "reader", "{input}"],
+     "expect": {"exit": 0, "stdout": "stop"}}
+  ]
+}
+AF_PROBE
+    }
+    local af_gate="$TMPROOT/acceptance-gate"
+    _gate_probe_fixture "$af_gate"
+    af_out="$("$freeze" "$af_gate" 2>&1)"; af_rc=$?
+    if [ "$af_rc" = 0 ] && jq -e 'keys == ["tests/features/chunk_6.feature",
+            "tests/probes/gate_m1.json",
+            "tests/probes/gate_m1/corpus/records.txt",
+            "tests/probes/gate_m1/relabelled/records.txt"]' \
+            "$af_gate/docs/chunks/contract-freeze.json" >/dev/null 2>&1; then
+      ok "probe-is-frozen-with-its-inputs"
+    else
+      bad "probe-is-frozen-with-its-inputs" \
+          "a gate must freeze its probe and every input file beside the chunk features (exit $af_rc: ${af_out:-no diagnostic}; manifest keys $(jq -c keys "$af_gate/docs/chunks/contract-freeze.json" 2>/dev/null))"
+    fi
+
+    _af_gate_refuses() { # $1=case $2=python mutation of the probe dict $3=text the refusal names
+      local d="$TMPROOT/acceptance-gate-$1" out rc
+      _gate_probe_fixture "$d"
+      python3 - "$d/tests/probes/gate_m1.json" "$2" <<'PYM' || { bad "$1" "the mutation itself failed to apply"; return; }
+import json, sys
+p = json.load(open(sys.argv[1]))
+exec(sys.argv[2])
+json.dump(p, open(sys.argv[1], "w"))
+PYM
+      out="$("$freeze" "$d" 2>&1)"; rc=$?
+      if [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 'GATE-M1' && printf '%s' "$out" | grep -Fq "$3"; then
+        ok "$1"
+      else
+        bad "$1" "freeze must refuse and name GATE-M1 and '$3' (exit $rc: ${out:-no diagnostic})"
+      fi
+    }
+    _af_gate_refuses probe-needs-an-adversarial-case \
+      'p["cases"] = [c for c in p["cases"] if c["kind"] != "adversarial"]' "no adversarial case"
+    _af_gate_refuses probe-realistic-needs-many-records \
+      'p["cases"][0]["records"] = 1' "records >= 2"
+    _af_gate_refuses probe-run-names-its-input \
+      'p["cases"][1]["run"] = ["python3", "-m", "reader"]' "{input}"
+    _af_gate_refuses probe-input-must-exist \
+      'p["cases"][1]["input"] = "tests/probes/gate_m1/nowhere"' "does not exist"
+
+    local af_noprobe="$TMPROOT/acceptance-gate-missing"
+    _gate_probe_fixture "$af_noprobe"
+    rm "$af_noprobe/tests/probes/gate_m1.json"
+    af_out="$("$freeze" "$af_noprobe" 2>&1)"; af_rc=$?
+    if [ "$af_rc" = 1 ] && printf '%s' "$af_out" | grep -Fq 'GATE-M1: missing probe; expected tests/probes/gate_m1.json'; then
+      ok "missing-probe-is-named"
+    else
+      bad "missing-probe-is-named" "a gate with no probe must fail and name the expected path (exit $af_rc: ${af_out:-no diagnostic})"
+    fi
+
+    # ADR-0014's reason, for the probe: an implementation branch that weakens
+    # the milestone probe — its expectation OR one of its fixtures — is refused
+    # at review exactly as a changed feature is.
+    local af_base="$TMPROOT/acceptance-gate-base" af_head="$TMPROOT/acceptance-gate-head" wk_detail=""
+    _gate_probe_fixture "$af_base"; "$freeze" "$af_base" >/dev/null 2>&1
+    rm -rf "$af_head"; cp -R "$af_base" "$af_head"
+    sed -i.bak 's/"stdout": "stop"/"stdout": ""/' "$af_head/tests/probes/gate_m1.json"; rm -f "$af_head/tests/probes/"*.bak
+    af_out="$("$freeze" --check-base "$af_base" "$af_head" 2>&1)"; af_rc=$?
+    { [ "$af_rc" = 1 ] && printf '%s' "$af_out" | grep -Fq 'tests/probes/gate_m1.json'; } || wk_detail="$wk_detail expectation(exit $af_rc)"
+    rm -rf "$af_head"; cp -R "$af_base" "$af_head"
+    printf 'a\nb\nc\n' > "$af_head/tests/probes/gate_m1/relabelled/records.txt"
+    af_out="$("$freeze" --check-base "$af_base" "$af_head" 2>&1)"; af_rc=$?
+    { [ "$af_rc" = 1 ] && printf '%s' "$af_out" | grep -Fq 'tests/probes/gate_m1/relabelled/records.txt'; } || wk_detail="$wk_detail fixture(exit $af_rc)"
+    rm -rf "$af_head"; cp -R "$af_base" "$af_head"
+    af_out="$("$freeze" --check-base "$af_base" "$af_head" 2>&1)"; af_rc=$?
+    [ "$af_rc" = 0 ] || wk_detail="$wk_detail unchanged-head-refused(exit $af_rc: $af_out)"
+    if [ -z "$wk_detail" ]; then ok "a-weakened-probe-is-refused-at-review"
+    else bad "a-weakened-probe-is-refused-at-review" "--check-base must refuse a changed probe or probe fixture and accept an unchanged one:$wk_detail"; fi
+
+    # -- epic PL4: a scenario that aggregates is planned on many records -------
+    _af_multi() { # $1=dir $2=declaration $3=tag scenario 3? (1/0)
+      _acceptance_fixture "$1"
+      sed -i.bak "s#^- \*\*Acceptance:\*\*#- **Multi-record fixtures:** $2\\
+- **Acceptance:**#" "$1/docs/chunks/CHUNK-6.md"
+      [ "$3" = 1 ] && sed -i.bak '/Scenario: Freeze deterministically/i\
+  @multi-record' "$1/tests/features/chunk_6.feature"
+      rm -f "$1/docs/chunks/"*.bak "$1/tests/features/"*.bak
+    }
+    local mr_detail="" mr
+    mr="$TMPROOT/acceptance-multi-ok"
+    _af_multi "$mr" '`tests/fixtures/plans.json` (3 records) → scenario 3' 1
+    "$freeze" "$mr" >/dev/null 2>&1 || mr_detail="$mr_detail declared-and-tagged-refused"
+    mr="$TMPROOT/acceptance-multi-untagged"
+    _af_multi "$mr" '`tests/fixtures/plans.json` (3 records) → scenario 3' 0
+    af_out="$("$freeze" "$mr" 2>&1)"
+    printf '%s' "$af_out" | grep -Fq '@multi-record scenarios [] do not match' || mr_detail="$mr_detail untagged-accepted"
+    mr="$TMPROOT/acceptance-multi-undeclared"
+    _af_multi "$mr" 'none' 1
+    af_out="$("$freeze" "$mr" 2>&1)"
+    printf '%s' "$af_out" | grep -Fq '@multi-record scenarios [3] do not match' || mr_detail="$mr_detail tag-without-fixture-accepted"
+    mr="$TMPROOT/acceptance-multi-single"
+    _af_multi "$mr" '`tests/fixtures/plans.json` (1 record) → scenario 3' 1
+    af_out="$("$freeze" "$mr" 2>&1)"
+    printf '%s' "$af_out" | grep -Fq 'a multi-record fixture holds at least 2' || mr_detail="$mr_detail one-record-accepted"
+    if [ -z "$mr_detail" ]; then ok "multi-record-fixture-is-planned"
+    else bad "multi-record-fixture-is-planned" "declared fixtures must map exactly to @multi-record scenarios and hold >= 2 records:$mr_detail"; fi
   fi
 }
 wants roadmap   && run_roadmap_group
@@ -11723,6 +12181,33 @@ run_digest_group() {
     || bad "an-unreadable-board-is-named" "an unreadable board must be named on stdout with exit 3, never read as quiet (rc=$rc): $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
   rm -rf "$kb/broken"
 
+  # Epic MS1: a held milestone gate is silent while any chunk it closes is
+  # open, and speaks — decision-first, as bootstrapped — once they are all done.
+  mkdir -p "$kb/gates"
+  sqlite3 "$kb/gates/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  local gate_reason
+  gate_reason="$(bash -c '. scripts/decision-message.sh && decision_message milestone-gate "GATE-M1 holds milestone M1" "means" "decide" "risk" "reply"')"
+  sqlite3 "$kb/gates/kanban.db" "DELETE FROM tasks; DELETE FROM task_events;
+    INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+      ('t_g1', 'CHUNK-1: last chunk of M1', 'forge-verifier', 'review', 1785200000),
+      ('t_g2', 'GATE-M1: Milestone 1', NULL, 'blocked', 1785200000);
+    INSERT INTO task_links (parent_id, child_id) VALUES ('t_g1', 't_g2');
+    INSERT INTO task_events (task_id, kind, payload, created_at)
+      VALUES ('t_g2', 'blocked', json_object('reason', '$(printf '%s' "$gate_reason" | sed "s/'/''/g")'), 1785200000);" >/dev/null 2>&1
+  local g_open g_done
+  g_open="$(_dg --board gates --day 2026-07-28 2>/dev/null)"
+  sqlite3 "$kb/gates/kanban.db" "UPDATE tasks SET status='done', completed_at=1785200000 WHERE id='t_g1';" >/dev/null 2>&1
+  g_done="$(_dg --board gates --day 2026-07-28 2>/dev/null)"
+  if ! printf '%s' "$g_open" | grep -q 't_g2' \
+     && printf '%s' "$g_done" | grep -q '^— t_g2 · GATE-M1' \
+     && printf '%s' "$g_done" | grep -q '^Decision needed: decide'; then
+    ok "a-gate-speaks-only-when-its-milestone-is-done"
+  else
+    bad "a-gate-speaks-only-when-its-milestone-is-done" \
+        "a held gate must be absent while its chunk is open and shown decision-first once it is done; open: $(printf '%s' "$g_open" | grep -c t_g2) mention(s), done: $(printf '%s' "$g_done" | head -8 | tr '\n' ' ')"
+  fi
+  rm -rf "$kb/gates"
+
   if detail="$(decision_classes_diagnostic scripts/decision-message.sh)"; then
     ok "every-block-class-has-a-decision ($(bash -c '. scripts/decision-message.sh && decision_classes' | grep -c .) classes)"
   else
@@ -11742,10 +12227,10 @@ run_digest_group() {
   # file under scripts/ defines its own copy. Zero producers found is a fail.
   local p found=0 defs
   detail=""
-  for p in prejudge-review.sh merge-watcher.sh digest.sh; do
-    [ -f "scripts/$p" ] || { detail="$detail $p-missing"; continue; }
+  for p in scripts/prejudge-review.sh scripts/merge-watcher.sh scripts/digest.sh hermes/board-bootstrap.sh; do
+    [ -f "$p" ] || { detail="$detail $p-missing"; continue; }
     found=$((found + 1))
-    grep -Eq '^[[:space:]]*\. "?\$[^"]*/decision-message\.sh"?' "scripts/$p" \
+    grep -Eq '^[[:space:]]*\. "?\$[^"]*/decision-message\.sh"?' "$p" \
       || detail="$detail $p-does-not-source-the-formatter"
   done
   [ "$found" -gt 0 ] || detail="$detail no-producer-found"

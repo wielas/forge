@@ -11,5 +11,6 @@
   - Given a record with an unavailable metric, when it is serialised, then that field is null.
   - Given a record carrying an unknown extra key, when it is validated, then validation fails and names the key.
 - **Out of scope:** reading the board, rendering Markdown, publication.
+- **Multi-record fixtures:** none
 - **Done when:** `make check` green + all three scenarios pass + ADR-0004 written
 - **Lane:** claude-interactive  ·  **Risk:** high

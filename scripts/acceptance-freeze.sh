@@ -7,6 +7,16 @@
 #   tests/features/chunk_<id>.feature         executable acceptance
 #   docs/chunks/contract-freeze.json          path -> SHA-256 of feature bytes
 #
+# A milestone gate (epic MS1) is a GATE-<milestone> node with no feature. What
+# it freezes instead is its declared probe (MS2):
+#   tests/probes/gate_<milestone>.json        forge.probe.v1: realistic and
+#                                             adversarial cases, each an input,
+#                                             a command and the expected result
+#   every file under each case's input        the fixtures the probe runs on
+# Both are hashed into the same manifest, for ADR-0014's reason: the milestone
+# probe is the backstop for everything per-chunk review cannot see, so an
+# implementation branch must not be able to weaken it.
+#
 # This command validates the first two before atomically replacing the third.
 # A failed run never rewrites the last good manifest.
 #
@@ -89,7 +99,10 @@ def load_manifest(root: Path, role: str):
             feature_path is None
             or feature_path.is_absolute()
             or ".." in feature_path.parts
-            or feature_path.suffix != ".feature"
+            or not (
+                feature_path.suffix == ".feature"
+                or feature_path.parts[:2] == ("tests", "probes")
+            )
         ):
             errors.append(f"{role} manifest has invalid feature path {feature!r}")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -111,7 +124,7 @@ def load_graph_ids(root: Path, role: str):
     for index, entry in enumerate(value):
         chunk_id = entry.get("id") if isinstance(entry, dict) else None
         if not isinstance(chunk_id, str) or not re.fullmatch(
-            r"CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*", chunk_id
+            r"(CHUNK|GATE)-[A-Za-z0-9][A-Za-z0-9._-]*", chunk_id
         ):
             return None, f"{role} graph entry {index} has invalid id {chunk_id!r}"
         ids.append(chunk_id)
@@ -135,6 +148,10 @@ def contract_acceptance_surface(root: Path, chunk_id: str, role: str):
         line.rstrip("\r\n") for line in lines
         if re.match(r"^-\s+\*\*Real sources:\*\*", line)
     ]
+    multi_record = [
+        line.rstrip("\r\n") for line in lines
+        if re.match(r"^-\s+\*\*Multi-record fixtures:\*\*", line)
+    ]
     acceptance = [
         line.rstrip("\r\n") for line in lines
         if re.match(r"^-\s+\*\*Acceptance:\*\*", line)
@@ -153,6 +170,7 @@ def contract_acceptance_surface(root: Path, chunk_id: str, role: str):
     return {
         "scenarios": "".join(lines[start:end]),
         "real_sources": real_sources[0],
+        "multi_record": multi_record[0] if multi_record else None,
         "acceptance": acceptance[0],
     }, None
 
@@ -210,7 +228,7 @@ if check_base is not None:
     # The contract prose is one of ADR-0014's three acceptance artifacts. Keep
     # ordinary fields such as Touches amendable/advisory, but freeze the exact
     # Scenarios block, explicit source mapping, and Acceptance path.
-    for chunk_id in sorted(base_ids):
+    for chunk_id in sorted(i for i in base_ids if i.startswith("CHUNK-")):
         base_surface, base_surface_error = contract_acceptance_surface(
             check_base, chunk_id, "approved base"
         )
@@ -225,7 +243,8 @@ if check_base is not None:
         if base_surface != head_surface:
             errors.append(
                 f"docs/chunks/{chunk_id}.md: contract acceptance surface differs "
-                "from the approved base (Scenarios, Real sources, or Acceptance)"
+                "from the approved base (Scenarios, Real sources, Multi-record "
+                "fixtures, or Acceptance)"
             )
 
     if errors:
@@ -256,7 +275,7 @@ for index, entry in enumerate(graph):
     if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
         fatal(f"graph entry {index} has no string id")
     chunk_id = entry["id"]
-    if not re.fullmatch(r"CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*", chunk_id):
+    if not re.fullmatch(r"(CHUNK|GATE)-[A-Za-z0-9][A-Za-z0-9._-]*", chunk_id):
         fatal(f"graph entry {index} has unsupported id {chunk_id!r}")
     ids.append(chunk_id)
 
@@ -348,7 +367,11 @@ def feature_scenarios(chunk_id: str, feature_text: str):
         index for index, scenario in enumerate(scenarios, start=1)
         if "real-source" in scenario["tags"]
     }
-    return (parsed, tagged), None
+    multi = {
+        index for index, scenario in enumerate(scenarios, start=1)
+        if "multi-record" in scenario["tags"]
+    }
+    return (parsed, tagged, multi), None
 
 
 def contract_real_sources(chunk_id: str, contract: str):
@@ -384,10 +407,122 @@ def contract_real_sources(chunk_id: str, contract: str):
     return sources, None
 
 
+def contract_multi_record(chunk_id: str, contract: str):
+    """Epic PL4. Absent or `none` is no fixture; otherwise each entry maps a
+    fixture of at least two records to the scenario that must use it. redglass's
+    advancing fixture held exactly one claim, so the fail-open gates it was meant
+    to exercise were never exercised: a gate over one record cannot aggregate."""
+    match = re.search(
+        r"(?m)^-\s+\*\*Multi-record fixtures:\*\*\s+(.+?)\s*$", contract
+    )
+    if match is None or match.group(1).strip().lower() == "none":
+        return [], None
+    entries = []
+    for item in match.group(1).split(";"):
+        item = item.strip()
+        parsed = re.fullmatch(
+            r"`([^`]+)`\s*\((\d+)\s+records?\)\s*(?:→|->)\s*scenario\s+([1-9][0-9]*)",
+            item,
+            re.IGNORECASE,
+        )
+        if parsed is None:
+            return None, (
+                f"{chunk_id}: invalid Multi-record fixtures entry {item!r}; expected "
+                "`path` (N records) → scenario N"
+            )
+        if int(parsed.group(2)) < 2:
+            return None, (
+                f"{chunk_id}: fixture `{parsed.group(1)}` declares {parsed.group(2)} "
+                "record(s); a multi-record fixture holds at least 2"
+            )
+        entries.append((parsed.group(1), int(parsed.group(3))))
+    return entries, None
+
+
+def probe_path(gate_id: str) -> str:
+    return f"tests/probes/{gate_id.lower().replace('-', '_')}.json"
+
+
+def validate_probe(gate_id: str):
+    """(digests, error) for a gate's forge.probe.v1 declaration (epic MS2)."""
+    rel = probe_path(gate_id)
+    path = project / rel
+    try:
+        raw = path.read_bytes()
+        probe = json.loads(raw.decode("utf-8"))
+    except FileNotFoundError:
+        return None, f"{gate_id}: missing probe; expected {rel}"
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"{gate_id}: cannot read {rel}: {exc}"
+    milestone = gate_id.removeprefix("GATE-")
+    if not isinstance(probe, dict) or probe.get("probe") != "forge.probe.v1":
+        return None, f"{gate_id}: {rel} is not a forge.probe.v1 object"
+    if probe.get("milestone") != milestone:
+        return None, f"{gate_id}: {rel} names milestone {probe.get('milestone')!r}, expected {milestone!r}"
+    cases = probe.get("cases")
+    if not isinstance(cases, list) or not cases:
+        return None, f"{gate_id}: {rel} has no cases"
+    digests = {rel: hashlib.sha256(raw).hexdigest()}
+    names, kinds = set(), set()
+    for index, case in enumerate(cases, start=1):
+        where = f"{gate_id}: {rel} case {index}"
+        if not isinstance(case, dict):
+            return None, f"{where} is not an object"
+        name = case.get("name")
+        if not isinstance(name, str) or not name.strip() or name in names:
+            return None, f"{where} needs a unique, non-empty name"
+        names.add(name)
+        kind = case.get("kind")
+        if kind not in ("realistic", "adversarial"):
+            return None, f"{where} kind must be realistic or adversarial, not {kind!r}"
+        kinds.add(kind)
+        records = case.get("records")
+        if kind == "realistic" and (not isinstance(records, int) or isinstance(records, bool) or records < 2):
+            return None, f"{where} is realistic and must declare records >= 2 (a one-record fixture cannot aggregate)"
+        run = case.get("run")
+        if (not isinstance(run, list) or not run
+                or not all(isinstance(arg, str) and arg for arg in run)
+                or not any("{input}" in arg for arg in run)):
+            return None, f"{where} run must be a non-empty argv of strings that names {{input}}"
+        expect = case.get("expect")
+        if (not isinstance(expect, dict)
+                or not isinstance(expect.get("exit"), int) or isinstance(expect.get("exit"), bool)
+                or not set(expect) <= {"exit", "stdout"}
+                or ("stdout" in expect and not isinstance(expect["stdout"], str))):
+            return None, f"{where} expect must be {{\"exit\": <int>}} with an optional \"stdout\" substring"
+        given = case.get("input")
+        input_path = Path(given) if isinstance(given, str) and given else None
+        if (input_path is None or input_path.is_absolute() or ".." in input_path.parts
+                or input_path.parts[:2] != ("tests", "probes")):
+            return None, f"{where} input must be a path under tests/probes/, not {given!r}"
+        target = project / input_path
+        if target.is_file():
+            files = [target]
+        elif target.is_dir():
+            files = sorted(p for p in target.rglob("*") if p.is_file())
+        else:
+            return None, f"{where} input {given} does not exist"
+        if not files:
+            return None, f"{where} input {given} holds no files"
+        for file in files:
+            digests[file.relative_to(project).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
+    missing = {"realistic", "adversarial"} - kinds
+    if missing:
+        return None, f"{gate_id}: {rel} has no {' and no '.join(sorted(missing))} case"
+    return digests, None
+
+
 errors = []
 features = {}
 
-for chunk_id in sorted(ids):
+for gate_id in sorted(i for i in ids if i.startswith("GATE-")):
+    digests, probe_error = validate_probe(gate_id)
+    if probe_error:
+        errors.append(probe_error)
+        continue
+    features.update(digests)
+
+for chunk_id in sorted(i for i in ids if i.startswith("CHUNK-")):
     contract_path = chunk_dir / f"{chunk_id}.md"
     expected = expected_feature(chunk_id)
     if not contract_path.is_file():
@@ -432,7 +567,7 @@ for chunk_id in sorted(ids):
     if feature_error:
         errors.append(feature_error)
         continue
-    actual_steps, tagged_indexes = generated
+    actual_steps, tagged_indexes, multi_indexes = generated
     if planned != actual_steps:
         errors.append(
             f"{chunk_id}: feature steps do not match the contract's Given/When/Then scenarios"
@@ -453,6 +588,25 @@ for chunk_id in sorted(ids):
         errors.append(
             f"{chunk_id}: @real-source scenarios {sorted(tagged_indexes)} do not "
             f"match declared source scenarios {sorted(declared_indexes)}"
+        )
+        continue
+
+    fixtures, fixture_error = contract_multi_record(chunk_id, contract)
+    if fixture_error:
+        errors.append(fixture_error)
+        continue
+    beyond = [f"{path} → scenario {index}" for path, index in fixtures if index > len(planned)]
+    if beyond:
+        errors.append(
+            f"{chunk_id}: Multi-record fixtures maps beyond its {len(planned)} scenario(s): "
+            + ", ".join(beyond)
+        )
+        continue
+    fixture_indexes = {index for _, index in fixtures}
+    if fixture_indexes != multi_indexes:
+        errors.append(
+            f"{chunk_id}: @multi-record scenarios {sorted(multi_indexes)} do not "
+            f"match declared multi-record fixture scenarios {sorted(fixture_indexes)}"
         )
         continue
 

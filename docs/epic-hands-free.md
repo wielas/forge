@@ -317,12 +317,45 @@ matches a chunk file) and `board-bootstrap.sh` (single root, atomic parents)
 all assume every node is a chunk with a frozen feature. The gate's assignee
 must be a real profile, or the card strands silently. *Done when* the
 `roadmap/` and `bootstrap/` groups cover gate nodes.
+*S5: met. A gate is `GATE-<milestone>` in `graph.json`, with
+`docs/chunks/GATE-<milestone>.md` carrying Milestone, Probe, Estimate and Lane.
+`board-bootstrap.sh` creates it **held for the operator**, the way it creates an
+interactive chunk: blocked, unassigned, and without the lane skill, worktree or
+branch. Its reason is decision-first, through the one formatter, and the digest
+stays silent about it until every chunk it closes is done. The gate is refused
+before any board exists if it is parentless or routed anywhere but
+`claude-interactive`. No profile runs a gate card yet, so "a real profile" is
+S5b's (the probe runner) and S8's (the overseer). Metrics count a gate as a
+card, never as a chunk. Cases: `roadmap/gates-*`, `bootstrap/gate-*`,
+`bootstrap/next-milestone-waits-for-the-gate`,
+`bootstrap/a-misrouted-gate-is-refused-before-any-board`,
+`metrics/a-gate-is-a-card-not-a-chunk`,
+`digest/a-gate-speaks-only-when-its-milestone-is-done`. The opt-in
+`bootstrap/real-hermes-gate-holds-the-next-milestone` is the real kernel.*
 
 **MS2. The milestone probe runs on the gate card.** Realistic multi-record
 fixtures plus adversarial input mutations that must be rejected, declared at
 roadmap time (PL3) and executed when the gate card starts. Failures become
 chunk cards. *Why:* redglass CHUNK-15.0. *Done when* a replay on redglass's
 pre-CHUNK-15 tree flags the fail-open gates.
+*S5 built the declaration only. It is `tests/probes/gate_<milestone>.json`,
+`forge.probe.v1`. Each case carries a name, a kind (`realistic`, with `records`
+≥ 2, or `adversarial`), an `input` under `tests/probes/`, a `run` argv naming
+`{input}`, and an `expect` of `exit` plus an optional `stdout` substring.
+`acceptance-freeze` validates it and hashes it, with every input file, into
+`contract-freeze.json`, so `--check-base` refuses an implementation branch
+that weakens the probe (`roadmap/probe-*`,
+`roadmap/a-weakened-probe-is-refused-at-review`). **The runner and the replay
+are row S5b.** If S5b finds the format wrong, it bumps the schema to
+`forge.probe.v2` rather than editing v1 under plans already frozen against it.
+The replay must meet three conditions:
+- It must not vendor `wielas/vault`, which is private, into this public repo.
+  It reads a local checkout, read-only, through `git archive`, and skips when
+  that checkout is absent.
+- It must be two-sided: the pre-CHUNK-15 tree flags, and a post-CHUNK-16 tree
+  clears.
+- Its adversarial inputs must be valid under the *old* schema, so that a flag
+  is a wrong verdict rather than a load error.*
 
 **MS3. `forge-overseer` on GPT-6-Astra.** Invoked by gate cards, exceptions
 and triage — never per chunk. Absorbs `forge-orchestrator`'s routing role.
@@ -475,6 +508,13 @@ Read ADR-0003 and ADR-0010 before editing any skill.
 **PL1. `/scope`: ambition and restraint.** An ambition dial (toy / tool /
 product), a complexity budget, a "make it delightful" pass, explicit
 non-goals, and a gold-plating check.
+*Done when* (**proposed in S5 — this item had none**) `/scope` writes the dial,
+a numeric budget (`<n> milestones, <n> chunks`), a delight pass citing defined
+FRs, a recorded gold-plating pass and a non-empty out-of-scope list, in a form
+`scripts/plan-check.sh --stage scope` reads. `roadmap-check` warns when a
+roadmap exceeds the budget, and removing each field reddens its own case.
+*S5: met — the `roadmap/scope-*` cases, `roadmap/delight-cites-a-defined-requirement`
+and `roadmap/budget-caps-the-plan`.*
 
 **PL2. `/architect`: a practical feasibility stage.** Architect proves what can
 be done, how, and with what effort before anything is planned on it:
@@ -488,6 +528,14 @@ be done, how, and with what effort before anything is planned on it:
 - a "decisions for you" list for what surfaced.
 
 The ledger is a file a check can assert, not prose (ADR-0003).
+*Done when* (**proposed in S5**) `scripts/plan-check.sh --stage architect`
+asserts the ledger. Every row carries an approach, prior art, a spike verdict,
+an estimate in chunks, a tier, a cost and a call. A `proven` or `disproven`
+verdict names a `spikes/` directory that exists. The kept estimate fits the
+scope's budget, or the check sends the architect back to scope. The "decisions
+for you" list exists. *S5: met — `roadmap/ledger-*`,
+`roadmap/architect-requires-decisions-for-you`. The architect's hard rule "no
+code" now reads "no product code".*
 
 **PL3. `/roadmap`: milestones, probes, tiers.** Milestones end in gate cards
 (MS1) with declared probes (MS2). `lane` becomes an implementer tier (cheap /
@@ -495,10 +543,33 @@ strong / local / human); `human` only where a decision genuinely needs the
 operator. Chunk size scales with tier; estimates carry over from the
 feasibility ledger. A spec budget, because every lane re-reads the plan
 (JobApp's `ROADMAP.md` is 94 KB).
+*Done when* (**proposed in S5**) `/roadmap` emits:
+- a gate node per milestone, with a declared probe;
+- a `tier` on every chunk;
+- a per-milestone estimate carried from the ledger;
+- contracts, and a `ROADMAP.md` that is now an index, both within a byte budget
+  (6000 per contract, 16000 for the index).
+
+`roadmap-check` warns on each defect. *S5: met, except that **chunk size does
+not yet scale with tier**. Only `strong` and `human` have an implementer before
+EN1, so a cap for `cheap`/`local` would be a number with nothing to measure, and
+loosening any cap needs an ADR-0012 amendment. The caps stay the strong tier's.
+`roadmap-check` warns on a `cheap`/`local` tier, and the scaling rides EN4/EN6
+with data. Cases: `roadmap/tier-*`, `roadmap/estimate-carries-the-ledger`,
+`roadmap/spec-budget-*`. `/start-chunk` and `/end-chunk` still tick or update a
+chunk's line in `ROADMAP.md`. The index keeps one line per chunk for them, and
+WL2 retires both.*
 
 **PL4. Realistic fixtures in chunk contracts.** Any scenario touching
 aggregation or gating gets at least one multi-record fixture — the redglass
 one-claim lesson.
+*Done when* (**proposed in S5**) a contract's `**Multi-record fixtures:**`
+maps a fixture of two or more records to each `@multi-record` scenario.
+`acceptance-freeze` refuses a mismatch either way, or a one-record fixture, and
+`roadmap-check` warns on a contract without the field. *S5: met —
+`roadmap/multi-record-fixture-is-planned`,
+`roadmap/multi-record-fixtures-is-a-contract-field`. Which scenarios aggregate
+is the planner's judgement. No script can tell, so the tag is a declaration.*
 
 ## Track WL — weight loss
 
@@ -553,7 +624,8 @@ closes.
 | S3c | FL8 *(split from S3)* | Nothing bills per token until EN1 configures a cheap implementer, so the cap has nothing to measure before then | planned | |
 | S4 | GW6, GW1, GW2 *(GW4 and WL3 split out at S4's opening; P4 and P10(3) folded in)* | Runs become observable: run A is measured by GW6's numbers, and the operator merges it from a phone off GW2's digest | done | #79 |
 | S4b | GW4, WL3 *(split from S4)*; P7 triaged with WL3 | Runs start with one command and the graph is visible — convenience, neither changes what run A measures | planned | |
-| S5 | PL1–PL4, MS1, MS2 | The new project is planned with the new skills | planned | |
+| S5 | PL1–PL4, MS1, MS2's declaration *(MS2's runner and replay split out at S5's opening; PL3's tier-scaled caps deferred to EN4/EN6)* | The new project is planned with the new skills | done | #80 |
+| S5b | MS2's runner and its redglass replay *(split from S5)* | Run A's flip criterion counts what the milestone probe finds, so something must execute the probe S5 declares before S7 | planned | |
 | S6 | Plan the new project — operator-led | Scope → architect with spikes → roadmap, three milestones | planned | |
 | S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
 | S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
@@ -721,7 +793,8 @@ proven and say so where the claim is made.
 **P3 (S2). `lane/terminators-match-the-substrate` has been blind since
 Hermes 0.21.5.** *Triaged at S4's opening: **left open**. It is independent of
 S4 and blind only under `--with-hermes`; promote it when the `lane` group next
-changes.* Under `--with-hermes` it fails with
+changes. Re-triaged at S5's opening: still open, since S5 does not touch the
+`lane` group.* Under `--with-hermes` it fails with
 `toolsets-source-yielded-no-kanban-tools`: upstream moved the kanban tool list
 out of the `"kanban": {"tools": [...]}` literal into a module-level list
 passed to a `_ts(...)` helper (`~/.hermes/hermes-agent/toolsets.py`, lines
@@ -870,6 +943,7 @@ profile, its SOUL and the Roles row should go together, once run A's week of
 digests confirms nothing wants a model there. Changing a SOUL is a
 `profiles-bootstrap.sh` step, so S4 left it alone. Triage with WL retirement
 (S13), or earlier if the operator would rather not keep an idle profile.
+*Triaged at S5's opening: **moved to S13**, with WL retirement.*
 
 **P12 (S4). The retro log's generated row has no north-star cell.** GW6 says
 `/retro` *and* `make metrics` lead with the north-star numbers. S4 did the
@@ -877,7 +951,27 @@ second. `metrics.sh --markdown-row` still emits the nine columns
 `docs/retro-metrics.md` defines, and `metrics/markdown-row-has-operator-and-driver-cells`
 pins that header. Adding a column is a change to the retro log's format, and
 WL5 (S13) retargets `/retro` at these numbers anyway. Until then the retro
-reads them from `make metrics`' first section.
+reads them from `make metrics`' first section. *Triaged at S5's opening:
+**folded into WL5** (S13).*
+
+**P13 (S5). An interactive chunk speaks before it has anything to ask.**
+`board-bootstrap.sh` blocks a `claude-interactive` chunk at creation. The
+digest lists every blocked card, so a human chunk in milestone 3 appears under
+"waiting on you" from day one, while its parents are still open. S5 fixed this
+for gates only: the digest's waiting list skips a held `GATE-*` card whose
+parents are not all done. The same rule for interactive chunks would change
+`digest/fixture-message-exact`'s expected text, and S4's row owns that
+message. Evidence: `scripts/digest.sh` `board_json`, the `waiting` query.
+Triage it with the next digest change, or before run A if the M1 plan has a
+human chunk with parents.
+
+**P14 (S5). The operator completing a gate is not an operator action in
+`make metrics`.** `touches` counts comments and unblocks, and `merges` counts
+the operator's merges. The `complete` that releases a milestone is neither. In
+run A that is one uncounted action per milestone, and it is the checkpoint
+reply MS4 later automates. Decide in S8, with MS4, whether a gate completion
+counts, and whether the north-star row "operator actions per merged chunk"
+should carry it.
 
 ## Open questions
 

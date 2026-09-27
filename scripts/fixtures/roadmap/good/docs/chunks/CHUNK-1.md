@@ -14,5 +14,6 @@
   - Given an idle board with no WAL sidecars, when the reader opens its snapshot, then the read succeeds.
   - Given the same snapshot read twice, when the records are compared, then the two byte sequences are identical.
 - **Out of scope:** rendering, publication, the CLI surface, and any write to the board.
+- **Multi-record fixtures:** none
 - **Done when:** `make check` green + all five scenarios pass + docs updated
 - **Lane:** forge-codex-lane  ·  **Risk:** med

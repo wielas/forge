@@ -39,6 +39,10 @@ esac
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 GRAPH=docs/chunks/graph.json
 ROOT_ID=""
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# GW1: a held gate speaks to the operator, so it speaks through the one formatter.
+# shellcheck source=../scripts/decision-message.sh
+. "$HERE/../scripts/decision-message.sh"
 
 validate_graph() { # $1=graph; sets ROOT_ID
   local graph="$1" roots root_count missing ids seen total progress id deps dep ready
@@ -47,11 +51,11 @@ validate_graph() { # $1=graph; sets ROOT_ID
       type == "array" and length > 0
       and all(.[];
         ((.id | type) == "string")
-        and (.id | test("^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"))
+        and (.id | test("^(CHUNK|GATE)-[A-Za-z0-9][A-Za-z0-9._-]*$"))
         and ((.depends_on // []) | type == "array")
         and all((.depends_on // [])[];
           (type == "string")
-          and test("^CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*$"))
+          and test("^(CHUNK|GATE)-[A-Za-z0-9][A-Za-z0-9._-]*$"))
         and (((.depends_on // []) | unique | length)
              == ((.depends_on // []) | length)))
       and ((map(.id) | unique | length) == length)
@@ -68,6 +72,26 @@ validate_graph() { # $1=graph; sets ROOT_ID
     ' "$graph")"
   if [ -n "$missing" ]; then
     echo "FATAL: $graph names missing dependencies: $(printf '%s' "$missing" | paste -sd, -)" >&2
+    return 1
+  fi
+
+  # A GATE-<milestone> node (epic MS1) closes a milestone: its parents are that
+  # milestone's chunks, and the next milestone's chunks depend on it, so the
+  # kernel's own parent gating holds the next milestone until the gate is done.
+  # No profile runs a gate card yet, so it is held for the operator exactly as an
+  # interactive chunk is. Refused here, before any board exists: a gate with no
+  # parent (it would close nothing, and could be the root), and a gate routed to
+  # anything but claude-interactive — on the implementer lane it would be run as
+  # a chunk, and on any other profile it would strand or be misread.
+  local bad_gates
+  bad_gates="$(jq -r '
+      .[] | select(.id | startswith("GATE-"))
+      | select(((.depends_on // []) | length) == 0
+               or ((.lane // "claude-interactive") != "claude-interactive"))
+      | .id' "$graph")"
+  if [ -n "$bad_gates" ]; then
+    echo "FATAL: $graph has gate(s) that are parentless or not claude-interactive: $(printf '%s' "$bad_gates" | paste -sd, -)" >&2
+    echo "       A gate closes its milestone's chunks and is held for the operator." >&2
     return 1
   fi
 
@@ -315,7 +339,9 @@ create_card_id() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=bra
 # AGENTS.md rule branch_for() encodes. Measured 2026-09-03: passing --branch
 # alone here failed every interactive card at create.
 create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [--parent <id> ...]
-  local cid state status title="$1"
+  # $HOLD_REASON, when set, replaces the block reason: a milestone gate holds
+  # with a decision-first message rather than the interactive-chunk line.
+  local cid state status title="$1" reason
   cid=$(hermes kanban --board "$BOARD" create "$1" \
     --body "$(cat "$2")" \
     --assignee forge-operator-handoff \
@@ -339,9 +365,11 @@ create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [--parent
   else
     # One idiom for both the fresh card and the already-blocked one, and one
     # unconditional read-back that fails closed on all three substrate facts.
+    reason="${HOLD_REASON:-interactive chunk: human implementation required}"
+    reason="${reason//<id>/$cid}"
     [ "$status" = blocked ] || \
       hermes kanban --board "$BOARD" block --kind needs_input "$cid" \
-        "interactive chunk: human implementation required" >/dev/null
+        "$reason" >/dev/null
     hermes kanban --board "$BOARD" assign "$cid" none >/dev/null
     hermes kanban --board "$BOARD" show "$cid" --json | jq -e '
       .task.status == "blocked"
@@ -437,7 +465,8 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
     card_id_of "$id" >/dev/null 2>&1 && continue
 
     lane=$(jq -r --arg id "$id" --arg lane "$LANE_ASSIGNEE" \
-      '.[] | select(.id == $id) | (.lane // $lane)' "$GRAPH")
+      '.[] | select(.id == $id)
+       | (.lane // (if (.id | startswith("GATE-")) then "claude-interactive" else $lane end))' "$GRAPH")
     deps=$(jq -r --arg id "$id" \
       '.[] | select(.id == $id) | (.depends_on // [])[]' "$GRAPH")
     parent_args=()
@@ -461,7 +490,22 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
       exit 1
     }
     title=$(head -1 "$f" | sed 's/^#* *//')
-    branch=$(branch_for "$id" "${title:-$id}")
+    HOLD_REASON=""
+    case "$id" in
+      GATE-*)
+        # No branch: a gate is never implemented, so it never pushes one.
+        branch=""
+        milestone="${id#GATE-}"
+        probe="tests/probes/$(printf '%s' "$id" | tr 'A-Z-' 'a-z_').json"
+        HOLD_REASON="$(decision_message milestone-gate \
+          "$id holds milestone $milestone's successors until you complete it" \
+          "every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done" \
+          "once every chunk of $milestone is merged, run its probe ($probe) and decide whether $milestone is done; until then there is nothing to decide" \
+          "completing it early starts the next milestone on work nobody has probed" \
+          "\`hermes kanban --board $BOARD complete <id> --result \"probe: <outcome>\"\`")"
+        ;;
+      *) branch=$(branch_for "$id" "${title:-$id}");;
+    esac
     if [ "$lane" = "claude-interactive" ]; then
       # The empty-array guard stays: `"${parent_args[@]}"` on an empty array is
       # an unbound-variable error under `set -u` in bash 3.2, which is what the
@@ -472,7 +516,10 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
         cid=$(create_interactive_card "${title:-$id}" "$f" "$BOARD-$id" \
           "${parent_args[@]}")
       fi
-      echo "blocked  $id -> $cid (Lane: claude-interactive — run /start-chunk yourself)"
+      case "$id" in
+        GATE-*) echo "held     $id -> $cid (milestone gate — complete it when the milestone's probe passes)";;
+        *)      echo "blocked  $id -> $cid (Lane: claude-interactive — run /start-chunk yourself)";;
+      esac
     else
       if [ "$parent_count" -eq 0 ]; then
         cid=$(create_card_id "${title:-$id}" "$f" "$lane" "$BOARD-$id" "$branch")
