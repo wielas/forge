@@ -556,7 +556,9 @@ EN1, so a cap for `cheap`/`local` would be a number with nothing to measure, and
 loosening any cap needs an ADR-0012 amendment. The caps stay the strong tier's.
 `roadmap-check` warns on a `cheap`/`local` tier, and the scaling rides EN4/EN6
 with data. Cases: `roadmap/tier-*`, `roadmap/estimate-carries-the-ledger`,
-`roadmap/spec-budget-*`.*
+`roadmap/spec-budget-*`. `/start-chunk` and `/end-chunk` still tick or update a
+chunk's line in `ROADMAP.md`. The index keeps one line per chunk for them, and
+WL2 retires both.*
 
 **PL4. Realistic fixtures in chunk contracts.** Any scenario touching
 aggregation or gating gets at least one multi-record fixture — the redglass

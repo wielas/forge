@@ -96,3 +96,15 @@ CHUNK-5; subsequent projects must satisfy the normal pre-token chronology.
   to the approved base.
 - **Treat a hash match as semantic correctness.** SHA-256 proves byte identity,
   not that a scenario is strong, feasible, or adequately implemented.
+
+> **Amendment, 2026-09-27 (epic S5, MS1/MS2).** The manifest is no longer
+> feature paths only. A milestone gate (`GATE-<milestone>` in `graph.json`) has
+> no feature; what it freezes is its declared probe,
+> `tests/probes/gate_<milestone>.json` (`forge.probe.v1`), plus every input file
+> the probe runs on. The same reasoning applies: the milestone probe is the
+> backstop for what per-chunk review cannot see, so an implementation branch
+> must not be able to weaken it. `load_manifest` accepts a path under
+> `tests/probes/` beside `.feature` paths. `--check-base` compares those entries
+> exactly as it compares features (`roadmap/a-weakened-probe-is-refused-at-review`).
+> A contract's `Multi-record fixtures` line joins the frozen acceptance surface
+> beside `Scenarios`, `Real sources` and `Acceptance`.
