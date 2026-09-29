@@ -626,7 +626,7 @@ closes.
 | S4b | GW4, WL3 *(split from S4)*; P7 triaged with WL3 | Runs start with one command and the graph is visible — convenience, neither changes what run A measures | planned | |
 | S5 | PL1–PL4, MS1, MS2's declaration *(MS2's runner and replay split out at S5's opening; PL3's tier-scaled caps deferred to EN4/EN6)* | The new project is planned with the new skills | done | #80 |
 | S5b | MS2's runner and its redglass replay *(split from S5)* | Run A's flip criterion counts what the milestone probe finds, so something must execute the probe S5 declares before S7 | planned | |
-| S6 | Plan the new project — operator-led | Scope → architect with spikes → roadmap, three milestones | planned | |
+| S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is private. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's.* | Scope → architect with spikes → roadmap, three milestones | in progress | |
 | S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
 | S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
@@ -794,7 +794,8 @@ proven and say so where the claim is made.
 Hermes 0.21.5.** *Triaged at S4's opening: **left open**. It is independent of
 S4 and blind only under `--with-hermes`; promote it when the `lane` group next
 changes. Re-triaged at S5's opening: still open, since S5 does not touch the
-`lane` group.* Under `--with-hermes` it fails with
+`lane` group. Re-triaged at S6's opening: still open, since S6 changes no
+code.* Under `--with-hermes` it fails with
 `toolsets-source-yielded-no-kanban-tools`: upstream moved the kanban tool list
 out of the `"kanban": {"tools": [...]}` literal into a module-level list
 passed to a `_ts(...)` helper (`~/.hermes/hermes-agent/toolsets.py`, lines
@@ -963,7 +964,9 @@ parents are not all done. The same rule for interactive chunks would change
 `digest/fixture-message-exact`'s expected text, and S4's row owns that
 message. Evidence: `scripts/digest.sh` `board_json`, the `waiting` query.
 Triage it with the next digest change, or before run A if the M1 plan has a
-human chunk with parents.
+human chunk with parents. *Triaged at S6's opening: **S6's roadmap decides
+it.** If The Squatfather's M1 has a human chunk with parents, P13 is promoted to its
+own row before S7. Otherwise it waits for the next digest change.*
 
 **P14 (S5). The operator completing a gate is not an operator action in
 `make metrics`.** `touches` counts comments and unblocks, and `merges` counts
@@ -972,6 +975,19 @@ run A that is one uncounted action per milestone, and it is the checkpoint
 reply MS4 later automates. Decide in S8, with MS4, whether a gate completion
 counts, and whether the north-star row "operator actions per merged chunk"
 should carry it.
+
+**P15 (S6). Claude Code upgraded itself mid-epic.** `make preflight` on
+2026-09-28, after S5's deploy, reported PASS 104 / WARN 4 / FAIL 0. The fourth
+WARN is new: `docs/state.md`'s recorded environment says Claude Code 2.1.281,
+and the live version is 2.1.283. *Hold still during the epic* rules out an
+upgrade except as its own session, and nobody chose this one. S6's planning
+runs on 2.1.283, and the lane does not use Claude Code, so run A is not
+affected. Triage: pin or disable Claude Code's auto-update before run A, and
+update the recorded version in `state.md` when S6 closes.
+
+*Triaged at S6's opening: P7 stays with S4b; P9, P10(4)–(5) and P14 stay with
+S8; P10(1)–(2) stay open. S6 plans a project and changes no Forge code, so
+none of them is in reach.*
 
 ## Open questions
 
