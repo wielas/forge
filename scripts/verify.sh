@@ -2550,6 +2550,7 @@ bootstrap/malformed-ids-mutate-nothing  space, slash, traversal and malformed de
 bootstrap/full-extends-root-idempotently full bootstrap reuses the root key and atomically attaches every remaining parent
 bootstrap/completed-interactive-root-is-reused full bootstrap extends the human-completed root without re-blocking it
 bootstrap/parented-interactive-chunk-is-blocked-then-linked an interactive chunk whose parent is not done is created parentless, sticky-blocked, unassigned, then linked
+bootstrap/interactive-hold-is-the-reason-the-digest-skips  the reason the bootstrap blocks an interactive chunk with is byte-identical to the one the digest skips (P13)
 bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
 bootstrap/generated-branch-names-pass-the-branch-name-rule  the branch board-bootstrap.sh generates is accepted by branch-name.sh itself
 commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
@@ -2568,6 +2569,7 @@ bootstrap/gate-is-a-held-card-closing-its-milestone  a gate is created blocked, 
 bootstrap/next-milestone-waits-for-the-gate  the next milestone's chunk is created todo with the gate as its parent
 bootstrap/a-misrouted-gate-is-refused-before-any-board  a gate on the implementer lane or with no parent FATALs before init
 bootstrap/real-hermes-gate-holds-the-next-milestone  opt-in: the real kernel holds the next milestone behind a held gate
+bootstrap/real-hermes-interactive-chunk-waits-for-its-parents  opt-in: on the real kernel a held interactive chunk stays blocked through link, and the digest lists it only once its parent is done (P13)
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/post-fl3-board-numbers-exact  the one-card-per-chunk board reproduces its own exact expectation, envelopes on review_requested runs included (P4)
@@ -2882,6 +2884,7 @@ digest/fixture-message-exact        two fixture boards, a quiet one and an archi
 digest/silent-when-nothing-happened a board with nothing landed, in flight or waiting prints nothing and exits 0 — under --no-agent that is no notification
 digest/an-unreadable-board-is-named a board that cannot be read is named on stdout and exits 3; it is never reported as quiet
 digest/a-gate-speaks-only-when-its-milestone-is-done  a held gate is silent while a chunk it closes is open, and decision-first once all are done
+digest/an-interactive-chunk-speaks-only-when-its-parents-are-done  a held interactive chunk is silent while any parent is open and listed once all are done or archived; a later block, none recorded, a held root and a triaged card still speak (P13)
 digest/is-read-only                 the boards read are byte-identical, sidecars included, before and after
 digest/every-block-class-has-a-decision  every class in the contract's blocked_reason_pattern has a decision entry, and every entry is a registered class (GW1)
 digest/a-missing-decision-is-caught  a formatter with one class entry deleted reddens and names the class
@@ -4603,6 +4606,20 @@ HERMES_STUB
         "an interactive chunk whose parent is not done must end blocked, unassigned, with a sticky blocked event and its parent edge; exit $ic_rc, status '$(cat "$ichild/state/$ic_card.status" 2>/dev/null)', assignee '$(cat "$ichild/state/$ic_card.assignee" 2>/dev/null)', parents '$(cat "$ichild/state/$ic_card.parents" 2>/dev/null | tr '\n' ' ')': $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
   fi
 
+  # Epic P13: the digest keeps a held interactive chunk quiet by its block
+  # reason alone, so the reason the bootstrap writes must be, byte for byte, the
+  # one decision-message.sh hands the digest. Read from what the bootstrap
+  # really passed to `block`, never from its source.
+  local ic_hold
+  ic_hold="$(bash -c '. "$1" && printf %s "$INTERACTIVE_HOLD_REASON"' _ "$REPO_ROOT/scripts/decision-message.sh" 2>/dev/null)"
+  if [ -n "$ic_hold" ] && [ -n "$ic_card" ] \
+     && printf '%s' "$ic_hold" | cmp -s - "$ichild/state/$ic_card.reason"; then
+    ok "interactive-hold-is-the-reason-the-digest-skips"
+  else
+    bad "interactive-hold-is-the-reason-the-digest-skips" \
+        "the bootstrap must block an interactive chunk with decision-message.sh's INTERACTIVE_HOLD_REASON, the reason the digest skips while a parent is open; wrote '$(cat "$ichild/state/$ic_card.reason" 2>/dev/null)', want '$ic_hold'"
+  fi
+
   # -- epic MS1: a milestone gate is a held card between two milestones -------
   local gates="$TMPROOT/bootstrap-gates" g_rc g_card g_c1 g_c2 g_c3 g_detail=""
   _bootstrap_fixture "$gates" gates
@@ -4782,6 +4799,51 @@ REAL_GATE_GRAPH
       ok "real-hermes-gate-holds-the-next-milestone (isolated board: held gate keeps CHUNK-2 todo; completing it releases CHUNK-2)"
     else
       bad "real-hermes-gate-holds-the-next-milestone" "on the real kernel:$rg_detail"
+    fi
+  fi
+
+  # Epic P13 on the installed kernel: the real bootstrap's hold on a parented
+  # interactive chunk survives `link`, and the digest says nothing about the
+  # chunk until its parent is done, then lists it. The stub above cannot show
+  # the first half: whether `link` leaves a blocked card blocked is the kernel's.
+  if [ "$WITH_HERMES" != 1 ]; then
+    skip "real-hermes-interactive-chunk-waits-for-its-parents" "needs --with-hermes (isolated host integration)"
+  elif ! command -v hermes >/dev/null 2>&1; then
+    skip "real-hermes-interactive-chunk-waits-for-its-parents" "hermes not on PATH"
+  else
+    local ri="$TMPROOT/bootstrap-real-interactive" ri_project ri_home ri_db ri_c1 ri_c2 ri_detail="" ri_open ri_done
+    ri_project="$ri/project"; ri_home="$ri/hermes-home"
+    mkdir -p "$ri_project/docs/chunks" "$ri_home"
+    git -C "$ri_project" init -q
+    cat > "$ri_project/docs/chunks/graph.json" <<'REAL_HUMAN_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"default","depends_on":[]},
+  {"id":"CHUNK-2","lane":"claude-interactive","depends_on":["CHUNK-1"]}
+]
+REAL_HUMAN_GRAPH
+    printf '### CHUNK-1: real parent\n' > "$ri_project/docs/chunks/CHUNK-1.md"
+    printf '### CHUNK-2: real human chunk\n' > "$ri_project/docs/chunks/CHUNK-2.md"
+    out="$(cd "$ri_project" && HERMES_HOME="$ri_home" \
+      FORGE_LANE_ASSIGNEE=default "$bootstrap" human-real 2>&1)"; rc=$?
+    ri_db="$ri_home/kanban/boards/human-real/kanban.db"
+    ri_c1="$(sqlite3 "$ri_db" "SELECT id FROM tasks WHERE idempotency_key='human-real-CHUNK-1';" 2>/dev/null)"
+    ri_c2="$(sqlite3 "$ri_db" "SELECT id FROM tasks WHERE idempotency_key='human-real-CHUNK-2';" 2>/dev/null)"
+    [ "$rc" = 0 ] && [ -n "$ri_c1" ] && [ -n "$ri_c2" ] \
+      || ri_detail="$ri_detail bootstrap(exit $rc: $(printf '%s' "$out" | tail -2 | tr '\n' ' '))"
+    [ "$(sqlite3 "$ri_db" "SELECT status || '/' || COALESCE(assignee,'') FROM tasks WHERE id='$ri_c2';" 2>/dev/null)" = "blocked/" ] \
+      || ri_detail="$ri_detail chunk-not-held-after-link($(sqlite3 "$ri_db" "SELECT status || '/' || COALESCE(assignee,'') FROM tasks WHERE id='$ri_c2';" 2>/dev/null))"
+    ri_open="$(TZ=UTC HERMES_HOME="$ri_home" "$REPO_ROOT/scripts/digest.sh" --board human-real --day 2026-07-28 2>/dev/null)"
+    printf '%s' "$ri_open" | grep -q '^Waiting on you (0): nothing$' \
+      || ri_detail="$ri_detail spoke-while-its-parent-is-open($(printf '%s' "$ri_open" | grep -E '^(Waiting|— )' | tr '\n' ' '))"
+    HERMES_HOME="$ri_home" hermes kanban --board human-real complete "$ri_c1" --result "merged: fixture" >/dev/null 2>&1 \
+      || ri_detail="$ri_detail parent-would-not-complete"
+    ri_done="$(TZ=UTC HERMES_HOME="$ri_home" "$REPO_ROOT/scripts/digest.sh" --board human-real --day 2026-07-28 2>/dev/null)"
+    printf '%s' "$ri_done" | grep -q "^— $ri_c2 · CHUNK-2" \
+      || ri_detail="$ri_detail silent-once-its-parent-is-done($(printf '%s' "$ri_done" | grep -E '^(Waiting|— )' | tr '\n' ' '))"
+    if [ -z "$ri_detail" ]; then
+      ok "real-hermes-interactive-chunk-waits-for-its-parents (isolated board: held through link; the digest is silent until CHUNK-1 is done, then lists CHUNK-2)"
+    else
+      bad "real-hermes-interactive-chunk-waits-for-its-parents" "on the real kernel:$ri_detail"
     fi
   fi
 }
@@ -12207,6 +12269,56 @@ run_digest_group() {
         "a held gate must be absent while its chunk is open and shown decision-first once it is done; open: $(printf '%s' "$g_open" | grep -c t_g2) mention(s), done: $(printf '%s' "$g_done" | head -8 | tr '\n' ' ')"
   fi
   rm -rf "$kb/gates"
+
+  # Epic P13: an interactive chunk is held from the bootstrap on, like a gate,
+  # and has nothing to ask while a parent is open. CHUNK-5's shape — two
+  # parents, one done — so "all parents done" is told apart from "any". The
+  # controls stay listed throughout. Three share the open parent: a held chunk
+  # blocked again for another reason, because the LAST reason counts and the
+  # rule is not "every blocked card with an open parent"; a card blocked with
+  # no recorded reason, which a NULL comparison must not drop; and a held chunk
+  # that went to triage, which no script can complete (P8), so it always
+  # speaks. The fourth is a held root, which has nothing to wait for.
+  mkdir -p "$kb/humans"
+  sqlite3 "$kb/humans/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  local hold
+  hold="$(bash -c '. scripts/decision-message.sh && printf %s "$INTERACTIVE_HOLD_REASON"' 2>/dev/null | sed "s/'/''/g")"
+  sqlite3 "$kb/humans/kanban.db" "DELETE FROM tasks; DELETE FROM task_events; DELETE FROM task_runs;
+    INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+      ('t_h1', 'CHUNK-2: first parent',             'forge-verifier', 'done',    1785200000),
+      ('t_h2', 'CHUNK-3: second parent',            'forge-verifier', 'review',  1785200000),
+      ('t_h3', 'CHUNK-5: a human chunk',            NULL,             'blocked', 1785200000),
+      ('t_h4', 'CHUNK-6: held, then blocked again', NULL,             'blocked', 1785200000),
+      ('t_h5', 'CHUNK-7: blocked with no reason',   NULL,             'blocked', 1785200000),
+      ('t_h6', 'CHUNK-1: a held root',              NULL,             'blocked', 1785200000),
+      ('t_h7', 'CHUNK-8: held, now in triage',      NULL,             'triage',  1785200000);
+    INSERT INTO task_links (parent_id, child_id) VALUES
+      ('t_h1', 't_h3'), ('t_h2', 't_h3'), ('t_h2', 't_h4'), ('t_h2', 't_h5'), ('t_h2', 't_h7');
+    INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+      ('t_h3', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000),
+      ('t_h4', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000),
+      ('t_h4', 'blocked', json_object('reason', 'env: the workspace is gone', 'kind', 'needs_input'), 1785200100),
+      ('t_h6', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000),
+      ('t_h7', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000);" >/dev/null 2>&1
+  local h_open h_done c controls_listed=1
+  h_open="$(_dg --board humans --day 2026-07-28 2>/dev/null)"
+  sqlite3 "$kb/humans/kanban.db" "UPDATE tasks SET status='archived' WHERE id='t_h2';" >/dev/null 2>&1
+  h_done="$(_dg --board humans --day 2026-07-28 2>/dev/null)"
+  for c in t_h4 t_h5 t_h6 t_h7; do
+    printf '%s' "$h_open" | grep -q "^— $c · " && printf '%s' "$h_done" | grep -q "^— $c · " \
+      || controls_listed=0
+  done
+  if [ -n "$hold" ] && [ "$controls_listed" = 1 ] \
+     && printf '%s' "$h_open" | grep -q '^Waiting on you (4)$' \
+     && ! printf '%s' "$h_open" | grep -q 't_h3' \
+     && printf '%s' "$h_done" | grep -q '^Waiting on you (5)$' \
+     && printf '%s' "$h_done" | grep -q '^— t_h3 · CHUNK-5'; then
+    ok "an-interactive-chunk-speaks-only-when-its-parents-are-done"
+  else
+    bad "an-interactive-chunk-speaks-only-when-its-parents-are-done" \
+        "a held interactive chunk must be absent while either parent is open and listed once both are done or archived, with all four controls listed throughout; hold '$hold', open: $(printf '%s' "$h_open" | grep -E '^(Waiting|— )' | tr '\n' ' '), done: $(printf '%s' "$h_done" | grep -E '^(Waiting|— )' | tr '\n' ' ')"
+  fi
+  rm -rf "$kb/humans"
 
   if detail="$(decision_classes_diagnostic scripts/decision-message.sh)"; then
     ok "every-block-class-has-a-decision ($(bash -c '. scripts/decision-message.sh && decision_classes' | grep -c .) classes)"

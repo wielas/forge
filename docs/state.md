@@ -293,8 +293,12 @@ ends in the same place — so the race itself is untested until run A.
   `scripts/digest.sh` renders the operator's daily message, with every card
   waiting on the operator in the one decision-first format
   (`scripts/decision-message.sh`, GW1). Both are exact against checked-in
-  boards in the post-FL3 shape (`metrics/`, `digest/`). What that does NOT
-  prove:
+  boards in the post-FL3 shape (`metrics/`, `digest/`). A card the bootstrap
+  holds for later is left out of "waiting on you" until its parents are done:
+  a milestone gate since S5, and an interactive chunk since S6b (P13). The
+  interactive half also runs on the installed kernel, through the opt-in
+  `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. What that
+  does NOT prove:
   - No live post-FL3 board exists yet, so no real run has been measured by
     these numbers.
   - PR open → merge is a board proxy, not GitHub's timestamps.
