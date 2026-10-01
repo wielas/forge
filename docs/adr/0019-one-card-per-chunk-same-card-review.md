@@ -82,6 +82,22 @@ a reading of the diff. ADR-0007 D7.2's human tier is retired as a per-chunk
 stage; the operator's remaining per-run touchpoints are planning, the milestone
 checkpoint, and exceptions.
 
+> **Note, 2026-10-01 (epic S3b, FL5).** The mutation probe exists
+> (`scripts/mutation-probe.py`, Stage 1c of `scripts/prejudge-review.sh`), and
+> it is not literally "a mutation probe of the frozen scenarios". It mutates
+> only the implementation lines the PR changed, and runs the project's *whole*
+> suite against each mutant, frozen scenarios included. That is how tier 2
+> proved JobApp C21's blocker: every config read deleted, and the suite stayed
+> green. What it reports is a changed line on which every mutant
+> survived, which is a line no test observes. It runs in the tree the
+> merged-tree check proved green, before the scorer. A probe that could not run
+> is never a pass. It ships **reporting**: its verdict is written on the hold
+> and gates nothing until the operator sets `FORGE_MUTATION_PROBE_BOUNCE=1`.
+> The reason is the same as for merge mode in D19.3. Replayed, it bounced all six of
+> redglass's all-3s PRs as well as the three it should have, and a bounce is
+> live even while approvals only recommend, so its precision is measured in
+> run A before it is allowed to act (epic FL5).
+
 **D19.3 — Recommend-only is the default, and merge mode is earned.** The
 verifier ships in **recommend-only**: it reaches its verdict exactly as it would
 in merge mode, and then, on approve, blocks the card `needs_input` instead of
