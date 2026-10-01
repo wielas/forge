@@ -108,3 +108,17 @@ CHUNK-5; subsequent projects must satisfy the normal pre-token chronology.
 > exactly as it compares features (`roadmap/a-weakened-probe-is-refused-at-review`).
 > A contract's `Multi-record fixtures` line joins the frozen acceptance surface
 > beside `Scenarios`, `Real sources` and `Acceptance`.
+
+> **Amendment, 2026-10-01 (epic S5b, MS2).** What a valid probe is, and which
+> files it freezes, is now defined once, in `scripts/forge_probe.py`.
+> `acceptance-freeze` freezes by it, and `scripts/probe-run.sh`, which executes
+> the probe on the gate card, refuses any probe that does not match the
+> manifest. Three freeze rules are new:
+> - `.DS_Store` is never part of a probe, and a `run` may not name one.
+> - A symlink in an input is refused, because its target's bytes are not what
+>   the freeze would hash.
+> - An expectation that cannot discriminate is refused: an empty `stdout`, or
+>   an exit outside 0–255.
+>
+> v1's shape is unchanged, and no frozen plan changed under these rules. The
+> Squatfather's re-freeze is byte-identical. So v1 was tightened, not bumped.

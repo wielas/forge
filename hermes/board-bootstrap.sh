@@ -500,9 +500,9 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
         HOLD_REASON="$(decision_message milestone-gate \
           "$id holds milestone $milestone's successors until you complete it" \
           "every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done" \
-          "once every chunk of $milestone is merged, run its probe ($probe) and decide whether $milestone is done; until then there is nothing to decide" \
+          "once every chunk of $milestone is merged, run its probe ($probe) with \`~/.forge/repo/scripts/probe-run.sh '$REPO_ROOT' $id\` and decide whether $milestone is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide" \
           "completing it early starts the next milestone on work nobody has probed" \
-          "\`hermes kanban --board $BOARD complete <id> --result \"probe: <outcome>\"\`")"
+          "\`hermes kanban --board $BOARD complete <id> --result \"<the runner's last line>\"\`")"
         ;;
       *) branch=$(branch_for "$id" "${title:-$id}");;
     esac

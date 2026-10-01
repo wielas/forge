@@ -8,7 +8,8 @@
 #   docs/chunks/contract-freeze.json          path -> SHA-256 of feature bytes
 #
 # A milestone gate (epic MS1) is a GATE-<milestone> node with no feature. What
-# it freezes instead is its declared probe (MS2):
+# it freezes instead is its declared probe (MS2), whose rules live in
+# scripts/forge_probe.py so that probe-run.sh, which executes it, agrees:
 #   tests/probes/gate_<milestone>.json        forge.probe.v1: realistic and
 #                                             adversarial cases, each an input,
 #                                             a command and the expected result
@@ -61,7 +62,18 @@ command -v python3 >/dev/null 2>&1 || {
   exit 2
 }
 
-python3 - "$PROJECT" "$CHECK_BASE" <<'PY'
+# The siblings live beside the TARGET when this is reached through a symlink.
+_self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in /*) _self="$_link";; *) _self="$(dirname "$_self")/$_link";; esac
+done
+HERE="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || {
+  echo "acceptance-freeze: script directory cannot be resolved" >&2
+  exit 2
+}
+
+python3 - "$PROJECT" "$CHECK_BASE" "$HERE" <<'PY'
 import hashlib
 import json
 import os
@@ -69,6 +81,12 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+
+# forge.probe.v1 is defined once, beside this script, and probe-run.sh reads the
+# same definition. No bytecode: the runtime checkout stays exactly its commit.
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[3])
+from forge_probe import validate_probe  # noqa: E402
 
 
 project = Path(sys.argv[1]).resolve()
@@ -439,84 +457,11 @@ def contract_multi_record(chunk_id: str, contract: str):
     return entries, None
 
 
-def probe_path(gate_id: str) -> str:
-    return f"tests/probes/{gate_id.lower().replace('-', '_')}.json"
-
-
-def validate_probe(gate_id: str):
-    """(digests, error) for a gate's forge.probe.v1 declaration (epic MS2)."""
-    rel = probe_path(gate_id)
-    path = project / rel
-    try:
-        raw = path.read_bytes()
-        probe = json.loads(raw.decode("utf-8"))
-    except FileNotFoundError:
-        return None, f"{gate_id}: missing probe; expected {rel}"
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return None, f"{gate_id}: cannot read {rel}: {exc}"
-    milestone = gate_id.removeprefix("GATE-")
-    if not isinstance(probe, dict) or probe.get("probe") != "forge.probe.v1":
-        return None, f"{gate_id}: {rel} is not a forge.probe.v1 object"
-    if probe.get("milestone") != milestone:
-        return None, f"{gate_id}: {rel} names milestone {probe.get('milestone')!r}, expected {milestone!r}"
-    cases = probe.get("cases")
-    if not isinstance(cases, list) or not cases:
-        return None, f"{gate_id}: {rel} has no cases"
-    digests = {rel: hashlib.sha256(raw).hexdigest()}
-    names, kinds = set(), set()
-    for index, case in enumerate(cases, start=1):
-        where = f"{gate_id}: {rel} case {index}"
-        if not isinstance(case, dict):
-            return None, f"{where} is not an object"
-        name = case.get("name")
-        if not isinstance(name, str) or not name.strip() or name in names:
-            return None, f"{where} needs a unique, non-empty name"
-        names.add(name)
-        kind = case.get("kind")
-        if kind not in ("realistic", "adversarial"):
-            return None, f"{where} kind must be realistic or adversarial, not {kind!r}"
-        kinds.add(kind)
-        records = case.get("records")
-        if kind == "realistic" and (not isinstance(records, int) or isinstance(records, bool) or records < 2):
-            return None, f"{where} is realistic and must declare records >= 2 (a one-record fixture cannot aggregate)"
-        run = case.get("run")
-        if (not isinstance(run, list) or not run
-                or not all(isinstance(arg, str) and arg for arg in run)
-                or not any("{input}" in arg for arg in run)):
-            return None, f"{where} run must be a non-empty argv of strings that names {{input}}"
-        expect = case.get("expect")
-        if (not isinstance(expect, dict)
-                or not isinstance(expect.get("exit"), int) or isinstance(expect.get("exit"), bool)
-                or not set(expect) <= {"exit", "stdout"}
-                or ("stdout" in expect and not isinstance(expect["stdout"], str))):
-            return None, f"{where} expect must be {{\"exit\": <int>}} with an optional \"stdout\" substring"
-        given = case.get("input")
-        input_path = Path(given) if isinstance(given, str) and given else None
-        if (input_path is None or input_path.is_absolute() or ".." in input_path.parts
-                or input_path.parts[:2] != ("tests", "probes")):
-            return None, f"{where} input must be a path under tests/probes/, not {given!r}"
-        target = project / input_path
-        if target.is_file():
-            files = [target]
-        elif target.is_dir():
-            files = sorted(p for p in target.rglob("*") if p.is_file())
-        else:
-            return None, f"{where} input {given} does not exist"
-        if not files:
-            return None, f"{where} input {given} holds no files"
-        for file in files:
-            digests[file.relative_to(project).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
-    missing = {"realistic", "adversarial"} - kinds
-    if missing:
-        return None, f"{gate_id}: {rel} has no {' and no '.join(sorted(missing))} case"
-    return digests, None
-
-
 errors = []
 features = {}
 
 for gate_id in sorted(i for i in ids if i.startswith("GATE-")):
-    digests, probe_error = validate_probe(gate_id)
+    _, digests, probe_error = validate_probe(project, gate_id)
     if probe_error:
         errors.append(probe_error)
         continue

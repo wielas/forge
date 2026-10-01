@@ -49,6 +49,10 @@
 #   roadmap/    the sizing rules at PLAN time: one checked-in passing roadmap,
 #               one mutation per rule family, and the audited run's own CHUNK-5
 #               driven through the real check              (F11, F53, ADR-0012)
+#   probe/      the milestone probe, executed: a frozen probe passes, a missed
+#               case is a finding, an unplanned probe or an unstartable command
+#               has no verdict; and redglass's own history replayed, read-only,
+#               when a local checkout is present                    (MS2, S5b)
 #   gate/       repository merge protection and required-check diagnostics,
 #               driven through recorded API response shapes                    (F79)
 #   docs/       the reconciled launch ledger and operator contract: dispositions,
@@ -91,11 +95,11 @@ while [ $# -gt 0 ]; do
     --with-hermes) WITH_HERMES=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap gate docs digest quota manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe gate docs digest quota manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -2566,6 +2570,7 @@ commission/require-gate-restores-the-refusal  REQUIRE_GATE=1 restores the strict
 commission/an-unrecognised-require-gate-is-refused  any other REQUIRE_GATE value is refused, never reinterpreted
 bootstrap/real-hermes-root-and-extension opt-in isolated host proof uses Hermes rather than the command stub
 bootstrap/gate-is-a-held-card-closing-its-milestone  a gate is created blocked, unassigned, lane-free, parented on its milestone (MS1)
+bootstrap/gate-names-its-probe-runner    the gate's hold names ~/.forge/repo/scripts/probe-run.sh on this project and gate (MS2)
 bootstrap/next-milestone-waits-for-the-gate  the next milestone's chunk is created todo with the gate as its parent
 bootstrap/a-misrouted-gate-is-refused-before-any-board  a gate on the implementer lane or with no parent FATALs before init
 bootstrap/real-hermes-gate-holds-the-next-milestone  opt-in: the real kernel holds the next milestone behind a held gate
@@ -2811,6 +2816,22 @@ roadmap/probe-input-must-exist           a probe input that does not exist is re
 roadmap/missing-probe-is-named           a gate with no probe names its expected path
 roadmap/a-weakened-probe-is-refused-at-review  --check-base refuses a changed probe or probe fixture (ADR-0014)
 roadmap/multi-record-fixture-is-planned  declared fixtures map exactly to @multi-record scenarios, each >= 2 records (PL4)
+probe/a-frozen-probe-that-holds-passes  every case meets its expectation from the project root: exit 0, one PASS line each (MS2)
+probe/the-runner-reaches-its-definition-through-a-symlink  a symlinked runner still finds forge_probe.py beside its target
+probe/a-case-runs-without-a-shell        a $(...) argument reaches the command as text and never runs
+probe/a-missed-expectation-is-a-finding-named-by-case  a wrong exit or a missing stdout substring is exit 1, named in a paste-safe last line
+probe/a-hang-is-killed-and-named         a timed-out case is a finding, shown with its output, and its process group is killed
+probe/a-case-ends-when-its-command-exits  in-group stragglers are killed; an escaped process holding the output cannot stall the runner
+probe/a-runner-error-has-no-verdict     an exception in the runner (here: deployed without forge_probe.py) is exit 2, never a finding
+probe/a-verdict-names-the-commit-it-ran-on  a git checkout's last line ends 'at <short sha>', '+dirty' when tracked files changed
+probe/a-probe-the-plan-did-not-freeze-has-no-verdict  a changed, added, deleted or unfrozen probe file is exit 2, by path
+probe/a-command-that-cannot-start-has-no-verdict  a missing tool is exit 2, never a finding (F65/F66)
+probe/an-invalid-probe-is-refused-as-freeze-refuses-it  runner and freeze refuse alike: no adversarial case, NUL, surrogate, empty stdout, bad exit, symlinks
+probe/v1-has-one-definition              validate_probe lives only in scripts/forge_probe.py; both scripts import it
+probe/a-second-run-has-the-same-verdict  a run leaves no bytecode in its frozen input; .DS_Store is never part of a probe
+probe/unusable-arguments-are-exit-2      no project, no gate, a chunk id, a slash, an undeclared gate or a timeout outside 1-86400 is exit 2
+probe/redglass-replay-flags-the-fail-open-gates  before CHUNK-15 the probe flags all three fail-open gates, read-only (MS2)
+probe/redglass-replay-clears-the-fixed-tree  after CHUNK-16 every case of the same probe holds
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
 gate/classic-protection-is-a-gate         classic protection carrying both halves is GATED (exit 0)
 gate/required-contexts-are-checked-by-name  a gate missing a named context reports missing=, not gated
@@ -4643,6 +4664,16 @@ HERMES_STUB
   if [ -z "$g_detail" ]; then ok "gate-is-a-held-card-closing-its-milestone"
   else bad "gate-is-a-held-card-closing-its-milestone" \
       "GATE-M1 must be created blocked, unassigned, with no lane flags, parented on its milestone's chunks, holding a decision-first reason:$g_detail"; fi
+  # MS2 (S5b): the hold says how to run the probe — the runner, through
+  # ~/.forge/repo, on this project and this gate — not just where it lies.
+  local g_top
+  g_top="$(cd "$gates" && git rev-parse --show-toplevel 2>/dev/null)"
+  if [ -n "$g_top" ] && grep -Fq "\`~/.forge/repo/scripts/probe-run.sh '$g_top' GATE-M1\`" "$gates/state/$g_card.reason" 2>/dev/null; then
+    ok "gate-names-its-probe-runner"
+  else
+    bad "gate-names-its-probe-runner" \
+        "the gate's hold must name \`~/.forge/repo/scripts/probe-run.sh <project> GATE-M1\` (project ${g_top:-unresolved}; reason: $(grep -i 'probe' "$gates/state/$g_card.reason" 2>/dev/null | head -2 | tr '\n' '|'))"
+  fi
   if [ "$g_rc" = 0 ] && [ -n "$g_c3" ] \
      && [ "$(cat "$gates/state/$g_c3.parents" 2>/dev/null)" = "$g_card" ] \
      && [ "$(cat "$gates/state/$g_c3.status" 2>/dev/null)" = todo ]; then
@@ -10448,6 +10479,476 @@ PYM
   fi
 }
 wants roadmap   && run_roadmap_group
+
+# ---------------------------------------------------------------------------
+# probe/ — the milestone probe, executed (epic MS2, S5b). /roadmap declares a
+# gate's probe and acceptance-freeze freezes it (roadmap/probe-*); this group
+# runs it through scripts/probe-run.sh. Three outcomes, kept apart: every case
+# holds (0), a case does not — a finding (1), and no verdict at all (2), which
+# is what a probe the plan did not freeze or a command that cannot start gets.
+# Then MS2's done-when: the probe M4's gate should have carried, replayed on
+# redglass's own history — flagged before CHUNK-15, clear after CHUNK-16.
+run_probe_group() {
+  group probe
+  local runner="$REPO_ROOT/scripts/probe-run.sh" freeze="$REPO_ROOT/scripts/acceptance-freeze.sh"
+  local out rc detail
+
+  # One chunk, GATE-M1 and its probe, frozen by the real acceptance-freeze, so
+  # "the planned probe" here is exactly what planning writes. The product is
+  # src/reader.py, outside the probe; the probe's inputs are frozen.
+  _probe_fixture() { # $1=project root
+    local p="$1"
+    rm -rf "$p"; mkdir -p "$p/docs/chunks" "$p/tests/features" "$p/tests/probes/m1" "$p/src"
+    cat > "$p/docs/chunks/graph.json" <<'PR_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"claude-interactive","tier":"human","depends_on":[]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1"]}
+]
+PR_GRAPH
+    cat > "$p/docs/chunks/CHUNK-1.md" <<'PR_CHUNK'
+### CHUNK-1: Read records
+- **Goal:** Read a record file and stop on a relabelled record.
+- **Milestone:** M1 · **Depends on:** none
+- **Scenarios:**
+  - Given three records, When the reader runs, Then it advances.
+- **Real sources:** none
+- **Acceptance:** tests/features/chunk_1.feature
+- **Lane:** claude-interactive · **Risk:** low
+PR_CHUNK
+    cat > "$p/tests/features/chunk_1.feature" <<'PR_FEATURE'
+Feature: CHUNK-1 acceptance
+
+  Scenario: Read records
+    Given three records
+    When the reader runs
+    Then it advances
+PR_FEATURE
+    printf '### GATE-M1: Milestone 1\n- **Milestone:** M1\n- **Probe:** tests/probes/gate_m1.json\n- **Estimate:** 1 chunk\n- **Lane:** claude-interactive\n' \
+      > "$p/docs/chunks/GATE-M1.md"
+    cat > "$p/src/reader.py" <<'PR_READER'
+import sys
+
+records = open(sys.argv[1]).read().split()
+foreign = [r for r in records if r == "foreign"]
+if foreign:
+    print("stop: " + foreign[0])
+    sys.exit(3)
+print("advance %d" % len(records))
+PR_READER
+    printf 'a\nb\nc\n' > "$p/tests/probes/m1/corpus.txt"
+    printf 'a\nforeign\nc\n' > "$p/tests/probes/m1/relabelled.txt"
+    cat > "$p/tests/probes/gate_m1.json" <<'PR_PROBE'
+{
+  "probe": "forge.probe.v1",
+  "milestone": "M1",
+  "cases": [
+    {"name": "three records advance", "kind": "realistic", "records": 3,
+     "input": "tests/probes/m1",
+     "run": ["python3", "src/reader.py", "{input}/corpus.txt"],
+     "expect": {"exit": 0, "stdout": "advance 3"}},
+    {"name": "a relabelled record is stopped", "kind": "adversarial",
+     "input": "tests/probes/m1",
+     "run": ["python3", "src/reader.py", "{input}/relabelled.txt"],
+     "expect": {"exit": 3, "stdout": "stop: foreign"}}
+  ]
+}
+PR_PROBE
+    "$freeze" "$p" >"$p.freeze.log" 2>&1
+  }
+  _probe_mutate() { # $1=project root $2=python statement on the probe dict p
+    python3 - "$1/tests/probes/gate_m1.json" "$2" <<'PYM'
+import json, sys
+p = json.load(open(sys.argv[1]))
+exec(sys.argv[2])
+json.dump(p, open(sys.argv[1], "w"))
+PYM
+  }
+  local pass_line='probe GATE-M1: PASS — 2 of 2 cases passed (realistic 1/1, adversarial 1/1)'
+
+  # -- 0: every case holds -------------------------------------------------
+  # Run from somewhere else: each case runs from the project root, with
+  # {input} replaced, whatever directory the caller stood in.
+  local pp="$TMPROOT/probe-pass"
+  if ! _probe_fixture "$pp"; then
+    bad "a-frozen-probe-that-holds-passes" "the fixture plan did not freeze: $(tail -3 "$pp.freeze.log")"
+  else
+    out="$(cd / && "$runner" "$pp" GATE-M1 2>&1)"; rc=$?
+    if [ "$rc" = 0 ] \
+       && printf '%s\n' "$out" | grep -Fxq 'PASS  three records advance (realistic, 3 records)' \
+       && printf '%s\n' "$out" | grep -Fxq 'PASS  a relabelled record is stopped (adversarial)' \
+       && [ "$(printf '%s\n' "$out" | tail -1)" = "$pass_line" ]; then
+      ok "a-frozen-probe-that-holds-passes"
+    else
+      bad "a-frozen-probe-that-holds-passes" "every case holds, so exit 0 with a PASS line per case and '$pass_line' last (exit $rc: $(printf '%s' "$out" | tail -4 | tr '\n' '|'))"
+    fi
+  fi
+
+  # A symlink to the runner still reaches forge_probe.py beside its target, the
+  # way cron reaches digest.sh.
+  mkdir -p "$TMPROOT/probe-link"; ln -sf "$runner" "$TMPROOT/probe-link/probe-run.sh"
+  out="$("$TMPROOT/probe-link/probe-run.sh" "$pp" GATE-M1 2>&1)"; rc=$?
+  if [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | tail -1)" = "$pass_line" ]; then
+    ok "the-runner-reaches-its-definition-through-a-symlink"
+  else
+    bad "the-runner-reaches-its-definition-through-a-symlink" "run through a symlink it must still find scripts/forge_probe.py (exit $rc: $(printf '%s' "$out" | tail -2 | tr '\n' '|'))"
+  fi
+
+  # No shell between a case and its command: an argument is an argument.
+  local pn="$TMPROOT/probe-noshell"
+  _probe_fixture "$pn"
+  _probe_mutate "$pn" 'p["cases"][0]["run"].append("$(touch shell-ran)")' && "$freeze" "$pn" >/dev/null 2>&1
+  out="$("$runner" "$pn" GATE-M1 2>&1)"; rc=$?
+  if [ "$rc" = 0 ] && [ ! -e "$pn/shell-ran" ] && [ ! -e "$REPO_ROOT/shell-ran" ]; then
+    ok "a-case-runs-without-a-shell"
+  else
+    rm -f "$REPO_ROOT/shell-ran"
+    bad "a-case-runs-without-a-shell" "a \$(...) argument must reach the command as text, never run (exit $rc; shell-ran created: $( [ -e "$pn/shell-ran" ] && echo yes || echo no))"
+  fi
+
+  # -- 1: a finding, named by case ------------------------------------------
+  # The product fails open — it advances a relabelled record. Then a subtler
+  # defect: the right exit for the wrong reason, which only stdout can see.
+  local pf="$TMPROOT/probe-finding"
+  detail=""
+  _probe_fixture "$pf"
+  sed -i.bak 's/if foreign:/if False:/' "$pf/src/reader.py"; rm -f "$pf/src/reader.py.bak"
+  out="$("$runner" "$pf" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 1 ] || detail="$detail fail-open-exit=$rc"
+  printf '%s\n' "$out" | grep -Fxq "FAIL  a relabelled record is stopped (adversarial) — exit 0, expected 3; stdout lacks 'stop: foreign'" \
+    || detail="$detail fail-open-not-named"
+  printf '%s\n' "$out" | grep -Fxq 'PASS  three records advance (realistic, 3 records)' || detail="$detail control-did-not-pass"
+  [ "$(printf '%s\n' "$out" | tail -1)" = 'probe GATE-M1: FAIL — 1 of 2 cases passed (realistic 1/1, adversarial 0/1); failed: a relabelled record is stopped' ] \
+    || detail="$detail summary($(printf '%s\n' "$out" | tail -1))"
+  # The last line is pasted into --result "..." on the gate card, so no case
+  # name can put a quote, a $, a backtick or a backslash into it.
+  local last
+  _probe_fixture "$pf"
+  _probe_mutate "$pf" 'p["cases"][1]["name"] = "a \"relabelled\" $record `x` \\ stop"' && "$freeze" "$pf" >/dev/null 2>&1
+  sed -i.bak 's/if foreign:/if False:/' "$pf/src/reader.py"; rm -f "$pf/src/reader.py.bak"
+  last="$("$runner" "$pf" GATE-M1 2>/dev/null | tail -1)"
+  case "$last" in *'"'*|*'$'*|*'`'*|*'\'*) detail="$detail unsafe-last-line($last)";; esac
+  printf '%s' "$last" | grep -Fq "failed: a 'relabelled' 'record 'x' ' stop" || detail="$detail unsafe-name-not-named($last)"
+  _probe_fixture "$pf"
+  sed -i.bak 's/print("stop: " + foreign\[0\])/print("stop: other")/' "$pf/src/reader.py"; rm -f "$pf/src/reader.py.bak"
+  out="$("$runner" "$pf" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fxq "FAIL  a relabelled record is stopped (adversarial) — stdout lacks 'stop: foreign'" \
+    || detail="$detail stdout-only-miss(exit $rc)"
+  if [ -z "$detail" ]; then ok "a-missed-expectation-is-a-finding-named-by-case"
+  else bad "a-missed-expectation-is-a-finding-named-by-case" "a case that misses its exit or its stdout is exit 1, named with what it missed:$detail"; fi
+
+  # A hang is a finding too, and the timeout kills the case's process group:
+  # `uv run python` runs a grandchild, which is what `sleep 37.31 &` stands in
+  # for. A watchdog guards the suite itself.
+  local ph="$TMPROOT/probe-hang" waited=0 hpid
+  _probe_fixture "$ph"
+  _probe_mutate "$ph" 'p["cases"][1]["run"] = ["sh", "-c", "echo started; sleep 37.31 & sleep 37.31", "{input}"]' && "$freeze" "$ph" >/dev/null 2>&1
+  ( "$runner" "$ph" GATE-M1 --timeout 1 > "$ph.out" 2>&1; echo $? > "$ph.rc" ) &
+  hpid=$!
+  while kill -0 "$hpid" 2>/dev/null && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited+1)); done
+  if kill -0 "$hpid" 2>/dev/null; then
+    pkill -f -- "$ph" 2>/dev/null; kill "$hpid" 2>/dev/null
+    bad "a-hang-is-killed-and-named" "the runner was still running 20s after a 1s timeout — a timeout that does not kill the command's process group hangs the gate"
+  else
+    wait "$hpid" 2>/dev/null
+    # A killed process can take a moment to be reaped; give it three.
+    local left=1 tries=0
+    while [ "$tries" -lt 3 ] && left=0 && pgrep -f 'sleep 37.31' >/dev/null 2>&1; do left=1; tries=$((tries+1)); sleep 1; done
+    if [ "$(cat "$ph.rc" 2>/dev/null)" = 1 ] \
+       && grep -Fxq 'FAIL  a relabelled record is stopped (adversarial) — timed out after 1s; expected exit 3' "$ph.out" \
+       && grep -Fxq '      | started' "$ph.out" \
+       && [ "$left" = 0 ]; then
+      ok "a-hang-is-killed-and-named"
+    else
+      bad "a-hang-is-killed-and-named" "a timed-out case is exit 1, named as a timeout with what it printed, its process group killed (exit $(cat "$ph.rc" 2>/dev/null); left running: $(pgrep -f 'sleep 37.31' | tr '\n' ' '); $(tail -2 "$ph.out" | tr '\n' '|'))"
+      pkill -f 'sleep 37.31' 2>/dev/null
+    fi
+  fi
+
+  # A case ends when its command exits. What it left running in its own
+  # process group is killed then; a process that left the group (setsid) and
+  # still holds the case's output cannot keep the runner waiting for EOF.
+  local pe="$TMPROOT/probe-exits" waited=0 epid
+  detail=""
+  _probe_fixture "$pe"
+  _probe_mutate "$pe" 'p["cases"][0]["run"] = ["sh", "-c", "sleep 41.71 & python3 src/reader.py $0", "{input}/corpus.txt"]; p["cases"][1]["run"] = ["python3", "-c", "import subprocess, sys; subprocess.Popen([\"sleep\", \"41.73\"], start_new_session=True); sys.argv = [\"r\", sys.argv[1]]; exec(open(\"src/reader.py\").read())", "{input}/relabelled.txt"]' \
+    && "$freeze" "$pe" >/dev/null 2>&1
+  ( "$runner" "$pe" GATE-M1 --timeout 30 > "$pe.out" 2>&1; echo $? > "$pe.rc" ) &
+  epid=$!
+  while kill -0 "$epid" 2>/dev/null && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited+1)); done
+  if kill -0 "$epid" 2>/dev/null; then
+    pkill -f -- "$pe" 2>/dev/null; kill "$epid" 2>/dev/null
+    detail="$detail still-running-after-20s"
+  else
+    wait "$epid" 2>/dev/null
+    [ "$(cat "$pe.rc" 2>/dev/null)" = 0 ] && [ "$(tail -1 "$pe.out")" = "$pass_line" ] \
+      || detail="$detail verdict(exit $(cat "$pe.rc" 2>/dev/null): $(tail -1 "$pe.out"))"
+    local tries=0
+    while [ "$tries" -lt 3 ] && pgrep -f 'sleep 41.71' >/dev/null 2>&1; do tries=$((tries+1)); sleep 1; done
+    pgrep -f 'sleep 41.71' >/dev/null 2>&1 && detail="$detail in-group-worker-left-running"
+  fi
+  pkill -f 'sleep 41.71' 2>/dev/null; pkill -f 'sleep 41.73' 2>/dev/null
+  if [ -z "$detail" ]; then ok "a-case-ends-when-its-command-exits"
+  else bad "a-case-ends-when-its-command-exits" "the verdict comes from the command's exit; its group is killed, and an escaped process holding its output cannot stall the runner:$detail"; fi
+
+  # A bug in the runner is not a finding about the milestone. Deployed without
+  # forge_probe.py beside it, it has no verdict, and says why.
+  mkdir -p "$TMPROOT/probe-partial"; cp "$runner" "$TMPROOT/probe-partial/probe-run.sh"
+  out="$("$TMPROOT/probe-partial/probe-run.sh" "$pp" GATE-M1 2>/dev/null)"; rc=$?
+  if [ "$rc" = 2 ] && printf '%s\n' "$out" | tail -1 | grep -Fq 'probe GATE-M1: NO VERDICT — runner error: ModuleNotFoundError'; then
+    ok "a-runner-error-has-no-verdict"
+  else
+    bad "a-runner-error-has-no-verdict" "an exception in the runner is exit 2 with a NO VERDICT last line, never exit 1 (exit $rc: $(printf '%s\n' "$out" | tail -1))"
+  fi
+
+  # A verdict says which commit it is about, read before any case runs.
+  local pg="$TMPROOT/probe-git" sha
+  detail=""
+  _probe_fixture "$pg"
+  if git -C "$pg" init -q && git -C "$pg" add -A \
+     && git -C "$pg" -c user.email=verify@forge.invalid -c user.name=verify commit -qm fixture; then
+    sha="$(git -C "$pg" rev-parse --short HEAD)"
+    out="$("$runner" "$pg" GATE-M1 2>&1)"; rc=$?
+    [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | tail -1)" = "$pass_line at $sha" ] || detail="$detail clean($(printf '%s\n' "$out" | tail -1))"
+    printf '# edited\n' >> "$pg/src/reader.py"
+    out="$("$runner" "$pg" GATE-M1 2>&1)"; rc=$?
+    [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | tail -1)" = "$pass_line at $sha+dirty" ] || detail="$detail dirty($(printf '%s\n' "$out" | tail -1))"
+  else
+    detail="$detail git-fixture-failed"
+  fi
+  if [ -z "$detail" ]; then ok "a-verdict-names-the-commit-it-ran-on"
+  else bad "a-verdict-names-the-commit-it-ran-on" "a git checkout's verdict ends 'at <short sha>', '+dirty' when tracked files changed:$detail"; fi
+
+  # -- 2: no verdict ---------------------------------------------------------
+  # Only the planned probe has a verdict. Each change below is one an
+  # implementation branch could make; each must be refused, by path, before a
+  # single case runs.
+  _probe_unplanned() { # $1=label $2=shell change in the project root $3=text the refusal names
+    local d="$TMPROOT/probe-unplanned-$1" o r
+    _probe_fixture "$d"
+    ( cd "$d" && eval "$2" ) || { detail="$detail $1(change-failed)"; return; }
+    o="$("$runner" "$d" GATE-M1 2>&1)"; r=$?
+    if [ "$r" != 2 ] || ! printf '%s\n' "$o" | tail -1 | grep -Fq "probe GATE-M1: NO VERDICT — " \
+       || ! printf '%s\n' "$o" | grep -Fq "$3" || printf '%s\n' "$o" | grep -q '^PASS\|^FAIL'; then
+      detail="$detail $1(exit $r: $(printf '%s\n' "$o" | tail -1))"
+    fi
+  }
+  detail=""
+  _probe_unplanned weakened-expectation \
+    "sed -i.bak 's/\"stdout\": \"stop: foreign\"/\"stdout\": \"stop\"/' tests/probes/gate_m1.json && rm tests/probes/gate_m1.json.bak" \
+    'tests/probes/gate_m1.json differs from its frozen digest'
+  _probe_unplanned edited-input "printf 'a\nb\nc\n' > tests/probes/m1/relabelled.txt" \
+    'tests/probes/m1/relabelled.txt differs from its frozen digest'
+  _probe_unplanned added-input "printf 'x\n' > tests/probes/m1/extra.txt" \
+    'tests/probes/m1/extra.txt is not in docs/chunks/contract-freeze.json'
+  _probe_unplanned deleted-input "rm tests/probes/m1/corpus.txt" \
+    'tests/probes/m1/corpus.txt is frozen in docs/chunks/contract-freeze.json but no longer exists'
+  _probe_unplanned never-frozen \
+    "python3 -c 'import json; p=\"docs/chunks/contract-freeze.json\"; m=json.load(open(p)); json.dump({k: v for k, v in m.items() if not k.startswith(\"tests/probes/\")}, open(p, \"w\"))'" \
+    'tests/probes/gate_m1.json is not in docs/chunks/contract-freeze.json'
+  _probe_unplanned no-manifest "rm docs/chunks/contract-freeze.json" \
+    'cannot read docs/chunks/contract-freeze.json'
+  if [ -z "$detail" ]; then ok "a-probe-the-plan-did-not-freeze-has-no-verdict"
+  else bad "a-probe-the-plan-did-not-freeze-has-no-verdict" "each must be exit 2, NO VERDICT, naming the path, before any case runs:$detail"; fi
+
+  # A missing tool is not a defect in the milestone (F65/F66: could not run is
+  # not a finding).
+  local pc="$TMPROOT/probe-cannot-start"
+  _probe_fixture "$pc"
+  _probe_mutate "$pc" 'p["cases"][1]["run"][0] = "forge-probe-no-such-command"' && "$freeze" "$pc" >/dev/null 2>&1
+  out="$("$runner" "$pc" GATE-M1 2>&1)"; rc=$?
+  detail=""
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | tail -1 | grep -Fxq "probe GATE-M1: NO VERDICT — case 'a relabelled record is stopped' could not start 'forge-probe-no-such-command': No such file or directory" \
+    || detail="$detail alone(exit $rc: $(printf '%s\n' "$out" | tail -1))"
+  # ...and a finding in a case that did run is still reported, not hidden.
+  sed -i.bak 's/print("advance %d" % len(records))/print("advance none")/' "$pc/src/reader.py"; rm -f "$pc/src/reader.py.bak"
+  out="$("$runner" "$pc" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -q "^FAIL  three records advance (realistic, 3 records) — stdout lacks 'advance 3'" \
+    && printf '%s\n' "$out" | tail -1 | grep -Fq '; 1 of the 1 cases that ran also failed' \
+    || detail="$detail beside-a-finding(exit $rc: $(printf '%s\n' "$out" | tail -1))"
+  if [ -z "$detail" ]; then ok "a-command-that-cannot-start-has-no-verdict"
+  else bad "a-command-that-cannot-start-has-no-verdict" "a command that cannot start is exit 2, never a finding, and does not hide one:$detail"; fi
+
+  # One definition of v1: the runner refuses each invalid probe in the words
+  # acceptance-freeze uses, because both import scripts/forge_probe.py.
+  # A symlink in an input is refused because its target is not what the
+  # freeze hashes; the rest cannot discriminate or cannot reach exec.
+  _probe_invalid() { # $1=label $2=python mutation of p, or "" $3=shell change in the root, or "" $4=refusal text
+    local d="$TMPROOT/probe-invalid-$1" o r f
+    _probe_fixture "$d"
+    [ -z "$2" ] || _probe_mutate "$d" "$2"
+    [ -z "$3" ] || ( cd "$d" && eval "$3" ) || { detail="$detail $1(change-failed)"; return; }
+    o="$("$runner" "$d" GATE-M1 2>&1)"; r=$?
+    f="$("$freeze" "$d" 2>&1)"
+    if [ "$r" != 2 ] || ! printf '%s\n' "$o" | tail -1 | grep -Fq "NO VERDICT — tests/probes/gate_m1.json $4" \
+       || ! printf '%s\n' "$f" | grep -Fq "GATE-M1: tests/probes/gate_m1.json $4"; then
+      detail="$detail $1(runner exit $r: $(printf '%s\n' "$o" | tail -1); freeze: $(printf '%s\n' "$f" | tail -1))"
+    fi
+  }
+  detail=""
+  _probe_invalid no-adversarial 'p["cases"] = [c for c in p["cases"] if c["kind"] != "adversarial"]' "" \
+    'has no adversarial case'
+  _probe_invalid nul-in-an-argument 'p["cases"][1]["run"][1] = "src/reader.py\x00"' "" \
+    'case 2 run must be a non-empty argv of strings'
+  _probe_invalid lone-surrogate 'p["cases"][1]["run"][1] = "src/reader.py\ud800"' "" \
+    'case 2 run must be a non-empty argv of strings'
+  _probe_invalid empty-stdout 'p["cases"][1]["expect"]["stdout"] = ""' "" \
+    'case 2 expect stdout is empty, which every output contains'
+  _probe_invalid exit-out-of-range 'p["cases"][1]["expect"]["exit"] = 300' "" \
+    'case 2 expect exit 300 is not an exit status (0-255)'
+  _probe_invalid runs-an-ignored-file 'p["cases"][1]["run"] = ["python3", "{input}/.DS_Store"]' "" \
+    "case 2 run names '{input}/.DS_Store', a file that is never part of a probe"
+  _probe_invalid linked-directory "" "mkdir -p src/lib && ln -s ../../../src/lib tests/probes/m1/lib" \
+    'case 1 input tests/probes/m1 holds a symlink, tests/probes/m1/lib, which cannot be frozen'
+  _probe_invalid linked-file "" "ln -s ../../../src/reader.py tests/probes/m1/reader.py" \
+    'case 1 input tests/probes/m1 holds a symlink, tests/probes/m1/reader.py, which cannot be frozen'
+  if [ -z "$detail" ]; then ok "an-invalid-probe-is-refused-as-freeze-refuses-it"
+  else bad "an-invalid-probe-is-refused-as-freeze-refuses-it" "runner (exit 2) and freeze must refuse each in the same words:$detail"; fi
+  local defs
+  defs="$(grep -rln '^def validate_probe' "$REPO_ROOT/scripts" "$REPO_ROOT/hermes" "$REPO_ROOT/skills" 2>/dev/null | tr '\n' ' ')"
+  if [ "$defs" = "$REPO_ROOT/scripts/forge_probe.py " ] \
+     && ! grep -q 'def validate_probe' "$REPO_ROOT/scripts/acceptance-freeze.sh" "$runner" \
+     && grep -q '^from forge_probe import' "$REPO_ROOT/scripts/acceptance-freeze.sh" \
+     && grep -q '^[[:space:]]*from forge_probe import' "$runner"; then
+    ok "v1-has-one-definition"
+  else
+    bad "v1-has-one-definition" "validate_probe must be defined once, in scripts/forge_probe.py, and imported by acceptance-freeze.sh and probe-run.sh (defined in: ${defs:-nowhere})"
+  fi
+
+  # A rerun at the gate gets the same verdict. A Python case writes no
+  # bytecode into its own input (a frozen directory), and Finder's .DS_Store
+  # is never part of a probe — at freeze time or at run time.
+  local pr="$TMPROOT/probe-rerun" first second
+  detail=""
+  _probe_fixture "$pr"
+  printf 'import sys\n\nimport helper\n\nhelper.main(sys.argv[1])\n' > "$pr/tests/probes/m1/drive.py"
+  printf 'import runpy\nimport sys\n\n\ndef main(path):\n    sys.argv = ["src/reader.py", path]\n    runpy.run_path("src/reader.py", run_name="__main__")\n' \
+    > "$pr/tests/probes/m1/helper.py"
+  _probe_mutate "$pr" 'p["cases"][0]["run"] = ["python3", "{input}/drive.py", "{input}/corpus.txt"]'
+  printf 'finder\n' > "$pr/tests/probes/m1/.DS_Store"
+  "$freeze" "$pr" >/dev/null 2>&1 || detail="$detail freeze-refused"
+  grep -Fq '.DS_Store' "$pr/docs/chunks/contract-freeze.json" && detail="$detail ds-store-frozen"
+  first="$("$runner" "$pr" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 0 ] || detail="$detail first-exit=$rc"
+  [ -z "$(find "$pr/tests/probes" -name __pycache__ -o -name '*.pyc')" ] || detail="$detail bytecode-in-the-input"
+  printf 'finder again\n' > "$pr/tests/probes/m1/.DS_Store"
+  second="$("$runner" "$pr" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ "$first" = "$second" ] || detail="$detail second-run(exit $rc: $(printf '%s\n' "$second" | tail -1))"
+  # A freeze from before .DS_Store was ignored may still list one; its absence
+  # is not a missing input.
+  rm -f "$pr/tests/probes/m1/.DS_Store"
+  python3 -c 'import json, sys; p = sys.argv[1]; m = json.load(open(p)); m["tests/probes/m1/.DS_Store"] = "0" * 64; json.dump(m, open(p, "w"))' \
+    "$pr/docs/chunks/contract-freeze.json"
+  out="$("$runner" "$pr" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 0 ] || detail="$detail legacy-ds-store(exit $rc: $(printf '%s\n' "$out" | tail -1))"
+  if [ -z "$detail" ]; then ok "a-second-run-has-the-same-verdict"
+  else bad "a-second-run-has-the-same-verdict" "a run must leave nothing in its frozen input, and .DS_Store is never part of a probe:$detail"; fi
+
+  # Usage: anything the runner cannot even start on is exit 2.
+  detail=""
+  "$runner" >/dev/null 2>&1; [ $? = 2 ] || detail="$detail no-args"
+  "$runner" "$pp" >/dev/null 2>&1; [ $? = 2 ] || detail="$detail no-gate"
+  "$runner" "$TMPROOT/probe-nowhere" GATE-M1 >/dev/null 2>&1; [ $? = 2 ] || detail="$detail no-project"
+  "$runner" "$pp" CHUNK-1 >/dev/null 2>&1; [ $? = 2 ] || detail="$detail chunk-as-gate"
+  "$runner" "$pp" GATE-M9 >/dev/null 2>&1; [ $? = 2 ] || detail="$detail undeclared-gate"
+  "$runner" "$pp" GATE-M1 --timeout 0 >/dev/null 2>&1; [ $? = 2 ] || detail="$detail zero-timeout"
+  "$runner" "$pp" GATE-M1 --timeout soon >/dev/null 2>&1; [ $? = 2 ] || detail="$detail word-timeout"
+  "$runner" "$pp" GATE-M1 --fast >/dev/null 2>&1; [ $? = 2 ] || detail="$detail unknown-flag"
+  "$runner" "$pp" GATE-M1 --timeout >/dev/null 2>&1; [ $? = 2 ] || detail="$detail timeout-without-a-value"
+  "$runner" "$pp" GATE-M1 --timeout 86401 >/dev/null 2>&1; [ $? = 2 ] || detail="$detail timeout-over-a-day"
+  "$runner" "$pp" GATE-M1 --timeout 99999999999999999999 >/dev/null 2>&1; [ $? = 2 ] || detail="$detail timeout-past-int64"
+  out="$("$runner" "$pp" GATE-M1/../../x 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq "is not a gate id" || detail="$detail gate-id-with-a-slash"
+  if [ -z "$detail" ]; then ok "unusable-arguments-are-exit-2"
+  else bad "unusable-arguments-are-exit-2" "each must be exit 2, never a verdict:$detail"; fi
+
+  # -- MS2's done-when: the replay on redglass -------------------------------
+  # redglass (wielas/vault) is private and this repo is public, so nothing of
+  # it is here. The replay reads a local checkout, read-only, through
+  # `git archive`: the two trees below, and the probe M4's gate should have
+  # carried, which the operator committed once to a private local branch
+  # (forge/gate-m4-probe; pinned here by SHA so a moved branch cannot change
+  # what is replayed). Every corpus in it is synthetic. Each case runs a driver
+  # that projects its corpus onto the tree's own schema and validates it clean
+  # before the gates run, so on the old tree a flag is a wrong verdict, never a
+  # load error. Skips, with the reason, wherever any of that is absent — CI.
+  local rg_repo="${FORGE_REDGLASS_CHECKOUT:-$HOME/dev/redglass}"
+  local rg_old=f32abebb78880a98cdb84b5f798b1bd6d12d3733   # main before CHUNK-15
+  local rg_new=713f1ebfb55936c19b3b34a61fc532b9251e150c   # main after CHUNK-16 (and 17)
+  local rg_probe=3f3e42fe10c5ddc148dd4a7e5b1c6277643073dc   # forge/gate-m4-probe
+  local rg_why=""
+  if ! git -C "$rg_repo" rev-parse --git-dir >/dev/null 2>&1; then
+    rg_why="no redglass checkout at $rg_repo (FORGE_REDGLASS_CHECKOUT)"
+  elif ! git -C "$rg_repo" cat-file -e "$rg_old^{commit}" 2>/dev/null \
+       || ! git -C "$rg_repo" cat-file -e "$rg_new^{commit}" 2>/dev/null; then
+    rg_why="$rg_repo lacks $rg_old or $rg_new"
+  elif ! git -C "$rg_repo" cat-file -e "$rg_probe:tests/probes/gate_m4.json" 2>/dev/null; then
+    rg_why="$rg_repo lacks the probe commit $rg_probe (branch forge/gate-m4-probe)"
+  elif ! command -v uv >/dev/null 2>&1 || ! uv python find 3.12 >/dev/null 2>&1; then
+    rg_why="the probe runs on uv's Python 3.12, which is not installed here"
+  fi
+  if [ -n "$rg_why" ]; then
+    skip "redglass-replay-flags-the-fail-open-gates" "$rg_why"
+    skip "redglass-replay-clears-the-fixed-tree" "$rg_why"
+  else
+    _rg_tree() { # $1=sha $2=dest: the tree, the probe overlaid, frozen as planning would
+      rm -rf "$2"; mkdir -p "$2"
+      git -C "$rg_repo" archive "$1" | tar -x -C "$2" \
+        && git -C "$rg_repo" archive "$rg_probe" tests/probes | tar -x -C "$2" \
+        && python3 - "$2" <<'PYF'
+import hashlib, json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+path = root / "docs/chunks/contract-freeze.json"
+manifest = json.loads(path.read_text()) if path.exists() else {}
+for f in sorted((root / "tests/probes").rglob("*")):
+    if f.is_file():
+        manifest[f.relative_to(root).as_posix()] = hashlib.sha256(f.read_bytes()).hexdigest()
+path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+PYF
+    }
+    local rg_before rg_dir="$TMPROOT/redglass-replay"
+    # HEAD and refs: what a replay could move. Not the working tree, which the
+    # operator may be editing while this runs, and `git status` can rewrite the
+    # index, which a read-only check must not do. Read again after each tree.
+    _rg_refs() { printf '%s %s' "$(git -C "$rg_repo" rev-parse HEAD)" "$(git -C "$rg_repo" for-each-ref | shasum)"; }
+    # Counts only in what this suite prints: the case names are the private probe's.
+    _rg_counts() { printf '%s\n' "$1" | tail -1 | sed -n 's/.* — \([0-9]* of [0-9]* cases passed\).*/\1/p'; }
+    rg_before="$(_rg_refs)"
+
+    detail=""
+    if _rg_tree "$rg_old" "$rg_dir/old"; then
+      out="$("$runner" "$rg_dir/old" GATE-M4 --timeout 120 2>&1)"; rc=$?
+      [ "$rc" = 1 ] || detail="$detail exit=$rc"
+      # By gate, not by full name. "exit 0" is the driver's "advanced": a wrong
+      # verdict, which a load or validation error (its 20, 30, 40) is not.
+      local adv
+      for adv in demand economics risk; do
+        [ "$(printf '%s\n' "$out" | grep -c "^FAIL  $adv-[a-z-]* (adversarial) — exit 0, expected 10")" = 1 ] \
+          || detail="$detail not-flagged:$adv"
+      done
+      printf '%s\n' "$out" | grep -q '^PASS  a-realistic-corpus-advances (realistic, ' \
+        || detail="$detail control-did-not-advance"
+    else
+      detail="$detail extract-failed"
+    fi
+    [ "$rg_before" = "$(_rg_refs)" ] || detail="$detail checkout-HEAD-or-refs-moved"
+    if [ -z "$detail" ]; then ok "redglass-replay-flags-the-fail-open-gates (${rg_old:0:7}: $(_rg_counts "$out"))"
+    else bad "redglass-replay-flags-the-fail-open-gates" "before CHUNK-15 the old gates must wrongly advance all three adversarial corpora, while a sound corpus advances, and the checkout's HEAD and refs must not move:$detail ($(printf '%s\n' "$out" | tail -1))"; fi
+
+    detail=""
+    if _rg_tree "$rg_new" "$rg_dir/new"; then
+      out="$("$runner" "$rg_dir/new" GATE-M4 --timeout 120 2>&1)"; rc=$?
+      [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | tail -1)" = 'probe GATE-M4: PASS — 5 of 5 cases passed (realistic 2/2, adversarial 3/3)' ] \
+        || detail="$detail exit=$rc"
+    else
+      detail="$detail extract-failed"
+    fi
+    [ "$rg_before" = "$(_rg_refs)" ] || detail="$detail checkout-HEAD-or-refs-moved"
+    if [ -z "$detail" ]; then ok "redglass-replay-clears-the-fixed-tree (${rg_new:0:7}: $(_rg_counts "$out"))"
+    else bad "redglass-replay-clears-the-fixed-tree" "after CHUNK-16 every case must hold, and the checkout's HEAD and refs must not move:$detail ($(printf '%s\n' "$out" | grep '^FAIL\|NO VERDICT' | head -3 | tr '\n' '|') $(printf '%s\n' "$out" | tail -1))"; fi
+  fi
+}
+wants probe     && run_probe_group
 
 # ---------------------------------------------------------------------------
 # gate/ — the merge gate, asked as a program.
