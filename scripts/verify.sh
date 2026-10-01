@@ -17,6 +17,7 @@
 #   ./scripts/verify.sh cli config      # only these groups
 #   ./scripts/verify.sh --with-codex    # also run the sandbox probes (spend tokens)
 #   ./scripts/verify.sh bootstrap --with-hermes  # run isolated real-Hermes bootstrap proof
+#   ./scripts/verify.sh verifier --with-replays  # replay recorded private PRs from local clones
 #   ./scripts/verify.sh --list          # list cases without running them
 #
 # Groups:
@@ -45,7 +46,8 @@
 #   verifier/   the verifier's own card: the merged-tree union executed against
 #               real repositories, recommend-only holds, the bounce budget, the
 #               block kind that keeps a hold out of `triage`, the disagree path
-#               under a real dispatcher pass, and the merge-watcher  (FL4, FL6)
+#               under a real dispatcher pass, the merge-watcher, and the mutation
+#               probe executed against a stamped project         (FL4, FL5, FL6)
 #   roadmap/    the sizing rules at PLAN time: one checked-in passing roadmap,
 #               one mutation per rule family, and the audited run's own CHUNK-5
 #               driven through the real check              (F11, F53, ADR-0012)
@@ -88,11 +90,12 @@ helptext() {
   ' "$0"
 }
 
-WITH_CODEX=0; WITH_HERMES=0; LIST_ONLY=0; SUITES=""
+WITH_CODEX=0; WITH_HERMES=0; WITH_REPLAYS=0; LIST_ONLY=0; SUITES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-codex) WITH_CODEX=1; shift;;
     --with-hermes) WITH_HERMES=1; shift;;
+    --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
     cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
@@ -2707,6 +2710,12 @@ verifier/merged-tree-restores-the-tree-before-merging  a setup that rewrites a t
 verifier/merged-tree-uses-the-prs-base  merge-check is given the PR's own baseRefName and the hold names it; an unreadable base is substrate, never an assumed main
 verifier/merge-mode-survives-a-failed-completion  merged but the completion or read-back failed: the card is held merge-pending with the verdict stashed, and the merge-watcher completes it
 verifier/merge-watcher-reports-once  a closed PR, a hold with no PR url and a merge whose card will not complete reach stdout once per hold, decision-first (GW1, P10(3)); a GitHub read failure goes to stderr only
+verifier/merged-tree-keeps-its-tree-for-the-probe  --keep-at leaves the green union (HEAD the merge of head and base, clean) for the probe; an existing path is refused
+verifier/mutation-probe-finds-unobserved-lines  CI-green fixtures of t_624586d7, a hollow Then, C21's unreached config and an unpinned message bounce on exactly their unobserved lines; a well-tested change passes (FL5)
+verifier/mutation-probe-mutation-is-caught  keeping the project's addopts lets --cov-fail-under turn a surviving mutant into a kill, and the unobserved line disappears
+verifier/mutation-probe-fails-closed  a red baseline, an exhausted budget and a non-checkout are unrunnable; a docs-only change passes with nothing probed
+verifier/mutation-probe-bounces-only-behind-its-switch  by default the verdict and its lines go on the hold and the scorer runs; under FORGE_MUTATION_PROBE_BOUNCE=1 an unobserved line bounces before the scorer and an unrunnable probe is substrate
+verifier/mutation-probe-replays-the-recorded-prs  JobApp C21 (on tier 2's lines), C17 and ladder PR #6 report survivors, its fix passes, and redglass replays as measured at S3b, from local clones at the recorded SHAs (--with-replays)
 sweep/dest-refuses-tmp-both-spellings       /tmp and /private/tmp are one directory; both lose
 sweep/dest-refuses-tmp-via-traversal        symlinks and `..` resolved BEFORE judging
 sweep/dest-refuses-traversal-past-a-missing-component  `..` through a dir that does not exist yet still lands in /tmp
@@ -2924,7 +2933,7 @@ EOF
 fi
 
 echo "forge verify — $(date '+%Y-%m-%d %H:%M:%S %Z')"
-echo "groups:$SUITES$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')$([ "$WITH_HERMES" = 1 ] && echo ' (+real Hermes)')"
+echo "groups:$SUITES$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')$([ "$WITH_HERMES" = 1 ] && echo ' (+real Hermes)')$([ "$WITH_REPLAYS" = 1 ] && echo ' (+recorded replays)')"
 
 wants cli       && run_cli_group
 wants config    && run_config_group
@@ -8427,6 +8436,241 @@ MCCGH
         "$mc must merge into the head commit's own tree, and must never call a merge git refused without a conflicted path a conflict —$mcd_detail"
 
   # -------------------------------------------------------------------------
+  # 2d. `--keep-at`: the merged tree, left where the mutation probe can use it.
+  #
+  # FL5's probe must judge the tree this script proved green, not a second clone
+  # that could differ from it, so the clone can be placed at a caller's path and
+  # left there. A path that already exists is refused rather than cloned over.
+  # -------------------------------------------------------------------------
+  local mck_detail="" mck_dir="$TMPROOT/merge-check-kept" mck_out mck_rc
+  rm -rf "$mck_dir"
+  mck_out="$("$mc" --clone-from "$mcorg" --head-ref green --keep-at "$mck_dir" 2>/dev/null)"; mck_rc=$?
+  { [ "$mck_rc" = 0 ] && printf '%s' "$mck_out" | jq -e '.result == "pass"' >/dev/null 2>&1; } \
+    || mck_detail="$mck_detail kept-union-not-pass(rc=$mck_rc)"
+  # The kept tree IS the union: HEAD is the merge commit, its parents are the
+  # head and the base the result names, and nothing tracked is left dirty.
+  [ "$(git -C "$mck_dir" rev-parse HEAD^1 2>/dev/null)" = "$(printf '%s' "$mck_out" | jq -r .head_sha)" ] \
+    && [ "$(git -C "$mck_dir" rev-parse HEAD^2 2>/dev/null)" = "$(printf '%s' "$mck_out" | jq -r .base_sha)" ] \
+    || mck_detail="$mck_detail kept-tree-is-not-the-union"
+  [ -z "$(git -C "$mck_dir" status --porcelain --untracked-files=no 2>/dev/null)" ] \
+    || mck_detail="$mck_detail kept-tree-is-dirty"
+  mck_out="$("$mc" --clone-from "$mcorg" --head-ref green --keep-at "$mck_dir" 2>/dev/null)"; mck_rc=$?
+  { [ "$mck_rc" = 3 ] && printf '%s' "$mck_out" | jq -e '.result == "unrunnable" and (.evidence | test("already exists"))' >/dev/null 2>&1; } \
+    || mck_detail="$mck_detail an-existing-path-was-cloned-over(rc=$mck_rc)"
+  rm -rf "$mck_dir"
+  [ -z "$mck_detail" ] \
+    && ok "merged-tree-keeps-its-tree-for-the-probe (--keep-at leaves the green union, HEAD the merge of head and base, clean; an existing path is refused)" \
+    || bad "merged-tree-keeps-its-tree-for-the-probe" \
+        "$mc --keep-at must leave exactly the union it judged, and never clone over an existing path —$mck_detail"
+
+  # -------------------------------------------------------------------------
+  # 2e. The mutation probe (FL5), EXECUTED against a stamped project.
+  #
+  # Each fixture under scripts/fixtures/mutation-probe/ is a branch of one real
+  # python-service project, and every defective one is CI-GREEN — `make check`
+  # passes it, which is the whole point: JobApp C21 and C17 and the July
+  # ladder's PR #6 were all green. The private PRs themselves cannot be committed
+  # to this public repo, so these are their mechanisms in miniature, and the
+  # recorded PRs are replayed from local clones by the opt-in case below.
+  #
+  #   assertion-free    t_624586d7: the Then step RETURNS its comparison. The
+  #                     gate's F14 floor already blocks this one; the probe
+  #                     sees it independently.
+  #   assertion-hollow  the same scenario with an assertion the gate accepts
+  #                     (`isinstance(..., str)`), so only a mutation can see that
+  #                     the empty-label branch is decided by nothing.
+  #   config-unreached  the class of C21's blocker: config reads that are
+  #                     executed but decide nothing a test checks.
+  #   message-unpinned  the class of C17's finding at its strongest: no test
+  #                     reads the paused-path message at all. (The real C17
+  #                     pinned a prefix of its message elsewhere, which a
+  #                     deletion trips; its replay bounces on other lines — 2f.)
+  #   well-tested       redglass's all-3s shape: every line pinned. Must pass.
+  #
+  # The expected lines are the WHOLE set, so a probe that reports extra lines on
+  # the well-tested change or misses one on a defective change is caught.
+  # -------------------------------------------------------------------------
+  local mp=scripts/mutation-probe.py mpfx=scripts/fixtures/mutation-probe
+  local mpd="$TMPROOT/mutation-probe-lab" mp_detail="" mp_base="" mp_out mp_rc mp_fx mp_want mp_got
+  if ! command -v uvx >/dev/null 2>&1; then
+    for c in mutation-probe-finds-unobserved-lines mutation-probe-mutation-is-caught mutation-probe-fails-closed; do
+      skip "$c" "uvx not on PATH (the template cannot be stamped)"
+    done
+  elif ! uvx copier copy --defaults --data project_name="probe-lab" \
+          templates/python-service "$mpd" >"$TMPROOT/mp-copier.log" 2>&1 \
+       || ! ( set -e; cd "$mpd"; git init -q -b main
+              git config user.email v@forge.invalid; git config user.name verify
+              make setup; git add -A; git -c core.hooksPath=/dev/null commit -qm base ) >"$TMPROOT/mp-setup.log" 2>&1; then
+    for c in mutation-probe-finds-unobserved-lines mutation-probe-mutation-is-caught mutation-probe-fails-closed; do
+      bad "$c" "the probe lab could not be stamped and set up: $(tail -2 "$TMPROOT/mp-copier.log" "$TMPROOT/mp-setup.log" 2>/dev/null | tr '\n' ' ' | head -c 300)"
+    done
+  else
+    mp_base="$(git -C "$mpd" rev-parse HEAD)"
+    # A fixture is a commit on a fresh branch off the base. Hooks are bypassed
+    # for the FIXTURE's commit only — the lab is this case's, and what it asserts
+    # is `make check` itself, run explicitly below.
+    _mp_branch() {
+      ( set -e; cd "$mpd"; git checkout -q -f -B "$1" "$mp_base"
+        cp -R "$REPO_ROOT/$mpfx/$1/." .
+        [ -z "${2:-}" ] || sed -i.bak "$2" pyproject.toml && rm -f pyproject.toml.bak
+        git add -A; git -c core.hooksPath=/dev/null commit -qm "$1" ) >/dev/null 2>&1
+    }
+    _mp_lines() { printf '%s' "$1" | jq -r '[.unobserved[]? | "\(.file | sub("^src/probe_lab/";"")):\(.line)"] | join(",")' 2>/dev/null; }
+    _mp_clean() { [ -z "$(git -C "$mpd" status --porcelain --untracked-files=no 2>/dev/null)" ]; }
+
+    for mp_fx in "assertion-free|survived|labels.py:7,labels.py:8,labels.py:9" \
+                 "assertion-hollow|survived|labels.py:7" \
+                 "config-unreached|survived|report.py:9,report.py:10,report.py:24,report.py:25,report.py:27" \
+                 "message-unpinned|survived|sync.py:12" \
+                 "well-tested|pass|"; do
+      IFS='|' read -r mp_fx mp_want mp_got <<< "$mp_fx"
+      _mp_branch "$mp_fx" || { mp_detail="$mp_detail $mp_fx-branch-not-built"; continue; }
+      make -C "$mpd" check >/dev/null 2>&1 || mp_detail="$mp_detail $mp_fx-is-not-ci-green"
+      mp_out="$("$REPO_ROOT/$mp" --tree "$mpd" --base-sha "$mp_base" --budget 120 2>/dev/null)"; mp_rc=$?
+      [ "$(printf '%s' "$mp_out" | jq -r .result 2>/dev/null)" = "$mp_want" ] \
+        || mp_detail="$mp_detail $mp_fx-result=$(printf '%s' "$mp_out" | jq -r .result 2>/dev/null)(want $mp_want)"
+      { [ "$mp_want" = survived ] && [ "$mp_rc" = 1 ]; } || { [ "$mp_want" = pass ] && [ "$mp_rc" = 0 ]; } \
+        || mp_detail="$mp_detail $mp_fx-rc=$mp_rc"
+      [ "$(_mp_lines "$mp_out")" = "$mp_got" ] \
+        || mp_detail="$mp_detail $mp_fx-lines=[$(_mp_lines "$mp_out")](want [$mp_got])"
+      _mp_clean || mp_detail="$mp_detail $mp_fx-tree-left-mutated"
+    done
+    # Every unobserved line names its mutations and an action a worker can take.
+    _mp_branch message-unpinned
+    printf '%s' "$("$REPO_ROOT/$mp" --tree "$mpd" --base-sha "$mp_base" --budget 120 2>/dev/null)" | jq -e '
+        .unobserved[0] | (.source | test("sync: paused"))
+        and ([.mutants[].mutation] | any(test("-> pass")))
+        and (.action | test("test"))' >/dev/null 2>&1 \
+      || mp_detail="$mp_detail an-unobserved-line-is-not-actionable"
+    # The division of labour with the gate: F14's AST floor blocks the literal
+    # t_624586d7 shape and cannot see the hollow one — which is why the probe exists.
+    _mp_branch assertion-free
+    [ "$(python3 "$REPO_ROOT/scripts/prejudge-steps.py" "$mpd/tests" 2>/dev/null | jq '.offenders | length')" = 1 ] \
+      || mp_detail="$mp_detail the-gate-no-longer-blocks-the-literal-shape"
+    _mp_branch assertion-hollow
+    [ "$(python3 "$REPO_ROOT/scripts/prejudge-steps.py" "$mpd/tests" 2>/dev/null | jq '.offenders | length')" = 0 ] \
+      || mp_detail="$mp_detail the-gate-now-sees-the-hollow-shape(update-this-case)"
+    [ -z "$mp_detail" ] \
+      && ok "mutation-probe-finds-unobserved-lines (CI-green fixtures: assertion-free, hollow, C21's unreached config and an unpinned message bounce on exactly their lines; the well-tested change passes; the tree is restored)" \
+      || bad "mutation-probe-finds-unobserved-lines" \
+          "$mp must report exactly the changed lines no test observes, on code that make check passes —$mp_detail"
+
+    # MUTATION: keep the project's addopts. The template's `--cov-fail-under`
+    # then fails any mutant run whose coverage drops — deleting `note(...)`
+    # leaves `note`'s body unexecuted — and a survivor reads as a KILL. The
+    # fixture's floor is 100 so the drop is decisive; the default command clears
+    # addopts and reports the line, the mutant does not.
+    local mp_mut="$TMPROOT/mutation-probe-keeps-addopts.py" mp_cov
+    sed -e 's/ -o addopts=//g' "$mp" > "$mp_mut"
+    if cmp -s "$mp" "$mp_mut"; then
+      bad "mutation-probe-mutation-is-caught" \
+          "the mutation changed nothing in $mp — the default test command moved, so this probe proves nothing (F65)"
+    else
+      mp_detail=""
+      _mp_branch coverage-floor 's/--cov-fail-under=[0-9]*/--cov-fail-under=100/' \
+        || mp_detail="$mp_detail coverage-floor-branch-not-built"
+      make -C "$mpd" check >/dev/null 2>&1 || mp_detail="$mp_detail coverage-floor-is-not-ci-green"
+      mp_cov="$("$REPO_ROOT/$mp" --tree "$mpd" --base-sha "$mp_base" --budget 120 2>/dev/null)"
+      printf '%s' "$(_mp_lines "$mp_cov")" | grep -q 'notes.py:17' \
+        || mp_detail="$mp_detail the-real-probe-misses-the-deleted-call($(_mp_lines "$mp_cov"))"
+      mp_cov="$(python3 "$mp_mut" --tree "$mpd" --base-sha "$mp_base" --budget 120 2>/dev/null)"
+      ! printf '%s' "$(_mp_lines "$mp_cov")" | grep -q 'notes.py:17' \
+        || mp_detail="$mp_detail the-mutant-still-reports-it(the-fixture-no-longer-trips-the-floor)"
+      _mp_clean || mp_detail="$mp_detail tree-left-mutated"
+      [ -z "$mp_detail" ] \
+        && ok "mutation-probe-mutation-is-caught (with the project's addopts kept, --cov-fail-under turns a surviving deleted call into a kill and the unobserved line disappears)" \
+        || bad "mutation-probe-mutation-is-caught" \
+            "the probe must neutralise the coverage floor, or a survivor that lowers coverage reads as a kill —$mp_detail"
+    fi
+
+    # FAILS CLOSED: a probe that did not run has not passed. A red baseline, a
+    # budget the unmutated suite alone exceeds and a directory that is not a
+    # checkout are all unrunnable (exit 3); a change with no implementation line
+    # in it is a pass with nothing probed, not an outage.
+    mp_detail=""
+    _mp_branch message-unpinned
+    ( cd "$mpd"; printf 'def test_red():\n    assert False\n' > tests/test_red.py
+      git add -A; git -c core.hooksPath=/dev/null commit -qm red ) >/dev/null 2>&1
+    mp_out="$("$REPO_ROOT/$mp" --tree "$mpd" --base-sha "$mp_base" --budget 120 2>/dev/null)"; mp_rc=$?
+    { [ "$mp_rc" = 3 ] && printf '%s' "$mp_out" | jq -e '.result == "unrunnable" and (.evidence | test("unmutated tree is red"))' >/dev/null 2>&1; } \
+      || mp_detail="$mp_detail a-red-baseline-was-not-unrunnable(rc=$mp_rc)"
+    _mp_branch message-unpinned
+    mp_out="$("$REPO_ROOT/$mp" --tree "$mpd" --base-sha "$mp_base" --budget 1 --test-cmd 'sleep 3' 2>/dev/null)"; mp_rc=$?
+    { [ "$mp_rc" = 3 ] && printf '%s' "$mp_out" | jq -e '.result == "unrunnable"' >/dev/null 2>&1; } \
+      || mp_detail="$mp_detail an-exhausted-budget-was-not-unrunnable(rc=$mp_rc)"
+    mp_out="$("$REPO_ROOT/$mp" --tree "$TMPROOT" --base-sha "$mp_base" 2>/dev/null)"; mp_rc=$?
+    [ "$mp_rc" = 3 ] || mp_detail="$mp_detail a-non-checkout-was-not-unrunnable(rc=$mp_rc)"
+    ( set -e; cd "$mpd"; git checkout -q -f -B docs-only "$mp_base"; printf '# notes\n' > NOTES.md
+      git add -A; git -c core.hooksPath=/dev/null commit -qm docs ) >/dev/null 2>&1
+    mp_out="$("$REPO_ROOT/$mp" --tree "$mpd" --base-sha "$mp_base" --test-cmd false 2>/dev/null)"; mp_rc=$?
+    { [ "$mp_rc" = 0 ] && printf '%s' "$mp_out" | jq -e '.result == "pass" and .mutants.run == 0 and (.evidence | test("nothing to probe"))' >/dev/null 2>&1; } \
+      || mp_detail="$mp_detail a-docs-only-change-was-not-a-pass-with-nothing-probed(rc=$mp_rc)"
+    _mp_clean || mp_detail="$mp_detail tree-left-mutated"
+    [ -z "$mp_detail" ] \
+      && ok "mutation-probe-fails-closed (a red baseline, an exhausted budget and a non-checkout are unrunnable; a docs-only change passes with nothing probed)" \
+      || bad "mutation-probe-fails-closed" \
+          "a probe that could not run its own baseline must never report a verdict —$mp_detail"
+  fi
+
+  # -------------------------------------------------------------------------
+  # 2f. The recorded PRs, replayed (opt-in: --with-replays).
+  #
+  # FL5's done-when names real PRs: JobApp C21 (#29) and C17 (#28), whose
+  # defects tier 2 proved by mutation; the July ladder's assertion-free PR #6
+  # (`t_624586d7`); and redglass's all-3s PRs, which were meant to pass and, when
+  # replayed at S3b, did not — the manifest records what was measured, and the
+  # epic's row S3b holds the per-line triage. JobApp and
+  # `wielas/vault` are private and this repository is public, so their code is
+  # never committed: `scripts/fixtures/mutation-replays.tsv` holds only names,
+  # SHAs and the expected outcome, and each replay clones the operator's LOCAL
+  # checkout (`$FORGE_REPLAY_ROOT`, default ~/dev), checks out the head the
+  # reviewer saw, merges the base it was reviewed against, prepares it the way
+  # merge-check does, and runs the real probe. Nothing is fetched and nothing in
+  # the local checkout is touched. It is opt-in because CI has no such clones,
+  # and a replay that cannot run must not be a skip once it was asked for.
+  # -------------------------------------------------------------------------
+  if [ "$WITH_REPLAYS" != 1 ]; then
+    skip "mutation-probe-replays-the-recorded-prs" "needs --with-replays (replays private product PRs from local clones)"
+  else
+    local rp_root="${FORGE_REPLAY_ROOT:-$HOME/dev}" rp_detail="" rp_seen="" rp_name rp_repo rp_base rp_head rp_want rp_must rp_note rp_dir rp_out rp_got rp_line rp_hashes
+    while IFS=$'\t' read -r rp_name rp_repo rp_base rp_head rp_want rp_must rp_note; do
+      case "$rp_name" in ''|'#'*) continue;; esac
+      rp_dir="$TMPROOT/replay-$rp_name"; rm -rf "$rp_dir"
+      [ -d "$rp_root/$rp_repo/.git" ] || { rp_detail="$rp_detail $rp_name:no-local-clone-at-$rp_root/$rp_repo"; continue; }
+      { git clone -q --no-tags "$rp_root/$rp_repo" "$rp_dir" \
+        && git -C "$rp_dir" -c advice.detachedHead=false checkout -q "$rp_head" \
+        && git -C "$rp_dir" -c user.email=v@forge.invalid -c user.name=verify \
+             merge -q --no-edit --no-ff "$rp_base"; } >/dev/null 2>&1 \
+        || { rp_detail="$rp_detail $rp_name:cannot-build-the-reviewed-union"; continue; }
+      if make -C "$rp_dir" -n setup >/dev/null 2>&1; then
+        ( cd "$rp_dir" && unset UV_OFFLINE UV_CACHE_DIR && make setup ) >"$rp_dir.setup.log" 2>&1 \
+          || { rp_detail="$rp_detail $rp_name:setup-failed"; continue; }
+      fi
+      rp_out="$("$REPO_ROOT/$mp" --tree "$rp_dir" --base-sha "$rp_base" --budget "${FORGE_REPLAY_BUDGET:-420}" 2>/dev/null)"
+      rp_got="$(printf '%s' "$rp_out" | jq -r '.result // "unreadable"' 2>/dev/null)"
+      [ "$rp_got" = "$rp_want" ] \
+        || rp_detail="$rp_detail $rp_name=$rp_got(want $rp_want: $(printf '%s' "$rp_out" | jq -r '.evidence' 2>/dev/null | head -c 160))"
+      # The lines tier 2 named must be among the ones reported: a bounce for some
+      # other reason would satisfy `survived` and prove nothing about the finding.
+      # They are pinned as SHA-256 of "<file>:<line>:<source>", so the public
+      # manifest names no private path or line of code.
+      rp_hashes="$(printf '%s' "$rp_out" | jq -r '.unobserved[]? | "\(.file):\(.line):\(.source)"' 2>/dev/null \
+        | python3 -c 'import hashlib,sys; [print("sha256:" + hashlib.sha256(l.rstrip("\n").encode()).hexdigest()) for l in sys.stdin]')"
+      for rp_line in $(printf '%s' "$rp_must" | tr ',' ' '); do
+        [ "$rp_line" = - ] && continue
+        printf '%s\n' "$rp_hashes" | grep -Fxq "$rp_line" \
+          || rp_detail="$rp_detail $rp_name:did-not-report-${rp_line:0:19}…"
+      done
+      rp_seen="$rp_seen $rp_name=$rp_got"
+      rm -rf "$rp_dir" "$rp_dir.setup.log"
+    done < "$REPO_ROOT/scripts/fixtures/mutation-replays.tsv"
+    [ -z "$rp_detail" ] \
+      && ok "mutation-probe-replays-the-recorded-prs ($(printf '%s' "$rp_seen" | sed 's/^ //'))" \
+      || bad "mutation-probe-replays-the-recorded-prs" \
+          "the recorded PRs must replay to the outcome measured at S3b, naming the lines tier 2 named —$rp_detail"
+  fi
+
+  # -------------------------------------------------------------------------
   # 3. The routing, on the REAL kernel, in an isolated HERMES_HOME.
   #
   # `gh`, `claude` and the merged-tree check are stubs that log every call; the
@@ -8444,7 +8688,8 @@ MCCGH
              hold-kind-mutation-is-caught disagree-path-parks-before-it-unblocks \
              a-human-chunk-can-be-bounced \
              merge-watcher-completes-a-merged-hold merged-tree-uses-the-prs-base \
-             merge-mode-survives-a-failed-completion merge-watcher-reports-once; do
+             merge-mode-survives-a-failed-completion merge-watcher-reports-once \
+             mutation-probe-bounces-only-behind-its-switch; do
       skip "$c" "hermes (and its venv python) not installed"
     done
   else
@@ -8535,7 +8780,26 @@ case "${VF_MERGED_TREE:-pass}" in
   *) jq -n '{schema:"forge.mergecheck.v1",result:"unrunnable",evidence:"stub says unrunnable",action:null}'; exit 3;;
 esac
 VMC
-    chmod +x "$vbin/gh" "$vbin/claude" "$vbin/merge-check"
+    # The mutation probe, recorded, for the same reason: `mutation-probe.py` is
+    # executed against real repositories by its own cases above, so here its
+    # outcome is the input and the ROUTING is what gets exercised.
+    cat > "$vbin/mutation-probe" <<'VMP'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$VSTUB/mp.log"
+case "${VF_MUTATION:-pass}" in
+  pass) jq -n '{schema:"forge.mutation.v1",result:"pass",unobserved:[],
+          evidence:"every one of 4 probed changed line(s) is observed by a test"}'; exit 0;;
+  survived) jq -n '{schema:"forge.mutation.v1",result:"survived",
+          evidence:"1 of 4 probed changed line(s) are observed by no test",
+          unobserved:[{file:"src/forgeboard_report/domain.py",line:41,
+            source:"print(\"sync: disabled\")",
+            mutants:[{op:"delete-statement",mutation:"print(\"sync: disabled\") -> pass"},
+                     {op:"empty-string",mutation:"\"sync: disabled\" -> \"\""}],
+            action:"add or tighten a test that fails when this line changes"}]}'; exit 1;;
+  *) jq -n '{schema:"forge.mutation.v1",result:"unrunnable",evidence:"stub says unrunnable"}'; exit 3;;
+esac
+VMP
+    chmod +x "$vbin/gh" "$vbin/claude" "$vbin/merge-check" "$vbin/mutation-probe"
 
     _v()   { HERMES_HOME="$vhome" hermes kanban --board vlab "$@"; }
     _vst() { _v show "$1" --json 2>/dev/null | jq -r '[.task.status,(.task.assignee // "-")] | join("/")'; }
@@ -8564,14 +8828,14 @@ with kbc.connect_closing() as c:
       r="$(_vrid "$vP")"
       printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" \
         HERMES_HOME="$vhome" HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$r" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" "$@" \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
         "$REPO_ROOT/$review" https://example.invalid/wielas/proj/pull/9 \
         --chunk "$vP" --board vlab --fixture "$REPO_ROOT/$prs/pr-9" \
         > "$vbin/out.json" 2> "$vbin/err.txt"
       echo $?
     }
     _vboard() {   # a fresh board with P and its child C
-      rm -rf "$vhome" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/merged" "$vbin/closed" \
+      rm -rf "$vhome" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
              "$vbin/base" "$vbin/state-down"
       mkdir -p "$vhome"
       # The live head starts equal to the one the recorded PR carries, because in
@@ -8755,7 +9019,7 @@ VWRAP
     vrc="$(printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" \
         HERMES_HOME="$vhome" HERMES_KANBAN_TASK="$vP" \
         HERMES_KANBAN_RUN_ID="$( _vclaim_review "$vP" && _vrid "$vP")" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_VERIFIER_MERGE=1 \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" FORGE_VERIFIER_MERGE=1 \
         "$REPO_ROOT/$review" https://example.invalid/wielas/proj/pull/9 \
         --chunk "$vP" --board vlab --fixture "$vfx" > "$vbin/out.json" 2>"$vbin/err.txt"; echo $?)"
     [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc"
@@ -8807,6 +9071,69 @@ VWRAP
       && ok "bounce-returns-the-same-card (request-changes to the lane with the reasons on the card, no card created; a red union bounces before the scorer; an unrunnable one is substrate)" \
       || bad "bounce-returns-the-same-card" \
           "a bounce must return THIS card to its implementer with actionable reasons and create nothing —$vdetail"
+
+    # ---- FL5: the probe reports by default, and bounces only when switched --
+    # Replayed at S3b it bounced the PRs it should and all six of redglass's
+    # all-3s PRs too, so it ships REPORTING (the operator's decision): its verdict
+    # goes on the hold, the scorer still runs, and the implementer never sees it.
+    # Under FORGE_MUTATION_PROBE_BOUNCE=1 — the exact string, like merge mode — a
+    # line no test observes returns the card to the lane before any model is paid,
+    # and a probe that could not run is substrate. Either way it runs in the tree
+    # the merged-tree stage proved green: the SAME directory, via `--keep-at`.
+    vdetail=""; _vboard
+    vrc="$(_vrun VF_MUTATION=survived)"
+    { [ "$vrc" = 0 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail report-only-survivors-did-not-reach-a-recommendation(rc=$vrc,$(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    grep -q . "$vbin/claude.log" 2>/dev/null || vdetail="$vdetail report-only-skipped-the-scorer"
+    _v show "$vP" --json | jq -e '
+        ([ .events[] | select(.kind == "changes_requested") ] | length == 0)
+        and ([ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+             | test("REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1")
+               and test("src/forgeboard_report/domain.py:41") and test("no test failed")
+               and test("found 1 changed line"))' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-hold-does-not-carry-the-report-only-finding"
+    local vkeep; vkeep="$(sed -n 's/.*--keep-at \([^ ]*\).*/\1/p' "$vbin/mc.log" 2>/dev/null | head -1)"
+    { [ -n "$vkeep" ] && grep -q -- "--tree $vkeep " "$vbin/mp.log" 2>/dev/null; } \
+      || vdetail="$vdetail the-probe-was-not-given-the-tree-merge-check-kept(mc:'$(cat "$vbin/mc.log" 2>/dev/null)' mp:'$(cat "$vbin/mp.log" 2>/dev/null)')"
+    # Anything but the exact switch value 1 stays reporting.
+    _vboard; vrc="$(_vrun VF_MUTATION=survived FORGE_MUTATION_PROBE_BOUNCE=true)"
+    jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail a-non-1-switch-value-bounced($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    # Switched on: a bounce before the scorer, with the line on the card.
+    _vboard; vrc="$(_vrun VF_MUTATION=survived FORGE_MUTATION_PROBE_BOUNCE=1)"
+    jq -e '.action == "bounce" and (.summary | test("mutation probe: 1 changed line"))
+        and (.summary | test("round 1 of 2")) and .created_cards == []
+        and .metadata.schema == "forge.mutation.v1"' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail switched-on-not-a-mutation-bounce($(jq -c '[.action,.summary]' "$vbin/out.json" 2>/dev/null))"
+    [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail switched-on-not-back-with-the-lane($(_vst "$vP"))"
+    ! grep -q . "$vbin/claude.log" 2>/dev/null || vdetail="$vdetail scorer-was-paid-for-an-unobserved-line"
+    _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "changes_requested") ] | last
+        | (.payload | tostring)
+        | test("src/forgeboard_report/domain.py:41") and test("no test failed")
+          and test("sync: disabled") and test("add or tighten a test")' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-line-and-the-mutations-are-not-on-the-card"
+    # A probe that could not run: substrate when it gates, named on the hold when
+    # it reports — never a pass in either mode.
+    _vboard; vrc="$(_vrun VF_MUTATION=unrunnable FORGE_MUTATION_PROBE_BOUNCE=1)"
+    { [ "$vrc" = 3 ] && [ "$(_vst "$vP")" = running/forge-verifier ] \
+      && jq -e '(.reason | test("^env: mutation-probe-unrunnable"))' "$vbin/out.json" >/dev/null 2>&1 \
+      && ! grep -q . "$vbin/claude.log" 2>/dev/null; } \
+      || vdetail="$vdetail switched-on-unrunnable-was-not-substrate(rc=$vrc,$(_vst "$vP"))"
+    _vboard; vrc="$(_vrun VF_MUTATION=unrunnable)"
+    { [ "$vrc" = 0 ] && _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+           | test("mutation probe: DID NOT RUN") and test("did not run") and (test("observed by a test") | not)' >/dev/null 2>&1; } \
+      || vdetail="$vdetail report-only-unrunnable-not-named-on-the-hold(rc=$vrc)"
+    _vboard; vrc="$(_vrun VF_MUTATION=pass)"
+    { [ "$vrc" = 0 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
+      && _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+           | test("mutation probe: every one of 4 probed changed line")
+             and test("every changed line it probed is observed by a test")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-passing-probe-is-not-on-the-hold(rc=$vrc,$(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    [ -z "$vdetail" ] \
+      && ok "mutation-probe-bounces-only-behind-its-switch (by default the verdict and its lines are on the hold and the scorer runs; under FORGE_MUTATION_PROBE_BOUNCE=1 exactly, an unobserved line bounces before the scorer and an unrunnable probe is substrate; the probe gets merge-check's kept tree)" \
+      || bad "mutation-probe-bounces-only-behind-its-switch" \
+          "the probe must report on the hold unless the operator switched bouncing on, and must never read as a pass when it did not run —$vdetail"
 
     # ---- FL6: two rounds, then one exception, and the window resets --------
     # The epic reached "two" by letting the kernel's same-kind recurrence route
@@ -8894,14 +9221,14 @@ VWRAP
       _vclaim_review "$vP" >/dev/null
       printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" \
         HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$(_vrid "$vP")" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" "$vmut" \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$vmut" \
         https://example.invalid/wielas/proj/pull/9 --chunk "$vP" --board vlab \
         --fixture "$REPO_ROOT/$prs/pr-9" >/dev/null 2>&1
       env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" "operator: disagrees" --board vlab >/dev/null 2>&1
       _vhandoff "$vP"; _vclaim_review "$vP" >/dev/null
       printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" \
         HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$(_vrid "$vP")" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" "$vmut" \
+        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$vmut" \
         https://example.invalid/wielas/proj/pull/9 --chunk "$vP" --board vlab \
         --fixture "$REPO_ROOT/$prs/pr-9" > "$vbin/mut.json" 2>&1
       [ "$(_vst "$vP" | cut -d/ -f1)" = triage ] \

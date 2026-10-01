@@ -1,0 +1,25 @@
+# FL5 recorded replays — ./scripts/verify.sh verifier --with-replays
+# Names, SHAs and outcomes only: the code is private and this repository is public.
+# Recovered at S3b's opening from board snapshots, `gh` and the tier-2 transcripts;
+# the reviewed head is the commit the reviewer saw, not the merge. <repo> is a
+# directory under $FORGE_REPLAY_ROOT (default ~/dev). Tab-separated.
+#
+# `expect` is what the probe MEASURED at S3b, not what the done-when first hoped
+# for: the redglass rows were meant to pass and did not (the epic's FL5 has the
+# triage). `must-report` pins lines the result must name, so C21 bounces for tier
+# 2's reason and not merely for some reason. Each pin is the SHA-256 of
+# "<file>:<line>:<source>" as the probe reports it, so it names nothing a reader
+# of this public file could not already see; `-` pins nothing. redglass-5's base
+# is the merge-base: its recorded baseRefOid postdates the head the reviewer saw
+# and conflicts with it.
+# name	repo	base	reviewed-head	expect	must-report	what it is
+jobapp-c21	JobApp	60beca79d3dc36aa2dd5d6f6e33602947bebe665	b7ac063ef1362c880b3b8db280977fd083e9fa61	survived	sha256:8e9cb8103db603414138a44a1f68e002b81d3483ce5f4b8e468e8a6aceb2cc8f,sha256:8072826b5a984f662086e731b63990d923ccaa88c99c8612732cbe53584ab4ff,sha256:b02c14711f207e987632ebd36a8176b9d1440d5e50d22285c1d4c0df6b209bf2,sha256:c2664739e4d0e16a5eeb034c2cdf2f377af672c6dd60f8db43202ceb991efa41	JobApp PR #29; the four pins are the lines behind tier 2's first blocker
+jobapp-c17	JobApp	2c46235abec8527f283eac1725855f79ca232dc9	b864ab43d7f3e92536267c3940d0c74114e51fbe	survived	-	JobApp PR #28; bounces on other untested lines, not on tier 2's (that line is observed, if weakly)
+ladder-pr6	ladder-forge	9b34d19be4e5465663b5f417f2d918362658fce0	7a5add5421193e19ba7bdcfe2fad98026011fb81	survived	sha256:c033d5b17b7215cee8e18cc182701165ea6488270e859ee7145f196c908c0dbf	ladder-forge PR #6, prejudge t_624586d7; the Then step returned instead of asserting
+ladder-pr6-fixed	ladder-forge	9b34d19be4e5465663b5f417f2d918362658fce0	f95c54397cd79285b651324599f1fe84eef180b4	pass	-	the same PR after its fix added a real assertion (control)
+redglass-2	redglass	b1c750b11f9537ab83ff8276520999567634e03d	96523406fe0ec71a0968337f05f59bbbf53ba987	survived	-	redglass PR #3, chunk 2, tier-1 all 3s
+redglass-3	redglass	4ff837b85778f614d4f84dc0f67859416f71fe94	a9f2fb2608186a5ec1d1ba286657e366de950aa5	survived	-	redglass PR #4, chunk 3, tier-1 all 3s
+redglass-5	redglass	16e6f28d55603bf6e44207352f4be9844dda22cb	ad39c7bd52255bbe6cca6c8acfe2f6a1cf879a03	survived	-	redglass PR #7, chunk 5, tier-1 all 3s
+redglass-7	redglass	16e6f28d55603bf6e44207352f4be9844dda22cb	09357f1d1bfe07a79d5f71ceff4128985343f92f	survived	-	redglass PR #6, chunk 7, tier-1 all 3s
+redglass-8	redglass	b5b61e1df20bdd2e270a6ac050ffa37771d42e8a	b618be34a0d4d3fed9ad3783f2b7752f7f3da214	survived	-	redglass PR #8, chunk 8, tier-1 all 3s
+redglass-11	redglass	2e773d6257bacba01ef4691dc30b306838af72f5	9bbddbf2732e0ac83dc2dc3965050af43072a5ff	survived	-	redglass PR #10, chunk 11, tier-1 all 3s
