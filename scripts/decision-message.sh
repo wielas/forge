@@ -16,6 +16,7 @@
 #   scripts/merge-watcher.sh    a hold it cannot finish (closed PR, no PR, a merge
 #                               that would not complete)
 #   scripts/digest.sh           every card waiting on the operator, whoever blocked it
+#   hermes/board-bootstrap.sh   the hold on a milestone gate and on an interactive chunk
 #
 # THE CLASS TABLE is the second half. A lane block is one line —
 # `<class>: <reason>` from rubrics/run-metadata-contract.json — because the lane
@@ -31,6 +32,15 @@ decision_message() {
   printf '%s: %s\n\nWhat it means: %s\nDecision needed: %s\nRisk: %s\nReply: %s\n' \
     "$1" "$2" "$3" "$4" "$5" "$6"
 }
+
+# The bootstrap's hold on a chunk a human implements (`Lane: claude-interactive`).
+# It is the one mark such a card carries — no title prefix like a gate's, and no
+# assignee once the bootstrap takes its sentinel off. The bootstrap blocks the
+# card with it, and the digest reads it to keep the card out of "waiting on you"
+# while a parent is still open (epic P13). One string, so the two cannot drift;
+# `make verify` (`bootstrap/interactive-hold-is-the-reason-the-digest-skips`)
+# compares what the bootstrap really writes with this.
+INTERACTIVE_HOLD_REASON="interactive chunk: human implementation required"
 
 # $1=class -> four lines on stdout: means, decision, risk, reply. The reply may
 # name `<id>` and `<board>`; the caller substitutes them. Exit 1 for a class

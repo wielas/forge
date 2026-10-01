@@ -365,7 +365,7 @@ create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [--parent
   else
     # One idiom for both the fresh card and the already-blocked one, and one
     # unconditional read-back that fails closed on all three substrate facts.
-    reason="${HOLD_REASON:-interactive chunk: human implementation required}"
+    reason="${HOLD_REASON:-$INTERACTIVE_HOLD_REASON}"
     reason="${reason//<id>/$cid}"
     [ "$status" = blocked ] || \
       hermes kanban --board "$BOARD" block --kind needs_input "$cid" \

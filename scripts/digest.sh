@@ -32,7 +32,9 @@
 # WAITING ON YOU is rendered in GW1's format (scripts/decision-message.sh). A
 # verifier hold already carries the whole format in its reason and is shown as
 # written, cut after its reply; a one-line lane block is expanded from the
-# class table there.
+# class table there. A card the bootstrap holds for later — a milestone gate,
+# or a chunk a human implements — waits on nobody while a parent is open, so it
+# is left out until every parent is done.
 #
 # Usage:
 #   digest.sh [--board <slug>]... [--day YYYY-MM-DD]
@@ -90,6 +92,10 @@ fi
 DAY_START="$(sqlite3 :memory: "SELECT strftime('%s','$DAY','utc');")"
 DAY_END="$(sqlite3 :memory: "SELECT strftime('%s','$DAY','+1 day','utc');")"
 
+# The interactive hold as an SQL literal: board_json compares the last block
+# reason with it.
+INTERACTIVE_HOLD_SQL="$(printf '%s' "$INTERACTIVE_HOLD_REASON" | sed "s/'/''/g")"
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-digest.XXXXXX")" || exit 2
 trap 'rm -rf "$WORK"' EXIT
 
@@ -127,7 +133,17 @@ SELECT json_object(
                                                JOIN tasks p ON p.id = l.parent_id
                                               WHERE l.child_id = t.id
                                                 AND p.status NOT IN ('done','archived')))
-                      ORDER BY t.id))
+                      ORDER BY t.id) w
+              -- An interactive chunk (epic P13) is held from the bootstrap on as
+              -- well, and asks nothing while a parent is open: the human cannot
+              -- start it yet. Its one mark is the reason the bootstrap blocked it
+              -- with, and only as its LAST reason, so a later block still speaks.
+              -- `IS`, not `=`: a card blocked with no recorded reason must stay.
+              WHERE NOT (w.status = 'blocked' AND w.reason IS '$INTERACTIVE_HOLD_SQL'
+                         AND EXISTS (SELECT 1 FROM task_links l
+                                       JOIN tasks p ON p.id = l.parent_id
+                                      WHERE l.child_id = w.id
+                                        AND p.status NOT IN ('done','archived'))))
 );
 SQL
 }
