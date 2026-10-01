@@ -627,7 +627,7 @@ closes.
 | S5 | PL1–PL4, MS1, MS2's declaration *(MS2's runner and replay split out at S5's opening; PL3's tier-scaled caps deferred to EN4/EN6)* | The new project is planned with the new skills | done | #80 |
 | S5b | MS2's runner and its redglass replay *(split from S5)* | Run A's flip criterion counts what the milestone probe finds, so something must execute the probe S5 declares before S7 | planned | |
 | S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is `wielas/Squatfather`, private, so `merge-gate.sh` reports `UNAVAILABLE` and commissioning records `posture: UNGATED`. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's. **Closed 2026-10-01: met.** Scope, architect and roadmap were each signed off by the operator. Read from the runtime at `78f6f1f`: `plan-check` scope CLEAR (6 pass) and architect CLEAR (4 pass), with two spikes, `garmin-lib` proven and `garmin-live` disproven (a 429 on one login attempt); `roadmap-check` CLEAR (14 pass, 0 warn); `acceptance-freeze` 30 contracts, byte-identical to the committed manifest. The plan is 3 milestones and 10 chunks (5 / 3 / 2) against a budget of 3 and 10. The probes hold 2 realistic + 3 adversarial cases (M1), 2 + 2 (M2) and 2 + 1 (M3). There is one root, CHUNK-1. M1's one human chunk, CHUNK-5, has parents, so P13 is promoted to row S6b. `GATE-M1` is also held on a live Garmin spike the operator runs during M1. The plan reaches `main` through Squatfather PR #1.* | Scope → architect with spikes → roadmap, three milestones | done | #81 |
-| S6b | P13 *(promoted at S6's close)* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | planned | |
+| S6b | P13 *(promoted at S6's close)*. *Done when (**proposed at S6b's opening — neither the row nor P13 had one**): the digest's waiting list skips a `blocked` card whose last block reason is the bootstrap's interactive hold while any parent is not `done` or `archived`, and lists it as before once all are; that reason is one string both scripts source, and what the bootstrap really writes is checked against it; `digest/fixture-message-exact`'s expected text is unchanged; and every new case has been seen red against its defect. **Closed 2026-10-01: met.** Measured first on Hermes 0.21.5 in an isolated `HERMES_HOME`: the hold survives `link`, and `main`'s digest listed the chunk while its only parent was `ready`. Three cases, all red before the fix: `digest/an-interactive-chunk-speaks-only-when-its-parents-are-done` (CHUNK-5's two parents, with two controls), `bootstrap/interactive-hold-is-the-reason-the-digest-skips`, and the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. Six mutants each reddened their case. `make verify` went from 486 / 0 / 10 to 488 / 0 / 11; the extra skip is the opt-in case. One discovery, P16.* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | done | |
 | S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
 | S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
@@ -965,7 +965,17 @@ parents are not all done. The same rule for interactive chunks would change
 `digest/fixture-message-exact`'s expected text, and S4's row owns that
 message. Evidence: `scripts/digest.sh` `board_json`, the `waiting` query.
 Triage it with the next digest change, or before run A if the M1 plan has a
-human chunk with parents. *Triaged at S6's close: **promoted to row S6b**,
+human chunk with parents. *Fixed in S6b. The digest leaves out a `blocked` card
+whose last block reason is the bootstrap's interactive hold while any parent is
+not `done` or `archived`. That reason is now one string,
+`INTERACTIVE_HOLD_REASON` in `scripts/decision-message.sh`, which the bootstrap
+writes and the digest reads. The rule keys on the reason because it is the one
+mark the card carries, so S4's fixture message is unchanged. Executed by
+`digest/an-interactive-chunk-speaks-only-when-its-parents-are-done`,
+`bootstrap/interactive-hold-is-the-reason-the-digest-skips` and, on the
+installed kernel, the opt-in
+`bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`.* *Triaged at
+S6's close: **promoted to row S6b**,
 before S7. The Squatfather's CHUNK-5 is `claude-interactive` and depends on
 CHUNK-2 and CHUNK-3. Triaged at S6's opening: **S6's roadmap decides
 it.** If The Squatfather's M1 has a human chunk with parents, P13 is promoted to its
@@ -994,6 +1004,33 @@ and is the operator's, before run A.*
 *Triaged at S6's opening: P7 stays with S4b; P9, P10(4)–(5) and P14 stay with
 S8; P10(1)–(2) stay open. S6 plans a project and changes no Forge code, so
 none of them is in reach.*
+
+*Triaged at S6b's opening: P13 is S6b's item. P3, P7, P9, P10 and P14 stay
+where S6 left them, since S6b changes only the digest's waiting list and the
+bootstrap's hold string. P15's pin is still the operator's, before run A.*
+
+**P16 (S6b). An interactive chunk that does speak reads as `other`.** Once
+its parents are done, the digest renders the bootstrap's hold as an unknown
+class. Executed on Hermes 0.21.5 in an isolated `HERMES_HOME` while opening
+S6b:
+
+```
+other: interactive chunk: human implementation required
+
+What it means: something outside the known block classes stopped this card
+Decision needed: read the reason and decide
+Risk: unknown — the card holds until someone looks
+Reply: `hermes kanban --board p13-probe show t_6ce2b0d6`
+```
+
+The card is waiting for the operator to implement it with `/start-chunk`. The
+message says neither that nor what releases it, and it calls the risk unknown.
+S5 gave a gate a decision-first hold (`milestone-gate`); an interactive chunk
+got nothing. The fix would build the interactive hold with `decision_message`,
+as the gate's is built. That changes `INTERACTIVE_HOLD_REASON`, and with it
+what the digest matches, but that is one string in one place now. In run A
+this is CHUNK-5's message once CHUNK-2 and CHUNK-3 merge. Triage with the next
+GW1 change, or before run A reaches CHUNK-5.
 
 ## Open questions
 
