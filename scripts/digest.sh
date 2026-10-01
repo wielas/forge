@@ -138,7 +138,7 @@ SELECT json_object(
               -- well, and asks nothing while a parent is open: the human cannot
               -- start it yet. Its one mark is the reason the bootstrap blocked it
               -- with, and only as its LAST reason, so a later block still speaks.
-              -- `IS`, not `=`: a card blocked with no recorded reason must stay.
+              -- IS, not =: a card blocked with no recorded reason must stay.
               WHERE NOT (w.status = 'blocked' AND w.reason IS '$INTERACTIVE_HOLD_SQL'
                          AND EXISTS (SELECT 1 FROM task_links l
                                        JOIN tasks p ON p.id = l.parent_id
