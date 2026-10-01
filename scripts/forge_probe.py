@@ -13,6 +13,7 @@ first time one end is edited (F30's defect class).
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 
 SCHEMA = "forge.probe.v1"
@@ -27,14 +28,46 @@ def probe_path(gate_id):
     return f"tests/probes/{gate_id.lower().replace('-', '_')}.json"
 
 
+def text(value):
+    """A string that survives being written out: no lone surrogates from a JSON escape."""
+    if not isinstance(value, str):
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def case_files(project, given):
-    """Every file a case's input names, sorted; None when the input is absent."""
+    """(files, error) for a case's input: every file it holds, sorted.
+
+    A symlink anywhere in an input is refused. Its target's bytes are not what
+    the freeze would hash (a linked directory is not even walked), so a frozen
+    probe could change underneath its manifest.
+    """
     target = project / given
+    if not target.exists() and not target.is_symlink():
+        return None, f"input {given} does not exist"
+    if target.is_symlink():
+        return None, f"input {given} is a symlink, which cannot be frozen"
     if target.is_file():
-        return [target]
-    if target.is_dir():
-        return sorted(p for p in target.rglob("*") if p.is_file() and p.name not in IGNORED)
-    return None
+        return [target], None
+    files = []
+    for root, dirs, names in os.walk(target, followlinks=False):
+        for entry in sorted(dirs + names):
+            path = Path(root) / entry
+            if path.is_symlink():
+                rel = path.relative_to(project).as_posix()
+                return None, f"input {given} holds a symlink, {rel}, which cannot be frozen"
+        files += [Path(root) / n for n in names if n not in IGNORED]
+    if not files:
+        return None, f"input {given} holds no files"
+    return sorted(files), None
+
+
+def names_an_ignored_file(arg):
+    return any(part in IGNORED for part in arg.replace("\\", "/").split("/"))
 
 
 def validate_probe(project, gate_id):
@@ -67,7 +100,7 @@ def validate_probe(project, gate_id):
         if not isinstance(case, dict):
             return None, None, f"{where} is not an object"
         name = case.get("name")
-        if not isinstance(name, str) or not name.strip() or name in names:
+        if not text(name) or not name.strip() or name in names:
             return None, None, f"{where} needs a unique, non-empty name"
         names.add(name)
         kind = case.get("kind")
@@ -79,27 +112,38 @@ def validate_probe(project, gate_id):
             return None, None, f"{where} is realistic and must declare records >= 2 (a one-record fixture cannot aggregate)"
         run = case.get("run")
         if (not isinstance(run, list) or not run
-                or not all(isinstance(arg, str) and arg and "\x00" not in arg for arg in run)
+                or not all(text(arg) and arg and "\x00" not in arg for arg in run)
                 or not any("{input}" in arg for arg in run)):
             return None, None, f"{where} run must be a non-empty argv of strings that names {{input}}"
+        ignored = next((arg for arg in run if names_an_ignored_file(arg)), None)
+        if ignored is not None:
+            return None, None, f"{where} run names {ignored!r}, a file that is never part of a probe"
         expect = case.get("expect")
         if (not isinstance(expect, dict)
                 or not isinstance(expect.get("exit"), int) or isinstance(expect.get("exit"), bool)
                 or not set(expect) <= {"exit", "stdout"}
-                or ("stdout" in expect and not isinstance(expect["stdout"], str))):
+                or ("stdout" in expect and not text(expect["stdout"]))):
             return None, None, f"{where} expect must be {{\"exit\": <int>}} with an optional \"stdout\" substring"
+        # Two expectations that cannot discriminate: an exit no process returns,
+        # and an empty substring, which every output contains.
+        if not 0 <= expect["exit"] <= 255:
+            return None, None, f"{where} expect exit {expect['exit']} is not an exit status (0-255)"
+        if expect.get("stdout") == "":
+            return None, None, f"{where} expect stdout is empty, which every output contains"
         given = case.get("input")
-        input_path = Path(given) if isinstance(given, str) and given else None
+        input_path = Path(given) if text(given) and given else None
         if (input_path is None or input_path.is_absolute() or ".." in input_path.parts
                 or input_path.parts[:2] != ("tests", "probes")):
             return None, None, f"{where} input must be a path under tests/probes/, not {given!r}"
-        files = case_files(project, input_path)
-        if files is None:
-            return None, None, f"{where} input {given} does not exist"
-        if not files:
-            return None, None, f"{where} input {given} holds no files"
+        files, error = case_files(project, input_path)
+        if error:
+            return None, None, f"{where} {error}"
         for file in files:
-            digests[file.relative_to(project).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
+            rel_file = file.relative_to(project).as_posix()
+            try:
+                digests[rel_file] = hashlib.sha256(file.read_bytes()).hexdigest()
+            except OSError as exc:
+                return None, None, f"{where} input file {rel_file} cannot be read: {exc.strerror or exc}"
     missing = {"realistic", "adversarial"} - kinds
     if missing:
         return None, None, f"{gate_id}: {rel} has no {' and no '.join(sorted(missing))} case"

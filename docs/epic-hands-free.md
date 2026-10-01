@@ -358,12 +358,32 @@ The replay must meet three conditions:
   is a wrong verdict rather than a load error.*
 
 *S5b: met. `scripts/probe-run.sh <project> GATE-<milestone>` runs a gate's
-frozen probe. Each case runs from the project root, with no shell, and its exit
-code and stdout are compared. A case that misses either, or times out, is a
-finding (exit 1), named. A probe or input that the manifest does not hold, an
-invalid probe, or a command that cannot start gets no verdict (exit 2). v1 is
-defined once, in `scripts/forge_probe.py`, which `acceptance-freeze` also
-imports. The gate card's hold names the command.*
+frozen probe. Each case runs from the project root, with no shell, and ends
+when its command exits. Its exit code and stdout are then compared.
+- A case that misses either, or times out, is a finding (exit 1).
+- A probe or input that the manifest does not hold, an invalid probe, a
+  command that cannot start, or an error in the runner itself gets no verdict
+  (exit 2).
+
+The last line is the gate card's result. It names the failed cases and the
+commit the run was on, and it is safe to paste inside double quotes. The gate
+card's hold names the command. It is a script the operator runs; a profile
+that runs gate cards is still S8's.*
+
+*v1 is defined once, in `scripts/forge_probe.py`, which `acceptance-freeze`
+also imports. Its shape is unchanged, but two things it accepted are now
+refused, at freeze time and at run time:
+- **A symlink in an input.** This is a freeze bug fix: a linked directory was
+  never walked, so its bytes were not hashed and `--check-base` could not see
+  them change.
+- **Values that cannot discriminate or cannot reach `exec`.** This is a
+  deliberate tightening: an empty `stdout` (every output contains it), an exit
+  outside 0–255, a string a JSON escape left unencodable, and a `run` that
+  names `.DS_Store`, which the freeze ignores.
+
+Neither changes a plan already frozen. The Squatfather's re-freeze is
+byte-identical and `--check-base` accepts it. The redglass replay's probe
+still validates. So v1 is not bumped.*
 
 *The replay is `probe/redglass-replay-*`. Its probe is the one M4's gate should
 have carried, written after the fact. It holds synthetic corpora, a driver and
@@ -375,11 +395,15 @@ corpora, while a sound corpus advances too:
 - economics is rated `moderate` with almost every input assumed;
 - risk passes while safety is unknown.
 
-On `713f1eb` all five cases hold. The third condition is met in its purpose,
-not its letter. Each corpus is stored in the newer tree's form. The driver
+The old tree also stops the second realistic corpus, a sound one with one
+unrelated weak claim (a fail-closed defect CHUNK-16 fixed too). On `713f1eb`
+all five cases hold. The third condition is met in its purpose, not its
+letter. Each corpus is stored in the newer tree's form. The driver
 projects it onto the tree's own schema and validates it clean before the
-gates run, so every flag is a wrong verdict, never a load error. v1 stands: The
-Squatfather's three probes read and match their freeze unchanged. "Failures
+gates run, so every flag is a wrong verdict, never a load error. The demand
+flag rests partly on a link that only the newer schema has: the old tree
+counts evidence the newer one scopes out, which is the defect as this epic
+first described it. "Failures
 become chunk cards" moved to S8, with MS4: which failure is a defect and which
 is a probe bug is the checkpoint's judgement.*
 
@@ -651,7 +675,7 @@ closes.
 | S4 | GW6, GW1, GW2 *(GW4 and WL3 split out at S4's opening; P4 and P10(3) folded in)* | Runs become observable: run A is measured by GW6's numbers, and the operator merges it from a phone off GW2's digest | done | #79 |
 | S4b | GW4, WL3 *(split from S4)*; P7 triaged with WL3 | Runs start with one command and the graph is visible — convenience, neither changes what run A measures | planned | |
 | S5 | PL1–PL4, MS1, MS2's declaration *(MS2's runner and replay split out at S5's opening; PL3's tier-scaled caps deferred to EN4/EN6)* | The new project is planned with the new skills | done | #80 |
-| S5b | MS2's runner and its redglass replay *(split from S5; MS2's "failures become chunk cards" moved to S8 at S5b's opening)*. *Done when (**proposed at S5b's opening — the row had none**): `scripts/probe-run.sh <project> GATE-<m>` runs a gate's frozen v1 probe from the project root, with no shell, and keeps three outcomes apart — 0 every case holds, 1 a finding named by case (timeouts included), 2 no verdict; a probe or input the manifest does not hold, and a command that cannot start, get no verdict; v1 has one definition, which both scripts read; the gate card names the command; MS2's replay meets S5's three conditions; every new case is seen red against its defect; and v1 is bumped only if the replay shows it wrong. **Closed 2026-10-01: met.** `scripts/forge_probe.py` holds v1 once, and `acceptance-freeze` imports it unchanged; the `probe/` group (14 cases) and `bootstrap/gate-names-its-probe-runner` prove the rest. The replay's probe is a synthetic one M4's gate should have carried, committed once by the operator to a private local redglass branch and pinned here by SHA. It flags `f32abeb` (all three adversarial corpora advance; the control advances too) and clears `713f1eb` (5 of 5). Its third condition is met in purpose: each corpus is stored in the newer tree's form and projected onto the tree's own schema and validated clean before the gates run. v1 stands; The Squatfather's three probes match their freeze unchanged. 17 runner mutants, the old hold text and the two replay trees swapped each reddened their case. `make verify` went from 488 / 0 / 11 to 503 / 0 / 11. An independent review found two exit-code defects and six smaller ones, all fixed before the PR. Two discoveries, P17 and P18.* | Run A's flip criterion counts what the milestone probe finds, so something must execute the probe S5 declares before S7 | done | #83 |
+| S5b | MS2's runner and its redglass replay *(split from S5; MS2's "failures become chunk cards" moved to S8 at S5b's opening)*. *Done when (**proposed at S5b's opening — the row had none**): `scripts/probe-run.sh <project> GATE-<m>` runs a gate's frozen v1 probe from the project root, with no shell, and keeps three outcomes apart — 0 every case holds, 1 a finding named by case (timeouts included), 2 no verdict; a probe or input the manifest does not hold, and a command that cannot start, get no verdict; v1 has one definition, which both scripts read; the gate card names the command; MS2's replay meets S5's three conditions; every new case is seen red against its defect; and v1 is bumped only if the replay shows it wrong. **Closed 2026-10-01: met.** `scripts/forge_probe.py` holds v1 once, and `acceptance-freeze` imports it; the `probe/` group (16 cases) and `bootstrap/gate-names-its-probe-runner` prove the rest. A case ends when its command exits, its output going to files; the last line names what failed and the commit, and is paste-safe. v1 now refuses a symlink in an input (a freeze bug fix) and expectations that cannot discriminate (a deliberate tightening); no frozen plan changed, so v1 is not bumped. The replay's probe is a synthetic one M4's gate should have carried, committed once by the operator to a private local redglass branch and pinned here by SHA. It flags `f32abeb` (all three adversarial corpora advance; the control advances too) and clears `713f1eb` (5 of 5). Its third condition is met in purpose: each corpus is stored in the newer tree's form and projected onto the tree's own schema, validated clean before the gates run. 28 mutants each reddened their case, as did the old hold text, the two replay trees swapped, and the pre-review pipe-based runner on `a-case-ends-when-its-command-exits`. `make verify` went from 488 / 0 / 11 to 505 / 0 / 11. Two independent reviews found four exit-code or hang defects, two holes in the freeze, and smaller issues; all were fixed before merge, except two additions for S8 (P20). Discoveries: P18, P19, P20.* | Run A's flip criterion counts what the milestone probe finds, so something must execute the probe S5 declares before S7 | done | #83 |
 | S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is `wielas/Squatfather`, private, so `merge-gate.sh` reports `UNAVAILABLE` and commissioning records `posture: UNGATED`. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's. **Closed 2026-10-01: met.** Scope, architect and roadmap were each signed off by the operator. Read from the runtime at `78f6f1f`: `plan-check` scope CLEAR (6 pass) and architect CLEAR (4 pass), with two spikes, `garmin-lib` proven and `garmin-live` disproven (a 429 on one login attempt); `roadmap-check` CLEAR (14 pass, 0 warn); `acceptance-freeze` 30 contracts, byte-identical to the committed manifest. The plan is 3 milestones and 10 chunks (5 / 3 / 2) against a budget of 3 and 10. The probes hold 2 realistic + 3 adversarial cases (M1), 2 + 2 (M2) and 2 + 1 (M3). There is one root, CHUNK-1. M1's one human chunk, CHUNK-5, has parents, so P13 is promoted to row S6b. `GATE-M1` is also held on a live Garmin spike the operator runs during M1. The plan reaches `main` through Squatfather PR #1.* | Scope → architect with spikes → roadmap, three milestones | done | #81 |
 | S6b | P13 *(promoted at S6's close)*. *Done when (**proposed at S6b's opening — neither the row nor P13 had one**): the digest's waiting list skips a `blocked` card whose last block reason is the bootstrap's interactive hold while any parent is not `done` or `archived`, and lists it as before once all are; that reason is one string both scripts source, and what the bootstrap really writes is checked against it; `digest/fixture-message-exact`'s expected text is unchanged; and every new case has been seen red against its defect. **Closed 2026-10-01: met.** Measured first on Hermes 0.21.5 in an isolated `HERMES_HOME`: the hold survives `link`, and `main`'s digest listed the chunk while its only parent was `ready`. Three cases, all red before the fix: `digest/an-interactive-chunk-speaks-only-when-its-parents-are-done` (CHUNK-5's two parents, with four controls), `bootstrap/interactive-hold-is-the-reason-the-digest-skips`, and the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. Eight mutants each reddened their case. `make verify` went from 486 / 0 / 10 to 488 / 0 / 11; the extra skip is the opt-in case. One discovery, P16.* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | done | #82 |
 | S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
@@ -1064,9 +1088,10 @@ them reads. P16 is the interactive hold, not the gate's, so it still waits for
 its own GW1 change, before run A reaches CHUNK-5. P15's pin is still the
 operator's, before run A. MS2's middle sentence, "failures become chunk cards",
 moved to S8 with MS4: whether a failed case is a defect or a probe bug is a
-judgement, so it belongs to the checkpoint rather than the runner.*
+judgement, so it belongs to the checkpoint rather than the runner. S5b's items
+start at P18, because S3b's open PR #84 claims P17.*
 
-**P17 (S5b). A probe's `run` can name a driver outside its input, and nothing
+**P18 (S5b). A probe's `run` can name a driver outside its input, and nothing
 freezes it.** `validate_probe` hashes every file under each case's `input`.
 The argv is hashed as part of the probe file, but a file it names elsewhere is
 not. Running the product itself (`src/...`) is the point. A probe-authored
@@ -1075,18 +1100,29 @@ change without `--check-base` seeing it. The Squatfather's probes and the
 redglass replay both keep their drivers inside the input (`{input}/run.py`), so
 nothing is exposed today. Fix shape: `/roadmap` says drivers live under the
 input, and `acceptance-freeze` refuses an argv path under `tests/probes/` that
-lies outside its own case's input. Triage with the next planning change, before
-a second project plans.
+lies outside its own case's input. The same holds for a file named indirectly,
+such as a `.DS_Store` read by a script. S5b refuses only an argument that names
+one. Triage with the next planning change, before a second project plans.
 
-**P18 (S5b). An expected exit of 1 is also what a crash returns.** The
+**P19 (S5b). An expected exit of 1 is also what a crash returns.** The
 Squatfather's GATE-M3 case `partial-push-reports-scheduled-and-missing`
 expects exit 1. Run against a copy of the plan while opening S5b, before any
 code exists, it missed only on stdout, because the `ModuleNotFoundError`
 traceback also exited 1. Its stdout substring is what keeps it honest. The replay's driver
 avoids this: it keeps 1 for a crash and uses 10, 20, 30 and 40. Fix shape: a
 `roadmap-check` warning on an expected exit of 1 or 2 (a crash, argparse's
-usage error), or a line in `/roadmap`. Triage with P17. The Squatfather need
+usage error), or a line in `/roadmap`. Triage with P18. The Squatfather need
 not amend anything for run A, since its substring already guards the case.
+
+**P20 (S5b review). The runner keeps only a tail of a failing case's output,
+and does not re-check its inputs after a run.** A second review proposed two
+additions:
+- `--logs <dir>`, the full stdout and stderr of every case;
+- a digest check after the run, naming the case that changed its own frozen
+  input. Today the next run's NO VERDICT names the path but not the cause.
+
+Both serve S8's overseer, which reads a gate's result without an operator
+beside it. Neither changes a verdict, so S5b deferred them. Triage with MS4.
 
 ## Open questions
 

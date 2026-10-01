@@ -332,28 +332,37 @@ ends in the same place — so the race itself is untested until run A.
   - No tier but `strong` and `human` has an implementer (EN1).
 - **The milestone probe, executed (epic S5b; MS2's runner and replay).**
   `scripts/probe-run.sh <project> GATE-<milestone>` runs a gate's frozen
-  `forge.probe.v1` probe. Each case runs from the project root, with no shell
-  and stdin closed, in its own process group, which a timeout kills (a
-  grandchild that leaves the group with `setsid` would escape it). It has three
-  outcomes, kept apart:
+  `forge.probe.v1` probe. Each case runs from the project root with no shell,
+  stdin closed and output to files, in its own process group. It ends when its
+  command exits, and whatever it left in that group is killed then. A timeout
+  kills the group too. A process that leaves the group (`setsid`) is not
+  killed, but it cannot hold the runner waiting either. It has three outcomes,
+  kept apart:
   - 0: every case holds.
   - 1: a finding. A case missed its exit code or its stdout, or timed out,
     and is named.
   - 2: no verdict. The probe or an input differs from the manifest or was
-    never frozen, the probe is invalid, or a command cannot start. In the last
-    case every other case still runs and is reported, so no finding is hidden.
-    The manifest is trusted as merged; `acceptance-freeze --check-base` is
-    what refuses a re-frozen, weaker probe at review.
+    never frozen, the probe is invalid, a command cannot start, or the runner
+    itself failed. When a command cannot start, every other case still runs
+    and is reported, so no finding is hidden. The manifest is trusted as
+    merged; `acceptance-freeze --check-base` is what refuses a re-frozen,
+    weaker probe at review.
 
-  v1 is defined once, in `scripts/forge_probe.py`, which `acceptance-freeze`
-  imports too. The gate card's hold names the command. All of this is
-  fixture-exact in `probe/`, and each case was seen red against a mutant.
-  MS2's done-when is met by a replay on redglass's own history, read-only
-  through `git archive`. The probe M4's gate should have carried flags all
-  three fail-open gates on `f32abeb` (before CHUNK-15) and clears on `713f1eb`
-  (after CHUNK-16). What that does NOT prove:
+  The last line is the gate card's result. It names the failed cases, ends
+  `at <short sha>` (`+dirty` for changed tracked files) in a git checkout, and
+  is safe inside double quotes. v1 is defined once, in `scripts/forge_probe.py`,
+  which `acceptance-freeze` imports too. Since S5b it refuses a symlink in an
+  input and four expectations that cannot discriminate; no frozen plan changed.
+  The gate card's hold names the command. All of this is fixture-exact in
+  `probe/`, and each case was seen red against a mutant. MS2's done-when is
+  met by a replay on redglass's own history, read-only through `git archive`.
+  The probe M4's gate should have carried flags all three fail-open gates on
+  `f32abeb` (before CHUNK-15) and clears on `713f1eb` (after CHUNK-16). What
+  that does NOT prove:
   - That probe is synthetic and retrofitted. It sits on a private local
     redglass branch, so the replay skips on any other machine, CI included.
+  - The demand flag rests partly on a link only the newer schema has. Nothing
+    asserts which fields survive the driver's projection onto the old tree.
   - No gate card has run its probe on a live board. Failures do not yet become
     chunk cards; that is S8's, with MS4.
 - **Timeout/reclaim and circuit-breaker recovery.** Signal-9 retry is proven;
