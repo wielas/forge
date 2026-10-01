@@ -626,7 +626,8 @@ closes.
 | S4b | GW4, WL3 *(split from S4)*; P7 triaged with WL3 | Runs start with one command and the graph is visible — convenience, neither changes what run A measures | planned | |
 | S5 | PL1–PL4, MS1, MS2's declaration *(MS2's runner and replay split out at S5's opening; PL3's tier-scaled caps deferred to EN4/EN6)* | The new project is planned with the new skills | done | #80 |
 | S5b | MS2's runner and its redglass replay *(split from S5)* | Run A's flip criterion counts what the milestone probe finds, so something must execute the probe S5 declares before S7 | planned | |
-| S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is private. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's.* | Scope → architect with spikes → roadmap, three milestones | in progress | |
+| S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is `wielas/Squatfather`, private, so `merge-gate.sh` reports `UNAVAILABLE` and commissioning records `posture: UNGATED`. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's. **Closed 2026-10-01: met.** Scope, architect and roadmap were each signed off by the operator. Read from the runtime at `78f6f1f`: `plan-check` scope CLEAR (6 pass) and architect CLEAR (4 pass), with two spikes, `garmin-lib` proven and `garmin-live` disproven (a 429 on one login attempt); `roadmap-check` CLEAR (14 pass, 0 warn); `acceptance-freeze` 30 contracts, byte-identical to the committed manifest. The plan is 3 milestones and 10 chunks (5 / 3 / 2) against a budget of 3 and 10. The probes hold 2 realistic + 3 adversarial cases (M1), 2 + 2 (M2) and 2 + 1 (M3). There is one root, CHUNK-1. M1's one human chunk, CHUNK-5, has parents, so P13 is promoted to row S6b. `GATE-M1` is also held on a live Garmin spike the operator runs during M1. The plan reaches `main` through Squatfather PR #1.* | Scope → architect with spikes → roadmap, three milestones | done | |
+| S6b | P13 *(promoted at S6's close)* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | planned | |
 | S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | planned | |
 | S8 | MS3, MS4, MS5, GW3, WL1 | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
@@ -964,7 +965,9 @@ parents are not all done. The same rule for interactive chunks would change
 `digest/fixture-message-exact`'s expected text, and S4's row owns that
 message. Evidence: `scripts/digest.sh` `board_json`, the `waiting` query.
 Triage it with the next digest change, or before run A if the M1 plan has a
-human chunk with parents. *Triaged at S6's opening: **S6's roadmap decides
+human chunk with parents. *Triaged at S6's close: **promoted to row S6b**,
+before S7. The Squatfather's CHUNK-5 is `claude-interactive` and depends on
+CHUNK-2 and CHUNK-3. Triaged at S6's opening: **S6's roadmap decides
 it.** If The Squatfather's M1 has a human chunk with parents, P13 is promoted to its
 own row before S7. Otherwise it waits for the next digest change.*
 
@@ -983,7 +986,10 @@ and the live version is 2.1.283. *Hold still during the epic* rules out an
 upgrade except as its own session, and nobody chose this one. S6's planning
 runs on 2.1.283, and the lane does not use Claude Code, so run A is not
 affected. Triage: pin or disable Claude Code's auto-update before run A, and
-update the recorded version in `state.md` when S6 closes.
+update the recorded version in `state.md` when S6 closes. *At S6's close,
+2026-10-01, it had moved again, to 2.1.286. `state.md` now records 2.1.286,
+so preflight is green until the next unchosen upgrade. The pin is still open
+and is the operator's, before run A.*
 
 *Triaged at S6's opening: P7 stays with S4b; P9, P10(4)–(5) and P14 stay with
 S8; P10(1)–(2) stay open. S6 plans a project and changes no Forge code, so

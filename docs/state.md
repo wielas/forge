@@ -318,7 +318,11 @@ ends in the same place — so the race itself is untested until run A.
   runs it on the installed kernel in an isolated `HERMES_HOME`: a held gate
   keeps the next milestone `todo` after its own milestone is done, and
   completing it from `blocked` releases it. What that does NOT prove:
-  - No project has been planned with these skills. That is S6.
+  - One project has been planned with these skills, and none has run. In S6
+    (2026-10-01) The Squatfather was planned to 3 milestones and 10 chunks, and
+    `plan-check`, `roadmap-check` and `acceptance-freeze` all read CLEAR on it
+    (`docs/epic-hands-free.md`, row S6). Whether the plan holds up under a
+    lane is run A's question.
   - Nothing executes a declared probe. The runner and the redglass replay are
     S5b, so until then a gate's probe is run by hand.
   - No tier but `strong` and `human` has an implementer (EN1).
@@ -592,7 +596,7 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 ```
-Hermes 0.21.5 · codex-cli 0.156.1 · Claude Code 2.1.281 · gh 2.101.0
+Hermes 0.21.5 · codex-cli 0.156.1 · Claude Code 2.1.286 · gh 2.101.0
 lefthook 2.1.10 · uv 0.12.18 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator, forge-codex-lane, forge-verifier,
