@@ -2884,7 +2884,7 @@ digest/fixture-message-exact        two fixture boards, a quiet one and an archi
 digest/silent-when-nothing-happened a board with nothing landed, in flight or waiting prints nothing and exits 0 — under --no-agent that is no notification
 digest/an-unreadable-board-is-named a board that cannot be read is named on stdout and exits 3; it is never reported as quiet
 digest/a-gate-speaks-only-when-its-milestone-is-done  a held gate is silent while a chunk it closes is open, and decision-first once all are done
-digest/an-interactive-chunk-speaks-only-when-its-parents-are-done  a held interactive chunk is silent while any parent is open and listed once all are done or archived; a later block, or none recorded, still speaks (P13)
+digest/an-interactive-chunk-speaks-only-when-its-parents-are-done  a held interactive chunk is silent while any parent is open and listed once all are done or archived; a later block, none recorded, a held root and a triaged card still speak (P13)
 digest/is-read-only                 the boards read are byte-identical, sidecars included, before and after
 digest/every-block-class-has-a-decision  every class in the contract's blocked_reason_pattern has a decision entry, and every entry is a registered class (GW1)
 digest/a-missing-decision-is-caught  a formatter with one class entry deleted reddens and names the class
@@ -12272,11 +12272,13 @@ run_digest_group() {
 
   # Epic P13: an interactive chunk is held from the bootstrap on, like a gate,
   # and has nothing to ask while a parent is open. CHUNK-5's shape — two
-  # parents, one done — so "all parents done" is told apart from "any". The two
-  # controls share the open parent and stay listed throughout: a held chunk
+  # parents, one done — so "all parents done" is told apart from "any". The
+  # controls stay listed throughout. Three share the open parent: a held chunk
   # blocked again for another reason, because the LAST reason counts and the
-  # rule is not "every blocked card with an open parent"; and a card blocked
-  # with no recorded reason, which a NULL comparison must not drop.
+  # rule is not "every blocked card with an open parent"; a card blocked with
+  # no recorded reason, which a NULL comparison must not drop; and a held chunk
+  # that went to triage, which no script can complete (P8), so it always
+  # speaks. The fourth is a held root, which has nothing to wait for.
   mkdir -p "$kb/humans"
   sqlite3 "$kb/humans/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
   local hold
@@ -12287,30 +12289,34 @@ run_digest_group() {
       ('t_h2', 'CHUNK-3: second parent',            'forge-verifier', 'review',  1785200000),
       ('t_h3', 'CHUNK-5: a human chunk',            NULL,             'blocked', 1785200000),
       ('t_h4', 'CHUNK-6: held, then blocked again', NULL,             'blocked', 1785200000),
-      ('t_h5', 'CHUNK-7: blocked with no reason',   NULL,             'blocked', 1785200000);
+      ('t_h5', 'CHUNK-7: blocked with no reason',   NULL,             'blocked', 1785200000),
+      ('t_h6', 'CHUNK-1: a held root',              NULL,             'blocked', 1785200000),
+      ('t_h7', 'CHUNK-8: held, now in triage',      NULL,             'triage',  1785200000);
     INSERT INTO task_links (parent_id, child_id) VALUES
-      ('t_h1', 't_h3'), ('t_h2', 't_h3'), ('t_h2', 't_h4'), ('t_h2', 't_h5');
+      ('t_h1', 't_h3'), ('t_h2', 't_h3'), ('t_h2', 't_h4'), ('t_h2', 't_h5'), ('t_h2', 't_h7');
     INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
       ('t_h3', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000),
       ('t_h4', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000),
-      ('t_h4', 'blocked', json_object('reason', 'env: the workspace is gone', 'kind', 'needs_input'), 1785200100);" >/dev/null 2>&1
-  local h_open h_done
+      ('t_h4', 'blocked', json_object('reason', 'env: the workspace is gone', 'kind', 'needs_input'), 1785200100),
+      ('t_h6', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000),
+      ('t_h7', 'blocked', json_object('reason', '$hold', 'kind', 'needs_input'), 1785200000);" >/dev/null 2>&1
+  local h_open h_done c controls_listed=1
   h_open="$(_dg --board humans --day 2026-07-28 2>/dev/null)"
   sqlite3 "$kb/humans/kanban.db" "UPDATE tasks SET status='archived' WHERE id='t_h2';" >/dev/null 2>&1
   h_done="$(_dg --board humans --day 2026-07-28 2>/dev/null)"
-  if [ -n "$hold" ] \
-     && printf '%s' "$h_open" | grep -q '^Waiting on you (2)$' \
+  for c in t_h4 t_h5 t_h6 t_h7; do
+    printf '%s' "$h_open" | grep -q "^— $c · " && printf '%s' "$h_done" | grep -q "^— $c · " \
+      || controls_listed=0
+  done
+  if [ -n "$hold" ] && [ "$controls_listed" = 1 ] \
+     && printf '%s' "$h_open" | grep -q '^Waiting on you (4)$' \
      && ! printf '%s' "$h_open" | grep -q 't_h3' \
-     && printf '%s' "$h_open" | grep -q '^— t_h4 · ' \
-     && printf '%s' "$h_open" | grep -q '^— t_h5 · ' \
-     && printf '%s' "$h_done" | grep -q '^Waiting on you (3)$' \
-     && printf '%s' "$h_done" | grep -q '^— t_h3 · CHUNK-5' \
-     && printf '%s' "$h_done" | grep -q '^— t_h4 · ' \
-     && printf '%s' "$h_done" | grep -q '^— t_h5 · '; then
+     && printf '%s' "$h_done" | grep -q '^Waiting on you (5)$' \
+     && printf '%s' "$h_done" | grep -q '^— t_h3 · CHUNK-5'; then
     ok "an-interactive-chunk-speaks-only-when-its-parents-are-done"
   else
     bad "an-interactive-chunk-speaks-only-when-its-parents-are-done" \
-        "a held interactive chunk must be absent while either parent is open and listed once both are done or archived, with both controls listed throughout; hold '$hold', open: $(printf '%s' "$h_open" | grep -E '^(Waiting|— )' | tr '\n' ' '), done: $(printf '%s' "$h_done" | grep -E '^(Waiting|— )' | tr '\n' ' ')"
+        "a held interactive chunk must be absent while either parent is open and listed once both are done or archived, with all four controls listed throughout; hold '$hold', open: $(printf '%s' "$h_open" | grep -E '^(Waiting|— )' | tr '\n' ' '), done: $(printf '%s' "$h_done" | grep -E '^(Waiting|— )' | tr '\n' ' ')"
   fi
   rm -rf "$kb/humans"
 
