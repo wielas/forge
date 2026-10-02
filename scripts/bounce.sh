@@ -86,6 +86,15 @@ if [ "$who" = "$SENTINEL" ] || [ "$who" = none ]; then
   # and a card parked on a non-spawnable sentinel is a card nothing picks up.
   [ -n "$want_implementer" ] \
     || { echo "bounce: $CARD is '$end' but assigned '$who', and no review_requested event names an implementer to restore" >&2; exit 1; }
+  # A HUMAN-TIER CHUNK'S IMPLEMENTER IS THE SENTINEL (epic P21): lane-handoff.sh
+  # puts it on before an operator's handoff, so the kernel restores it here. On
+  # the sentinel is exactly where a human chunk belongs — nothing spawns it, and
+  # the digest lists it as waiting on the operator. It is the end state, not a
+  # park left behind; until S6c this script reported it as a failure.
+  if [ "$want_implementer" = "$SENTINEL" ] && [ "$who" = "$SENTINEL" ]; then
+    echo "$CARD: back with the operator ($end on $SENTINEL, a human-tier chunk) — $REASON"
+    exit 0
+  fi
   kanban assign "$CARD" "$want_implementer" >/dev/null 2>&1
   who="$(assignee)"
 fi

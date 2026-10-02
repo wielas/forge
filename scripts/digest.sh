@@ -34,7 +34,9 @@
 # written, cut after its reply; a one-line lane block is expanded from the
 # class table there. A card the bootstrap holds for later — a milestone gate,
 # or a chunk a human implements — waits on nobody while a parent is open, so it
-# is left out until every parent is done.
+# is left out until every parent is done. A human chunk sent back for changes
+# sits `ready` on the non-spawnable sentinel; nothing but the operator picks it
+# up, so it is waiting on them and is not counted in flight (epic P21).
 #
 # Usage:
 #   digest.sh [--board <slug>]... [--day YYYY-MM-DD]
@@ -96,6 +98,11 @@ DAY_END="$(sqlite3 :memory: "SELECT strftime('%s','$DAY','+1 day','utc');")"
 # reason with it.
 INTERACTIVE_HOLD_SQL="$(printf '%s' "$INTERACTIVE_HOLD_REASON" | sed "s/'/''/g")"
 
+# The non-spawnable sentinel a human-tier chunk is handed off on (epic P21,
+# lane-handoff.sh). A bounce returns such a card `ready` on it, and nothing but
+# the operator will ever pick it up — so it is waiting on them, not in flight.
+SENTINEL_SQL="$(printf '%s' "${FORGE_HANDOFF_SENTINEL:-forge-operator-handoff}" | sed "s/'/''/g")"
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-digest.XXXXXX")" || exit 2
 trap 'rm -rf "$WORK"' EXIT
 
@@ -116,6 +123,7 @@ SELECT json_object(
   'flight', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'status', status)), json_array())
                FROM (SELECT id, title, status FROM tasks
                       WHERE status IN ('running','review','ready','todo')
+                        AND NOT (status = 'ready' AND assignee IS '$SENTINEL_SQL')
                       ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'review' THEN 1
                                            WHEN 'ready' THEN 2 ELSE 3 END, id)),
   'waiting', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'status', status, 'reason', reason)), json_array())
@@ -123,7 +131,10 @@ SELECT json_object(
                             (SELECT json_extract(e.payload,'\$.reason') FROM task_events e
                               WHERE e.task_id = t.id AND e.kind IN ('blocked','block_loop_detected')
                               ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS reason
-                       FROM tasks t WHERE t.status IN ('blocked','triage')
+                       FROM tasks t
+                      WHERE (t.status IN ('blocked','triage')
+                             -- A human chunk sent back for changes (epic P21).
+                             OR (t.status = 'ready' AND t.assignee IS '$SENTINEL_SQL'))
                         -- A milestone gate (epic MS1) is held from the moment the
                         -- board is bootstrapped, but it asks nothing until every
                         -- chunk it closes is done. Before that it is not waiting
@@ -157,6 +168,19 @@ render_waiting() {
   status="$(printf '%s' "$card" | jq -r '.status')"
   reason="$(printf '%s' "$card" | jq -r '.reason // ""')"
   printf -- '— %s · %s\n' "$id" "$title"
+  # The only `ready` card waiting is a human chunk sent back (epic P21). Its
+  # reasons — the verifier's bounce or the operator's own — are evidence and
+  # stay on the card, so `.reason` (a block reason) is not read here; the
+  # message says whose move it is and where the reasons are.
+  if [ "$status" = ready ]; then
+    decision_message returned \
+      "this human-tier chunk was sent back for changes; the reasons are on the card" \
+      "the verifier, or you through bounce.sh, returned it to you; no lane will pick it up" \
+      "fix it on its branch and hand it off again, or decide the reasons are wrong" \
+      "its children and its milestone gate wait; nothing is merged" \
+      "\`hermes kanban --board $board show $id\` for the reasons; after the fix, \`/end-chunk\` hands it back to the verifier"
+    return
+  fi
   # A verifier hold already speaks the format. Show it as written, up to the end
   # of its reply: what follows is evidence, which is on the card.
   if printf '%s' "$reason" | grep -q '^Decision needed: '; then

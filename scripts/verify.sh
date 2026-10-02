@@ -2540,7 +2540,7 @@ lane/lane-sh-blocks-before-the-push  a red check and an audit breach block with 
 lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers, the handoff included, beside itself
 lane/lane-sh-reenters-on-a-bounce  FL3, stubs: same card/branch/PR, red baseline tolerated, the implementer's session resumed with the reasons
 lane/bounce-round-trip-on-real-hermes  FL3, real kernel in an isolated HERMES_HOME: handoff, native gate, request-changes, re-entry, approval releases the child
-lane/lane-handoff-is-fail-closed  validates before the transition, reads the end state back, unparks a blocked human-tier card
+lane/lane-handoff-is-fail-closed  validates before the transition, reads the end state back, unparks a blocked human-tier card, and puts the sentinel on an unassigned one before the unblock (P21)
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/verifier-delegates-its-protocol    the SOUL names the script and the script exists (ADR-0010)
 lane/verifier-terminator-mapping        rc 0 -> call nothing (the program transitioned the card), rc 3 -> kanban_block; an outage is not a rejection
@@ -2701,6 +2701,7 @@ verifier/bounce-budget-becomes-an-exception  FL6: two rounds, then a completable
 verifier/a-hold-is-never-triage  recommend, disagree, repair, recommend again: the second hold rotates kind, stays blocked and still completes
 verifier/hold-kind-mutation-is-caught  a pinned block kind reaches triage on the real kernel, cannot be completed, and is reported as stranded
 verifier/disagree-path-parks-before-it-unblocks  bounce.sh's own events show the sentinel park before the unblock; a dispatch pass in the window spawns nothing (smoke, with its control stated); the implementer returns
+verifier/a-human-chunk-can-be-bounced  P21, real kernel: the bootstrap's human card, handed off by lane-handoff.sh, is bounced onto the sentinel and listed as waiting by the digest; handed off again it is held, and bounce.sh returns it to the operator
 verifier/merge-watcher-completes-a-merged-hold  silent on an open PR, reports a closed one, completes a merged one with its commit and says so on stderr only (GW1), ignores other blocks; metrics.sh reads that real-kernel board as one operator merge with zero operator touches (GW6)
 verifier/merged-tree-restores-the-tree-before-merging  a setup that rewrites a tracked file main also changed is still a green union; a merge git refuses with no conflicted path is unrunnable, never a conflict
 verifier/merged-tree-uses-the-prs-base  merge-check is given the PR's own baseRefName and the hold names it; an unreadable base is substrate, never an assumed main
@@ -2906,6 +2907,8 @@ digest/silent-when-nothing-happened a board with nothing landed, in flight or wa
 digest/an-unreadable-board-is-named a board that cannot be read is named on stdout and exits 3; it is never reported as quiet
 digest/a-gate-speaks-only-when-its-milestone-is-done  a held gate is silent while a chunk it closes is open, and decision-first once all are done
 digest/an-interactive-chunk-speaks-only-when-its-parents-are-done  a held interactive chunk is silent while any parent is open and listed once all are done or archived; a later block, none recorded, a held root and a triaged card still speak (P13)
+digest/an-interactive-hold-is-decision-first  once it speaks, the bootstrap's interactive hold says what it is, the decision and the reply (/start-chunk) — never other, never risk unknown (P16)
+digest/a-returned-human-chunk-waits-on-you  a human chunk sent back for changes (ready, on the sentinel) is waiting on the operator, decision-first, and out of flight; a ready lane card stays in flight (P21)
 digest/is-read-only                 the boards read are byte-identical, sidecars included, before and after
 digest/every-block-class-has-a-decision  every class in the contract's blocked_reason_pattern has a decision entry, and every entry is a registered class (GW1)
 digest/a-missing-decision-is-caught  a formatter with one class entry deleted reddens and names the class
@@ -3606,6 +3609,9 @@ case "$verb" in
   unblock)
     f="$STUB/cards/$1.json"
     jq '.task.status = "ready"' "$f" > "$f.new" && mv "$f.new" "$f";;
+  assign)
+    f="$STUB/cards/$1.json"
+    jq --arg a "$2" '.task.assignee = (if $a == "none" then null else $a end)' "$f" > "$f.new" && mv "$f.new" "$f";;
   *) exit 0;;
 esac
 LHERMES
@@ -3973,8 +3979,20 @@ with kbc.connect_closing() as c:
     { [ "$lho_rc" = 0 ] && [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-verifier ] \
       && [ "$(grep -oE '(unblock|request-review) t_lane' "$lstub/hermes.log" | awk '{ print $1 }' | tr '\n' ' ')" = "unblock request-review " ]; } \
       || lho_detail="$lho_detail human-chunk-not-handed-off(rc=$lho_rc,$(tail -1 "$lroot/lho.out"))"
+    # Epic P21: the card as board-bootstrap.sh REALLY leaves it — blocked and
+    # UNASSIGNED, the sentinel taken back off. The kernel records the assignee at
+    # request-review as the implementer a bounce returns to, and refuses
+    # request-changes when there is none, so the sentinel goes on FIRST — before
+    # the unblock, so the card is never ready with nobody on it.
+    _lsh_fixture handoff
+    jq '.task.status = "blocked" | .task.assignee = null' "$lstub/cards/t_lane.json" > "$lstub/t.json" \
+      && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
+    lho_rc="$(_lho HERMES_KANBAN_TASK= HERMES_KANBAN_RUN_ID= "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
+    { [ "$lho_rc" = 0 ] && [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-verifier ] \
+      && [ "$(grep -oE '(assign t_lane forge-operator-handoff|unblock t_lane|request-review t_lane)' "$lstub/hermes.log" | awk '{ print $1 }' | tr '\n' ' ')" = "assign unblock request-review " ]; } \
+      || lho_detail="$lho_detail unassigned-human-chunk-not-given-the-sentinel-first(rc=$lho_rc,$(grep -oE '(assign|unblock|request-review) t_lane[^ ]*( [^ ]+)?' "$lstub/hermes.log" | tr '\n' ';'))"
     if [ -z "$lho_detail" ]; then
-      ok "lane-handoff-is-fail-closed (an invalid envelope never transitions; a kernel claiming success is read back; a blocked human-tier card is unblocked, then handed off)"
+      ok "lane-handoff-is-fail-closed (an invalid envelope never transitions; a kernel claiming success is read back; a blocked human-tier card is unblocked, then handed off; an unassigned one is given the sentinel first)"
     else
       bad "lane-handoff-is-fail-closed" "lane-handoff.sh must validate first, read the end state back, and unpark a human-tier card —$lho_detail"
     fi
@@ -8424,6 +8442,7 @@ MCCGH
              a-red-ci-pr-never-merges bounce-returns-the-same-card \
              bounce-budget-becomes-an-exception a-hold-is-never-triage \
              hold-kind-mutation-is-caught disagree-path-parks-before-it-unblocks \
+             a-human-chunk-can-be-bounced \
              merge-watcher-completes-a-merged-hold merged-tree-uses-the-prs-base \
              merge-mode-survives-a-failed-completion merge-watcher-reports-once; do
       skip "$c" "hermes (and its venv python) not installed"
@@ -8956,6 +8975,71 @@ VWRAP
       && ok "disagree-path-parks-before-it-unblocks (the park precedes the unblock in the card's events, a dispatch pass in the window spawns nothing, the implementer is restored, the reason lands, and a card nobody holds is refused)" \
       || bad "disagree-path-parks-before-it-unblocks" \
           "bounce.sh must park on the sentinel, survive a dispatcher pass, restore the implementer and refuse a card nobody is holding —$vdetail"
+
+    # ---- a human-tier chunk can be bounced (epic P21) ---------------------
+    # The card as board-bootstrap.sh leaves an interactive chunk: created on the
+    # sentinel, held with the interactive hold (`--kind needs_input`), the
+    # sentinel taken back off. Measured 2026-10-02 on this kernel: handed off
+    # from there, `request-changes` refuses ("review handoff has no valid
+    # implementer provenance"), because the kernel returns a bounce to the
+    # assignee recorded at request-review and there was none. The verifier then
+    # strands the card as `other: handoff-integrity`. And `bounce.sh` exits 1 on
+    # a held human card even when it lands in the right place. So: the REAL
+    # lane-handoff.sh, prejudge-review.sh and bounce.sh, end to end, on the card
+    # the bootstrap really makes.
+    vdetail=""
+    rm -rf "$vhome" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/merged" "$vbin/closed" \
+           "$vbin/base" "$vbin/state-down"
+    mkdir -p "$vhome"
+    jq -r '.headRefOid' "$REPO_ROOT/$prs/pr-9/pr.json" > "$vbin/head"
+    HERMES_HOME="$vhome" hermes kanban boards create vlab >/dev/null 2>&1
+    vP="$(_v create "CHUNK-5: a human chunk" --assignee forge-operator-handoff --json 2>/dev/null | jq -r '.id')"
+    _v block --kind needs_input "$vP" \
+      "$(bash -c '. "$1" && printf %s "$INTERACTIVE_HOLD_REASON"' _ "$REPO_ROOT/scripts/decision-message.sh")" >/dev/null 2>&1
+    _v assign "$vP" none >/dev/null 2>&1
+    [ "$(_vst "$vP")" = blocked/- ] || vdetail="$vdetail not-bootstrap-shaped($(_vst "$vP"))"
+    _vhand() {  # the operator's handoff, from outside any worker
+      env PATH="$vbin:$PATH" HERMES_HOME="$vhome" HERMES_KANBAN_TASK= HERMES_KANBAN_RUN_ID= \
+        "$REPO_ROOT/scripts/lane-handoff.sh" "$vP" --board vlab --summary "CHUNK-5, by hand" \
+        --metadata "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json" > "$vbin/hand.out" 2>&1
+      echo $?
+    }
+    vrc="$(_vhand)"
+    { [ "$vrc" = 0 ] && [ "$(_vst "$vP")" = review/forge-verifier ]; } \
+      || vdetail="$vdetail first-handoff(rc=$vrc,$(_vst "$vP"),$(tail -1 "$vbin/hand.out"))"
+    # 1. The verifier bounces it — before the scorer, on a red union — and the
+    #    card goes back to the operator, on the sentinel nothing spawns.
+    vrc="$(_vrun VF_MERGED_TREE=check-failed)"
+    { [ "$vrc" = 0 ] && jq -e '.action == "bounce"' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail not-bounced(rc=$vrc,$(jq -r '.action + " " + (.reason // "")' "$vbin/out.json" 2>/dev/null | head -c 160))"
+    [ "$(_vst "$vP")" = ready/forge-operator-handoff ] || vdetail="$vdetail bounce-landed($(_vst "$vP"))"
+    _v show "$vP" --json | jq -e 'any(.events[]; .kind == "changes_requested")' >/dev/null 2>&1 \
+      || vdetail="$vdetail no-changes_requested-event"
+    # 2. The digest says so: waiting on you, decision-first, not in flight.
+    vout="$(HERMES_HOME="$vhome" "$REPO_ROOT/scripts/digest.sh" --board vlab 2>/dev/null)"
+    { printf '%s' "$vout" | grep -q "^— $vP · CHUNK-5" \
+      && printf '%s' "$vout" | grep -q '^Waiting on you (1)$' \
+      && printf '%s' "$vout" | grep -q '^Decision needed: ' \
+      && printf '%s' "$vout" | grep -q '^In flight: nothing$'; } \
+      || vdetail="$vdetail digest-did-not-list-it($(printf '%s' "$vout" | grep -E '^(In flight|Waiting|— )' | tr '\n' ' '))"
+    # 3. Fixed and handed off again, from `ready`; this time it is held.
+    vrc="$(_vhand)"
+    { [ "$vrc" = 0 ] && [ "$(_vst "$vP")" = review/forge-verifier ]; } \
+      || vdetail="$vdetail second-handoff(rc=$vrc,$(_vst "$vP"),$(tail -1 "$vbin/hand.out"))"
+    vrc="$(_vrun)"
+    { [ "$vrc" = 0 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
+      || vdetail="$vdetail not-held(rc=$vrc,$(_vst "$vP"))"
+    # 4. The operator disagrees: bounce.sh returns it to the operator and says so.
+    vout="$(env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" \
+             "operator: notes skip the token rule" --board vlab 2>&1)"; vrc=$?
+    { [ "$vrc" = 0 ] && [ "$(_vst "$vP")" = ready/forge-operator-handoff ] \
+      && printf '%s' "$vout" | grep -q "back with the operator"; } \
+      || vdetail="$vdetail bounce-sh(rc=$vrc,$(_vst "$vP"),$vout)"
+    [ -z "$vdetail" ] \
+      && ok "a-human-chunk-can-be-bounced (the bootstrap's card, handed off by hand: the verifier's bounce lands on the sentinel and the digest lists it as waiting; handed off again it is held; bounce.sh returns it to the operator)" \
+      || bad "a-human-chunk-can-be-bounced" \
+          "a human-tier chunk must survive the whole review loop on the real kernel —$vdetail"
 
     # ---- the merge-watcher ------------------------------------------------
     # The other half of recommend-only: something has to notice the operator's
@@ -12819,7 +12903,52 @@ run_digest_group() {
     bad "an-interactive-chunk-speaks-only-when-its-parents-are-done" \
         "a held interactive chunk must be absent while either parent is open and listed once both are done or archived, with all four controls listed throughout; hold '$hold', open: $(printf '%s' "$h_open" | grep -E '^(Waiting|— )' | tr '\n' ' '), done: $(printf '%s' "$h_done" | grep -E '^(Waiting|— )' | tr '\n' ' ')"
   fi
+  # Epic P16: once it speaks, the hold must say what it is and what to do. It
+  # rendered as `other: … Risk: unknown` until S6c — the one held card in run A
+  # that is the operator's own work, described as a mystery.
+  local h_msg
+  h_msg="$(printf '%s\n' "$h_done" | awk '/^— t_h3 /{f=1; next} f && /^— /{exit} f')"
+  if printf '%s' "$h_msg" | grep -q '^interactive: ' \
+     && printf '%s' "$h_msg" | grep -q '^Decision needed: ' \
+     && printf '%s' "$h_msg" | grep -q '^Reply: .*/start-chunk' \
+     && ! printf '%s' "$h_msg" | grep -q '^other: ' \
+     && ! printf '%s' "$h_msg" | grep -qi 'risk: unknown'; then
+    ok "an-interactive-hold-is-decision-first"
+  else
+    bad "an-interactive-hold-is-decision-first" \
+        "a listed interactive chunk must render as what it is, the decision and the reply — never as other; got: $(printf '%s' "$h_msg" | tr '\n' '|' | head -c 400)"
+  fi
   rm -rf "$kb/humans"
+
+  # Epic P21: a human chunk the verifier (or the operator, through bounce.sh)
+  # sent back lands `ready` on the non-spawnable sentinel. Nothing will pick it
+  # up but the operator, so it is waiting on them — and it is not "in flight",
+  # which is what a ready card means everywhere else. The control is a ready
+  # lane card, which stays in flight and is not waiting on anyone.
+  mkdir -p "$kb/returned"
+  sqlite3 "$kb/returned/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  sqlite3 "$kb/returned/kanban.db" "DELETE FROM tasks; DELETE FROM task_events; DELETE FROM task_runs;
+    INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+      ('t_r1', 'CHUNK-5: sent back',   'forge-operator-handoff', 'ready', 1785200000),
+      ('t_r2', 'CHUNK-4: a lane chunk', 'forge-codex-lane',       'ready', 1785200000);
+    INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+      ('t_r1', 'changes_requested', json_object('reason', 'https://example.invalid/p/pull/9' || char(10) || char(10) || 'merged tree: 5 tests fail on the union', 'implementer', 'forge-operator-handoff', 'reviewer', 'forge-verifier', 'status', 'ready'), 1785200000);" >/dev/null 2>&1
+  local r_out r_msg
+  r_out="$(_dg --board returned --day 2026-07-28 2>/dev/null)"
+  r_msg="$(printf '%s\n' "$r_out" | awk '/^— t_r1 /{f=1; next} f && /^— /{exit} f')"
+  if printf '%s' "$r_out" | grep -q '^In flight: 1 ready$' \
+     && printf '%s' "$r_out" | grep -q '^Waiting on you (1)$' \
+     && printf '%s' "$r_out" | grep -q '^— t_r1 · CHUNK-5' \
+     && ! printf '%s' "$r_out" | grep -q '^— t_r2 ' \
+     && printf '%s' "$r_msg" | grep -q '^returned: ' \
+     && printf '%s' "$r_msg" | grep -q '^Decision needed: fix it' \
+     && printf '%s' "$r_msg" | grep -q '^Reply: .*show t_r1'; then
+    ok "a-returned-human-chunk-waits-on-you"
+  else
+    bad "a-returned-human-chunk-waits-on-you" \
+        "a human chunk sent back (ready, on forge-operator-handoff) must be waiting on the operator, decision-first and out of flight, while a ready lane card stays in flight; got: $(printf '%s' "$r_out" | grep -vE '^(Landed|Spend|$)' | tr '\n' '|' | head -c 500)"
+  fi
+  rm -rf "$kb/returned"
 
   if detail="$(decision_classes_diagnostic scripts/decision-message.sh)"; then
     ok "every-block-class-has-a-decision ($(bash -c '. scripts/decision-message.sh && decision_classes' | grep -c .) classes)"

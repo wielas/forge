@@ -35,7 +35,9 @@
 #             `ready`, or `blocked` (board-bootstrap parks human chunks there);
 #             a blocked card is unblocked and handed off back-to-back, and the
 #             END STATE is re-read because a dispatcher tick can land between
-#             the two writes.
+#             the two writes. An unassigned card is first given the
+#             non-spawnable sentinel `forge-operator-handoff`, so a bounce has
+#             an implementer to return to (epic P21).
 #
 # Usage: lane-handoff.sh <task-id> --metadata <file> --summary <text>
 #                        [--reviewer <profile>] [--board <slug>]
@@ -89,6 +91,20 @@ IFS=$'\t' read -r status assignee < <(status_of)
 
 worker=0
 [ "${HERMES_KANBAN_TASK:-}" = "$TASK" ] && [ -n "${HERMES_KANBAN_RUN_ID:-}" ] && worker=1
+# A HUMAN-TIER CARD NEEDS AN IMPLEMENTER ON RECORD (epic P21). The kernel returns
+# a bounce to the assignee recorded at request-review, and refuses
+# `request-changes` when there was none ("review handoff has no valid
+# implementer provenance", measured on 0.21.5) — and board-bootstrap.sh takes
+# the sentinel back off an interactive card, so an operator's handoff starts
+# unassigned. The verifier then strands the card as `handoff-integrity`. So the
+# non-spawnable sentinel goes on first: a bounce lands the card `ready` on it,
+# where nothing spawns it and the digest lists it as waiting on the operator.
+# BEFORE the unblock, so the card is never `ready` with nobody on it.
+SENTINEL="${FORGE_HANDOFF_SENTINEL:-forge-operator-handoff}"
+if [ "$worker" = 0 ] && [ -z "${assignee:-}" ]; then
+  kanban assign "$TASK" "$SENTINEL" >/dev/null 2>&1 \
+    || refuse "other: card $TASK has no implementer on record and could not be given $SENTINEL"
+fi
 if [ "$worker" = 0 ] && [ "$status" = blocked ]; then
   kanban unblock "$TASK" >/dev/null 2>&1 || refuse "other: card $TASK is blocked and could not be unblocked for handoff"
 fi
