@@ -40,7 +40,19 @@ decision_message() {
 # while a parent is still open (epic P13). One string, so the two cannot drift;
 # `make verify` (`bootstrap/interactive-hold-is-the-reason-the-digest-skips`)
 # compares what the bootstrap really writes with this.
-INTERACTIVE_HOLD_REASON="interactive chunk: human implementation required"
+#
+# It is decision-first (epic P16): until S6c it was the one line
+# "interactive chunk: human implementation required", which the digest could
+# only render as `other`, risk unknown, for the one held card that is the
+# operator's own work. It names no card: it must stay byte-identical on every
+# card for the digest's match, and the digest prints the card's id and title
+# directly above it.
+INTERACTIVE_HOLD_REASON="$(decision_message interactive \
+  "this chunk is yours to implement; no lane will pick it up" \
+  "the roadmap routed it to a human (Lane: claude-interactive); its children and its milestone gate wait until its PR is merged" \
+  "implement it now, or re-plan it for a lane" \
+  "nothing is built until you start it, and nothing merges before the verifier has reviewed it" \
+  "\`/start-chunk <its CHUNK id>\` in the product checkout; \`/end-chunk\` hands it to the verifier")"
 
 # $1=class -> four lines on stdout: means, decision, risk, reply. The reply may
 # name `<id>` and `<board>`; the caller substitutes them. Exit 1 for a class

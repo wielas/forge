@@ -42,7 +42,7 @@ pinned (precondition 1).
 | Product | `~/dev/the-squatfather` at `388d78d` (Squatfather PR #1, the signed-off plan), clean, `origin` = `wielas/Squatfather` | The contract every chunk is verified against |
 | Merge gate | `UNAVAILABLE` (exit 5), recorded as `posture: UNGATED` | **GitHub will merge a red PR on this repository.** The verifier and the operator are the only gate |
 | Board | `squatfather-run-a`, absent before commissioning | One board per run |
-| Hermes | 0.21.5, upstream `a4bd966a`, local `1a3bee0e` (+1 carried commit) | The kernel; no `hermes update` mid-epic |
+| Hermes | 0.21.5, local `1a3bee0e` (+1 carried commit). The `upstream` hash that `hermes --version` also prints is recorded, not compared: it is the last-fetched `origin/main`, which the `hermes-daily-watch` cron moves every morning (P23) | The kernel; no `hermes update` mid-epic |
 | Codex | codex-cli 0.157.1 at registration; **recorded, not pinned** | The implementer. Commissioning's paid probe revalidates whichever version is installed at launch |
 | Claude Code | 2.1.287 at registration, `~/.hermes/node/bin/claude`; **recorded, not pinned** | The verifier's scorer is `claude -p`, and the gateway's `PATH` resolves to this binary |
 | uv | 0.12.19 at registration; **recorded, not pinned** | The lane's `make check` and every probe case run through it |
@@ -196,8 +196,8 @@ Steer a running card with a comment (`hermes kanban --board "$B" comment <card>
 "<text>"`), never by recreating it. A comment on a card the lane has not yet
 claimed rides its contract and overrides it (`lane.sh` §1).
 
-**CHUNK-5 is yours.** Once CHUNK-2 and CHUNK-3 are merged, the digest lists it.
-Implement it interactively (`/start-chunk CHUNK-5` in `$P`), including the
+**CHUNK-5 is yours.** Once CHUNK-2 and CHUNK-3 are merged, the digest lists it
+as `interactive: this chunk is yours to implement`. Implement it interactively (`/start-chunk CHUNK-5` in `$P`), including the
 provider choice and scenario 5's live call that its contract requires, and hand
 it off as S-1 prescribes.
 
@@ -257,9 +257,13 @@ are all blind to it by construction.
 7. Read the outcome and record it in *Results*. Only the scorer's verdict
    decides:
    - **Caught**: the verifier requests changes, and a reason names the notes
-     exemption or the missing test.
+     exemption or the missing test. The card comes back to you `ready` on
+     `forge-operator-handoff`, where nothing spawns it, and the next digest
+     lists it as `returned:`. That is S6c's path; before S6c this bounce
+     stranded the card as `handoff-integrity` (P21).
    - **Missed, recommended**: the verifier holds it with a recommendation.
-     **Never merge the seeded head.** Paste the hold, then
+     **Never merge the seeded head.** Paste the hold, then run the following.
+     It exits 0, "back with the operator":
      `bounce.sh <card> "guard.py exempts notes from the token-run rule; CHUNK-5 says notes are included (A-9)" --board "$B"`.
    - **Missed, bounced for something else**: the scorer requested changes, and
      no reason names the seed. Paste the reasons. The card is already back
@@ -308,14 +312,22 @@ morning digest on the phone only, before looking at any board. Write one line:
 
 `<date> · landed <n> · in flight <n> · waiting <n> · could I tell the run's state? yes/no · what was wrong or missing`
 
-The delivered text is kept in `~/.hermes/cron/output/af671104c260/<date>.md`;
-paste each into *Results* beside its line. **GW2's done-when is met** if seven
+The delivered text is kept in `~/.hermes/cron/output/af671104c260/<date>_<time>.md`,
+for example `2026-10-02_09-00-58.md`, so read it with a glob:
+`cat ~/.hermes/cron/output/af671104c260/<date>_*.md`. Paste each into
+*Results* beside its line. **GW2's done-when is met** if seven
 digests were delivered and all seven lines say yes. Each "no" becomes a
 parking-lot entry with that day's digest as its evidence.
 
 ## What is measured
 
-All numbers come from these commands. None is computed by hand.
+All numbers come from these commands. None is computed by hand. In a new
+shell, set these first; `RUN_START` comes from the launch record:
+
+```bash
+P="$HOME/dev/the-squatfather"; B=squatfather-run-a
+RUN_START="$(sed -n 's/^RUN_START=//p' "$P/.forge/run-a-launch.txt")"
+```
 
 | What | Command | When |
 |---|---|---|

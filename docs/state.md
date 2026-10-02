@@ -282,6 +282,14 @@ met only in part: `bounce.sh` provably parks on the non-spawnable sentinel befor
 it unblocks, and a real `hermes kanban dispatch` pass runs in that window, but in
 an isolated `HERMES_HOME` nothing is spawnable, and the control without the park
 ends in the same place — so the race itself is untested until run A.
+Since epic S6c (P21), a human-tier chunk handed off from outside a worker can be
+bounced too. `lane-handoff.sh` gives an unassigned card the non-spawnable
+`forge-operator-handoff` first, so the kernel records an implementer. A bounce
+then lands the card `ready` on that sentinel, and the digest lists it as
+waiting on the operator. `bounce.sh` reports that end state as success.
+`verifier/a-human-chunk-can-be-bounced` runs the loop on the installed kernel,
+using the card exactly as the bootstrap leaves it. No live human chunk has been
+through it.
 **What that does NOT prove:** no dispatcher has ever
   spawned `forge-verifier` (the review claim is made through the kernel's own
   `claim_review_task`, and the reviewer model has never run this protocol), no

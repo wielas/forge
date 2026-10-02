@@ -678,7 +678,7 @@ closes.
 | S5b | MS2's runner and its redglass replay *(split from S5; MS2's "failures become chunk cards" moved to S8 at S5b's opening)*. *Done when (**proposed at S5b's opening — the row had none**): `scripts/probe-run.sh <project> GATE-<m>` runs a gate's frozen v1 probe from the project root, with no shell, and keeps three outcomes apart — 0 every case holds, 1 a finding named by case (timeouts included), 2 no verdict; a probe or input the manifest does not hold, and a command that cannot start, get no verdict; v1 has one definition, which both scripts read; the gate card names the command; MS2's replay meets S5's three conditions; every new case is seen red against its defect; and v1 is bumped only if the replay shows it wrong. **Closed 2026-10-01: met.** `scripts/forge_probe.py` holds v1 once, and `acceptance-freeze` imports it; the `probe/` group (16 cases) and `bootstrap/gate-names-its-probe-runner` prove the rest. A case ends when its command exits, its output going to files; the last line names what failed and the commit, and is paste-safe. v1 now refuses a symlink in an input (a freeze bug fix) and expectations that cannot discriminate (a deliberate tightening); no frozen plan changed, so v1 is not bumped. The replay's probe is a synthetic one M4's gate should have carried, committed once by the operator to a private local redglass branch and pinned here by SHA. It flags `f32abeb` (all three adversarial corpora advance; the control advances too) and clears `713f1eb` (5 of 5). Its third condition is met in purpose: each corpus is stored in the newer tree's form and projected onto the tree's own schema, validated clean before the gates run. 28 mutants each reddened their case, as did the old hold text, the two replay trees swapped, and the pre-review pipe-based runner on `a-case-ends-when-its-command-exits`. `make verify` went from 488 / 0 / 11 to 505 / 0 / 11. Two independent reviews found four exit-code or hang defects, two holes in the freeze, and smaller issues; all were fixed before merge, except two additions for S8 (P20). Discoveries: P18, P19, P20.* | Run A's flip criterion counts what the milestone probe finds, so something must execute the probe S5 declares before S7 | done | #83 |
 | S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is `wielas/Squatfather`, private, so `merge-gate.sh` reports `UNAVAILABLE` and commissioning records `posture: UNGATED`. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's. **Closed 2026-10-01: met.** Scope, architect and roadmap were each signed off by the operator. Read from the runtime at `78f6f1f`: `plan-check` scope CLEAR (6 pass) and architect CLEAR (4 pass), with two spikes, `garmin-lib` proven and `garmin-live` disproven (a 429 on one login attempt); `roadmap-check` CLEAR (14 pass, 0 warn); `acceptance-freeze` 30 contracts, byte-identical to the committed manifest. The plan is 3 milestones and 10 chunks (5 / 3 / 2) against a budget of 3 and 10. The probes hold 2 realistic + 3 adversarial cases (M1), 2 + 2 (M2) and 2 + 1 (M3). There is one root, CHUNK-1. M1's one human chunk, CHUNK-5, has parents, so P13 is promoted to row S6b. `GATE-M1` is also held on a live Garmin spike the operator runs during M1. The plan reaches `main` through Squatfather PR #1.* | Scope → architect with spikes → roadmap, three milestones | done | #81 |
 | S6b | P13 *(promoted at S6's close)*. *Done when (**proposed at S6b's opening — neither the row nor P13 had one**): the digest's waiting list skips a `blocked` card whose last block reason is the bootstrap's interactive hold while any parent is not `done` or `archived`, and lists it as before once all are; that reason is one string both scripts source, and what the bootstrap really writes is checked against it; `digest/fixture-message-exact`'s expected text is unchanged; and every new case has been seen red against its defect. **Closed 2026-10-01: met.** Measured first on Hermes 0.21.5 in an isolated `HERMES_HOME`: the hold survives `link`, and `main`'s digest listed the chunk while its only parent was `ready`. Three cases, all red before the fix: `digest/an-interactive-chunk-speaks-only-when-its-parents-are-done` (CHUNK-5's two parents, with four controls), `bootstrap/interactive-hold-is-the-reason-the-digest-skips`, and the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. Eight mutants each reddened their case. `make verify` went from 486 / 0 / 10 to 488 / 0 / 11; the extra skip is the opt-in case. One discovery, P16.* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | done | #82 |
-| S6c | P16, P21 *(promoted at S7's opening)*. *Done when (**proposed at S7's opening**): a human-tier chunk handed off through `lane-handoff.sh` can be bounced. The kernel records an implementer, so `request-changes` lands the card `ready` on the non-spawnable `forge-operator-handoff`. `bounce.sh` accepts that sentinel as a human chunk's implementer. A bounced human chunk is listed under "waiting on you". Its interactive hold renders decision-first rather than as `other`. Every new case is seen red against its defect, and the human-handoff bounce runs on the installed kernel.* | Run A's seeded defect goes through CHUNK-5, the human chunk. Today any verifier bounce of a human chunk strands it as `other: handoff-integrity`, and its hold reads "risk unknown" | planned | |
+| S6c | P16, P21 *(promoted at S7's opening)*. *Done when (**proposed at S7's opening**): a human-tier chunk handed off through `lane-handoff.sh` can be bounced. The kernel records an implementer, so `request-changes` lands the card `ready` on the non-spawnable `forge-operator-handoff`. `bounce.sh` accepts that sentinel as a human chunk's implementer. A bounced human chunk is listed under "waiting on you". Its interactive hold renders decision-first rather than as `other`. Every new case is seen red against its defect, and the human-handoff bounce runs on the installed kernel. **Closed 2026-10-02: met.** `lane-handoff.sh` gives an unassigned card `forge-operator-handoff` before it unblocks it, so the kernel records an implementer. `bounce.sh` accepts the sentinel as a human chunk's implementer and reports "back with the operator". The digest lists a returned human chunk under "waiting on you" (`returned:`), not in flight. `INTERACTIVE_HOLD_REASON` is a decision-first `interactive:` message. Three new cases, and `lane/lane-handoff-is-fail-closed` widened: `verifier/a-human-chunk-can-be-bounced` runs the whole loop on the installed kernel in an isolated `HERMES_HOME`, with the real scripts and the card the bootstrap makes; `digest/an-interactive-hold-is-decision-first`; `digest/a-returned-human-chunk-waits-on-you`. Six mutants, one per fix, each reddened exactly the cases it targets. With the sentinel left off, the real-kernel case fails with P21's own `handoff-integrity` refusal. The opt-in `bootstrap --with-hermes` is 16 / 0 / 0 with the new hold. `make verify` went from 506 / 0 / 11 (`main` @ `5989f1c`) to 509 / 0 / 11. Folded in at the opening: two `docs/run-a.md` defects found by #85's review. One discovery, P23, folded in at the close as a one-line `docs/run-a.md` fix.* | Run A's seeded defect goes through CHUNK-5, the human chunk. Today any verifier bounce of a human chunk strands it as `other: handoff-integrity`, and its hold reads "risk unknown" | done | #86 |
 | S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)*. *Opened 2026-10-02. The protocol is `docs/run-a.md`. This row's first PR registers it before launch, and a second PR adds the results at the end of M1. That departs from "one session, one PR" by **the operator's decision at the opening**: the run spans days, and S6c must see its row on `main`. The protocol is frozen at `RUN_START`, as the launch record's `FORGE_SHA`, so S6c and S3b may still edit it. Preconditions: S6c and S3b (#84, rebased) merge and deploy before `RUN_START`. Decided at the opening, before launch:*<br>*– The seeded defect is S-1, which the operator plants in CHUNK-5. Only the scorer's verdict decides whether it was caught. A gate or merged-tree bounce unrelated to the seed voids the attempt.*<br>*– A reporting mutation probe's "would bounce" is not a bounce. S3b defers two things to this row: the probe's precision, measured from the holds, and the operator's decision on its switch at M1's checkpoint. Both read `docs/run-a.md`'s list of each recommended PR's probe verdict beside the operator's judgement of it.*<br>*– FL4's clause is met by drill D-1 on CHUNK-2, declared in advance and excluded from the flip count.*<br>*– Claude Code and Codex are not frozen; they stay current. Run A records the versions it ran on, and a version that moves mid-run is recorded rather than a stop. That amends* Hold still during the epic*. Hermes alone stays held.*<br>*– `GATE-M1` is not completed in run A.*<br>*Done when (**proposed at S7's opening — the row had none**): `docs/run-a.md` is executed to its end state. CHUNK-1 to CHUNK-5 are merged, each on a green PR, and their cards are done. `GATE-M1` has been probed and is still held. S-1 and D-1 are recorded, and seven digests judged. Its* Results *hold only pasted output, and the flip verdict is recorded clause by clause. Baseline at the opening (`main` @ `affc967`): 505 / 0 / 11.* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | in progress — protocol registered, run not started | #85 (registration) |
 | S8 | MS3, MS4, MS5, GW3, WL1; MS2's "failures become chunk cards" *(moved from S5b at its opening)* | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
@@ -1104,7 +1104,14 @@ got nothing. The fix would build the interactive hold with `decision_message`,
 as the gate's is built. That changes `INTERACTIVE_HOLD_REASON`, and with it
 what the digest matches, but that is one string in one place now. In run A
 this is CHUNK-5's message once CHUNK-2 and CHUNK-3 merge. Triage with the next
-GW1 change, or before run A reaches CHUNK-5.
+GW1 change, or before run A reaches CHUNK-5. *Fixed in S6c.
+`INTERACTIVE_HOLD_REASON` is now a decision-first message,
+`interactive: this chunk is yours to implement; no lane will pick it up`,
+whose reply is `/start-chunk`. It names no card, so it stays byte-identical
+on every card, and the digest's exact match still holds. On the installed
+kernel, the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`
+passes with the multi-line hold. Executed by
+`digest/an-interactive-hold-is-decision-first`.*
 
 *Triaged at S5b's opening: P3, P7, P9, P10 and P14 stay where S6b left them.
 S5b adds a runner and changes only the words of the gate's hold, which none of
@@ -1186,7 +1193,19 @@ Both times the card ends `ready/forge-operator-handoff`, which is the right
 place for a human chunk, and the script reports it as a failure (lines 83–93).
 `lane/lane-handoff-is-fail-closed` covers the operator path against stubs
 only. *Triaged at S7's opening:
-promoted to row S6c, with P16.*
+promoted to row S6c, with P16.* *Fixed in S6c, in three places:
+- `lane-handoff.sh` gives an unassigned card the sentinel before it unblocks
+  it, so the kernel records an implementer and a bounce lands the card on
+  `ready/forge-operator-handoff`.
+- `bounce.sh` accepts the sentinel as a human chunk's implementer, and reports
+  "back with the operator".
+- The digest lists such a card under "waiting on you" (`returned:`), and no
+  longer counts it in flight.
+
+`verifier/a-human-chunk-can-be-bounced` executes the whole loop on the
+installed kernel with the real scripts: the bootstrap's card, a bounce, the
+digest, a second handoff, a hold, and `bounce.sh`. Before the fix it failed
+with this exact `handoff-integrity` refusal.*
 
 **P22 (S7 opening). The cron step that `digest.sh` and `merge-watcher.sh`
 document cannot be done.** Both headers tell the operator to symlink the script
@@ -1218,6 +1237,46 @@ either header gets a refusal. Triage with the next change to either script.
 - *P11 and P12 stay with S13.*
 - *P22 is new and waits for the next change to either script. S6c's opening
   decides whether S6c, which touches the digest, takes it.*
+
+*Triaged at S6c's opening (2026-10-02):*
+- *P16 and P21 are S6c's items.*
+- *The review that merged S7's registration (#85) found two defects in
+  `docs/run-a.md`. Both are folded in here, because the protocol is open to
+  edits until `RUN_START` and S6c rewrites its S-1 steps anyway:*
+  - *the delivered digests are named `<date>_<time>.md`, not `<date>.md`;*
+  - *`$RUN_START` was used as a shell variable that nothing set.*
+- *P22 stays open. S6c touches `digest.sh` but not `merge-watcher.sh`, and
+  fixing one header would leave the two disagreeing.*
+- *Everything else stays where S7's opening left it.*
+
+**P23 (S6c). Run A's *Inputs* registers a Hermes hash that moves every
+morning without an update.** `hermes --version` prints `upstream <sha>`, and
+that sha is the checkout's last-fetched `origin/main`, not what is installed.
+The `hermes-daily-watch` cron (`30 8 * * *`) fetches it every morning:
+`~/.hermes/scripts/hermes-watch.sh` runs `git fetch origin` (line 111). Read
+on 2026-10-02:
+
+```
+$ hermes --version
+Hermes Agent v0.21.5 (2026.9.24) · upstream 00373b53 · local 1a3bee0e (+1 carried commit)
+$ git -C ~/.hermes/hermes-agent reflog show origin/main --date=iso -3
+00373b5376 refs/remotes/origin/main@{2026-10-02 08:31:08 +0200}: fetch origin: fast-forward
+a4bd966aee refs/remotes/origin/main@{2026-10-01 08:31:11 +0200}: fetch origin: fast-forward
+f42f579cf8 refs/remotes/origin/main@{2026-09-30 08:32:18 +0200}: fetch origin: fast-forward
+```
+
+The installed tree has not moved: `HEAD` is still `1a3bee0e`, whose reflog
+last moved on 2026-09-24. `docs/run-a.md` registered `upstream a4bd966a`, and
+its *Inputs* say a difference at launch is a stop. Read literally, the operator
+stops run A over a fetch. Fix shape: the Hermes row compares
+`local 1a3bee0e (+1 carried commit)` only, and records `upstream` without
+comparing it. It is a one-line edit, and the protocol is open until `RUN_START`.
+Triage before `RUN_START`. *Folded into S6c at its close, because no session
+opens between S6c and `RUN_START` to triage it. S6c's opening folded in two
+`docs/run-a.md` defects on the same ground. The Hermes row now compares
+`local` only. Every other* Inputs *row read back unchanged on 2026-10-02: the
+driver pin, the product at `388d78d` (clean), both switches unset, the
+gateway's four values, and both crons.*
 
 ## Open questions
 
