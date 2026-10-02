@@ -1252,7 +1252,9 @@ either header gets a refusal. Triage with the next change to either script.
 **P23 (S6c). Run A's *Inputs* registers a Hermes hash that moves every
 morning without an update.** `hermes --version` prints `upstream <sha>`, and
 that sha is the checkout's last-fetched `origin/main`, not what is installed.
-Something fetches it daily at about 08:31. Read on 2026-10-02:
+The `hermes-daily-watch` cron (`30 8 * * *`) fetches it every morning:
+`~/.hermes/scripts/hermes-watch.sh` runs `git fetch origin` (line 111). Read
+on 2026-10-02:
 
 ```
 $ hermes --version
