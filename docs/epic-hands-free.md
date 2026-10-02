@@ -277,6 +277,65 @@ C21, C17, and C23's check that could not fail (#41 → #44). *Done when*
 recorded replays of C21 and C17 bounce, an assertion-free PR in the style of
 the July ladder's `t_624586d7` bounces, and redglass's all-3s PRs pass.
 
+*Evaluated at S3b, before writing one (a spike, measured on ladder-forge PR #6
+and redglass PRs #34 and #38).* **cosmic-ray 8.7** cannot see PR #6 at all:
+it has no string, call or return operator, so it generated no mutant for the
+line. It also edits the source in place (a killed run left a mutant in the
+tree) and ran #38 in 544 s. **mutmut 3.8** saw PR #6 and was the fastest (66 s
+on #38), because it runs only the tests that cover each mutant, in parallel.
+But it has no line filter — scoping to the diff needs a wrapper that maps
+generated functions back to lines and relies on an abort trick to generate
+without running — it copies `src/` and `tests/` into a 40 MB `mutants/` tree
+that tests reading other directories cannot run in, it would be one more
+pinned tool injected into the product's environment, and it reports a mutant
+no test covers as "no tests" rather than as a survivor. Under the spike's
+recommended wrapper, which skips those, that drops exactly C21's blocker (see
+below). So the probe is **hand-rolled** (`scripts/mutation-probe.py`, standard
+library only): native line scoping, a
+per-line verdict, a breadth-first budget, and it mutates in place in the
+disposable clone the merged-tree check already prepared, so every data file
+the tests read is present. What it gives up, measured: speed (the whole suite
+per mutant, sequentially — JobApp C21 took 300 s), and mutmut's
+`continue`/`break`, argument-removal and string-method operators.
+
+*S3b's status against that done-when: met in part, and amended (2026-10-01,
+on measurement and by the operator's decision at S3b's close).* The rule was
+fixed before any replay ran: a changed implementation line on which every
+mutant survived is a line no test observes. In the bullets below, "bounces"
+means the probe's verdict is `survived`. The verifier acts on that verdict only
+under the switch described after them. Replayed from the operator's local
+clones at the recorded SHAs (`verifier/mutation-probe-replays-the-recorded-prs`,
+opt-in):
+- **C21 bounces**, on 17 lines that include the lines behind tier 2's first
+  blocker: config reads that no test even executes.
+- **C17 bounces**, on 9 untested lines, but **not on tier 2's line**. Its
+  disabled-path message is pinned elsewhere by a prefix, which a deletion trips,
+  so the line is observed. How *strongly* it is
+  observed is a question for a reader, not this rule.
+- **The ladder's PR #6 bounces** on `label.py:6`, and its fixed head passes.
+  The gate's F14 floor already blocks that literal shape; the probe also sees
+  the variant the floor cannot (`verifier/mutation-probe-finds-unobserved-lines`).
+- **redglass's all-3s PRs do not pass: all six bounce**, on 98 lines.
+  - 12 are decorator flags whose change nothing can observe — noise.
+  - 18 are output identifiers that no test pins — minor.
+  - The rest are lines no test runs or checks. Among them are 24 validation
+    lines in chunk 8 that no test runs, a branch condition in chunk 11 that
+    nothing decides, and the chunk-5 clause tier 2 itself flagged as not
+    load-bearing. That is the fail-open class CHUNK-15.0 later exposed.
+
+No per-line rule that bounces C21 can pass these PRs, because C21's blocker
+lines are never executed either. So the last clause is amended: redglass's PRs
+replay to what was measured, with this triage, rather than to `pass`. And
+because a bounce is live even while approvals only recommend, **the probe ships
+reporting.** Its verdict and its lines go on every hold, never on the
+implementer's card, and it bounces only under the operator's
+`FORGE_MUTATION_PROBE_BOUNCE=1` (`verifier/mutation-probe-bounces-only-behind-its-switch`).
+Run A measures its precision from those holds, and switching it on is the
+operator's call at M1's checkpoint (carried in S7's row). So the first three
+clauses are met as the probe's verdicts, the verifier bounces on them only once
+switched on, and the redglass clause is not met but amended to what was
+measured.
+
 **FL6. Bounce budget → exception.** Two bounce rounds, then one decision-first
 exception to the operator. *Done when* (**proposed in S3 — this item had no
 done-when**) two `request-changes` rounds on one card are followed by a
@@ -670,7 +729,7 @@ closes.
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | done | #76 |
 | S2b | P6 *(promoted from the parking lot when S3 opened)* | Every bootstrap ended in FATAL on a correct write, so the one signal the operator reads after a deploy had to be ignored | done | #77 |
 | S3 | FL4, FL6 *(FL5 and FL8 split out at S3's opening)* | The verifier complete, but only recommending | done | #78 |
-| S3b | FL5 *(split from S3)* | The mutation probe is what caught JobApp C21; its replays have to be recovered from the boards first, which is its own half of the work | planned | |
+| S3b | FL5 *(split from S3)*. **Closed 2026-10-01: met in part — the first three clauses as the probe's verdicts, the last amended on measurement.** The replays were recovered from board snapshots, `gh` and the tier-2 transcripts. Only names and SHAs are committed (`scripts/fixtures/mutation-replays.tsv`), because JobApp and `wielas/vault` are private and this repository is public. The probe is hand-rolled after an evaluation of mutmut and cosmic-ray (FL5). Replayed, the probe's verdict on C21, C17 and the ladder's PR #6 is `survived`, and on PR #6's fix `pass`. It also returns `survived` on all six of redglass's all-3s PRs, mostly on lines no test runs or checks; FL5 holds the triage. So **by the operator's decision the probe ships reporting**. Its verdict goes on every hold, and the verifier *bounces* on it only under `FORGE_MUTATION_PROBE_BOUNCE=1` (`verifier/mutation-probe-bounces-only-behind-its-switch`). As shipped, nothing bounces on the probe; the deferrals are carried in S7's row. Five default cases were added (four offline, one on the installed kernel), plus one opt-in replay case, and each was seen red against its defect. Measured from a linked worktree, `make verify` went from 488 / 0 / 11 to 493 / 0 / 12; the extra skip is the opt-in replay case. Rebased on 2026-10-02 onto `main` @ `64c20f0` (after S5b, S7 and S6c), and re-measured from the main checkout: 509 / 0 / 11 to 514 / 0 / 12, the same five cases and one skip; S6c's `verifier/a-human-chunk-can-be-bounced` still passes through this PR's `prejudge-review.sh`. One discovery: P17. | The mutation probe is what caught JobApp C21; its replays have to be recovered from the boards first, which is its own half of the work | done | #84 |
 | S3c | FL8 *(split from S3)* | Nothing bills per token until EN1 configures a cheap implementer, so the cap has nothing to measure before then | planned | |
 | S4 | GW6, GW1, GW2 *(GW4 and WL3 split out at S4's opening; P4 and P10(3) folded in)* | Runs become observable: run A is measured by GW6's numbers, and the operator merges it from a phone off GW2's digest | done | #79 |
 | S4b | GW4, WL3 *(split from S4)*; P7 triaged with WL3 | Runs start with one command and the graph is visible — convenience, neither changes what run A measures | planned | |
@@ -679,7 +738,7 @@ closes.
 | S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is `wielas/Squatfather`, private, so `merge-gate.sh` reports `UNAVAILABLE` and commissioning records `posture: UNGATED`. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's. **Closed 2026-10-01: met.** Scope, architect and roadmap were each signed off by the operator. Read from the runtime at `78f6f1f`: `plan-check` scope CLEAR (6 pass) and architect CLEAR (4 pass), with two spikes, `garmin-lib` proven and `garmin-live` disproven (a 429 on one login attempt); `roadmap-check` CLEAR (14 pass, 0 warn); `acceptance-freeze` 30 contracts, byte-identical to the committed manifest. The plan is 3 milestones and 10 chunks (5 / 3 / 2) against a budget of 3 and 10. The probes hold 2 realistic + 3 adversarial cases (M1), 2 + 2 (M2) and 2 + 1 (M3). There is one root, CHUNK-1. M1's one human chunk, CHUNK-5, has parents, so P13 is promoted to row S6b. `GATE-M1` is also held on a live Garmin spike the operator runs during M1. The plan reaches `main` through Squatfather PR #1.* | Scope → architect with spikes → roadmap, three milestones | done | #81 |
 | S6b | P13 *(promoted at S6's close)*. *Done when (**proposed at S6b's opening — neither the row nor P13 had one**): the digest's waiting list skips a `blocked` card whose last block reason is the bootstrap's interactive hold while any parent is not `done` or `archived`, and lists it as before once all are; that reason is one string both scripts source, and what the bootstrap really writes is checked against it; `digest/fixture-message-exact`'s expected text is unchanged; and every new case has been seen red against its defect. **Closed 2026-10-01: met.** Measured first on Hermes 0.21.5 in an isolated `HERMES_HOME`: the hold survives `link`, and `main`'s digest listed the chunk while its only parent was `ready`. Three cases, all red before the fix: `digest/an-interactive-chunk-speaks-only-when-its-parents-are-done` (CHUNK-5's two parents, with four controls), `bootstrap/interactive-hold-is-the-reason-the-digest-skips`, and the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. Eight mutants each reddened their case. `make verify` went from 486 / 0 / 10 to 488 / 0 / 11; the extra skip is the opt-in case. One discovery, P16.* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | done | #82 |
 | S6c | P16, P21 *(promoted at S7's opening)*. *Done when (**proposed at S7's opening**): a human-tier chunk handed off through `lane-handoff.sh` can be bounced. The kernel records an implementer, so `request-changes` lands the card `ready` on the non-spawnable `forge-operator-handoff`. `bounce.sh` accepts that sentinel as a human chunk's implementer. A bounced human chunk is listed under "waiting on you". Its interactive hold renders decision-first rather than as `other`. Every new case is seen red against its defect, and the human-handoff bounce runs on the installed kernel. **Closed 2026-10-02: met.** `lane-handoff.sh` gives an unassigned card `forge-operator-handoff` before it unblocks it, so the kernel records an implementer. `bounce.sh` accepts the sentinel as a human chunk's implementer and reports "back with the operator". The digest lists a returned human chunk under "waiting on you" (`returned:`), not in flight. `INTERACTIVE_HOLD_REASON` is a decision-first `interactive:` message. Three new cases, and `lane/lane-handoff-is-fail-closed` widened: `verifier/a-human-chunk-can-be-bounced` runs the whole loop on the installed kernel in an isolated `HERMES_HOME`, with the real scripts and the card the bootstrap makes; `digest/an-interactive-hold-is-decision-first`; `digest/a-returned-human-chunk-waits-on-you`. Six mutants, one per fix, each reddened exactly the cases it targets. With the sentinel left off, the real-kernel case fails with P21's own `handoff-integrity` refusal. The opt-in `bootstrap --with-hermes` is 16 / 0 / 0 with the new hold. `make verify` went from 506 / 0 / 11 (`main` @ `5989f1c`) to 509 / 0 / 11. Folded in at the opening: two `docs/run-a.md` defects found by #85's review. One discovery, P23, folded in at the close as a one-line `docs/run-a.md` fix.* | Run A's seeded defect goes through CHUNK-5, the human chunk. Today any verifier bounce of a human chunk strands it as `other: handoff-integrity`, and its hold reads "risk unknown" | done | #86 |
-| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)*. *Opened 2026-10-02. The protocol is `docs/run-a.md`. This row's first PR registers it before launch, and a second PR adds the results at the end of M1. That departs from "one session, one PR" by **the operator's decision at the opening**: the run spans days, and S6c must see its row on `main`. The protocol is frozen at `RUN_START`, as the launch record's `FORGE_SHA`, so S6c and S3b may still edit it. Preconditions: S6c and S3b (#84, rebased) merge and deploy before `RUN_START`. Decided at the opening, before launch:*<br>*– The seeded defect is S-1, which the operator plants in CHUNK-5. Only the scorer's verdict decides whether it was caught. A gate or merged-tree bounce unrelated to the seed voids the attempt.*<br>*– A reporting mutation probe's "would bounce" is not a bounce. S3b defers two things to this row: the probe's precision, measured from the holds, and the operator's decision on its switch at M1's checkpoint. Both read `docs/run-a.md`'s list of each recommended PR's probe verdict beside the operator's judgement of it.*<br>*– FL4's clause is met by drill D-1 on CHUNK-2, declared in advance and excluded from the flip count.*<br>*– Claude Code and Codex are not frozen; they stay current. Run A records the versions it ran on, and a version that moves mid-run is recorded rather than a stop. That amends* Hold still during the epic*. Hermes alone stays held.*<br>*– `GATE-M1` is not completed in run A.*<br>*Done when (**proposed at S7's opening — the row had none**): `docs/run-a.md` is executed to its end state. CHUNK-1 to CHUNK-5 are merged, each on a green PR, and their cards are done. `GATE-M1` has been probed and is still held. S-1 and D-1 are recorded, and seven digests judged. Its* Results *hold only pasted output, and the flip verdict is recorded clause by clause. Baseline at the opening (`main` @ `affc967`): 505 / 0 / 11.* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | in progress — protocol registered, run not started | #85 (registration) |
+| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)*; FL5's precision and its switch *(deferred from S3b; decided below)*. *Opened 2026-10-02. The protocol is `docs/run-a.md`. This row's first PR registers it before launch, and a second PR adds the results at the end of M1. That departs from "one session, one PR" by **the operator's decision at the opening**: the run spans days, and S6c must see its row on `main`. The protocol is frozen at `RUN_START`, as the launch record's `FORGE_SHA`, so S6c and S3b may still edit it. Preconditions: S6c and S3b (#84, rebased) merge and deploy before `RUN_START`. Decided at the opening, before launch:*<br>*– The seeded defect is S-1, which the operator plants in CHUNK-5. Only the scorer's verdict decides whether it was caught. A gate or merged-tree bounce unrelated to the seed voids the attempt.*<br>*– A reporting mutation probe's "would bounce" is not a bounce. S3b defers two things to this row: the probe's precision, measured from the holds, and the operator's decision on its switch at M1's checkpoint. Both read `docs/run-a.md`'s list of each recommended PR's probe verdict beside the operator's judgement of it.*<br>*– FL4's clause is met by drill D-1 on CHUNK-2, declared in advance and excluded from the flip count.*<br>*– Claude Code and Codex are not frozen; they stay current. Run A records the versions it ran on, and a version that moves mid-run is recorded rather than a stop. That amends* Hold still during the epic*. Hermes alone stays held.*<br>*– `GATE-M1` is not completed in run A.*<br>*Done when (**proposed at S7's opening — the row had none**): `docs/run-a.md` is executed to its end state. CHUNK-1 to CHUNK-5 are merged, each on a green PR, and their cards are done. `GATE-M1` has been probed and is still held. S-1 and D-1 are recorded, and seven digests judged. Its* Results *hold only pasted output, and the flip verdict is recorded clause by clause. Baseline at the opening (`main` @ `affc967`): 505 / 0 / 11.* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | in progress — protocol registered, run not started | #85 (registration) |
 | S8 | MS3, MS4, MS5, GW3, WL1; MS2's "failures become chunk cards" *(moved from S5b at its opening)* | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
 | S10 | EN5, EN1, EN2 | Engine groundwork | planned | |
@@ -1112,6 +1171,28 @@ on every card, and the digest's exact match still holds. On the installed
 kernel, the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`
 passes with the multi-line hold. Executed by
 `digest/an-interactive-hold-is-decision-first`.*
+
+*Triaged at S3b's opening: P3 stays open, since S3b does not touch the `lane`
+group. P7 stays with S4b; P9, P10(4)–(5) and P14 stay with S8. P10(1) stays
+open: the probe runs after the `--dry-run` exit, so what `--dry-run` routes is
+unchanged. P10(2) was in reach, because the probe runs in the clone
+`merge-check.sh` prepared, and stays open: the probe starts only after that
+clone's union came back `pass`, so an environment that cannot build the union
+never reaches it, and the stale-setup risk stays merge-check's alone. P15's pin
+is still the operator's, before run A. P16 stays with the next GW1 change; S3b
+writes no decision message of its own.*
+
+**P17 (S3b). Two `make verify` runs at once share one lab directory.**
+`scripts/verify.sh` sets `LABROOT="$HOME/.forge-verify-lab"`, the `substrate`
+group starts `worktree-gitfile` with `rm -rf "$LABROOT"`, and every run's EXIT
+trap removes it again. S3b ran its baseline and closing suites in a linked
+worktree while S5b ran its own in another, so one run can delete the other's
+lab between its `mkdir` and its check, and `substrate/worktree-gitfile` (and
+the paid `--with-codex` probes, which use the same path) would fail for a
+reason that is not a defect. Found by reading the code; not observed. The fix
+is a per-run lab (`mktemp -d` under
+`$HOME`, which keeps it out of `/tmp` for the reason the comment gives).
+Triage before the epic runs sessions in parallel again.
 
 *Triaged at S5b's opening: P3, P7, P9, P10 and P14 stay where S6b left them.
 S5b adds a runner and changes only the words of the gate's hold, which none of

@@ -26,7 +26,13 @@
 # Usage:
 #   merge-check.sh --clone-from <url|path> --head-ref <branch>
 #                  [--base-ref <branch>] [--check-cmd <cmd>]
-#                  [--setup-cmd <cmd>|--no-setup] [--json]
+#                  [--setup-cmd <cmd>|--no-setup] [--keep-at <dir>] [--json]
+#
+#   --keep-at <dir> clones into <dir> instead of a private temporary directory
+#   and LEAVES IT THERE, prepared and merged, for the caller to remove. It is how
+#   the verifier's mutation probe (FL5, `scripts/mutation-probe.sh`) runs in the
+#   very tree this script just proved green, rather than building a second one
+#   that could differ from it. <dir> must not exist yet.
 #
 # Exit: 0 the merged tree is green.
 #       1 the merge conflicts, or the merged tree fails its check (actionable).
@@ -44,7 +50,7 @@ CLONE_FROM=""; HEAD_REF=""; BASE_REF="main"; CHECK_CMD="make check"
 # the project has no such target, overridable, and `--no-setup` for a caller that
 # has its own arrangement.
 SETUP_CMD="${FORGE_MERGE_SETUP_CMD-make setup}"
-HEAD_SHA_WANT=""
+HEAD_SHA_WANT=""; KEEP_AT=""
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -55,6 +61,7 @@ while [ $# -gt 0 ]; do
     --check-cmd)  CHECK_CMD="${2:?--check-cmd needs a command}"; shift 2;;
     --setup-cmd)  SETUP_CMD="${2:?--setup-cmd needs a command}"; shift 2;;
     --no-setup)   SETUP_CMD=""; shift;;
+    --keep-at)    KEEP_AT="${2:?--keep-at needs a directory}"; shift 2;;
     --json)       shift;;   # accepted and ignored: the result is always JSON
     -h|--help)    awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
@@ -67,6 +74,17 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-mergecheck.XXXXXX")" || {
   echo '{"schema":"forge.mergecheck.v1","result":"unrunnable","evidence":"no writable TMPDIR"}'; exit 3; }
 trap 'rm -rf "$TMP"' EXIT
 REPO="$TMP/repo"; LOG="$TMP/check.log"
+# A kept tree is the caller's, so it is never inside the TMP the trap removes.
+# An existing path is refused rather than cloned into: a clone over a stale tree
+# would judge whatever that tree already held.
+if [ -n "$KEEP_AT" ]; then
+  [ ! -e "$KEEP_AT" ] || {
+    jq -n --arg p "$KEEP_AT" '{schema:"forge.mergecheck.v1",result:"unrunnable",
+      evidence:("--keep-at " + $p + " already exists, so no clone was made over it")}' 2>/dev/null \
+      || echo '{"schema":"forge.mergecheck.v1","result":"unrunnable","evidence":"--keep-at path already exists"}'
+    exit 3; }
+  REPO="$KEEP_AT"
+fi
 
 # Every check runs through this, never bare: `lane.sh` strips exactly these for
 # exactly this reason, and a verifier that inherits the driver's environment

@@ -294,8 +294,26 @@ through it.
   spawned `forge-verifier` (the review claim is made through the kernel's own
   `claim_review_task`, and the reviewer model has never run this protocol), no
   real PR has been merged by it, merge mode has never been on outside a fixture,
-  and the mutation probe FL5 adds does not exist yet — so an approval today rests
-  on the gate, the merged tree and the `claude -p` scorer only.
+  and the mutation probe FL5 adds only reports — so an approval today still rests
+  on the gate, the merged tree and the `claude -p` scorer.
+- **The mutation probe, replayed but reporting (epic S3b, FL5).**
+  `scripts/mutation-probe.py` mutates the implementation lines a PR changed, in
+  the tree `merge-check.sh --keep-at` proved green, and reports every changed
+  line on which every mutant survived. It is executed against CI-green fixtures
+  of each defect class in a stamped `python-service` (`verifier/mutation-probe-*`),
+  and replayed from local clones against the real PRs at their recorded SHAs
+  (opt-in, `--with-replays`):
+  - JobApp C21 bounces on tier 2's own blocker lines.
+  - C17 and the ladder's PR #6 bounce, and PR #6's fix passes.
+  - All six of redglass's all-3s PRs bounce as well, mostly on lines no test runs
+    or checks (triage in the epic's FL5).
+
+  So it ships **reporting**: its verdict is on every hold, and it bounces only
+  under `FORGE_MUTATION_PROBE_BOUNCE=1`. What that does NOT prove:
+  - Its precision on a live run. Run A measures it from the holds.
+  - That it fits the verifier's 1800 s terminal timeout on every PR. The default
+    budget is 420 s; the longest replay, JobApp C21, used 300 s of it.
+  - Anything for a non-Python product.
 - **The north-star numbers and the daily digest, live (epic S4, GW6/GW2).**
   `make metrics` now opens with the epic's north-star block, and
   `scripts/digest.sh` renders the operator's daily message, with every card

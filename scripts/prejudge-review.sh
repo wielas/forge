@@ -34,6 +34,24 @@
 #     as part of the transition, exactly as `request-review` ends the lane's.
 #     Exit 3 is still the model's `kanban_block`, because nothing transitioned.
 #
+# WHAT FL5 ADDED (epic S3b).
+#   * Stage 1c, the MUTATION PROBE (`scripts/mutation-probe.sh`). It runs in the
+#     merged tree Stage 1b just proved green, mutates the implementation lines the
+#     PR changed, and runs the tests against each mutant. A changed line on which
+#     every mutant survived is a line no test observes — JobApp C21's config reads,
+#     C17's message, the July ladder's assertion-free Then step — and each one is
+#     a bounce reason the implementer can act on: the file, the line, the
+#     mutation, and that no test failed. It runs BEFORE the scorer for the same
+#     reason Stage 1b does: a deterministic bounce is free, and the scorer is not.
+#   * It REPORTS by default and bounces only behind the operator's switch,
+#     `FORGE_MUTATION_PROBE_BOUNCE=1` (the operator's decision at S3b's close).
+#     Replayed, it bounced C21, C17 and the ladder's PR #6 as it should — and
+#     all six of redglass's all-3s PRs too, mostly on real untested lines and
+#     partly on noise. A bounce is live even while approvals only recommend, so
+#     enforcing an unmeasured probe would put its precision on every chunk of
+#     run A. Its verdict is on every hold instead, which is where run A
+#     measures it.
+#
 # WHAT THIS FILE IS NOT ALLOWED TO DO
 # It does not re-decide anything the gate decided, it does not score, and it
 # does not touch the scorer's brief. The `claude -p --model opus` call below is
@@ -61,6 +79,10 @@
 #                                   is the default and fails closed.
 #   FORGE_VERIFIER_BOUNCE_BUDGET    rounds before the exception          [2]
 #   FORGE_MERGE_CHECK_BIN           stand in for scripts/merge-check.sh
+#   FORGE_MUTATION_PROBE_BOUNCE=1   the mutation probe BOUNCES. Absent = it
+#                                   reports on the hold and gates nothing.
+#   FORGE_MUTATION_PROBE_BIN        stand in for scripts/mutation-probe.py
+#   FORGE_MUTATION_BUDGET           seconds the mutation probe may spend [420]
 #
 # Exit: 0 a routed outcome — the card has already been transitioned; the model
 #         calls NOTHING. Read `.action` for which transition happened:
@@ -734,7 +756,7 @@ fi
 # (the rule `prejudge/skip-is-distinguishable-from-pass` states for the gate).
 # ---------------------------------------------------------------------------
 MERGE_CHECK_BIN="${FORGE_MERGE_CHECK_BIN:-$HERE/merge-check.sh}"
-MERGED="$TMP/merged-tree.json"
+MERGED="$TMP/merged-tree.json"; TREE="$TMP/merged-tree"
 merge_repo=""; head_ref=""; base_ref=""; clone_url=""
 if [ -n "$FIXTURE" ] && [ -z "${FORGE_MERGE_CHECK_BIN:-}" ]; then
   jq -n '{schema:"forge.mergecheck.v1", result:"skipped",
@@ -767,8 +789,10 @@ else
     || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, its base branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"
   # --head-sha pins the union to Stage 0's commit: without it this clones "the
   # branch", which may have moved since.
+  # --keep-at leaves the prepared, merged clone where Stage 1c can probe it: the
+  # mutation probe must judge the tree this stage proved green, not a second one.
   "$MERGE_CHECK_BIN" --clone-from "$clone_url" --head-ref "$head_ref" --base-ref "$base_ref" \
-    ${VERIFIED_HEAD:+--head-sha "$VERIFIED_HEAD"} > "$MERGED" 2>"$TMP/merged.err"
+    ${VERIFIED_HEAD:+--head-sha "$VERIFIED_HEAD"} --keep-at "$TREE" > "$MERGED" 2>"$TMP/merged.err"
   merged_rc=$?
 fi
 merged_result="$(jq -r '.result // "unreadable"' "$MERGED" 2>/dev/null || echo unreadable)"
@@ -778,6 +802,79 @@ case "$merged_result" in
     bounce_or_except "$(jq -r '"- **merged-tree** — \(.evidence)\n  - action: \(.action // "make the union green and push")"' "$MERGED")" \
                      "merged tree: $merged_result" "$MERGED";;
   *) substrate "env: merge-check-unrunnable — $(jq -r '.evidence // "no result object"' "$MERGED" 2>/dev/null | head -c 300) (rc $merged_rc)";;
+esac
+
+# ---------------------------------------------------------------------------
+# Stage 1c — the mutation probe (FL5). Does any test OBSERVE each line this PR
+# changed?
+#
+# Neither tier caught JobApp C21's two blockers by reading; a mutation did — the
+# judge deleted every config read the chunk added and the suite stayed
+# green. That is the class this stage executes: it mutates the implementation
+# lines the PR changed, in the merged tree Stage 1b kept (`--keep-at`), runs the
+# project's tests against each mutant, and reports every changed line on which
+# EVERY mutant survived. Such a line is one no test can see, whatever the
+# scenarios claim. The rule, its operators and its budget live in
+# `scripts/mutation-probe.py`; this stage only routes the result.
+#
+# UNDER THE SWITCH, THE SAME THREE-WAY CONTRACT AS STAGE 1b. `pass` continues
+# to the scorer; `survived` is a bounce with one actionable reason per
+# unobserved line; anything else — including `skipped`, which is what a fixture
+# run without an override produces, and a probe that could not run its own
+# unmutated baseline — is a substrate fault. A probe that did not run has not
+# passed.
+#
+# WITHOUT THE SWITCH (the default), nothing here transitions the card: every
+# outcome continues to the scorer and is written on the hold — `pass` as such,
+# `survived` with the lines it WOULD have bounced, anything else as "did not
+# run". It is never reported as a pass it was not, and the implementer never
+# sees a report-only finding, because acting on it would make it a bounce in
+# all but name. Only the exact string `1` enables bouncing, so a typo, an empty
+# value or an inherited `0` all fail closed to reporting — the same rule as
+# FORGE_VERIFIER_MERGE.
+#
+# `FORGE_MUTATION_PROBE_BIN` lets a case drive a recorded outcome; the probe's
+# own cases execute the real thing against real repositories.
+# ---------------------------------------------------------------------------
+PROBE_BIN="${FORGE_MUTATION_PROBE_BIN:-$HERE/mutation-probe.py}"
+PROBE="$TMP/mutation-probe.json"
+if [ -n "$FIXTURE" ] && [ -z "${FORGE_MUTATION_PROBE_BIN:-}" ]; then
+  jq -n '{schema:"forge.mutation.v1", result:"skipped",
+          evidence:"--fixture without FORGE_MUTATION_PROBE_BIN: no tree to mutate"}' > "$PROBE"
+  probe_rc=3
+else
+  "$PROBE_BIN" --tree "$TREE" --base-sha "$(jq -r '.base_sha // empty' "$MERGED" 2>/dev/null)" \
+    --budget "${FORGE_MUTATION_BUDGET:-420}" > "$PROBE" 2>"$TMP/probe.err"
+  probe_rc=$?
+fi
+probe_result="$(jq -r '.result // "unreadable"' "$PROBE" 2>/dev/null || echo unreadable)"
+probe_bounces() { [ "${FORGE_MUTATION_PROBE_BOUNCE:-}" = 1 ]; }
+case "$probe_result" in
+  pass) ;;
+  survived)
+    # Reporting (no switch), nothing transitions here: the lines go on the hold
+    # below. Bouncing, at most 30 lines are listed — the reasons ride a card
+    # event, and a PR with hundreds of unobserved lines needs its count and its
+    # first lines, not a 40 KB comment. The count is always the whole number.
+    if probe_bounces; then
+    bounce_or_except "$(jq -r '(.unobserved[:30][]? |
+        "- **mutation-probe** — `\(.file):\(.line)` `\(.source)`: no test failed under \(.mutants | map("`" + .mutation + "`") | join(", "))\n  - action: \(.action)"),
+        (if (.unobserved | length) > 30 then "- …and \((.unobserved | length) - 30) more unobserved line(s) of the same kind" else empty end)' "$PROBE")" \
+      "mutation probe: $(jq -r '.unobserved | length' "$PROBE" 2>/dev/null) changed line(s) no test observes" "$PROBE"
+    fi;;
+  *) ! probe_bounces \
+       || substrate "env: mutation-probe-unrunnable — $(jq -r '.evidence // "no result object"' "$PROBE" 2>/dev/null | head -c 300) (rc $probe_rc)";;
+esac
+# What the hold says about the probe, in every mode. Report-only findings name
+# their lines (at most ten) so the operator can judge them at the merge.
+case "$probe_result" in
+  pass)     PROBE_LINE="mutation probe: $(jq -r '.evidence // ""' "$PROBE" 2>/dev/null | head -c 300)"
+            PROBE_CLAUSE="every changed line it probed is observed by a test";;
+  survived) PROBE_LINE="mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — $(jq -r '.evidence // ""' "$PROBE" 2>/dev/null | head -c 300)
+$(jq -r '.unobserved[:10][]? | "  - \(.file):\(.line) `\(.source)` — no test failed under \(.mutants | map(.mutation) | join("; "))"' "$PROBE" 2>/dev/null)$(jq -r 'if (.unobserved | length) > 10 then "\n  - …and \((.unobserved | length) - 10) more" else "" end' "$PROBE" 2>/dev/null)"
+            PROBE_CLAUSE="the mutation probe found $(jq -r '.unobserved | length' "$PROBE" 2>/dev/null) changed line(s) no test observes (report-only, listed below)";;
+  *)        PROBE_LINE="mutation probe: DID NOT RUN (report-only, so this does not block) — $(jq -r '.evidence // "no result object"' "$PROBE" 2>/dev/null | head -c 300)"
+            PROBE_CLAUSE="the mutation probe did not run (report-only, see below)";;
 esac
 
 # ---------------------------------------------------------------------------
@@ -1016,11 +1113,12 @@ gated="$(jq -c --slurpfile gate "$GATE" '.gate_result = $gate[0]' "$TMP/verdict.
 # The implementer line goes FIRST in every body: it is the one fact that decides
 # whether the rest can be trusted, and run 55 approved a diff without it (F22).
 # ---------------------------------------------------------------------------
-EVIDENCE="$(printf '%s\ngate: clear — %s\nmerged tree: %s\nverdict: %s — scores %s\nspot-check: %s' \
+EVIDENCE="$(printf '%s\ngate: clear — %s\nmerged tree: %s\n%s\nverdict: %s — scores %s\nspot-check: %s' \
   "$(implementer_model_line)" \
   "$(jq -r '[.checks[]|select(.status=="warn")|.id]
      | if length==0 then "no warnings" else "warnings: "+join(", ") end' "$GATE")" \
   "$(jq -r '.evidence // "not run"' "$MERGED" 2>/dev/null | head -c 300)" \
+  "$PROBE_LINE" \
   "$SUMMARY" \
   "$(jq -r '.scores | "\(.spec_fidelity)/\(.scenario_integrity)/\(.architectural_conformance)"
      + "/\(.scope_discipline)/\(.debt_honesty)/\(.doc_reconciliation)"' "$TMP/verdict.json")" \
@@ -1033,6 +1131,10 @@ case "$VERDICT" in
     # a stage that returns early is one edit away from not returning early.
     [ "$(jq -r '.result // "unreadable"' "$MERGED" 2>/dev/null)" = pass ] \
       || substrate "env: merge-check-unrunnable — no passing merged-tree result, so nothing here may approve"
+    # Under the switch the probe is half of what an approval rests on, so it is
+    # re-read here for the same reason; reporting, it is evidence on the hold.
+    ! probe_bounces || [ "$(jq -r '.result // "unreadable"' "$PROBE" 2>/dev/null)" = pass ] \
+      || substrate "env: mutation-probe-unrunnable — no passing mutation-probe result, so nothing here may approve"
     # STASHED BEFORE ANY MERGE, not after it. In merge mode the completion is what
     # carries the verdict; if the merge lands and the completion does not, the
     # merge-watcher finishes the card and this comment is the only copy of the
@@ -1068,7 +1170,7 @@ $EVIDENCE")"; recommend_rc=$?
     fi
     route_recommend "$(decision_message merge-pending \
       "${chunk_title:-this chunk} is verified and NOT merged — the verifier may only recommend" \
-      "the deterministic gate is clear, \`make check\` is green on this branch merged with $base_ref, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
+      "the deterministic gate is clear, \`make check\` is green on this branch merged with $base_ref, $PROBE_CLAUSE, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
       "merge the PR, or send it back" \
       "nothing is merged and this card's children stay held until it is" \
       "merge $PR_URL on GitHub — the merge-watcher completes this card — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
