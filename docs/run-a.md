@@ -29,21 +29,23 @@ Seeded on purpose:
 
 Both are declared below, before the run, so neither is read as a finding.
 
-## Frozen inputs
+## Inputs
 
 Each is read at launch by the command in *Launch*, step 2, and pasted into
-the launch record. A difference from this table is a stop, not a correction.
+the launch record. At launch, a difference from this table is a stop, not a
+correction. The exception is the three tool versions: they are recorded, not
+pinned (precondition 1).
 
-| Input | Value | Why it is pinned |
+| Input | Value | Why it matters |
 |---|---|---|
 | Forge runtime | `~/.forge/repo` → `~/dev/forge-runtime`, at `origin/main` once this protocol, S6c and S3b (#84) have merged | Every profile executes it. No deploy happens during the run |
 | Product | `~/dev/the-squatfather` at `388d78d` (Squatfather PR #1, the signed-off plan), clean, `origin` = `wielas/Squatfather` | The contract every chunk is verified against |
 | Merge gate | `UNAVAILABLE` (exit 5), recorded as `posture: UNGATED` | **GitHub will merge a red PR on this repository.** The verifier and the operator are the only gate |
 | Board | `squatfather-run-a`, absent before commissioning | One board per run |
 | Hermes | 0.21.5, upstream `a4bd966a`, local `1a3bee0e` (+1 carried commit) | The kernel; no `hermes update` mid-epic |
-| Codex | codex-cli 0.157.1 | The implementer. It moved from 0.156.1 on 2026-09-28; accepted at S7's opening and revalidated by commissioning's paid probe |
-| Claude Code | 2.1.287, `~/.hermes/node/bin/claude` | The verifier's scorer is `claude -p`, and the gateway's `PATH` resolves to this binary |
-| uv | 0.12.19 | The lane's `make check` and every probe case run through it. It moved from 0.12.18 in the same 2026-09-28 Homebrew upgrade as Codex |
+| Codex | codex-cli 0.157.1 at registration; **recorded, not pinned** | The implementer. Commissioning's paid probe revalidates whichever version is installed at launch |
+| Claude Code | 2.1.287 at registration, `~/.hermes/node/bin/claude`; **recorded, not pinned** | The verifier's scorer is `claude -p`, and the gateway's `PATH` resolves to this binary |
+| uv | 0.12.19 at registration; **recorded, not pinned** | The lane's `make check` and every probe case run through it |
 | Models | driver `z-ai/glm-5.3-flash` (`scripts/model-pins.sh`), Codex `gpt-5.6-luna` `xhigh` | The lane and verifier drivers, and the implementer |
 | Gateway | dispatch every 60 s, `max_in_progress: 1`, `failure_limit: 2`, `dispatch_stale_timeout_seconds: 14400` | `max_in_progress: 1` serializes the board: the two parallel M1 chunks will not overlap. That is a wall-clock fact, not a defect |
 | Switches | `FORGE_VERIFIER_MERGE` unset, `FORGE_MUTATION_PROBE_BOUNCE` unset (no profile `.env`, global `.env` or gateway plist sets either, read 2026-10-02) | Recommend-only, and the probe reports without bouncing |
@@ -53,13 +55,16 @@ the launch record. A difference from this table is a stop, not a correction.
 
 All must hold before `RUN_START`. Each is the operator's.
 
-1. **Freeze the tools before anything else.** Claude Code updated itself at
-   01:19 on 2026-10-02, during S7's own opening.
-   - Add `"env": {"DISABLE_AUTOUPDATER": "1"}` to the `settings.json` of every
-     Claude Code configuration directory you use.
-   - Run no `brew upgrade` and no `hermes update` until run A closes.
-   - Read back: `claude --version` prints 2.1.287, `codex --version` prints
-     0.157.1, and `uv --version` prints 0.12.19.
+1. **Record the tools; do not freeze them.** By the operator's decision on
+   2026-10-02, Claude Code and Codex stay current. Getting the newest harness
+   often outweighs holding it still, so their auto-updates and `brew upgrade`
+   continue through the run.
+   - The launch record captures the versions in force at `RUN_START`.
+   - A version that moves during the run is not a stop. Record it under
+     *Results › Tool versions*: the date, the tool, old → new.
+   - **Hermes is the exception.** Run no `hermes update` until run A closes:
+     its update path destroys the carried kernel patch (WL7), which is a
+     different hazard from a new harness.
 2. **This protocol, then S6c, then S3b (#84, rebased) are merged to `main`,
    and deployed once:**
    ```bash
@@ -73,8 +78,9 @@ All must hold before `RUN_START`. Each is the operator's.
    ```bash
    cd ~/dev/forge && make verify && make preflight
    ```
-   `make verify`: 0 failed. `make preflight`: FAIL 0. Read every WARN; a
-   recorded-version WARN means step 1 did not hold.
+   `make verify`: 0 failed. `make preflight`: FAIL 0. Read every WARN. A
+   recorded-environment WARN means a tool moved since `state.md` was written.
+   It does not block: note the versions it names in the launch record.
 4. **The roadmap is still CLEAR,** and **the product runs CI on its PRs.**
    Commissioning an ungated repository does not check the second, and the
    verifier's `ci-state` depends on it:
@@ -320,6 +326,7 @@ All numbers come from these commands. None is computed by hand.
 | The mutation probe beside the operator | For every recommended PR: the hold's mutation verdict (`pass`, `survived` with its lines, or not run), next to what the operator did (merged, or disagreed and why) | when the operator decides |
 | The milestone probe | `git -C "$P" switch main && git -C "$P" pull --ff-only && ~/.forge/repo/scripts/probe-run.sh "$P" GATE-M1; echo "probe exit=$?"` | once all five M1 chunks are merged |
 | The next milestone holds | `hermes kanban --board "$B" list` shows CHUNK-6 and CHUNK-8 `todo` | end of M1 |
+| Tool versions | `codex --version; claude --version; uv --version` | launch; root checkpoint; end of M1; whenever one moves |
 | Estimate vs actual | `GATE-M1` estimates 5 chunks; actual is the chunk count and bounce rounds `make metrics` reports | end of M1 |
 
 **The north-star block is reported raw,** exactly as the script prints it. D-1
@@ -391,12 +398,15 @@ command output. Diagnose before unblocking or rerunning.
   failed).
 - Repeated respawns, a tripped `failure_limit`, an unknown assignee, or
   `metadata-live` exiting 1 or 2.
-- A tool version that moved (preflight's recorded-environment WARN).
 - A card on another board dispatched during the run. Record it, with its
   times, beside run A's numbers.
 
-**Not a stop:** a lane PARKED on a Codex usage limit. It resumes itself. Stop
-only on a block reading `env: codex usage limit …`.
+**Not a stop:**
+- A lane PARKED on a Codex usage limit. It resumes itself. Stop only on a block
+  reading `env: codex usage limit …`.
+- Claude Code or Codex updating mid-run (precondition 1). Record it under
+  *Results › Tool versions*. That way a chunk implemented or scored after the
+  move can be told apart from one before it.
 
 **Do not complete `GATE-M1` during run A,** even when its probe passes and the
 digest lists it. Completing it releases CHUNK-6 and CHUNK-8 onto run A's runtime,
@@ -428,6 +438,11 @@ probe has run, and seven digests have been judged. Then:
 
 ### Root checkpoint
 *(not yet run)*
+
+### Tool versions
+*(not yet run — the versions at launch, then one line per move: date, tool,
+old → new, and the next card it touched; at the root checkpoint and at the end
+of M1, `codex --version; claude --version; uv --version` pasted)*
 
 ### Per chunk
 *(not yet run — one entry per chunk: each verifier outcome with its hold or reasons, the mutation verdict, the merge, and any disagreement)*
