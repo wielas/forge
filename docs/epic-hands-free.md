@@ -1104,7 +1104,14 @@ got nothing. The fix would build the interactive hold with `decision_message`,
 as the gate's is built. That changes `INTERACTIVE_HOLD_REASON`, and with it
 what the digest matches, but that is one string in one place now. In run A
 this is CHUNK-5's message once CHUNK-2 and CHUNK-3 merge. Triage with the next
-GW1 change, or before run A reaches CHUNK-5.
+GW1 change, or before run A reaches CHUNK-5. *Fixed in S6c.
+`INTERACTIVE_HOLD_REASON` is now a decision-first message,
+`interactive: this chunk is yours to implement; no lane will pick it up`,
+whose reply is `/start-chunk`. It names no card, so it stays byte-identical
+on every card, and the digest's exact match still holds. On the installed
+kernel, the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`
+passes with the multi-line hold. Executed by
+`digest/an-interactive-hold-is-decision-first`.*
 
 *Triaged at S5b's opening: P3, P7, P9, P10 and P14 stay where S6b left them.
 S5b adds a runner and changes only the words of the gate's hold, which none of
@@ -1186,7 +1193,19 @@ Both times the card ends `ready/forge-operator-handoff`, which is the right
 place for a human chunk, and the script reports it as a failure (lines 83–93).
 `lane/lane-handoff-is-fail-closed` covers the operator path against stubs
 only. *Triaged at S7's opening:
-promoted to row S6c, with P16.*
+promoted to row S6c, with P16.* *Fixed in S6c, in three places:
+- `lane-handoff.sh` gives an unassigned card the sentinel before it unblocks
+  it, so the kernel records an implementer and a bounce lands the card on
+  `ready/forge-operator-handoff`.
+- `bounce.sh` accepts the sentinel as a human chunk's implementer, and reports
+  "back with the operator".
+- The digest lists such a card under "waiting on you" (`returned:`), and no
+  longer counts it in flight.
+
+`verifier/a-human-chunk-can-be-bounced` executes the whole loop on the
+installed kernel with the real scripts: the bootstrap's card, a bounce, the
+digest, a second handoff, a hold, and `bounce.sh`. Before the fix it failed
+with this exact `handoff-integrity` refusal.*
 
 **P22 (S7 opening). The cron step that `digest.sh` and `merge-watcher.sh`
 document cannot be done.** Both headers tell the operator to symlink the script
@@ -1218,6 +1237,17 @@ either header gets a refusal. Triage with the next change to either script.
 - *P11 and P12 stay with S13.*
 - *P22 is new and waits for the next change to either script. S6c's opening
   decides whether S6c, which touches the digest, takes it.*
+
+*Triaged at S6c's opening (2026-10-02):*
+- *P16 and P21 are S6c's items.*
+- *The review that merged S7's registration (#85) found two defects in
+  `docs/run-a.md`. Both are folded in here, because the protocol is open to
+  edits until `RUN_START` and S6c rewrites its S-1 steps anyway:*
+  - *the delivered digests are named `<date>_<time>.md`, not `<date>.md`;*
+  - *`$RUN_START` was used as a shell variable that nothing set.*
+- *P22 stays open. S6c touches `digest.sh` but not `merge-watcher.sh`, and
+  fixing one header would leave the two disagreeing.*
+- *Everything else stays where S7's opening left it.*
 
 ## Open questions
 
