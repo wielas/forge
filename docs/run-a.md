@@ -42,7 +42,7 @@ pinned (precondition 1).
 | Product | `~/dev/the-squatfather` at `388d78d` (Squatfather PR #1, the signed-off plan), clean, `origin` = `wielas/Squatfather` | The contract every chunk is verified against |
 | Merge gate | `UNAVAILABLE` (exit 5), recorded as `posture: UNGATED` | **GitHub will merge a red PR on this repository.** The verifier and the operator are the only gate |
 | Board | `squatfather-run-a`, absent before commissioning | One board per run |
-| Hermes | 0.21.5, upstream `a4bd966a`, local `1a3bee0e` (+1 carried commit) | The kernel; no `hermes update` mid-epic |
+| Hermes | 0.21.5, local `1a3bee0e` (+1 carried commit). The `upstream` hash that `hermes --version` also prints is recorded, not compared: it is the last-fetched `origin/main`, which the `hermes-daily-watch` cron moves every morning (P23) | The kernel; no `hermes update` mid-epic |
 | Codex | codex-cli 0.157.1 at registration; **recorded, not pinned** | The implementer. Commissioning's paid probe revalidates whichever version is installed at launch |
 | Claude Code | 2.1.287 at registration, `~/.hermes/node/bin/claude`; **recorded, not pinned** | The verifier's scorer is `claude -p`, and the gateway's `PATH` resolves to this binary |
 | uv | 0.12.19 at registration; **recorded, not pinned** | The lane's `make check` and every probe case run through it |
