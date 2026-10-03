@@ -18,19 +18,21 @@ something is a `request-changes`.
 ## Protocol
 
 Your own task id **is** the chunk card: one card per chunk for its whole life
-(ADR-0019 D19.1). Take the PR URL and the contract from `kanban_show()`, then:
+(ADR-0019 D19.1). Take the task id, the PR URL and the contract from
+`kanban_show()`. Your terminal is fenced, so the program cannot write the board:
+it decides, and **you** make the one call it names.
 
 ```bash
 out="$(printf '%s' "$contract" | ~/.forge/repo/scripts/prejudge-review.sh \
-  "$pr_url" --chunk "$HERMES_KANBAN_TASK" --board "$HERMES_KANBAN_BOARD")"; rc=$?
+  "$pr_url" --chunk "$task_id" --board "$HERMES_KANBAN_BOARD")"; rc=$?
 printf '%s' "$out" | jq -r '.action, .summary, .reason'
 ```
 
-| `rc` | you call |
+| `rc` | you do |
 |---|---|
-| 0 | **nothing.** The program already transitioned this card — a bounce, a hold, or a merge and completion. A terminator here double-writes. |
-| 3 | `kanban_block` with `reason` from the envelope, verbatim |
+| 4 or 3 | call `terminate.tool` with `terminate.args`, **verbatim**; if it returns an error, call `on_error.tool` with `on_error.args`; then stop |
 | 2 | `kanban_block` with `reason="other: review-usage — <the stderr>"` — you called it wrong |
+| 0 | only `--dry-run` or `--help`: no call. A real review never exits 0 |
 
 An `rc` 3 is a fact about the substrate, never a judgement on the work. Do not
 retry it as a bounce, and never report an outage as a rejection.

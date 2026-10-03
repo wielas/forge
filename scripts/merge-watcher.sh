@@ -90,6 +90,13 @@ HERE="$(cd "$(dirname "$_self")" && pwd -P)"
 . "$HERE/decision-message.sh" 2>/dev/null \
   && declare -F decision_message >/dev/null \
   || { echo "merge-watcher: decision-message.sh is missing beside this script" >&2; exit 3; }
+# The ONE definition of where the verifier leaves its verdict (see forge-state.sh).
+# Cron hands this script the gateway's HOME, which is the real one; the verifier's
+# fenced terminal keeps the real one too (hermes_constants.get_subprocess_home).
+# shellcheck source=forge-state.sh
+. "$HERE/forge-state.sh" 2>/dev/null \
+  && declare -F forge_verdict_root >/dev/null \
+  || { echo "merge-watcher: forge-state.sh is missing beside this script" >&2; exit 3; }
 
 BOARDS="$BOARD"
 if [ -z "$BOARDS" ]; then
@@ -160,16 +167,29 @@ for card in $held; do
     MERGED)
       sha="$(printf '%s' "$state" | jq -r '.mergeCommit.oid // "unknown"')"
       [ "$DRY" = 1 ] && { echo "$card: would complete — $pr merged as ${sha:0:12}"; continue; }
-      # THE VERDICT RIDES THIS COMPLETION. `block` takes no `--metadata`, so the
-      # verifier stashed its envelope as a comment under a stable marker; this is
-      # the only write left that can store it, and completing a card with no live
-      # claim opens a new `forge-verifier` run for it to land on (measured). A
-      # card with no stash still completes — a missing record must not cost a
-      # merge — and then nothing counts it, which is what the absence means.
-      meta="$(printf '%s' "$shown" | jq -r '
-        [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | last | .body // ""' 2>/dev/null \
-        | sed -n '/^```json$/,/^```$/p' | sed '1d;$d')"
-      printf '%s' "$meta" | jq -e 'type == "object"' >/dev/null 2>&1 || meta=""
+      # THE VERDICT RIDES THIS COMPLETION. `block` and `request-changes` take no
+      # `--metadata`, so the verifier leaves its envelope on the host
+      # (`<state root>/verdicts/<board>-<card>.json`, forge-state.sh): a worker's
+      # terminal cannot write the board, and a driver retyping it would be the one
+      # place a verdict could be garbled. This is the only write left that can store
+      # it, and completing a card with no live claim opens a new `forge-verifier` run
+      # for it to land on (measured). A card stashed BEFORE epic S6d carries it as a
+      # `FORGE-VERDICT-V1` comment instead; that is the fallback. A card with
+      # neither still completes — a missing record must not cost a merge — and then
+      # nothing counts it, which is what the absence means (and the result says so).
+      meta=""
+      stash="$(forge_verdict_root)/$BOARD-$card.json"
+      if [ -s "$stash" ]; then
+        meta="$(cat "$stash" 2>/dev/null)"
+        printf '%s' "$meta" | jq -e 'type == "object"' >/dev/null 2>&1 \
+          || { echo "merge-watcher: $card: verdict stash $stash is not a JSON object, so it is NOT attached" >&2; meta=""; }
+      fi
+      if [ -z "$meta" ]; then
+        meta="$(printf '%s' "$shown" | jq -r '
+          [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | last | .body // ""' 2>/dev/null \
+          | sed -n '/^```json$/,/^```$/p' | sed '1d;$d')"
+        printf '%s' "$meta" | jq -e 'type == "object"' >/dev/null 2>&1 || meta=""
+      fi
       if [ -n "$meta" ]; then
         kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher)" \
           --metadata "$meta" >/dev/null 2>&1

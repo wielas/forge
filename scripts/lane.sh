@@ -16,8 +16,21 @@
 #
 # WHAT STAYS WITH THE MODEL, AND WHY IT IS SO LITTLE
 # The driver runs this file in the background, waits, reads the envelope and
-# terminates on the exit code. Its model sees ~1 KB of JSON, never a diff, a
-# transcript or a build log.
+# makes the ONE tool call the envelope names. Its model sees ~2 KB of JSON,
+# never a diff, a transcript or a build log.
+#
+# THIS FILE NEVER WRITES THE BOARD (epic S6d, P24). Hermes fences a worker's
+# terminal: every `hermes kanban` mutation from a shell the worker started is
+# refused, "even if a script removes the task id" (kanban-worker-lanes.md,
+# *Descendant process scope*), and HERMES_KANBAN_TASK, _RUN_ID and _CLAIM_LOCK
+# are scrubbed from it. Run A's first attempt (2026-10-03) did the work and then
+# could not hand it off: the driver improvised `export HERMES_KANBAN_TASK=...`,
+# the heartbeats all failed, and `request-review` was refused. The fence is a
+# boundary Hermes documents as cooperative, and it is not ours to defeat. So
+# this program decides and validates, and the driver — the one party the kernel
+# lets terminate a run — performs the transition the envelope names, verbatim.
+# What the terminal DOES keep (the board, DB, workspace, branch and profile
+# variables) is what this reads; the task id is the one explicit argument.
 #
 # THE ORDER IS THE PROTOCOL. Each step below exists because its absence was
 # measured, and the reason is kept beside the step rather than in a prompt a
@@ -31,13 +44,15 @@
 #   3 integrate the base   a fresh branch is fast-forwarded to origin/<base>
 #   4 lane-setup.sh        network, .venv, green baseline, immutable capture
 #   5 contract             body + comments + the role boundary, ALWAYS
-#   6 codex-run.sh         the pinned model, the sandbox, quota parking;
-#                          this file heartbeats the card while it runs
+#   6 codex-run.sh         the pinned model, the sandbox, quota parking; the
+#                          driver's own bridge keeps the claim alive meanwhile
 #   7 make check           plain — no UV_OFFLINE, no UV_CACHE_DIR
 #   8 blast-radius check   the final fail-closed audit, one per run key
 #   9 push, PR             reuse an open PR; never main
 #  10 metadata             forge.chunk.v1, computed, then validated
-#  11 hand off             lane-handoff.sh: running -> review, same card
+#  11 hand off             the envelope names kanban_request_review, with the
+#                          reviewer always explicit; the CARD is moved by the
+#                          driver's call, not by this file
 #
 # A BOUNCE COMES BACK TO THIS CARD (epic FL3, ADR-0019 D19.1). When the
 # reviewer requests changes, or the operator reopens the review, the card
@@ -49,24 +64,35 @@
 # re-read. There is no fix card, no judge card, and so no parent check that a
 # fix card could fail (the `failing-prereq` blocks of the product runs).
 #
-# Usage: lane.sh          — everything comes from the dispatcher's environment:
-#   HERMES_KANBAN_TASK, HERMES_KANBAN_WORKSPACE, HERMES_KANBAN_RUN_ID,
-#   HERMES_KANBAN_BOARD; HERMES_KANBAN_BRANCH is checked by lane-setup.sh.
+# Usage: lane.sh --task <task-id>
+#   <task-id> is your own task's id — `kanban_show().task.id`, the id in your
+#   prompt. The fenced terminal has no HERMES_KANBAN_TASK, and none is read.
+#   Everything else comes from what the terminal keeps: HERMES_KANBAN_BOARD,
+#   HERMES_KANBAN_WORKSPACE, HERMES_PROFILE, and HERMES_KANBAN_BRANCH (checked by
+#   lane-setup.sh). The run id is READ from the card: its one `running` run.
+#   The card must be this profile's, `running`, in this workspace.
 #
 # Knobs (all optional):
 #   FORGE_LANE_BASE        the protected branch PRs target            [main]
-#   FORGE_LANE_HEARTBEAT   seconds between card heartbeats            [300]
 #   FORGE_LANE_TICK        seconds between checks of the Codex run      [5]
 #   FORGE_LANE_REVIEWER    the profile the card is handed to  [forge-verifier]
-#   FORGE_LANE_SESSION_ROOT  where each card's Codex session id is kept for a
-#                          bounce re-entry          [~/.forge/lane-sessions]
+#   FORGE_LANE_SESSION_ROOT  where each card's Codex session id and validated
+#                          envelope are kept   [<state root>/lane-sessions]
+#                          (scripts/forge-state.sh owns the root)
 #
-# Exit: 0 handed off — `.action` is `handed-off`: the card is already in
-#         `review` and this run is over. Call NO terminator; kanban_complete
-#         would be refused, and must not be attempted.
-#       3 a block — `.reason` is a canonical `<class>: <reason>` from
-#         rubrics/run-metadata-contract.json; pass it to kanban_block verbatim.
-#       2 a usage error — the dispatcher environment is incomplete.
+# stdout is ONE `forge.lane.v2` envelope: `action`, `summary`, `reason`,
+# `terminate` and `on_error` (each `{tool, args}`), `created_cards`.
+#
+# Exit: 4 hand off — `.action` is `handoff`. Call `.terminate.tool` with
+#         `.terminate.args`, verbatim (`kanban_request_review`); if it returns
+#         an error, call `.on_error.tool` with `.on_error.args` and stop.
+#       3 a block — nothing was handed off. `.terminate` is `kanban_block` with
+#         a canonical `<class>: <reason>` (rubrics/run-metadata-contract.json);
+#         call it verbatim.
+#       2 a usage error — the argument or the runtime was wrong; `kanban_block`
+#         with `other: lane-usage — <the stderr>`.
+#       0 only for --help. A real run NEVER exits 0: a driver whose notes still
+#         say "0 = nothing to call" must fail loudly, not silently.
 # 1 is deliberately unused (ADR-0010 D10.3): a caller under `set -e` must not
 # read a block as a crash.
 # =============================================================================
@@ -79,30 +105,37 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # and the uv-run validator are both judged by the same rule. codex-run.sh sets
 # its own UV_CACHE_DIR for Codex, inside the sandbox, and nowhere else.
 unset UV_OFFLINE UV_CACHE_DIR
-TASK="${HERMES_KANBAN_TASK:-}"
+# shellcheck source=forge-state.sh
+. "$HERE/forge-state.sh" || { echo "usage: forge-state.sh is missing beside lane.sh" >&2; exit 2; }
+# NO HERMES_KANBAN_TASK / _RUN_ID / _CLAIM_LOCK ANYWHERE BELOW. The fenced
+# terminal does not carry them (agent/delegation_context.py KANBAN_ENV_KEYS), a
+# fallback to them would hide the defect on any host where they leak, and
+# `lane/programs-read-no-scrubbed-variable` runs this file with WRONG values
+# planted in exactly those names.
+TASK=""
 WS="${HERMES_KANBAN_WORKSPACE:-}"
-RUN_ID="${HERMES_KANBAN_RUN_ID:-}"
+RUN_ID=""
 BOARD="${HERMES_KANBAN_BOARD:-}"
+PROFILE="${HERMES_PROFILE:-}"
 BASE="${FORGE_LANE_BASE:-main}"
-HEARTBEAT="${FORGE_LANE_HEARTBEAT:-300}"
 REVIEWER="${FORGE_LANE_REVIEWER:-forge-verifier}"
-SESSION_ROOT="${FORGE_LANE_SESSION_ROOT:-$HOME/.forge/lane-sessions}"
+SESSION_ROOT="$(forge_lane_session_root)"
 TICK="${FORGE_LANE_TICK:-5}"
 STARTED="$(date +%s)"
-CREATED=()
 
-case "${1:-}" in
-  -h|--help) awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; exit 0;;
-  "") ;;
-  *) echo "lane.sh takes no arguments; it reads the dispatcher's HERMES_KANBAN_* environment" >&2; exit 2;;
-esac
-for knob in "HERMES_KANBAN_TASK=$TASK" "HERMES_KANBAN_WORKSPACE=$WS" \
-            "HERMES_KANBAN_RUN_ID=$RUN_ID" "HERMES_KANBAN_BOARD=$BOARD"; do
-  [ -n "${knob#*=}" ] || { echo "usage: ${knob%%=*} is unset — lane.sh runs inside a dispatcher-spawned worker" >&2; exit 2; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; exit 0;;
+    --task) TASK="${2:-}"; [ $# -ge 2 ] || { echo "usage: --task needs a task id" >&2; exit 2; }; shift 2;;
+    *) echo "usage: lane.sh --task <task-id>   (unknown argument '$1')" >&2; exit 2;;
+  esac
 done
-for n in "FORGE_LANE_HEARTBEAT=$HEARTBEAT" "FORGE_LANE_TICK=$TICK"; do
-  case "${n#*=}" in ""|*[!0-9]*|0) echo "usage: ${n%%=*} must be a positive whole number of seconds, got '${n#*=}'" >&2; exit 2;; esac
+[ -n "$TASK" ] || { echo "usage: lane.sh --task <task-id> — your task's id, from kanban_show().task.id; the fenced terminal has no HERMES_KANBAN_TASK" >&2; exit 2; }
+case "$TASK" in *[!A-Za-z0-9_-]*) echo "usage: --task '$TASK' is not a task id" >&2; exit 2;; esac
+for knob in "HERMES_KANBAN_WORKSPACE=$WS" "HERMES_KANBAN_BOARD=$BOARD" "HERMES_PROFILE=$PROFILE"; do
+  [ -n "${knob#*=}" ] || { echo "usage: ${knob%%=*} is unset — lane.sh runs in a dispatcher-spawned worker's terminal, which keeps it" >&2; exit 2; }
 done
+case "$TICK" in ""|*[!0-9]*|0) echo "usage: FORGE_LANE_TICK must be a positive whole number of seconds, got '$TICK'" >&2; exit 2;; esac
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-lane-sh.XXXXXX")"
 CODEX_PID=""
@@ -119,20 +152,38 @@ say() { printf '%s lane: %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
 # a step produces goes to a file under the run's scratch directory — the driver
 # is metered, and a build log in its context is paid for on every turn after.
 # ---------------------------------------------------------------------------
-envelope() {   # action, summary, metadata-file|'null', reason, exit-code
-  local action="$1" summary="$2" metafile="$3" reason="$4" code="$5" meta='null'
-  [ "$metafile" != "null" ] && [ -s "$metafile" ] && meta="$(cat "$metafile")"
-  jq -n --arg action "$action" --arg summary "$summary" --arg reason "$reason" \
-        --argjson metadata "$meta" \
-        --argjson created "$(printf '%s\n' ${CREATED[@]+"${CREATED[@]}"} \
-                             | jq -Rs 'split("\n") | map(select(length>0))')" '
-    { schema: "forge.lane.v1", action: $action,
+# `terminate` is the ONE call the driver makes; `on_error` is what it makes
+# instead when the kernel refuses `terminate` (the card is still `running`, so a
+# `kanban_block` lands, and without one the run is reaped as a crash). Both carry
+# `task_id`: the kernel refuses a worker's call on any task but its own, which is
+# the identity check no program can do from a terminal that has no task id.
+call_json() {   # tool, args-json -> {tool, args}
+  jq -nc --arg tool "$1" --argjson args "$2" '{tool: $tool, args: $args}'
+}
+ENVELOPE_COPY=""
+envelope() {   # action, summary, reason, terminate-json, on_error-json|null, exit-code
+  local out
+  out="$(jq -n --arg action "$1" --arg summary "$2" --arg reason "$3" \
+        --argjson terminate "$4" --argjson on_error "$5" '
+    { schema: "forge.lane.v2", action: $action,
       summary: (if $summary == "" then null else $summary end),
       reason: (if $reason == "" then null else $reason end),
-      metadata: $metadata, created_cards: $created }'
-  exit "$code"
+      terminate: $terminate, on_error: $on_error, created_cards: [] }')"
+  printf '%s\n' "$out"
+  [ -z "$ENVELOPE_COPY" ] || printf '%s\n' "$out" > "$ENVELOPE_COPY" 2>/dev/null
+  exit "$6"
 }
-block() { say "block: $1"; envelope block "" null "$1" 3; }
+# TRUSTED_TASK is empty until the card has been read back and is provably this
+# terminal's. Until then a block names no task and the kernel applies it to the
+# driver's own: a wrong --task must not make the kernel refuse the very block that
+# reports it (a worker may only mutate its own task).
+TRUSTED_TASK=""
+block() {
+  say "block: $1"
+  envelope block "" "$1" \
+    "$(call_json kanban_block "$(jq -nc --arg t "$TRUSTED_TASK" --arg r "$1" \
+         '(if $t == "" then {} else {task_id: $t} end) + {reason: $r}')")" null 3
+}
 
 # The canonical `<class>: <reason>` line out of a step's output, or a fallback
 # naming the step and its exit code. The helpers already print board-ready
@@ -144,19 +195,22 @@ reason_from() {   # file, fallback
   printf '%s\n' "${line:-$2}"
 }
 
-command -v jq >/dev/null || { printf '{"schema":"forge.lane.v1","action":"block","reason":"env: jq missing"}\n'; exit 3; }
+command -v jq >/dev/null || {
+  printf '{"schema":"forge.lane.v2","action":"block","reason":"env: jq missing","terminate":{"tool":"kanban_block","args":{"reason":"env: jq missing"}},"on_error":null,"created_cards":[]}\n'
+  exit 3
+}
 for tool in git gh hermes make; do
   command -v "$tool" >/dev/null || block "env: $tool is not on PATH"
 done
 kanban() { hermes kanban --board "$BOARD" "$@"; }
 
-LAST_BEAT=0
-beat() {   # note — at most once per HEARTBEAT, never fatal
-  local now; now="$(date +%s)"
-  [ $((now - LAST_BEAT)) -ge "$HEARTBEAT" ] || return 0
-  LAST_BEAT="$now"
-  kanban heartbeat "$TASK" --note "$1" >/dev/null 2>&1 || say "heartbeat failed (continuing)"
-}
+# NO HEARTBEAT HERE. `hermes kanban heartbeat` is a mutation, so it is refused in
+# this terminal (run A: every one failed). The claim is kept alive by the driver
+# process: every tool call, `process wait` included, runs under a 30 s activity
+# thread that calls `heartbeat_current_worker_from_env` (tools/kanban_tools.py:519,
+# agent/tool_executor.py:618) — heartbeat_claim and a `heartbeat` event, at least
+# 60 s apart. Run A's own board shows those events at ~60 s throughout, while every
+# one of this file's CLI heartbeats failed.
 
 # ---------------------------------------------------------------------------
 # 1. Read the card. An operator comment overrides the card body — the skill
@@ -171,6 +225,38 @@ beat() {   # note — at most once per HEARTBEAT, never fatal
 kanban show "$TASK" --json > "$TMP/card.json" 2>/dev/null \
   && jq -e '.task.id' "$TMP/card.json" >/dev/null 2>&1 \
   || block "env: cannot read card $TASK on board $BOARD"
+# ---------------------------------------------------------------------------
+# WHICH CARD IS THIS TERMINAL'S, AND WHICH RUN? The driver passed the id; the
+# fence kept no task id to check it against, so the card itself is asked. A wrong
+# id is a driver error (exit 2: it blocks, and the kernel refuses a block on a
+# card that is not its own), never a reason to run Codex in someone else's
+# workspace. The run id is the card's ONE `running` run — the CLI's `show --json`
+# has no `.task.current_run_id`, but the run list names the live run, and it is
+# the id the board-local scratch and audit keys are built from (lane-setup.sh).
+# ---------------------------------------------------------------------------
+identity_error() { echo "usage: $1" >&2; exit 2; }
+jq -e --arg id "$TASK" '.task.id == $id' "$TMP/card.json" >/dev/null \
+  || identity_error "board $BOARD returned a different card than --task $TASK"
+[ "$(jq -r '.task.status // ""' "$TMP/card.json")" = running ] \
+  || identity_error "card $TASK is '$(jq -r '.task.status // "unreadable"' "$TMP/card.json")', not running — --task must be YOUR task's id (kanban_show().task.id)"
+[ "$(jq -r '.task.assignee // ""' "$TMP/card.json")" = "$PROFILE" ] \
+  || identity_error "card $TASK is assigned to '$(jq -r '.task.assignee // "nobody"' "$TMP/card.json")', not to this profile ($PROFILE) — --task must be YOUR task's id"
+[ "$(jq '[.runs[]? | select(.status == "running")] | length' "$TMP/card.json")" = 1 ] \
+  || identity_error "card $TASK has no single running run, so there is no run id to key this run on"
+RUN_ID="$(jq -r '[.runs[] | select(.status == "running")][0].id | tostring' "$TMP/card.json")"
+card_ws="$(cd "$(jq -r '.task.workspace_path // ""' "$TMP/card.json")" 2>/dev/null && pwd -P)"
+env_ws="$(cd "$WS" 2>/dev/null && pwd -P)"
+{ [ -n "$card_ws" ] && [ "$card_ws" = "$env_ws" ]; } \
+  || identity_error "card $TASK's workspace is '$(jq -r '.task.workspace_path // "none"' "$TMP/card.json")', not this terminal's ($WS) — --task must be YOUR task's id"
+TRUSTED_TASK="$TASK"   # from here a block may name the card: the kernel will accept it
+# A REVIEW CLAIM IS NOT A LANE RUN. `kanban_request_review` with no reviewer leaves
+# the card in `review` on THIS profile, and the dispatcher then claims it for the
+# lane to "review" its own work (measured on 0.21.5: review/forge-codex-lane, and
+# `dispatch` lists it as spawnable). The hand-off below always names a reviewer,
+# but it is made by a model retyping the arguments, so a dropped one must not run
+# Codex again over finished work. The claim says where it came from.
+[ "$(jq -r '[.events[]? | select(.kind == "claimed")] | last | .payload.source_status // ""' "$TMP/card.json")" != review ] \
+  || block "other: handoff-integrity — card $TASK was claimed from review by its own implementer, so its last hand-off named no reviewer; name one (kanban assign it to forge-verifier, then unblock) instead of re-running the chunk"
 TITLE="$(jq -r '.task.title // ""' "$TMP/card.json")"
 jq -r '.task.body // ""' "$TMP/card.json" > "$TMP/body.md"
 [ -s "$TMP/body.md" ] && grep -q '[^[:space:]]' "$TMP/body.md" \
@@ -206,7 +292,6 @@ if [ -n "$LAST_HANDOFF" ]; then
   [ -s "$TMP/reasons.md" ] \
     || block "judge-bounce: card $TASK came back from review with no recorded reason — there is nothing to fix"
 fi
-beat "lane: card read"
 
 # ---------------------------------------------------------------------------
 # 2. Parent guard. ADR-0008's rule — children build on merged parents — is
@@ -267,7 +352,6 @@ FORGE_LANE_RUNTIME="$(sed -n 's/^FORGE_LANE_RUNTIME=//p' "$TMP/setup.out" | tail
 [ -n "$FORGE_LANE_RUN_KEY" ] && [ -d "$FORGE_LANE_RUNTIME" ] \
   || block "env: lane-setup.sh succeeded without emitting FORGE_LANE_RUN_KEY and FORGE_LANE_RUNTIME"
 export FORGE_LANE_RUNTIME
-beat "lane: environment ready"
 
 # ---------------------------------------------------------------------------
 # 5. The contract, with the role boundary appended ALWAYS, whatever the card
@@ -322,33 +406,25 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Codex. codex-run.sh owns the invocation (sandbox, --add-dir grant, model
 # pin, UV cache) and parks through provider usage limits, resuming the same
-# session. A park keeps this run alive for hours, so this file heartbeats the
-# card the whole time — the dispatcher reclaims a card silent for too long —
-# and posts every PARK-COMMENT the runner prints, because that comment is what
-# lets a successor run resume the session instead of restarting the chunk.
+# session. A park keeps this run alive for hours; the driver's own bridge keeps
+# the claim fresh meanwhile (see "NO HEARTBEAT HERE" above).
+#
+# THE RUNNER'S `PARK-COMMENT` LINES USED TO BE POSTED TO THE CARD AS THEY APPEARED.
+# `hermes kanban comment` is refused in this terminal, so they are COUNTED instead
+# and reported once, in the hand-off summary (`parked N× on <windows>`), which is
+# durable on the run. Resumption never depended on the comment: it reads the park
+# file and `lane-sessions` (codex-run.sh). What the operator loses is the card-
+# visible "parked until ..." WHILE the run lives; the runner's own log, the park
+# file under ~/.forge/lane-parks and `hermes kanban log <id>` still show it.
 # ---------------------------------------------------------------------------
 CODEX_LOG="$FORGE_LANE_RUNTIME/codex-run.log"
-POSTED=0
-post_park_comments() {
-  local n=0 line
-  while IFS= read -r line; do
-    n=$((n + 1))
-    [ "$n" -gt "$POSTED" ] || continue
-    kanban comment "$TASK" "PARK-COMMENT ${line#*PARK-COMMENT }" >/dev/null 2>&1 \
-      || say "could not post a PARK-COMMENT (continuing)"
-    POSTED="$n"
-  done < <(grep 'PARK-COMMENT ' "$CODEX_LOG" 2>/dev/null)
-}
 "$HERE/codex-run.sh" "$WS" "$RUN_ID" "$TASK" > "$CODEX_LOG" 2>&1 &
 CODEX_PID=$!
 while kill -0 "$CODEX_PID" 2>/dev/null; do
-  post_park_comments
-  beat "lane: codex running"
   sleep "$TICK"
 done
 wait "$CODEX_PID"; codex_rc=$?
 CODEX_PID=""
-post_park_comments
 [ "$codex_rc" = 0 ] || block "$(reason_from "$CODEX_LOG" "env: codex-run.sh exited $codex_rc")"
 # Kept for a bounce re-entry, keyed by board and card, outside the per-run
 # scratch (which a new run never sees). Never fatal: losing it costs one
@@ -358,7 +434,12 @@ if [ -s "$FORGE_LANE_RUNTIME/codex-session-id" ]; then
     && printf '%s\t%s\n' "$(head -1 "$FORGE_LANE_RUNTIME/codex-session-id")" "$WS" > "$SESSION_RECORD" \
     || say "could not keep the Codex session id for a re-entry (continuing)"
 fi
-LAST_BEAT=0; beat "lane: codex finished; verifying"
+PARKS="$(grep -c 'PARK-COMMENT ' "$CODEX_LOG" 2>/dev/null)"
+PARK_NOTE=""
+if [ "${PARKS:-0}" -gt 0 ]; then
+  PARK_WINDOWS="$(sed -n 's/.*PARK-COMMENT env: codex usage limit on \([^;]*\);.*/\1/p' "$CODEX_LOG" | sort -u | paste -sd, -)"
+  PARK_NOTE=" Parked ${PARKS}x on a Codex usage limit (${PARK_WINDOWS:-window unknown})."
+fi
 
 # ---------------------------------------------------------------------------
 # 7. Verify it here. Plain `make check` — the command CI runs, with the uv
@@ -498,18 +579,43 @@ validator_says() {
 SUMMARY="$CHUNK_ID$([ "$REENTRY" = 1 ] && printf ' (after review)'): PR $PR_URL — make check green, blast radius clean, codex ${codex_model:-unknown}. Watch: $(jq -r '.files_changed' "$FORGE_LANE_RUNTIME/chunk-metadata.json") files, ${lines_ins:-0}+/${lines_del:-0}- lines."
 
 # ---------------------------------------------------------------------------
-# 11. Hand off, on the same card (epic FL3). lane-handoff.sh validates the
-# envelope again and moves the card running -> review, assigned to the
-# reviewer — always named, because after an operator reopen the kernel has no
-# reviewer to default to and would dispatch the card back to this lane. The
-# Hermes CLI binds this run's id from the dispatcher environment, so the
-# transition proves ownership of the live claim. It is this run's terminator:
-# the card leaves `running`, and the driver calls nothing after it. The card
-# reaches `done` only when its PR merges, which is what holds its children.
+# 11. The hand-off — NAMED here, MADE by the driver (epic FL3, then P24).
+#
+# The card moves running -> review, assigned to the reviewer, on the SAME card.
+# The reviewer is always named: after an operator `reopen-review` the kernel has
+# no reviewer to default to and would dispatch the card back to this lane (the
+# check in step 1 refuses that run). The card reaches `done` only when its PR
+# merges, which is what holds its children — so this is NOT `kanban_complete`.
+#
+# This file does not make the call: the terminal is fenced (see the top). It
+# prints the call, `kanban_request_review` with the validated envelope as its
+# `metadata`, and the driver makes it. Two consequences are handled here:
+#
+#   * The driver retypes the arguments. What it must not get wrong is on the host
+#     too: the validated envelope is kept beside the session record, and the
+#     verifier compares the metadata the kernel stored with it before it reviews
+#     anything (prejudge-review.sh, "the lane's envelope arrives intact").
+#   * `kanban_request_review` adds one key to the stored metadata,
+#     `worker_session_id`, and redacts secret-shaped strings; neither touches a
+#     SHA, a URL or a number, and the schema allows the key (measured, S6d).
+#
+# The envelope is also left in the run's scratch, so an operator can re-issue a
+# hand-off a driver never made without re-running Codex.
 # ---------------------------------------------------------------------------
-"$HERE/lane-handoff.sh" "$TASK" --board "$BOARD" --reviewer "$REVIEWER" \
-  --summary "$SUMMARY" --metadata "$FORGE_LANE_RUNTIME/chunk-metadata.json" \
-  > "$TMP/handoff.out" 2>&1
-handoff_rc=$?
-[ "$handoff_rc" = 0 ] || block "$(reason_from "$TMP/handoff.out" "other: lane-handoff.sh exited $handoff_rc")"
-envelope handed-off "$SUMMARY" "$FORGE_LANE_RUNTIME/chunk-metadata.json" "" 0
+SUMMARY="${SUMMARY}${PARK_NOTE}"
+if mkdir -p "$SESSION_ROOT" 2>/dev/null \
+   && jq -S . "$FORGE_LANE_RUNTIME/chunk-metadata.json" > "$SESSION_ROOT/$BOARD-$TASK.metadata.json.new" 2>/dev/null \
+   && mv -f "$SESSION_ROOT/$BOARD-$TASK.metadata.json.new" "$SESSION_ROOT/$BOARD-$TASK.metadata.json"; then
+  :
+else
+  say "could not keep the validated envelope for the verifier to compare (continuing)"
+  rm -f "$SESSION_ROOT/$BOARD-$TASK.metadata.json.new" 2>/dev/null
+fi
+ENVELOPE_COPY="$FORGE_LANE_RUNTIME/envelope.json"
+envelope handoff "$SUMMARY" "" \
+  "$(call_json kanban_request_review "$(jq -nc --arg t "$TASK" --arg s "$SUMMARY" --arg r "$REVIEWER" \
+       --slurpfile m "$FORGE_LANE_RUNTIME/chunk-metadata.json" \
+       '{task_id: $t, summary: $s, metadata: $m[0], reviewer: $r}')")" \
+  "$(call_json kanban_block "$(jq -nc --arg t "$TASK" --arg u "$PR_URL" \
+       '{task_id: $t, reason: ("other: handoff-integrity — the review hand-off of " + $t + " was refused by the kernel; the branch is pushed and the PR is open (" + $u + "), so nothing needs re-running")}')")" \
+  4
