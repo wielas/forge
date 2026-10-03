@@ -29,6 +29,11 @@ needs, from the INSTALLED Hermes and never by hand:
   claim-review <board> <task>
       The dispatcher's own claim of a card in `review` (`claim_review_task`).
 
+  denied-verbs
+      The `hermes kanban` verbs the installed Hermes refuses from a fenced terminal
+      (`_DELEGATED_CHILD_DENIED_ACTIONS`), `|`-joined — the set a program run by a worker
+      must never call. Exits 1 and prints nothing if the installed module no longer has it.
+
 It refuses to run unless HERMES_HOME is an isolated directory: a case must never
 reach the operator's boards or the running gateway.
 """
@@ -184,12 +189,23 @@ def cmd_claim_review(argv):
         return 0 if kb.claim_review_task(conn, task) is not None else 1
 
 
+def cmd_denied_verbs(argv):
+    try:
+        from hermes_cli.kanban import _DELEGATED_CHILD_DENIED_ACTIONS as denied
+    except Exception as e:                                   # the name moved: say so, do not guess
+        print(f"worker-ctx: cannot read the denied verbs: {e}", file=sys.stderr)
+        return 1
+    print("|".join(sorted(denied)))
+    return 0
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs"):
         die(__doc__.split("\n\n")[0] + " — see the module docstring")
     cmd, rest = sys.argv[1], sys.argv[2:]
-    isolated_home()
-    sys.exit({"fenced-env": cmd_fenced_env, "perform": cmd_perform,
+    if cmd != "denied-verbs":
+        isolated_home()
+    sys.exit({"fenced-env": cmd_fenced_env, "perform": cmd_perform, "denied-verbs": cmd_denied_verbs,
               "claim-review": cmd_claim_review}[cmd](rest) or 0)
 
 

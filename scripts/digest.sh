@@ -183,7 +183,13 @@ render_waiting() {
   fi
   # A verifier hold already speaks the format. Show it as written, up to the end
   # of its reply: what follows is evidence, which is on the card.
-  if printf '%s' "$reason" | grep -q '^Decision needed: '; then
+  #
+  # EXCEPT FROM `triage`. A card the kernel routed to its unblock-loop breaker keeps the
+  # hold's text as its last block reason, so the verbatim branch would tell the operator to
+  # "merge the PR" about a card no script can complete (epic P8). Since epic S6d the verifier
+  # cannot see where its own block landed — the run ends with the transition, and a fenced
+  # terminal cannot read back — so THIS is where a stranded hold is told apart from a real one.
+  if [ "$status" != triage ] && printf '%s' "$reason" | grep -q '^Decision needed: '; then
     printf '%s\n' "$reason" | awk '/^Reply: /{r=1} r && /^$/{exit} {print}'
     return
   fi
