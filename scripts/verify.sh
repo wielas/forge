@@ -2536,6 +2536,7 @@ lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_L
 lane/role-boundary-prepended      the contract carries body + operator comments + the boundary, and neither worker chatter nor the verifier's FORGE-VERDICT-V1 envelope
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/terminator-set-is-closed     kanban_request_review only as the call the envelope names; _changes, _complete and _create named forbidden, not merely unlisted
+lane/the-claim-is-kept-alive-by-the-driver  the installed Hermes still heartbeats a worker's claim from every running tool call (lane.sh no longer heartbeats)
 lane/terminators-match-the-substrate    every terminator the installed Hermes exposes is accounted for in §7 (--with-hermes)
 lane/blast/missing-run-capture    a check with no current-run immutable baseline cannot pass
 lane/blast/capture-is-single-use  Codex cannot replace the pre-Codex baseline
@@ -2572,6 +2573,9 @@ lane/uv-cache-dir-is-deterministic-and-outside-worktree  one run-specific TMPDIR
 lane/verification-is-plain-make-check   executed: lane.sh strips UV_OFFLINE/UV_CACHE_DIR from make check
 lane/lane-sh-runs-the-protocol    executed end to end with stub hermes/gh/codex under a fenced-terminal stub: order, push, PR, validated envelope; exits 4 naming kanban_request_review, writes nothing to the board, the park in the summary
 lane/lane-sh-blocks-before-the-push  a red check and an audit breach block with their class and never push, each a kanban_block call; a missing task id or profile is 2
+lane/lane-sh-refuses-a-task-that-is-not-its-card  --task is checked against the board (running, this profile's, one running run, this workspace); a missing card blocks naming no task; a card claimed from review blocks as handoff-integrity (H1)
+lane/lane-sh-attempts-no-board-mutation  two full fenced passes on the real kernel with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses
+lane/lane-sh-reads-no-scrubbed-variable  fenced, with wrong values planted for exactly the scrubbed names; it reads its own card and nothing mentions the planted id
 lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers beside itself and names the hand-off as a kanban_request_review call
 lane/lane-sh-reenters-on-a-bounce  FL3, stubs: same card/branch/PR, red baseline tolerated, the implementer's session resumed with the reasons
 lane/bounce-round-trip-on-real-hermes  FL3 + P24, real kernel in an isolated HERMES_HOME: a fenced lane names the hand-off, the driver's tool call lands it, native gate, request-changes through the tool, re-entry, approval; lane-handoff.sh refuses under the fence
@@ -2699,7 +2703,7 @@ prejudge/emits-its-own-shape-not-the-verdict-schema  the gate emits forge.gate.v
 prejudge/gate-is-a-stage-not-a-replacement  no model in the gate, and the protocol's scorer still there
 prejudge/scorer-is-the-control-arm  the claude -p call is byte-identical to the recorded baseline (S5's control; never skips)
 prejudge/review-routes-by-gate-result  a gate block bounces with no model spawned, carrying forge.gate.v1
-prejudge/review-emits-a-terminator-envelope  one forge.review.v1 object tells the model which terminator to call
+prejudge/review-emits-a-terminator-envelope  one forge.review.v2 object names the call the driver makes (terminate, on_error); only a dry-run exits 0
 prejudge/review-never-prints-the-diff  a recorded 63 KB patch reaches the prompt file and not stdout
 prejudge/schema-hides-stamped-fields  the model is not asked for the fields the operator stamps
 prejudge/cost-is-storable         the verdict schema takes cost, session_id, worker_session_id and tokens_estimate — storable, never demanded, cache field intact
@@ -3347,6 +3351,36 @@ run_lane_group() {
     fi
   fi
 
+  # THE CLAIM IS KEPT ALIVE BY THE DRIVER, NOT BY THE PROGRAM (forge-lane §1 says so). lane.sh used to
+  # heartbeat the card itself (`hermes kanban heartbeat`); that is a mutation, so it is refused in a
+  # fenced terminal, and the line was removed. What keeps a multi-hour `process wait` from losing its
+  # claim is Hermes's own bridge: every tool call runs under a 30 s activity thread that stamps
+  # `_touch_activity`, which (for a dispatcher-spawned worker) calls
+  # `heartbeat_current_worker_from_env` = `heartbeat_claim` + a `heartbeat` event. Run A's board shows
+  # those events at ~60 s throughout, while every CLI heartbeat from the program failed. This pins the
+  # four places that behaviour lives in the INSTALLED source, so a Hermes that moves it is red, not a
+  # lane whose claim lapses mid-run. A missing checkout is the only skip.
+  local hb_src="$HOME/.hermes/hermes-agent" hb_detail=""
+  if [ ! -d "$hb_src" ]; then
+    skip "the-claim-is-kept-alive-by-the-driver" "hermes source not found"
+  else
+    grep -q '^def heartbeat_current_worker_from_env' "$hb_src/tools/kanban_tools.py" 2>/dev/null \
+      && awk '/^def heartbeat_current_worker_from_env/{f=1} f && /kb\.heartbeat_claim/{ok=1} f && /kbd\.heartbeat_worker/{ok2=1} END{exit !(ok && ok2)}' "$hb_src/tools/kanban_tools.py" \
+      || hb_detail="$hb_detail the-bridge-no-longer-extends-the-claim-and-records-a-heartbeat"
+    grep -q 'heartbeat_current_worker_from_env()' "$hb_src/agent/activity_tracking.py" 2>/dev/null \
+      || hb_detail="$hb_detail _touch_activity-no-longer-calls-the-bridge"
+    grep -q '^def _run_with_activity_heartbeat' "$hb_src/agent/tool_executor.py" 2>/dev/null \
+      && grep -q 'agent\._touch_activity(label)' "$hb_src/agent/tool_executor.py" 2>/dev/null \
+      || hb_detail="$hb_detail a-running-tool-no-longer-stamps-activity"
+    grep -q '^DEFAULT_CLAIM_TTL_SECONDS' "$hb_src/hermes_cli/kanban_db.py" 2>/dev/null \
+      || hb_detail="$hb_detail the-claim-ttl-moved"
+    if [ -z "$hb_detail" ]; then
+      ok "the-claim-is-kept-alive-by-the-driver (the installed Hermes still heartbeats a worker's claim from every running tool call: _run_with_activity_heartbeat -> _touch_activity -> heartbeat_current_worker_from_env -> heartbeat_claim + heartbeat_worker)"
+    else
+      bad "the-claim-is-kept-alive-by-the-driver" "forge-lane §1 says the runtime heartbeats a worker while any tool runs, and lane.sh no longer does —$hb_detail"
+    fi
+  fi
+
   # The grant is bounded by a NAMED set, not by freezing the shared .git. An
   # earlier revision asserted whole-.git immutability and blocked clean chunks
   # on a sibling lane's commit, on any fetch, and on pre-existing malformed
@@ -3902,6 +3936,53 @@ LCODEX
       bad "lane-sh-blocks-before-the-push" "a failed step must block with its canonical class and never push —$lb_detail"
     fi
 
+    # --task IS THE DRIVER'S WORD, AND A FENCED TERMINAL HAS NOTHING TO CHECK IT AGAINST (no
+    # HERMES_KANBAN_TASK). So the card is read back: it must be running, this profile's, hold
+    # one running run, and sit in THIS terminal's workspace — else exit 2 before Codex or setup
+    # starts. And a card the lane's own implementer claimed FROM REVIEW is not a lane run (H1):
+    # a hand-off retyped without its reviewer leaves `review/forge-codex-lane`, which the
+    # dispatcher then claims for the lane to "review" its own work.
+    local lt_detail="" lt_rc
+    _lsh_fixture refuse
+    _lt_card() { # id status assignee workspace  [extra jq]  -> a card the stub serves
+      jq -n --arg id "$1" --arg st "$2" --arg a "$3" --arg ws "$4" \
+        '{task: {id: $id, title: "CHUNK-7: Sync engine", status: $st, assignee: $a, workspace_path: $ws, body: "x"},
+          parents: [], comments: [], events: [], runs: [{id: 1, status: "running"}]}' > "$lstub/cards/$1.json"
+    }
+    _lt_card t_other running forge-verifier "$lwt"
+    lt_rc="$(LSH_TASK=t_other _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "assigned to 'forge-verifier', not to this profile" "$lroot/err" && [ ! -s "$lstub/calls" ]; } \
+      || lt_detail="$lt_detail another-profiles-card(rc=$lt_rc)"
+    _lt_card t_idle ready forge-codex-lane "$lwt"
+    lt_rc="$(LSH_TASK=t_idle _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "is 'ready', not running" "$lroot/err"; } || lt_detail="$lt_detail a-card-that-is-not-running(rc=$lt_rc)"
+    _lt_card t_far running forge-codex-lane "$lroot/some-other-workspace"
+    lt_rc="$(LSH_TASK=t_far _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "workspace is" "$lroot/err"; } || lt_detail="$lt_detail a-card-in-another-workspace(rc=$lt_rc)"
+    jq '.runs = [{id: 1, status: "running"}, {id: 2, status: "running"}]' "$lstub/cards/t_idle.json" \
+      | jq --arg ws "$lwt" '.task.id = "t_two" | .task.status = "running" | .task.workspace_path = $ws' > "$lstub/cards/t_two.json"
+    lt_rc="$(LSH_TASK=t_two _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "no single running run" "$lroot/err"; } || lt_detail="$lt_detail two-running-runs(rc=$lt_rc)"
+    # a card that does not exist is substrate (exit 3) whose block names NO task
+    lt_rc="$(LSH_TASK=t_nonexistent _lsh_run)"
+    { [ "$lt_rc" = 3 ] && _lsh_env '.terminate.tool == "kanban_block" and (.terminate.args | has("task_id") | not)
+         and (.terminate.args.reason | startswith("env: cannot read card"))' | grep -q true; } \
+      || lt_detail="$lt_detail a-missing-card-named-a-task(rc=$lt_rc)"
+    # H1: claimed from review by its own implementer
+    _lsh_fixture refuse
+    jq '.events += [{kind: "claimed", created_at: 50, payload: {lock: "h:1", run_id: 1, source_status: "review"}}]' \
+      "$lstub/cards/t_lane.json" > "$lstub/t.json" && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
+    lt_rc="$(_lsh_run)"
+    { [ "$lt_rc" = 3 ] && _lsh_env '.terminate.args.task_id == "t_lane"
+         and (.terminate.args.reason | startswith("other: handoff-integrity — card t_lane was claimed from review"))' | grep -q true \
+      && [ ! -s "$lstub/calls" ]; } \
+      || lt_detail="$lt_detail a-review-claim-ran-codex-again(rc=$lt_rc,$(_lsh_env .reason | head -c 100))"
+    if [ -z "$lt_detail" ]; then
+      ok "lane-sh-refuses-a-task-that-is-not-its-card (another profile's, not-running, another-workspace and two-running-runs cards are exit 2 before any work; a missing card blocks naming no task; a card claimed from review blocks as handoff-integrity)"
+    else
+      bad "lane-sh-refuses-a-task-that-is-not-its-card" "lane.sh must check --task against the board and refuse a review claim, before Codex —$lt_detail"
+    fi
+
     # ADR-0008's rule, as ADR-0019 D19.5 keeps it: native gating should make
     # this unreachable, and the guard stays until a run shows the gate holding.
     local ld_rc ld_detail=""
@@ -3961,12 +4042,23 @@ LCODEX
   local rh_src="$HOME/.hermes/hermes-agent" rh_detail="" rh_p rh_c rh_run rh_rc rh_bin
   if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$rh_py" ]; then
     skip "bounce-round-trip-on-real-hermes" "hermes (and its venv python) not installed"
+    skip "lane-sh-attempts-no-board-mutation" "hermes (and its venv python) not installed"
   elif [ ! -x "$lsh" ]; then
     bad "bounce-round-trip-on-real-hermes" "$lsh is missing"
   else
     _lsh_fixture real
     rh_bin="$lroot/realbin"; mkdir -p "$rh_bin"
     cp "$lstub/bin/gh" "$lstub/bin/codex" "$rh_bin/"
+    # Every `hermes` the lane runs is LOGGED, then run for real (a swallowed refusal is invisible
+    # to an outcome check — run A's lane went on past `heartbeat failed (continuing)` eleven times).
+    local rh_log="$lroot/rh-hermes.log" rh_verbs
+    rh_verbs="$(_fenced_verbs)"; : > "$rh_log"
+    cat > "$rh_bin/hermes" <<RHLOG
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$rh_log"
+exec "$(command -v hermes)" "\$@"
+RHLOG
+    chmod +x "$rh_bin/hermes"
     rm -rf "$rh_home"; mkdir -p "$rh_home"
     _rh() { HERMES_HOME="$rh_home" hermes kanban --board lanelab "$@"; }
     _rh_status() { _rh show "$1" --json 2>/dev/null | jq -r '[.task.status, .task.assignee] | join("/")'; }
@@ -4053,6 +4145,16 @@ LCODEX
     _rh_review "$rh_p" approve || rh_detail="$rh_detail approve-failed($(head -c 200 "$lroot/review-calls.json"))"
     [ "$(_rh_status "$rh_p" | cut -d/ -f1)" = done ] || rh_detail="$rh_detail not-done"
     [ "$(_rh_status "$rh_c" | cut -d/ -f1)" = ready ] || rh_detail="$rh_detail child-not-released($(_rh_status "$rh_c"))"
+    # The lane's whole run, twice, attempted NO board mutation: only reads reached `hermes`.
+    local rh_mut_detail=""
+    grep -q ' show ' "$rh_log" || rh_mut_detail="$rh_mut_detail the-wrapper-saw-no-read(the-check-went-blind)"
+    ! grep -Eq "^kanban( --board [^ ]+)? ($rh_verbs)( |\$)" "$rh_log" \
+      || rh_mut_detail="$rh_mut_detail ATTEMPTED($(grep -Eo "^kanban( --board [^ ]+)? ($rh_verbs)" "$rh_log" | sort | uniq -c | head -3 | tr '\n' ';'))"
+    if [ -z "$rh_mut_detail" ]; then
+      ok "lane-sh-attempts-no-board-mutation (two full passes, fenced, with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses — no heartbeat, no comment, no hand-off from the terminal)"
+    else
+      bad "lane-sh-attempts-no-board-mutation" "a worker's lane must not attempt a board mutation from its terminal —$rh_mut_detail"
+    fi
     # 7. the operator's tool refuses under the fence (it is not the worker's), with a message
     #    that says why — and the board is untouched
     local rh_h rh_snip rh_hmsg
@@ -4071,6 +4173,48 @@ LCODEX
     else
       bad "bounce-round-trip-on-real-hermes" "the same-card round trip broke against the installed kernel —$rh_detail"
     fi
+  fi
+
+  # THE LANE READS NO SCRUBBED VARIABLE. The fence only makes HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK
+  # ABSENT, so a program that falls back to them ("${HERMES_KANBAN_TASK:-$arg}") passes against a
+  # clean fence. The same fenced environment is therefore given WRONG values for exactly the names
+  # Hermes scrubs (read from the installed module). A card with an empty body keeps it fast: the
+  # lane reads the card, checks its identity, and blocks `stale-spec` before any work.
+  local lp_home="$TMPROOT/lane-poison-home" lp_task lp_snip lp_rc lp_detail="" lp_log="$TMPROOT/lane-poison-argv.log"
+  if command -v hermes >/dev/null 2>&1 && [ -x "$WCTX_PY" ] && [ -x "$lsh" ]; then
+    _lsh_fixture poison
+    rm -rf "$lp_home" "$lroot/poisonbin"; mkdir -p "$lp_home" "$lroot/poisonbin"
+    cat > "$lroot/poisonbin/hermes" <<LPLOG
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$lp_log"
+exec "$(command -v hermes)" "\$@"
+LPLOG
+    chmod +x "$lroot/poisonbin/hermes"; : > "$lp_log"
+    HERMES_HOME="$lp_home" hermes kanban boards create lanepoison >/dev/null 2>&1
+    lp_task="$(HERMES_HOME="$lp_home" hermes kanban --board lanepoison create "CHUNK-7: no body" --assignee forge-codex-lane \
+                 --workspace "dir:$lwt" --json 2>/dev/null | jq -r '.id // empty')"
+    HERMES_HOME="$lp_home" hermes kanban --board lanepoison claim "$lp_task" >/dev/null 2>&1
+    lp_snip="$(_wsnip "$lp_home" lanepoison "$lp_task" forge-codex-lane --poison)" || lp_detail="$lp_detail snippet-failed"
+    grep -q '^export HERMES_KANBAN_TASK=t_poison00' "$lp_snip" 2>/dev/null \
+      && grep -q '^export HERMES_KANBAN_RUN_ID=999' "$lp_snip" 2>/dev/null \
+      && grep -q '^export HERMES_KANBAN_CLAIM_LOCK=poison:0:0' "$lp_snip" 2>/dev/null \
+      || lp_detail="$lp_detail the-control-is-not-poisoned"
+    ( . "$lp_snip"; env PATH="$lroot/poisonbin:$PATH" TMPDIR="$lroot/tmp" FORGE_LANE_SESSION_ROOT="$lroot/sessions" \
+        "$REPO_ROOT/$lsh" --task "$lp_task" ) > "$lroot/out.json" 2> "$lroot/err"; lp_rc=$?
+    rm -f "$lp_snip" "$lp_snip.err"
+    { [ "$lp_rc" = 3 ] && _lsh_env '.terminate.tool == "kanban_block" and .terminate.args.task_id == "'"$lp_task"'"
+          and (.terminate.args.reason | startswith("stale-spec: card '"$lp_task"' has an empty body"))' | grep -q true; } \
+      || lp_detail="$lp_detail the-poisoned-run-did-not-read-its-own-card(rc=$lp_rc,$(_lsh_env '.reason // .action' | head -c 120))"
+    ! grep -rq 't_poison00' "$lp_log" "$lroot/out.json" "$lroot/err" 2>/dev/null || lp_detail="$lp_detail the-poisoned-id-was-touched"
+    grep -q " show $lp_task " "$lp_log" || lp_detail="$lp_detail the-card-was-never-read(the-check-went-blind)"
+    ! ls "$lroot"/tmp 2>/dev/null | grep -q -- '-999' || lp_detail="$lp_detail the-poisoned-run-id-keyed-the-scratch"
+    if [ -z "$lp_detail" ]; then
+      ok "lane-sh-reads-no-scrubbed-variable (fenced, with WRONG values planted for exactly the scrubbed names: it reads its own card, blocks it by id, and nothing it ran mentions the planted id)"
+    else
+      bad "lane-sh-reads-no-scrubbed-variable" "lane.sh must take its task from --task and its run from the card, never from HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK —$lp_detail"
+    fi
+  else
+    skip "lane-sh-reads-no-scrubbed-variable" "hermes (and its venv python) not installed"
   fi
 
   # lane-handoff.sh on its own: the three promises end-chunk §5 makes for it.
@@ -13480,8 +13624,9 @@ QPIN
 
   # The other half: a runner the lane does not call is dead code. §4 must reach
   # it through ~/.forge/repo, the only path that resolves from a worktree.
-  # Since FL2 the caller is scripts/lane.sh, beside the runner; the PARK-COMMENT
-  # relay is executed by lane/lane-sh-runs-the-protocol.
+  # Since FL2 the caller is scripts/lane.sh, beside the runner; its park count (the runner's
+  # PARK-COMMENT lines, reported in the hand-off summary since P24 — a fenced terminal cannot
+  # post them to the card) is executed by lane/lane-sh-runs-the-protocol.
   if grep -Fq '"$HERE/codex-run.sh" "$WS" "$RUN_ID" "$TASK"' scripts/lane.sh \
      && grep -Fq 'PARK-COMMENT' scripts/lane.sh \
      && ! grep -Eq 'codex exec' scripts/lane.sh \
@@ -13489,7 +13634,7 @@ QPIN
     ok "lane-invokes-the-runner"
   else
     bad "lane-invokes-the-runner" \
-        "lane.sh must call codex-run.sh beside itself, relay its PARK-COMMENT, and never invoke codex exec inline"
+        "lane.sh must call codex-run.sh beside itself, count its PARK-COMMENT lines, and never invoke codex exec inline"
   fi
 }
 wants quota     && run_quota_group

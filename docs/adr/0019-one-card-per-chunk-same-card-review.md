@@ -241,6 +241,26 @@ argument above.
   > the worker's environment, so it proves ownership of the live claim.
   > `lane/bounce-round-trip-on-real-hermes` executes the whole trip, including
   > that the lane's own run cannot complete the card after handing it off.
+
+  > **Correction, 2026-10-03 (epic S6d, P24).** The sentence above — "the
+  > handoff is made by `scripts/lane-handoff.sh` through the Hermes CLI ... the
+  > CLI binds the run id from the worker's environment" — was false about a
+  > dispatched worker, and run A's first attempt found it out. Hermes fences a
+  > worker's terminal: `hermes kanban request-review` (and every other
+  > mutation) from a shell the worker started is refused with "delegate_task
+  > child contexts cannot mutate Kanban tasks via the CLI", the task and run ids
+  > are scrubbed from that shell's environment, and the fence survives a script
+  > that removes the task id (`kanban-worker-lanes.md`, *Descendant process
+  > scope*; `agent/delegation_context.py`). Only the worker's own tool calls may
+  > hand off. So the lane's handoff is the **`kanban_request_review` tool**, made
+  > by the driver, with the call and its arguments named by `scripts/lane.sh`'s
+  > envelope — validated first, the reviewer always explicit, the run id proven
+  > by the tool's own binding. `lane-handoff.sh` is the operator's tool, for a
+  > human-tier chunk, and refuses under the fence. The prohibition on the
+  > driver's *own* use of the tool stands (`lane/terminator-set-is-closed`): the
+  > driver may make exactly the call the program names and no other.
+  > `lane/bounce-round-trip-on-real-hermes` now executes the trip with a fenced
+  > lane and the driver's real tool call. See ADR-0010's amendment of the same date.
 - The tier-2 handoff, the judge child and the fix child become dead machinery,
   along with the `verify` cases guarding them. They are removed in their own
   slices, each one after the replacement is green, never in the same change.

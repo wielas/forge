@@ -256,20 +256,43 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   the merged-PR guard stays in `scripts/lane.sh` until a live graph shows the
   native gate holding.
 - **The lane as a program, live.** Since epic S2 the lane's protocol is
-  `scripts/lane.sh` and its handoff `scripts/lane-handoff.sh`: executed end to
-  end in the `lane` group (real setup, runner, audit, make and validator; stub
-  `hermes`/`gh`/`codex`), and the same-card bounce round trip against the real
-  kernel. No dispatcher-spawned driver has run them yet. The S2-only hazard is
+  `scripts/lane.sh`: executed end to end in the `lane` group (real setup,
+  runner, audit, make and validator; stub `hermes`/`gh`/`codex`), and the
+  same-card bounce round trip against the real kernel. The S2-only hazard is
   **gone**: the lane hands its card to `forge-verifier`, and since epic S3 that
   profile's protocol expects the same card rather than a child (FL4).
+  **Run A's first attempt (2026-10-03) was the first dispatched driver, and it
+  found that the handoff could not be made from the lane's terminal:** Hermes
+  fences a worker's shell (every `hermes kanban` mutation refused, the task and
+  run ids scrubbed), so the lane did the whole chunk — Codex, `make check`, the
+  audit, the push, PR #2 — and `lane-handoff.sh`'s `request-review` was refused
+  (`field-notes`: *A worker's terminal is fenced*). Since epic S6d (P24) the lane
+  **names** its handoff and the driver makes it: `lane.sh --task <id>` exits 4
+  with a `kanban_request_review` call (reviewer always explicit, the validated
+  envelope as its metadata) and a `kanban_block` fallback, and writes nothing to
+  the board. Proven on the installed kernel in an isolated `HERMES_HOME`, with
+  the fenced environment built by Hermes's own `delegated_child_subprocess_env`
+  and the call performed through its real tool handler
+  (`lane/bounce-round-trip-on-real-hermes`, `lane-sh-attempts-no-board-mutation`,
+  `lane-sh-reads-no-scrubbed-variable`). **Not proven:** a live model making the
+  call with its arguments intact (the lane's validated envelope is kept on the
+  host and the verifier compares the stored copy with it, so a garbled copy is
+  caught, not prevented), and the claim surviving a multi-hour park (by source
+  and run A's heartbeat events, not by a run longer than the 15-minute TTL).
 - **The verifier's own card, fixture-proven on the real kernel (epic S3, FL4).**
   `forge-prejudge` is now `forge-verifier`, and `scripts/prejudge-review.sh`
-  transitions the chunk's own card: `request-changes` on a fail, a sticky block
-  on an approval it may only recommend, or — only under `FORGE_VERIFIER_MERGE=1`,
-  which nothing sets — a squash merge and completion (a merge whose completion
-  then fails is held `merge-pending:` for the watcher, never stranded). A run
-  with no board to transition refuses (exit 3) rather than report an outcome it
-  did not make. `scripts/merge-check.sh` runs `make check` on the PR's head
+  decides the chunk's own card's transition: `request-changes` on a fail, a
+  sticky block on an approval it may only recommend, or — only under
+  `FORGE_VERIFIER_MERGE=1`, which nothing sets — a squash merge and completion
+  (a merge whose completion then fails is held `merge-pending:` for the watcher,
+  never stranded). **Since epic S6d (P24) it names that call and the driver makes
+  it** (exit 4, `terminate` and `on_error`; the verifier's terminal is fenced like
+  the lane's): the verdict is a host file the merge-watcher reads, the chunk is
+  identified off the board rather than from a scrubbed variable, and the lane's
+  stored hand-off is compared with what the lane validated before any stage runs.
+  The `verifier/` cases perform each envelope through the real tool handler. A run
+  with no board to read refuses (exit 3) rather than name an outcome it could not
+  make. `scripts/merge-check.sh` runs `make check` on the PR's head
   merged with the PR's own base (`baseRefName`, never an assumed `main`), in a
   fresh clone, and is executed against real repositories where every branch is
   green alone and only the union is red. `scripts/merge-watcher.sh` completes a
