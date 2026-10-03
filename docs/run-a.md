@@ -446,6 +446,29 @@ probe has run, and seven digests have been judged. Then:
 *Filled only from pasted output. Nothing below is written before it happens.*
 
 ### Launch record
+
+#### Attempt 1 (halted)
+
+`$P/.forge/run-a-attempt-1/run-a-launch.txt`, as written by *Launch* step 2:
+
+```
+RUN_START=2026-10-03T07:43:39Z
+FORGE_SHA=6ab619f88ff7d1a37057f82ee30da8bedb329da4
+PRODUCT_SHA=388d78dbd13ba72b4517046faf975c1f032f9faa
+BOARD=squatfather-run-a
+Hermes Agent v0.21.5 (2026.9.24) · upstream bd0affe5 · local 1a3bee0e (+1 carried commit)
+codex-cli 0.157.1
+2.1.288 (Claude Code)
+gh version 2.101.0 (2026-09-15)
+uv 0.12.19 (Homebrew 2026-09-24 aarch64-apple-darwin)
+/Users/goonlab/dev/the-squatfather/.forge/commission-20261003T045646Z.3MF7h4.md
+overall: PASS
+posture: UNGATED (merge gate unavailable on this plan: wielas/Squatfather)
+```
+
+Halted 2026-10-03 at CHUNK-1's handoff. See *Amendments*, 2026-10-03.
+
+#### Attempt 2
 *(not yet run)*
 
 ### Root checkpoint
@@ -479,4 +502,55 @@ of M1, `codex --version; claude --version; uv --version` pasted)*
 
 ## Amendments
 
-*None.*
+**2026-10-03 — attempt 1 halted; what attempt 2 changes.**
+
+*What happened.*
+- Attempt 1's `RUN_START` was 2026-10-03T07:43:39Z.
+- Its CHUNK-1 card (`t_da03d07a`) was implemented and pushed (PR #2, CI green,
+  `ad3fd63`).
+- At 11:13 local, the kernel's descendant fence refused the lane's handoff to
+  the verifier (epic P24). No card reached the verifier, and nothing merged.
+- PR #2 had also re-sorted three frozen probe files (epic P25). The gate would
+  have bounced it on that alone.
+- The run was stopped and preserved under *Stop rules*. The evidence is
+  `$P/.forge/run-a-attempt-1/`: the driver's transcript, the lane's tmp dir, a
+  board copy, the card, PR #2 and the launch record.
+
+*What changes for attempt 2.* Everything above this section stands, except the
+following:
+- **Forge runtime:** `origin/main` once S6d has merged and deployed, including
+  `./hermes/profiles-bootstrap.sh`. It is recorded as the new launch record's
+  `FORGE_SHA`.
+- **Product:** `main` once Squatfather PR #3 has merged. PR #3 is the isort
+  first-party pin and changes no frozen file. The new launch record's
+  `PRODUCT_SHA` names it, and the tree must be clean.
+- **Board:** `squatfather-run-a2`. Read every `squatfather-run-a` in
+  *Preconditions*, *Launch*, the digest wrapper's line and *What is measured* as
+  `squatfather-run-a2`. Attempt 1's board stays as evidence. Its one card is
+  blocked and is never unblocked.
+- **Preconditions 1–8 are re-run in full,** including a fresh `make commission`
+  with `BOARD=squatfather-run-a2`. Attempt 1's commission certified a runtime
+  that no longer runs.
+- **Attempt 1's artifacts are moved aside before launch, and preserved.**
+  - Tag `ad3fd63` as `run-a-attempt-1/chunk-1` and push the tag.
+  - Close PR #2 with a pointer here.
+  - Delete its branch, `chunk/1-store-owner-history-in-a-migrated-sqlite`,
+    because attempt 2's CHUNK-1 reuses the name.
+  - Remove the worktree `$P/.worktrees/t_da03d07a`.
+- **Launch record:** attempt 2 writes `$P/.forge/run-a-launch.txt` afresh.
+  Attempt 1's copy is in `$P/.forge/run-a-attempt-1/` and is pasted above,
+  under *Results › Launch record*.
+- **The driver makes the program's call.** Where the text above says the lane
+  hands the card to `forge-verifier`, or the verifier bounces or holds it, the
+  program now decides the transition. The driver then makes it through the one
+  lifecycle tool the envelope names (S6d; ADR-0010 D10.3, amended 2026-10-03).
+  Nothing an operator does changes.
+- **PARK is read from the handoff summary.** Under the fence, a lane can no
+  longer comment mid-run. So *What is measured*'s "every `PARK-COMMENT`" now
+  means every `parked N×` line in a lane's handoff summary. That is the
+  `review_requested` run's summary in `hermes kanban --board "$B" show <card>`.
+- **A rehearsal comes before launch.** One hello chunk runs on a scratch board,
+  in `~/dev/hello-forge`, through the real gateway. It passes only if a
+  dispatcher-spawned lane hands off to `forge-verifier` through the tool path,
+  and the verifier then ends in a hold or a bounce through the tool path. It is
+  not part of run A: nothing measured reads from it.
