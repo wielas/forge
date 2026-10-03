@@ -4066,7 +4066,12 @@ RHLOG
     _rh_events() { _rh show "$1" --json 2>/dev/null | jq '.events | length'; }
     _rh_lane() { # $1=task, then extra env: the lane, run in a FENCED terminal, with its one argument
       local task="$1" snip rc; shift
-      snip="$(_wsnip "$rh_home" lanelab "$task" forge-codex-lane --branch chunk/7-sync-engine)" || return 99
+      snip="$(_wsnip "$rh_home" lanelab "$task" forge-codex-lane --branch chunk/7-sync-engine ${RH_POISON:+--poison})" || return 99
+      # the control: a poisoned run really carries the planted values for the scrubbed names
+      if [ -n "${RH_POISON:-}" ]; then
+        { grep -q '^export HERMES_KANBAN_TASK=t_poison00' "$snip" && grep -q '^export HERMES_KANBAN_RUN_ID=999' "$snip" \
+          && grep -q '^export HERMES_KANBAN_CLAIM_LOCK=poison:0:0' "$snip"; } && : > "$lroot/poison-control.ok"
+      fi
       ( . "$snip"
         env PATH="$rh_bin:$PATH" STUB="$lstub" LANE_CALLS="$lstub/calls" LANE_RED="$lstub/red" \
             TMPDIR="$lroot/tmp" CODEX_HOME="$lroot/codexhome" \
@@ -4101,8 +4106,16 @@ RHLOG
     # 1. first pass: the program names the hand-off; the board is untouched until the driver acts
     rh_run="$(_rh_claim "$rh_p")"
     rh_ev="$(_rh_events "$rh_p")"
-    rh_rc="$(_rh_lane "$rh_p")"
+    # pass 1 runs with WRONG values planted for exactly the scrubbed names (a fence alone only makes
+    # them absent, which a `${HERMES_KANBAN_RUN_ID:-...}` fallback survives): the scratch it builds
+    # must be keyed on the card's own run, and nothing it runs may mention the planted task.
+    rm -f "$lroot/poison-control.ok"
+    rh_rc="$(RH_POISON=1 _rh_lane "$rh_p")"
     [ "$rh_rc" = 4 ] || rh_detail="$rh_detail pass1-rc=$rh_rc($(jq -r '.reason // .action' "$lroot/out.json" 2>/dev/null))"
+    [ -e "$lroot/poison-control.ok" ] || rh_detail="$rh_detail the-poison-control-did-not-hold"
+    [ -d "$lroot/tmp/forge-lane-lanelab-$rh_run" ] && [ ! -e "$lroot/tmp/forge-lane-lanelab-999" ] \
+      || rh_detail="$rh_detail the-run-key-did-not-come-from-the-card($(ls "$lroot/tmp" 2>/dev/null | tr '\n' ' '))"
+    ! grep -q 't_poison00' "$rh_log" "$lroot/out.json" "$lroot/err" 2>/dev/null || rh_detail="$rh_detail the-poisoned-task-id-was-touched"
     [ "$(_rh_status "$rh_p")" = running/forge-codex-lane ] && [ "$(_rh_events "$rh_p")" = "$rh_ev" ] \
       || rh_detail="$rh_detail the-program-wrote-the-board($(_rh_status "$rh_p"),events $rh_ev->$(_rh_events "$rh_p"))"
     cp "$lroot/out.json" "$lroot/pass1.json"
