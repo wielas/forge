@@ -9267,6 +9267,15 @@ VLOGH
           [.events[] | select(.kind == "blocked")] | last | .payload.reason
           | startswith("other: handoff-integrity — request-changes did not return this card")' >/dev/null 2>&1; } \
       || vdetail="$vdetail the-fallback-did-not-land(perform-rc=$vrc,$(_vst "$vP"))"
+    # The claim forge-lane §2 makes about a hand-off that drops its reviewer: it lands on the
+    # implementer itself, and the dispatcher would claim it for the lane to "review" its own work.
+    _vboard
+    vx="$(_v create "CHUNK-9: no reviewer" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"; _v claim "$vx" >/dev/null 2>&1
+    jq -n --arg t "$vx" --argjson m "$vmeta" '{terminate: {tool: "kanban_request_review", args: {task_id: $t, summary: "x", metadata: $m}}}' > "$vbin/out-noreviewer.json"
+    _wperform "$vhome" vlab "$vx" forge-codex-lane "$vbin/out-noreviewer.json" > "$vbin/perform.json" 2>&1
+    { [ "$(_v show "$vx" --json | jq -r '[.task.status, .task.assignee] | join("/")')" = review/forge-codex-lane ] \
+      && [ "$(_v dispatch --dry-run --json 2>/dev/null | jq -r --arg id "$vx" '[.spawned[]? | select(.task_id == $id) | .assignee] | first // "none"')" = forge-codex-lane ]; } \
+      || vdetail="$vdetail a-hand-off-without-a-reviewer-did-not-land-spawnable-on-the-implementer"
     [ -z "$vdetail" ] \
       && ok "the-envelope-lands-on-the-real-kernel (a fail lands ready on the recorded implementer and a recommendation lands blocked/needs_input, each named by the tool's own result; the hold is sticky without an assign and renders decision-first; a refused call leaves the card running and its fallback lands)" \
       || bad "the-envelope-lands-on-the-real-kernel" \
