@@ -30,9 +30,11 @@
 #     sticky block on an approval the verifier may only recommend, or — only
 #     once the operator has flipped `FORGE_VERIFIER_MERGE` — the squash merge
 #     itself, then completion.
-#   * The model terminates NOTHING on a routed outcome. The kernel ends the run
-#     as part of the transition, exactly as `request-review` ends the lane's.
-#     Exit 3 is still the model's `kanban_block`, because nothing transitioned.
+#   * The kernel ends the run as part of the transition, exactly as
+#     `request-review` ends the lane's. (FL4 said "the model terminates NOTHING
+#     on a routed outcome": since epic S6d the program no longer makes the
+#     transition at all — see below — so the model makes exactly the call the
+#     envelope names, and that call is what ends the run.)
 #
 # WHAT FL5 ADDED (epic S3b).
 #   * Stage 1c, the MUTATION PROBE (`scripts/mutation-probe.sh`). It runs in the
@@ -103,8 +105,11 @@
 # Usage:
 #   prejudge-review.sh <pr-url> --chunk <card-id> [--board <slug>]
 #                      [--repo owner/name] [--wait <seconds>]
-#                      [--fixture <dir>] [--dry-run]
-#   ...with the chunk contract on stdin. <card-id> IS your own task's id
+#                      [--fixture <dir>] [--dry-run] [--contract-from-card]
+#   ...with the chunk contract on stdin, or `--contract-from-card` to read it from
+#   the card's own body (what a driver should do: a background terminal call has no
+#   pipe, and the contract is a multi-KB text it would otherwise retype into a
+#   shell command). <card-id> IS your own task's id
 #   (`kanban_show().task.id`; the fenced terminal has no HERMES_KANBAN_TASK, and
 #   none is read). It must be `running`, assigned to this profile (HERMES_PROFILE)
 #   and hold exactly one running run. HERMES_KANBAN_BOARD names the board.
@@ -119,8 +124,15 @@
 #   FORGE_MUTATION_PROBE_BIN        stand in for scripts/mutation-probe.py
 #   FORGE_MUTATION_BUDGET           seconds the mutation probe may spend [420]
 #
-# stdout is ONE `forge.review.v2` envelope: `action`, `summary`, `reason`,
+# stdout is ONE `forge.review.v2` envelope, as ONE COMPACT LINE — the last thing
+# printed: `action`, `summary`, `reason`, `rc` (this program's exit code),
 # `metadata`, `terminate` and `on_error` (each `{tool, args}`), `created_cards`.
+# The driver reads it with `process_manage(action="log")`, never from `wait`: a
+# wait's output is cut to the last 2000 characters (tools/process_registry.py
+# COMPLETION_OUTPUT_CHARS) and the call sits near the START of the envelope. Run
+# it in the BACKGROUND: a review outlasts the 420 s a foreground tool call gets
+# (agent/tool_executor.py _DEFAULT_CONCURRENT_TOOL_TIMEOUT_S; the CI wait alone
+# defaults to 600 s).
 #
 # Exit: 4 a routed outcome — NOTHING has been transitioned yet. Call
 #         `.terminate.tool` with `.terminate.args`, verbatim; if it returns an
@@ -146,7 +158,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PR_URL=""; CHUNK=""; BOARD="${HERMES_KANBAN_BOARD:-}"; REPO=""; chunk_title=""
-WAIT_SECS=600; FIXTURE="${PREJUDGE_FIXTURE:-}"; DRY_RUN=0
+WAIT_SECS=600; FIXTURE="${PREJUDGE_FIXTURE:-}"; DRY_RUN=0; CONTRACT_FROM_CARD=0
 CREATED=()
 # shellcheck source=forge-state.sh
 . "$HERE/forge-state.sh" || { echo "usage: forge-state.sh is missing beside prejudge-review.sh" >&2; exit 2; }
@@ -160,6 +172,7 @@ while [ $# -gt 0 ]; do
     --wait)    WAIT_SECS="${2:?--wait needs seconds}"; shift 2;;
     --fixture) FIXTURE="${2:?--fixture needs a directory}"; shift 2;;
     --dry-run) DRY_RUN=1; shift;;
+    --contract-from-card) CONTRACT_FROM_CARD=1; shift;;
     -h|--help) awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; exit 0;;
     -*) echo "unknown arg: $1" >&2; exit 2;;
     *) [ -z "$PR_URL" ] || { echo "only one PR: '$PR_URL' and '$1'" >&2; exit 2; }
@@ -167,8 +180,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$PR_URL" ] || { usagetext; exit 2; }
+[ "$CONTRACT_FROM_CARD" != 1 ] || [ "$DRY_RUN" != 1 ] || { echo "usage: --contract-from-card reads the card, and a --dry-run has none" >&2; exit 2; }
 command -v jq >/dev/null || {
-  printf '{"schema":"forge.review.v2","action":"substrate-block","reason":"env: jq missing","terminate":{"tool":"kanban_block","args":{"task_id":"%s","reason":"env: jq missing"}},"on_error":null,"created_cards":[]}\n' "$CHUNK"
+  # no jq, so nothing is escaped: the literal names no task (the kernel applies a block to the
+  # driver's own) and embeds nothing the caller typed
+  printf '{"schema":"forge.review.v2","action":"substrate-block","reason":"env: jq missing","rc":3,"terminate":{"tool":"kanban_block","args":{"reason":"env: jq missing"}},"on_error":null,"created_cards":[]}\n'
   exit 3
 }
 
@@ -184,13 +200,13 @@ trap 'rm -rf "$TMP"' EXIT
 envelope() {   # action, summary, metadata-file|'null', reason, exit-code, [terminate-json], [on_error-json]
   local action="$1" summary="$2" metafile="$3" reason="$4" code="$5" terminate="${6:-null}" on_error="${7:-null}" meta='null'
   [ "$metafile" != "null" ] && [ -s "$metafile" ] && meta="$(cat "$metafile")"
-  jq -n --arg action "$action" --arg summary "$summary" --arg reason "$reason" \
+  jq -nc --arg action "$action" --arg summary "$summary" --arg reason "$reason" --argjson rc "$code" \
         --argjson metadata "$meta" --argjson terminate "$terminate" --argjson on_error "$on_error" \
         --argjson created "$(printf '%s\n' ${CREATED[@]+"${CREATED[@]}"} \
                              | jq -Rs 'split("\n") | map(select(length>0))')" '
     { schema: "forge.review.v2", action: $action, summary: $summary,
       reason: (if $reason == "" then null else $reason end),
-      metadata: $metadata, terminate: $terminate, on_error: $on_error, created_cards: $created }'
+      rc: $rc, metadata: $metadata, terminate: $terminate, on_error: $on_error, created_cards: $created }'
   exit "$code"
 }
 
@@ -288,10 +304,33 @@ if board_live; then
     # THE LANE'S HAND-OFF ARRIVES INTACT. The lane's driver retyped the metadata and
     # the reviewer into `kanban_request_review`; this is the only place anything can
     # still notice. The card's last `review_requested` run is compared with what the
-    # lane validated and kept on the host. `worker_session_id` is the kernel's own
-    # stamp, and the three free-text lists (decisions, debt, card proposals) are lines
-    # lifted from the diff, which the kernel's redaction may legitimately rewrite — a
-    # secret-shaped line must not read as tampering.
+    # lane validated and kept on the host.
+    #
+    # THE KERNEL REWRITES TWO THINGS, and neither may read as tampering: it adds
+    # `worker_session_id`, and it REDACTS secret-shaped strings (`API_KEY=sk-…` becomes
+    # `API_KEY=***`, `ghp_ab…6789` becomes `ghp_ab...6789`) — in the free-text lists
+    # (decisions, debt, card proposals: lines lifted from the diff) and equally in a
+    # file NAME in `changed_files`. A false `handoff-integrity` is a run A stop rule, so:
+    #   * `worker_session_id` is dropped from both sides;
+    #   * the three free-text lists are compared by LENGTH (an item cannot vanish);
+    #   * every other leaf must be equal, or differ ONLY by carrying a redaction mark
+    #     (`***` or `...`) in the stored copy — the shape of a redaction, not an edit.
+    # A leaf changed to anything else, a key added or removed, a list shortened: red.
+    handoff_matches() {  # $1=the stored run (json) $2=the lane's host copy (file) -> 0 if the same hand-off
+      jq -en --argjson run "$1" --slurpfile host "$2" '
+        def redacted(a; b): (a | type) == "string" and (b | type) == "string" and a != b
+                            and (a | test("[*][*][*]|[.][.][.]"));
+        def texty: [.decisions, .debt, .card_proposals] | map(length);
+        ($run.metadata | del(.worker_session_id)) as $a
+        | ($host[0] | del(.worker_session_id)) as $b
+        | ($a | del(.decisions, .debt, .card_proposals)) as $x
+        | ($b | del(.decisions, .debt, .card_proposals)) as $y
+        | (($a | texty) == ($b | texty))
+          and ([$x | paths(scalars)] == [$y | paths(scalars)])
+          and all([$y | paths(scalars)][];
+                  . as $p | ($x | getpath($p)) as $u | ($y | getpath($p)) as $v
+                  | $u == $v or redacted($u; $v))' >/dev/null 2>&1
+    }
     handoff="$(printf '%s' "$CARD0" | jq -c '[.runs[]? | select(.outcome == "review_requested")] | sort_by(.id) | last // empty' 2>/dev/null)"
     if [ -n "$handoff" ]; then
       handoff_pr="$(printf '%s' "$handoff" | jq -r '.metadata.pr // empty' 2>/dev/null)"
@@ -300,8 +339,7 @@ if board_live; then
       if [ "$(printf '%s' "$handoff" | jq -r '.profile // ""')" = forge-codex-lane ]; then
         lane_copy="$(forge_lane_session_root)/$BOARD-$CHUNK.metadata.json"
         if [ -s "$lane_copy" ]; then
-          drop='del(.worker_session_id, .decisions, .debt, .card_proposals)'
-          [ "$(printf '%s' "$handoff" | jq -S ".metadata | $drop" 2>/dev/null)" = "$(jq -S "$drop" "$lane_copy" 2>/dev/null)" ] \
+          handoff_matches "$handoff" "$lane_copy" \
             || substrate "other: handoff-integrity — the chunk envelope stored on this card differs from the one the lane validated ($lane_copy): the driver altered it in transit, so what this review would read is not what the lane produced"
           LANE_COPY_NOTE="lane envelope: stored copy equals the one the lane validated"
         else
@@ -348,6 +386,10 @@ fi
 # unconditionally (even when idempotency-key resolved to an already-blocked
 # card) is safe. The read-back fails closed if any of those substrate facts —
 # including the link itself — did not take.
+# NEVER CALL route_tier2 OR route_bounce. They are the ADR-0007 tier-2 and fix-card machinery
+# ADR-0019 D19.1 retired; they stay defined only until the two `prejudge/` cases that lift them
+# are removed in their own slice. They run `hermes kanban create/assign/link`, which a fenced
+# worker terminal refuses (epic S6d), so a live call from here could not work anyway.
 route_tier2() {
   local body="$1" review
   board_live || return 0
@@ -781,7 +823,16 @@ fi
 # ---------------------------------------------------------------------------
 prompt_file="$TMP/prompt.txt"
 contract_file="$TMP/contract.md"
-cat > "$contract_file"   # the chunk contract, on stdin
+if [ "$CONTRACT_FROM_CARD" = 1 ]; then
+  # The contract IS the card's body (the lane read the same field for Codex), read from the card
+  # this program already identified — not retyped by a driver into a shell command, and not a
+  # stdin a background terminal call does not have.
+  printf '%s' "$CARD0" | jq -r '.task.body // ""' > "$contract_file" 2>/dev/null
+  [ -s "$contract_file" ] && grep -q '[^[:space:]]' "$contract_file" \
+    || substrate "stale-spec: card $CHUNK has an empty body — there is no contract to review against"
+else
+  cat > "$contract_file"   # the chunk contract, on stdin
+fi
 
 # --- PINNED REGION (scorer brief) — three-space indent is load-bearing. ------
 # The heredoc is quoted and NOT `<<-`, so every leading space is part of the

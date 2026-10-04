@@ -80,8 +80,12 @@
 #                          envelope are kept   [<state root>/lane-sessions]
 #                          (scripts/forge-state.sh owns the root)
 #
-# stdout is ONE `forge.lane.v2` envelope: `action`, `summary`, `reason`,
-# `terminate` and `on_error` (each `{tool, args}`), `created_cards`.
+# stdout is ONE `forge.lane.v2` envelope, as ONE COMPACT LINE — the last thing
+# printed: `action`, `summary`, `reason`, `rc` (this program's exit code),
+# `terminate` and `on_error` (each `{tool, args}`), `created_cards`. The driver
+# reads it with `process_manage(action="log")`, never from `wait`: a wait's output
+# is cut to the last 2000 characters (tools/process_registry.py
+# COMPLETION_OUTPUT_CHARS), and the call sits near the START of the envelope.
 #
 # Exit: 4 hand off — `.action` is `handoff`. Call `.terminate.tool` with
 #         `.terminate.args`, verbatim (`kanban_request_review`); if it returns
@@ -163,12 +167,12 @@ call_json() {   # tool, args-json -> {tool, args}
 ENVELOPE_COPY=""
 envelope() {   # action, summary, reason, terminate-json, on_error-json|null, exit-code
   local out
-  out="$(jq -n --arg action "$1" --arg summary "$2" --arg reason "$3" \
+  out="$(jq -nc --arg action "$1" --arg summary "$2" --arg reason "$3" --argjson rc "$6" \
         --argjson terminate "$4" --argjson on_error "$5" '
     { schema: "forge.lane.v2", action: $action,
       summary: (if $summary == "" then null else $summary end),
       reason: (if $reason == "" then null else $reason end),
-      terminate: $terminate, on_error: $on_error, created_cards: [] }')"
+      rc: $rc, terminate: $terminate, on_error: $on_error, created_cards: [] }')"
   printf '%s\n' "$out"
   [ -z "$ENVELOPE_COPY" ] || printf '%s\n' "$out" > "$ENVELOPE_COPY" 2>/dev/null
   exit "$6"
@@ -196,7 +200,7 @@ reason_from() {   # file, fallback
 }
 
 command -v jq >/dev/null || {
-  printf '{"schema":"forge.lane.v2","action":"block","reason":"env: jq missing","terminate":{"tool":"kanban_block","args":{"reason":"env: jq missing"}},"on_error":null,"created_cards":[]}\n'
+  printf '{"schema":"forge.lane.v2","action":"block","reason":"env: jq missing","rc":3,"terminate":{"tool":"kanban_block","args":{"reason":"env: jq missing"}},"on_error":null,"created_cards":[]}\n'
   exit 3
 }
 for tool in git gh hermes make; do
@@ -244,8 +248,12 @@ jq -e --arg id "$TASK" '.task.id == $id' "$TMP/card.json" >/dev/null \
 [ "$(jq '[.runs[]? | select(.status == "running")] | length' "$TMP/card.json")" = 1 ] \
   || identity_error "card $TASK has no single running run, so there is no run id to key this run on"
 RUN_ID="$(jq -r '[.runs[] | select(.status == "running")][0].id | tostring' "$TMP/card.json")"
-card_ws="$(cd "$(jq -r '.task.workspace_path // ""' "$TMP/card.json")" 2>/dev/null && pwd -P)"
-env_ws="$(cd "$WS" 2>/dev/null && pwd -P)"
+# `cd ""` SUCCEEDS in bash 3.2 (it stays where it is), so an empty workspace_path would compare
+# equal to an empty answer from the other side: both are asked ONLY when non-empty.
+card_ws_raw="$(jq -r '.task.workspace_path // ""' "$TMP/card.json")"
+card_ws="" env_ws=""
+[ -z "$card_ws_raw" ] || card_ws="$(cd "$card_ws_raw" 2>/dev/null && pwd -P)"
+[ -z "$WS" ] || env_ws="$(cd "$WS" 2>/dev/null && pwd -P)"
 { [ -n "$card_ws" ] && [ "$card_ws" = "$env_ws" ]; } \
   || identity_error "card $TASK's workspace is '$(jq -r '.task.workspace_path // "none"' "$TMP/card.json")', not this terminal's ($WS) — --task must be YOUR task's id"
 TRUSTED_TASK="$TASK"   # from here a block may name the card: the kernel will accept it
@@ -603,11 +611,13 @@ SUMMARY="$CHUNK_ID$([ "$REENTRY" = 1 ] && printf ' (after review)'): PR $PR_URL 
 # hand-off a driver never made without re-running Codex.
 # ---------------------------------------------------------------------------
 SUMMARY="${SUMMARY}${PARK_NOTE}"
+RECOVER_META=""
 if mkdir -p "$SESSION_ROOT" 2>/dev/null \
    && jq -S . "$FORGE_LANE_RUNTIME/chunk-metadata.json" > "$SESSION_ROOT/$BOARD-$TASK.metadata.json.new" 2>/dev/null \
    && mv -f "$SESSION_ROOT/$BOARD-$TASK.metadata.json.new" "$SESSION_ROOT/$BOARD-$TASK.metadata.json"; then
-  :
+  RECOVER_META="$SESSION_ROOT/$BOARD-$TASK.metadata.json"
 else
+  RECOVER_META="$FORGE_LANE_RUNTIME/chunk-metadata.json"
   say "could not keep the validated envelope for the verifier to compare (continuing)"
   rm -f "$SESSION_ROOT/$BOARD-$TASK.metadata.json.new" 2>/dev/null
 fi
@@ -616,6 +626,6 @@ envelope handoff "$SUMMARY" "" \
   "$(call_json kanban_request_review "$(jq -nc --arg t "$TASK" --arg s "$SUMMARY" --arg r "$REVIEWER" \
        --slurpfile m "$FORGE_LANE_RUNTIME/chunk-metadata.json" \
        '{task_id: $t, summary: $s, metadata: $m[0], reviewer: $r}')")" \
-  "$(call_json kanban_block "$(jq -nc --arg t "$TASK" --arg u "$PR_URL" \
-       '{task_id: $t, reason: ("other: handoff-integrity — the review hand-off of " + $t + " was refused by the kernel; the branch is pushed and the PR is open (" + $u + "), so nothing needs re-running")}')")" \
+  "$(call_json kanban_block "$(jq -nc --arg t "$TASK" --arg u "$PR_URL" --arg b "$BOARD" --arg m "$RECOVER_META" \
+       '{task_id: $t, reason: ("other: handoff-integrity — the review hand-off of " + $t + " was refused by the kernel; the branch is pushed and the PR is open (" + $u + "). Do NOT just unblock the card: that runs Codex again over finished work. Recover with: ~/.forge/repo/scripts/lane-handoff.sh " + $t + " --board " + $b + " --summary \"<one line>\" --metadata " + $m)}')")" \
   4
