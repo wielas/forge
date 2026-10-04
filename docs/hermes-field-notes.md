@@ -352,12 +352,89 @@ render actual cost as missing. If the id or profile database is unavailable,
 the run is unjudged and base board metrics remain readable.
 
 **Worker lifecycle.** A dispatched worker must end in exactly one of
-`kanban_complete` or `kanban_block`. Exiting without either is reaped as
-`crashed`: `consecutive_failures` ticks and the breaker blocks the card once it
-trips (`--max-retries`, default `kanban.failure_limit`=2). Heartbeat at least
-hourly on long work — the dispatcher reclaims a task running past
-`kanban.dispatch_stale_timeout_seconds` (4h) with no heartbeat in the last hour.
-A reclaim re-queues without penalty but loses the run's progress.
+`kanban_complete`, `kanban_request_review`, `kanban_block` (a reviewer:
+`kanban_complete`, `kanban_request_changes` or `kanban_block`). Exiting without
+one is reaped as `crashed`: `consecutive_failures` ticks and the breaker blocks
+the card once it trips (`--max-retries`, default `kanban.failure_limit`=2). The
+dispatcher reclaims a task running past `kanban.dispatch_stale_timeout_seconds`
+(4h) with no heartbeat in the last hour — but a worker's own tool calls heartbeat
+for it (below), so a script never has to.
+
+**A worker's terminal is fenced: workers terminate through tools.** (Run A,
+2026-10-03; epic S6d, P24.) Hermes carries a non-owner fence into every shell a
+worker starts (`tools/environments/local.py::_finalize_child_env` →
+`agent/delegation_context.py::delegated_child_subprocess_env`, `scrub_kanban_env`,
+`kanban_path_is_fenced`): `HERMES_KANBAN_TASK`, `_RUN_ID`, `_CLAIM_LOCK` (and the
+goal-mode keys) are scrubbed, `HERMES_DELEGATED_CHILD_CONTEXT=<board root>` is set
+— it names the lineage's board root, so a scratch `HERMES_HOME` elsewhere is a
+normal read-write board — and the board, DB, workspace, branch and profile
+variables are kept. In that shell every `hermes kanban` mutation is refused
+(`kanban.py:152`, the verbs in `_DELEGATED_CHILD_DENIED_ACTIONS`, with a durable
+guard at `kanban_db.py:135`), **even from a script that removes the task id**, and
+so is `kanban list` (it runs `recompute_ready`, a write). Reads work: `show`,
+`runs`. The symptom, verbatim: `kanban: delegate_task child contexts cannot mutate
+Kanban tasks via the CLI` (`... tasks or boards` for `list`). The dispatcher pops
+the marker at spawn (`kanban_db_dispatch.py`, "the grant boundary"), so the
+**driver's own tool calls are unfenced**, and the worker tools are the only way
+through: `kanban_request_review`, `kanban_request_changes`, `kanban_block`,
+`kanban_complete`, `kanban_comment` (own task: author = `HERMES_PROFILE`),
+`kanban_heartbeat`. The rule: **a worker's program decides and validates; the
+driver terminates, through the tool the program's envelope names.** Never
+re-export the scrubbed variables, unset the marker or open the board's database
+to write: Hermes documents the fence as cooperative scoping, not confinement,
+and defeating it is not ours to do. Consequences measured on 0.21.5: a tool that
+the kernel refuses (bad reviewer, a task id that is not the worker's, an unknown
+parameter) changes nothing and leaves the card `running`, so every handoff needs
+a fallback `kanban_block`; `kanban_request_review` with no `reviewer` leaves the
+card `review` on the implementer itself, which the dispatcher then claims (a
+review claim's `claimed` event carries `source_status: review`); the tools add
+`worker_session_id` to metadata and redact secret-shaped strings (`kanban_block`
+reasons and `kanban_comment` bodies too, which the CLI never did); the CLI's
+`show --json` has no `.task.current_run_id`, but exactly one `runs[]` entry is
+`running`. The claim is kept alive by the driver, not the script: every tool call
+runs under a 30 s activity thread that heartbeats the claim (`heartbeat_claim`, a
+`heartbeat` event) at least a minute apart; run A's board shows eleven of them
+while all of the lane script's own heartbeats were refused.
+
+**What a driver is shown of a background program (epic S6d, review F2/F3).** A foreground
+tool call dies at 420 s (`agent/tool_executor.py`, `_DEFAULT_CONCURRENT_TOOL_TIMEOUT_S`;
+run A's driver read "Error executing tool 'process_manage': timed out after 420.0s"
+after asking for a 1800 s wait), so anything longer than that is launched with
+`terminal(background=true, pty=true)` and waited on in short `process_manage wait`
+calls — each returns `status: timeout` while the process lives. The launch result's
+`exit_code: 0` is the launcher's; the program's is on the wait result whose `status`
+is `exited`. **A wait's `output` is only the last 2000 characters**
+(`tools/process_registry.py` `COMPLETION_OUTPUT_CHARS`, with `output_cut` giving how
+many were dropped); `process_manage log` returns the last 200 lines (`limit`). So a
+program whose stdout is a JSON object the driver must act on prints it as ONE
+compact line, last, and the driver reads it with `log`: run A's own 1178-byte
+metadata made a pretty-printed envelope 2379 characters and the wait lost its
+`terminate` and `task_id`. pty output carries `tput: No value for $TERM` lines before
+anything the program prints. `process_manage` is a deferred tool (reach it through
+`tool_search` / `tool_call`); `execute_code` is refused in an unattended session.
+
+**Hermes force-loads `sdlc-review` on every review claim, and a profile-local copy
+shadows it (measured, epic S6d, review F6).** `kanban_db_dispatch.py` adds
+`sdlc-review` to the skills of any card claimed from `review`. The bundled skill
+tells a reviewer to read the diff and `kanban_complete` on approve — for
+forge-verifier, whose approval is a hold the merge-watcher completes, the opposite
+of its SOUL. It cannot be put in `skills.disabled`: forge-lane is already disabled
+for the verifier, so both preloads would be missing and `finalize_preloaded_skills`
+raises ("every requested skill was unknown"), crashing every verifier spawn. Measured
+in an isolated HERMES_HOME with Hermes's own `build_preloaded_skills_prompt`: with the
+bundled copy seeded (it lives in each profile's own `skills/devops/sdlc-review/`, put
+there by the startup sync), the preload serves the generic skill; overwriting that
+path with a shim makes the preload serve ONLY the shim; a second `sync_skills`, or
+one run after the shim was written first, leaves it alone (`skipped`, the manifest
+treats a customised copy as the user's). The search order is project dirs, then the
+profile's own skills dir, then external dirs, first name wins. So
+`hermes/profiles/forge-verifier.sdlc-review.SKILL.md` is installed over that path by
+`profiles-bootstrap.sh`, and `config/the-review-spawn-preloads-the-shim` runs the real
+bootstrap into a scratch home and asks the preload. `hermes skills reset` puts the
+generic copy back; a re-sync with the bundled manifest's origin hash changed (what a
+`hermes update` brings) was measured to leave the shim alone (S6d's re-review).
+`config/skill-shim-in-sync/forge-verifier` turns red whenever the live copy is not the
+shim.
 
 **Crash-after-push is recoverable when the worktree and intent are durable.**
 Measured on card `t_6e2b8528`: run 8 pushed SHA `88ad60f`, recorded that SHA in

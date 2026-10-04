@@ -30,9 +30,11 @@
 #     sticky block on an approval the verifier may only recommend, or — only
 #     once the operator has flipped `FORGE_VERIFIER_MERGE` — the squash merge
 #     itself, then completion.
-#   * The model terminates NOTHING on a routed outcome. The kernel ends the run
-#     as part of the transition, exactly as `request-review` ends the lane's.
-#     Exit 3 is still the model's `kanban_block`, because nothing transitioned.
+#   * The kernel ends the run as part of the transition, exactly as
+#     `request-review` ends the lane's. (FL4 said "the model terminates NOTHING
+#     on a routed outcome": since epic S6d the program no longer makes the
+#     transition at all — see below — so the model makes exactly the call the
+#     envelope names, and that call is what ends the run.)
 #
 # WHAT FL5 ADDED (epic S3b).
 #   * Stage 1c, the MUTATION PROBE (`scripts/mutation-probe.sh`). It runs in the
@@ -51,6 +53,38 @@
 #     enforcing an unmeasured probe would put its precision on every chunk of
 #     run A. Its verdict is on every hold instead, which is where run A
 #     measures it.
+#
+# WHAT S6d CHANGED (epic S6d, P24): THIS FILE NEVER WRITES THE BOARD.
+# Hermes fences a worker's terminal. Every `hermes kanban` mutation from a shell
+# the worker started — request-changes, block, comment, complete — is refused,
+# "even if a script removes the task id" (kanban-worker-lanes.md, *Descendant
+# process scope*), and HERMES_KANBAN_TASK / _RUN_ID / _CLAIM_LOCK are scrubbed.
+# Run A's first attempt (2026-10-03) met this on the lane's hand-off. The fence is
+# a documented, cooperative boundary and is not ours to defeat, so the split
+# moves one step: this file still decides EVERYTHING, and it now prints the one
+# lifecycle call that carries the decision out — `kanban_request_changes`,
+# `kanban_block` or (merge mode) `kanban_complete`, with its arguments — and the
+# driver, the one party the kernel lets terminate a run, makes it verbatim.
+#   * Every call carries `task_id` = the card judged here. The kernel refuses a
+#     worker's call on any task but its own ("worker is scoped to task X"), so
+#     identity is enforced where it can be: it replaced a guard that compared
+#     --chunk with HERMES_KANBAN_TASK and passed vacuously once that was scrubbed.
+#   * Every envelope carries `on_error`: the call to make if the kernel refuses
+#     `terminate`. A refused terminator leaves the card `running` (measured), so
+#     without one the run is reaped as a crash. In merge mode it is the
+#     `merge-pending:` hold, so a merge that landed is never left unheld.
+#   * The read-backs this file used to make after each transition cannot run: the
+#     kernel ends the run WITH the transition. The tool's own result carries the
+#     end state (`status`, `implementer`, `block_kind`), and the cases
+#     `verifier/the-envelope-lands-on-the-real-kernel` execute each transition
+#     through Hermes's real handler.
+#   * The verdict JSON used to ride the card as a `FORGE-VERDICT-V1` comment, which
+#     only the merge-watcher ever read. It is a host file now (scripts/forge-state.sh
+#     owns the path), written here and read there, so the driver retypes none of it.
+#   * The hand-off the lane made is checked before anything runs: the metadata the
+#     kernel stored on its `review_requested` run must equal the envelope the lane
+#     validated (kept on the host), and the PR url must be the one that run names —
+#     the driver retyped both.
 #
 # WHAT THIS FILE IS NOT ALLOWED TO DO
 # It does not re-decide anything the gate decided, it does not score, and it
@@ -71,8 +105,14 @@
 # Usage:
 #   prejudge-review.sh <pr-url> --chunk <card-id> [--board <slug>]
 #                      [--repo owner/name] [--wait <seconds>]
-#                      [--fixture <dir>] [--dry-run]
-#   ...with the chunk contract on stdin. <card-id> IS the running card.
+#                      [--fixture <dir>] [--dry-run] [--contract-from-card]
+#   ...with the chunk contract on stdin, or `--contract-from-card` to read it from
+#   the card's own body (what a driver should do: a background terminal call has no
+#   pipe, and the contract is a multi-KB text it would otherwise retype into a
+#   shell command). <card-id> IS your own task's id
+#   (`kanban_show().task.id`; the fenced terminal has no HERMES_KANBAN_TASK, and
+#   none is read). It must be `running`, assigned to this profile (HERMES_PROFILE)
+#   and hold exactly one running run. HERMES_KANBAN_BOARD names the board.
 #
 # Env:
 #   FORGE_VERIFIER_MERGE=1          merge mode. Absent = recommend-only, which
@@ -84,17 +124,31 @@
 #   FORGE_MUTATION_PROBE_BIN        stand in for scripts/mutation-probe.py
 #   FORGE_MUTATION_BUDGET           seconds the mutation probe may spend [420]
 #
-# Exit: 0 a routed outcome — the card has already been transitioned; the model
-#         calls NOTHING. Read `.action` for which transition happened:
-#         `bounce` / `gate-block` (request-changes), `recommend` (blocked for
-#         the operator), `exception` (bounce budget spent), `merged` (merge
-#         mode), `merged-held` (merge mode: merged, but the completion did not
-#         take, so the card is held `merge-pending:` for the merge-watcher),
-#         `would-score` (--dry-run).
-#       3 a substrate fault — nothing transitioned. Read `.reason` and
-#         `kanban_block`. Includes a run with no board to transition on
+# stdout is ONE `forge.review.v2` envelope, as ONE COMPACT LINE — the last thing
+# printed: `action`, `summary`, `reason`, `rc` (this program's exit code),
+# `metadata`, `terminate` and `on_error` (each `{tool, args}`), `created_cards`.
+# The driver reads it with `process_manage(action="log")`, never from `wait`: a
+# wait's output is cut to the last 2000 characters (tools/process_registry.py
+# COMPLETION_OUTPUT_CHARS) and the call sits near the START of the envelope. Run
+# it in the BACKGROUND: a review outlasts the 420 s a foreground tool call gets
+# (agent/tool_executor.py _DEFAULT_CONCURRENT_TOOL_TIMEOUT_S; the CI wait alone
+# defaults to 600 s).
+#
+# Exit: 4 a routed outcome — NOTHING has been transitioned yet. Call
+#         `.terminate.tool` with `.terminate.args`, verbatim; if it returns an
+#         error, call `.on_error.tool` with `.on_error.args` and stop. `.action`
+#         says which: `bounce` / `gate-block` (kanban_request_changes),
+#         `recommend` (kanban_block: held for the operator), `exception` (kanban_
+#         block: bounce budget spent), `merged` (merge mode: kanban_complete),
+#         `merged-held` (merge mode: merged, but GitHub did not confirm it, so the
+#         card is held `merge-pending:` for the merge-watcher).
+#       3 a substrate fault — nothing was decided. `.terminate` is `kanban_block`
+#         with `.reason`; call it verbatim. Includes a run with no board to read
 #         (`env: no-board`), unless it is a --dry-run.
-#       2 a usage error.
+#       2 a usage error: `kanban_block` with `other: review-usage — <stderr>`.
+#       0 only for --help and --dry-run (`would-score`, which transitions nothing).
+#         A real run NEVER exits 0: a driver whose notes still say "0 = nothing to
+#         call" must fail loudly, not silently.
 #
 # 1 is deliberately NOT used: a bounced PR is a routed outcome, not a failure of
 # this script, and a caller running under `set -e` must not treat a bounce as a
@@ -104,18 +158,21 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PR_URL=""; CHUNK=""; BOARD="${HERMES_KANBAN_BOARD:-}"; REPO=""; chunk_title=""
-WAIT_SECS=600; FIXTURE="${PREJUDGE_FIXTURE:-}"; DRY_RUN=0
+WAIT_SECS=600; FIXTURE="${PREJUDGE_FIXTURE:-}"; DRY_RUN=0; CONTRACT_FROM_CARD=0
 CREATED=()
+# shellcheck source=forge-state.sh
+. "$HERE/forge-state.sh" || { echo "usage: forge-state.sh is missing beside prejudge-review.sh" >&2; exit 2; }
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --chunk)   CHUNK="${2:?--chunk needs a card id}"; shift 2;;
+    --chunk)   CHUNK="${2:-}"; [ -n "$CHUNK" ] || { echo "usage: --chunk needs your own task's id (kanban_show().task.id); the fenced terminal has no HERMES_KANBAN_TASK" >&2; exit 2; }; shift 2;;
     --board)   BOARD="${2:?--board needs a slug}"; shift 2;;
     --repo)    REPO="${2:?--repo needs owner/name}"; shift 2;;
     --wait)    WAIT_SECS="${2:?--wait needs seconds}"; shift 2;;
     --fixture) FIXTURE="${2:?--fixture needs a directory}"; shift 2;;
     --dry-run) DRY_RUN=1; shift;;
+    --contract-from-card) CONTRACT_FROM_CARD=1; shift;;
     -h|--help) awk 'NR>2 && /^# ={10,}/{exit} NR>2' "$0"; exit 0;;
     -*) echo "unknown arg: $1" >&2; exit 2;;
     *) [ -z "$PR_URL" ] || { echo "only one PR: '$PR_URL' and '$1'" >&2; exit 2; }
@@ -123,7 +180,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$PR_URL" ] || { usagetext; exit 2; }
-command -v jq >/dev/null || { echo '{"action":"substrate-block","reason":"env: jq missing"}'; exit 3; }
+[ "$CONTRACT_FROM_CARD" != 1 ] || [ "$DRY_RUN" != 1 ] || { echo "usage: --contract-from-card reads the card, and a --dry-run has none" >&2; exit 2; }
+command -v jq >/dev/null || {
+  # no jq, so nothing is escaped: the literal names no task (the kernel applies a block to the
+  # driver's own) and embeds nothing the caller typed
+  printf '{"schema":"forge.review.v2","action":"substrate-block","reason":"env: jq missing","rc":3,"terminate":{"tool":"kanban_block","args":{"reason":"env: jq missing"}},"on_error":null,"created_cards":[]}\n'
+  exit 3
+}
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-review.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
@@ -134,78 +197,162 @@ trap 'rm -rf "$TMP"' EXIT
 # printed here is billed to it. A 127 KB diff passes through this process and
 # never touches stdout.
 # ---------------------------------------------------------------------------
-envelope() {   # action, summary, metadata-file|'null', reason, exit-code
-  local action="$1" summary="$2" metafile="$3" reason="$4" code="$5" meta='null'
+envelope() {   # action, summary, metadata-file|'null', reason, exit-code, [terminate-json], [on_error-json]
+  local action="$1" summary="$2" metafile="$3" reason="$4" code="$5" terminate="${6:-null}" on_error="${7:-null}" meta='null'
   [ "$metafile" != "null" ] && [ -s "$metafile" ] && meta="$(cat "$metafile")"
-  jq -n --arg action "$action" --arg summary "$summary" --arg reason "$reason" \
-        --argjson metadata "$meta" \
+  jq -nc --arg action "$action" --arg summary "$summary" --arg reason "$reason" --argjson rc "$code" \
+        --argjson metadata "$meta" --argjson terminate "$terminate" --argjson on_error "$on_error" \
         --argjson created "$(printf '%s\n' ${CREATED[@]+"${CREATED[@]}"} \
                              | jq -Rs 'split("\n") | map(select(length>0))')" '
-    { schema: "forge.review.v1", action: $action, summary: $summary,
+    { schema: "forge.review.v2", action: $action, summary: $summary,
       reason: (if $reason == "" then null else $reason end),
-      metadata: $metadata, created_cards: $created }'
+      rc: $rc, metadata: $metadata, terminate: $terminate, on_error: $on_error, created_cards: $created }'
   exit "$code"
+}
+
+# THE CALL, NAMED. `args` always carries `task_id` = the card judged here, which the
+# kernel checks against the driver's own task (see the top). `kind` only when given.
+call_json() {   # tool, args-json -> {tool, args}
+  jq -nc --arg tool "$1" --argjson args "$2" '{tool: $tool, args: $args}'
+}
+# CHUNK_TRUSTED is 0 until the card has been read back and is provably THIS
+# worker's (below). Until then a call names no task at all, and the kernel applies
+# it to the driver's own: naming a card that failed the identity check would make
+# the kernel refuse the very `kanban_block` that reports the failure.
+CHUNK_TRUSTED=0
+task_args() {   # jq filter over {task_id: $t}, then --arg pairs -> args-json
+  local filter="$1"; shift
+  jq -nc --arg t "$([ "$CHUNK_TRUSTED" = 1 ] && printf '%s' "$CHUNK")" "$@" \
+    "(if \$t == \"\" then {} else {task_id: \$t} end) + ($filter)"
+}
+term_block() {   # reason [kind] -> the kanban_block call
+  if [ -n "${2:-}" ]; then
+    call_json kanban_block "$(task_args '{reason: $r, kind: $k}' --arg r "$1" --arg k "$2")"
+  else
+    call_json kanban_block "$(task_args '{reason: $r}' --arg r "$1")"
+  fi
 }
 
 # A substrate fault is a fact about the world, never a verdict on the work.
 # Conflating the two is how an outage reads as a rejection, which is why it has
 # its own exit code and its own terminator.
-substrate() { envelope substrate-block "" null "$1" 3; }
+substrate() { envelope substrate-block "" null "$1" 3 "$(term_block "$1")" null; }
 
 kanban() { hermes kanban --board "$BOARD" "$@"; }
 board_live() { [ -n "$BOARD" ] && command -v hermes >/dev/null; }
 
 # ---------------------------------------------------------------------------
-# --chunk IS THE RUNNING CARD. This guard used to assert the opposite, and it
-# was right until ADR-0019: a chunk card parented a tier-1 child, a MODEL read
-# the parent's id out of prose in the SOUL, and on 2026-09-04 a running prejudge
-# task passed ITS OWN id — route_tier2 parented the tier-2 card under itself and
-# the misparented chunk drove the card into `todo`, where `block` silently
-# refuses it. The fix then was to refuse `--chunk == $HERMES_KANBAN_TASK`.
+# --chunk IS THE RUNNING CARD — AND THE BOARD, NOT AN ENVIRONMENT VARIABLE, SAYS SO.
+# This guard has been through two shapes. Until ADR-0019 a chunk card parented a
+# tier-1 child, a MODEL read the parent's id out of prose in the SOUL, and on
+# 2026-09-04 a running prejudge task passed ITS OWN id — route_tier2 parented the
+# tier-2 card under itself and the misparented chunk drove the card into `todo`,
+# where `block` silently refuses it. Then (D19.1: ONE card per chunk, the
+# verifier claimed on that card) it compared --chunk with $HERMES_KANBAN_TASK.
+# Under the fence (P24) that variable is scrubbed, so the comparison passed
+# vacuously for ANY id. The identity is now read off the card, before anything is
+# decided, and the same fact is enforced a second time by the kernel when the
+# driver makes the call (every `terminate.args` carries `task_id`):
 #
-# D19.1 removes the parent relationship the old guard protected: there is ONE
-# card per chunk for its whole life, the verifier is claimed on that card, and
-# the SOUL passes `$HERMES_KANBAN_TASK`. So the identity that must hold is the
-# inverse, and it is still mechanically checkable BEFORE anything transitions:
+#   1. The card must be `running`, assigned to THIS profile (HERMES_PROFILE is kept
+#      by the fence), and hold exactly one running run — a review claim.
+#   2. It must LOOK like a chunk card (`CHUNK-<id>: <title>`, scripts/prejudge.sh's
+#      `branch_name` convention). A verifier pointed at a gate card or a typo'd id
+#      is refused.
+#   3. The hand-off the lane made arrives intact (below).
 #
-#   1. Under a worker, --chunk must BE the running task. Anything else means the
-#      caller reached for another card, and the card this run holds a claim on is
-#      not the card it would transition — the 2026-09-04 shape with the sign
-#      flipped. No board access needed, which is why it runs first.
-#   2. --chunk's card must still LOOK like a chunk card (`CHUNK-<id>: <title>`,
-#      scripts/prejudge.sh's `branch_name` convention). A verifier pointed at a
-#      gate card or a typo'd id is refused. Needs a live board, so it is
-#      conditional on one.
-#
-# Both fail closed through `substrate` (exit 3, `kanban_block`): a bad hand-off
-# is a fact about how this run was invoked, not a judgement on the work, so it
-# routes exactly like `env: jq missing` and never like a usage error a caller
-# under `set -e` could crash on.
+# All of them fail closed through `substrate` (exit 3, `kanban_block`): a bad
+# hand-off is a fact about how this run was invoked, not a judgement on the work,
+# so it routes exactly like `env: jq missing` and never like a usage error a caller
+# under `set -e` could crash on. A --dry-run has no claim to check.
 # ---------------------------------------------------------------------------
-[ -z "${HERMES_KANBAN_TASK:-}" ] || [ "$CHUNK" = "$HERMES_KANBAN_TASK" ] || \
-  substrate "env: chunk-identity — --chunk ($CHUNK) is not the running card (${HERMES_KANBAN_TASK}); under ADR-0019 D19.1 the chunk card and the review are the same card"
-
-# NO BOARD, NO ROUTED OUTCOME. Every exit-0 action below is a transition on this
-# card, and the SOUL tells the model to call NOTHING on rc 0. The routers used to
+# NO BOARD, NO ROUTED OUTCOME. Every exit-4 action below names a transition on this
+# card; a run with no board to read has nothing to name. The routers used to
 # `return 0` when the board was unset or `hermes` was missing, so a run with no
-# board reported `bounce` or `recommend` with rc 0 although nothing transitioned:
-# the model called nothing, the card stayed `running`, and the dispatcher reaped
-# it as a crash. So a run that cannot make a transition refuses before it starts,
-# the way `lane.sh` refuses an unset HERMES_KANBAN_BOARD.
+# board reported `bounce` or `recommend` although nothing could transition: the
+# card stayed `running` and the dispatcher reaped it as a crash. So a run that
+# cannot name a transition refuses before it starts, the way `lane.sh` refuses an
+# unset HERMES_KANBAN_BOARD.
 #
 # `--dry-run` is the one deliberate exception: it is the offline rehearsal
 # (`prejudge/review-routes-by-gate-result` and the envelope cases run it with no
 # board at all), and its envelope never claims a transition was made.
 if [ "$DRY_RUN" != 1 ] && ! board_live; then
-  substrate "env: no-board — ${BOARD:+board '$BOARD' is named but hermes is not on PATH}${BOARD:-no --board and no HERMES_KANBAN_BOARD}, so no outcome can be made on this card, and one that cannot be made must not be reported as made"
+  substrate "env: no-board — ${BOARD:+board '$BOARD' is named but hermes is not on PATH}${BOARD:-no --board and no HERMES_KANBAN_BOARD}, so no outcome can be named on this card, and one that cannot be named must not be reported as made"
 fi
 
+LANE_COPY_NOTE=""
+if [ "$DRY_RUN" = 1 ]; then
+  CHUNK_TRUSTED=1   # nothing here is performed; the envelope only shows the routing
+fi
 if board_live; then
-  chunk_title="$(kanban show "$CHUNK" --json 2>/dev/null | jq -r '.task.title // empty' 2>/dev/null)"
+  CARD0="$(kanban show "$CHUNK" --json 2>/dev/null)"
+  chunk_title="$(printf '%s' "$CARD0" | jq -r '.task.title // empty' 2>/dev/null)"
   case "$chunk_title" in
     CHUNK-[A-Za-z0-9]*) ;;
     *) substrate "env: chunk-identity — --chunk ($CHUNK) does not look like a chunk card (title '${chunk_title:-<unreadable>}', want CHUNK-<id>: <title>)";;
   esac
+  if [ "$DRY_RUN" != 1 ]; then
+    [ -n "${HERMES_PROFILE:-}" ] \
+      || substrate "env: chunk-identity — HERMES_PROFILE is unset, so there is no profile to check the card against (the fence keeps it)"
+    printf '%s' "$CARD0" | jq -e --arg id "$CHUNK" --arg me "$HERMES_PROFILE" '
+        .task.id == $id and .task.status == "running" and (.task.assignee // "") == $me
+        and ([.runs[]? | select(.status == "running")] | length) == 1' >/dev/null 2>&1 \
+      || substrate "env: chunk-identity — --chunk ($CHUNK) is not a card this profile ($HERMES_PROFILE) is running: it is '$(printf '%s' "$CARD0" | jq -r '(.task.status // "unreadable") + "/" + (.task.assignee // "nobody")' 2>/dev/null)'. Pass YOUR task's id (kanban_show().task.id); under ADR-0019 D19.1 the chunk card and the review are the same card"
+    CHUNK_TRUSTED=1
+
+    # THE LANE'S HAND-OFF ARRIVES INTACT. The lane's driver retyped the metadata and
+    # the reviewer into `kanban_request_review`; this is the only place anything can
+    # still notice. The card's last `review_requested` run is compared with what the
+    # lane validated and kept on the host.
+    #
+    # THE KERNEL REWRITES TWO THINGS, and neither may read as tampering: it adds
+    # `worker_session_id`, and it REDACTS secret-shaped strings (`API_KEY=sk-…` becomes
+    # `API_KEY=***`, `ghp_ab…6789` becomes `ghp_ab...6789`) — in the free-text lists
+    # (decisions, debt, card proposals: lines lifted from the diff) and equally in a
+    # file NAME in `changed_files`. A false `handoff-integrity` is a run A stop rule, so:
+    #   * `worker_session_id` is dropped from both sides;
+    #   * the three free-text lists are compared by LENGTH (an item cannot vanish);
+    #   * every other leaf must be equal, or differ ONLY as a redaction does: the stored copy
+    #     carries a mark (`***` or `...`) and everything BEFORE the mark is the same text the
+    #     lane validated (`secrets/API_KEY=***` against `secrets/API_KEY=sk-…`). A mark that
+    #     replaces text which was not there is an edit, not a redaction. And a mask never
+    #     adds text: a stored value LONGER than the one the lane validated is an edit.
+    # A leaf changed to anything else, a key added or removed, a list shortened: red.
+    handoff_matches() {  # $1=the stored run (json) $2=the lane's host copy (file) -> 0 if the same hand-off
+      jq -en --argjson run "$1" --slurpfile host "$2" '
+        def redacted(a; b): (a | type) == "string" and (b | type) == "string" and a != b
+                            and ((a | capture("^(?<p>.*?)(?:[*][*][*]|[.][.][.])") // null) as $m
+                                 | $m != null and (b | startswith($m.p))
+                                   and ((a | length) <= (b | length)));   # a mask never ADDS text
+        def texty: [.decisions, .debt, .card_proposals] | map(length);
+        ($run.metadata | del(.worker_session_id)) as $a
+        | ($host[0] | del(.worker_session_id)) as $b
+        | ($a | del(.decisions, .debt, .card_proposals)) as $x
+        | ($b | del(.decisions, .debt, .card_proposals)) as $y
+        | (($a | texty) == ($b | texty))
+          and (([$x | paths(scalars)] | sort) == ([$y | paths(scalars)] | sort))   # key ORDER is not content
+          and all([$y | paths(scalars)][];
+                  . as $p | ($x | getpath($p)) as $u | ($y | getpath($p)) as $v
+                  | $u == $v or redacted($u; $v))' >/dev/null 2>&1
+    }
+    handoff="$(printf '%s' "$CARD0" | jq -c '[.runs[]? | select(.outcome == "review_requested")] | sort_by(.id) | last // empty' 2>/dev/null)"
+    if [ -n "$handoff" ]; then
+      handoff_pr="$(printf '%s' "$handoff" | jq -r '.metadata.pr // empty' 2>/dev/null)"
+      [ -z "$handoff_pr" ] || [ "$handoff_pr" = "$PR_URL" ] \
+        || substrate "env: chunk-identity — the PR url given ($PR_URL) is not the one the lane's hand-off recorded ($handoff_pr)"
+      if [ "$(printf '%s' "$handoff" | jq -r '.profile // ""')" = forge-codex-lane ]; then
+        lane_copy="$(forge_lane_session_root)/$BOARD-$CHUNK.metadata.json"
+        if [ -s "$lane_copy" ]; then
+          handoff_matches "$handoff" "$lane_copy" \
+            || substrate "other: handoff-integrity — the chunk envelope stored on this card differs from the one the lane validated ($lane_copy): the driver altered it in transit, so what this review would read is not what the lane produced"
+          LANE_COPY_NOTE="lane envelope: stored copy equals the one the lane validated"
+        else
+          LANE_COPY_NOTE="lane envelope: NOT CHECKED — no host copy of what the lane validated ($lane_copy)"
+        fi
+      fi
+    fi
+  fi
 fi
 
 # An approval is a hand-off to the operator, not an ending. Completing without
@@ -244,6 +391,10 @@ fi
 # unconditionally (even when idempotency-key resolved to an already-blocked
 # card) is safe. The read-back fails closed if any of those substrate facts —
 # including the link itself — did not take.
+# NEVER CALL route_tier2 OR route_bounce. They are the ADR-0007 tier-2 and fix-card machinery
+# ADR-0019 D19.1 retired; they stay defined only until the two `prejudge/` cases that lift them
+# are removed in their own slice. They run `hermes kanban create/assign/link`, which a fenced
+# worker terminal refuses (epic S6d), so a live call from here could not work anyway.
 route_tier2() {
   local body="$1" review
   board_live || return 0
@@ -392,35 +543,40 @@ bounce_rounds() {
 }
 
 # A bounce: the SAME card back to its implementer, with the reasons on it. The
-# end state is read back rather than taken from the CLI's word (FL3's rule).
-route_changes() {  # $1=reasons body
-  board_live || return 0
-  kanban request-changes "$CHUNK" "$1" >/dev/null 2>&1 || return 1
-  card_json | jq -e '
-    (.task.status | IN("ready","todo"))
-    and any(.events[]?; .kind == "changes_requested")' >/dev/null || return 1
+# call is NAMED here (`changes_call`) and made by the driver. Its result is the
+# read-back this function used to make — `{ok, status, implementer}`, measured:
+# `ready`/`todo` and the implementer the kernel recorded at the hand-off — and a
+# kernel that cannot return the card (no implementer provenance) refuses, which
+# leaves the card `running` for `on_error` to block.
+changes_call() {  # $1=reasons body
+  call_json kanban_request_changes "$(task_args '{reason: $r}' --arg r "$1")"
 }
 
 # WHERE THE VERDICT GOES WHEN THE TRANSITION CANNOT CARRY IT.
 #
-# `hermes kanban complete` and `request-review` take `--metadata`. `block` and
-# `request-changes` DO NOT (measured against the installed CLI: neither help text
-# names the flag). So on every path except a merge, the envelope this script
-# computed — `forge.gate.v1` or `forge.judge.v1`, the rows `scripts/metrics.sh`
-# counts — has no run to ride.
+# `kanban_complete` and `kanban_request_review` take `metadata`. `kanban_block` and
+# `kanban_request_changes` DO NOT (measured against the installed tool schemas). So
+# on every path except a merge, the envelope this script computed — `forge.gate.v1`
+# or `forge.judge.v1`, the rows `scripts/metrics.sh` counts — has no run to ride.
 #
-# It is therefore posted as a card COMMENT under a stable marker, and the
-# merge-watcher passes it back as `--metadata` when it completes the card.
+# It used to be posted as a card COMMENT under a stable marker (`FORGE-VERDICT-V1`),
+# and the merge-watcher passed it back as `--metadata` when it completed the card.
+# A comment is a board write, which a fenced terminal cannot make, and posting it
+# through the driver would have it retype ~2 KB of JSON. So it is a HOST FILE now,
+# keyed by board and card, written here and read by the merge-watcher
+# (`scripts/forge-state.sh` is the one definition of where). Nothing is retyped. The
+# cost: the verdict is not on the card until the card completes — and nothing but
+# the watcher ever read it there (the lane only filtered it out of its contract).
+#
 # Measured: completing a card with no live claim opens a NEW run
 # (`profile = forge-verifier`, `outcome = completed`) and the metadata lands on
 # it, so `rubrics/run-metadata-contract.json`'s `forge-verifier` entry is true of
 # a merged chunk however it was completed.
 #
-# The comment goes on BEFORE the transition: a block ends this run, and evidence
-# that depends on a later write is evidence that can be lost. It never fails the
-# outcome — a verdict that was reached must not be destroyed by a board that
-# would not take a comment.
-VERDICT_MARKER="FORGE-VERDICT-V1"
+# It goes down BEFORE the transition is named, and it never fails the outcome — a
+# verdict that was reached must not be destroyed by a disk that would not take a
+# file. A failed write is said out loud instead: the watcher then completes the
+# card with "NO stored verdict envelope", which names the absence.
 stash_envelope() {  # $1=metadata file
   board_live || return 0
   [ -s "$1" ] || return 0
@@ -440,7 +596,7 @@ stash_envelope() {  # $1=metadata file
   # to the gate result, which is a `forge.gate.v1` on every path that reaches this
   # point and is honest about what it says — the gate's own verdict, with the
   # merged-tree evidence already on the card in the bounce reasons.
-  local file="$1"
+  local file="$1" root dest
   case "$(jq -r '.schema // ""' "$file" 2>/dev/null)" in
     forge.gate.v1|forge.judge.v1) ;;
     *) file="$GATE"
@@ -449,25 +605,25 @@ stash_envelope() {  # $1=metadata file
          *) return 0;;
        esac;;
   esac
-  kanban comment "$CHUNK" "$VERDICT_MARKER
-\`\`\`json
-$(jq -c . "$file" 2>/dev/null || cat "$file")
-\`\`\`" >/dev/null 2>&1 || true
+  root="$(forge_verdict_root)"; dest="$root/$BOARD-$CHUNK.json"
+  if mkdir -p "$root" 2>/dev/null && jq -c . "$file" > "$dest.new" 2>/dev/null && mv -f "$dest.new" "$dest"; then
+    :
+  else
+    rm -f "$dest.new" 2>/dev/null
+    echo "verdict stash: could not write $dest — the merge-watcher will complete this card with NO stored verdict envelope" >&2
+  fi
 }
 
 # An approval the verifier may only RECOMMEND (ADR-0019 D19.3). The card is
 # blocked sticky; the operator merges on GitHub; the merge-watcher completes it.
-# Return 2 means the kernel routed the block to `triage` anyway — a hold that
-# was never taken, which must be reported and never reported as a hold.
-route_recommend() {  # $1=reason, already carrying its registry class
-  local kind; kind="$(next_block_kind)"
-  board_live || return 0
-  kanban block --kind "$kind" "$CHUNK" "$1" >/dev/null 2>&1 || return 1
-  case "$(card_json | jq -r '.task.status')" in
-    blocked) return 0;;
-    triage)  return 2;;
-    *)       return 1;;
-  esac
+# The block is NAMED here and made by the driver. Its kind comes from the card's own
+# events (`next_block_kind`), never from the driver. The kernel's result carries the
+# end state (`status`, `block_kind`): `triage` there means the block was routed to
+# the kernel's unblock-loop breaker anyway — a hold that was never taken. That is
+# PREVENTED here (the kind rotates) rather than detected after the run ended, and
+# `digest.sh` lists a `triage` card as one no script can complete (epic P8).
+hold_call() {  # $1=reason, already carrying its registry class
+  term_block "$1" "$(next_block_kind)"
 }
 
 # Merge mode. NOT a configuration this script may choose: it is the operator's
@@ -481,10 +637,11 @@ route_recommend() {  # $1=reason, already carrying its registry class
 # work is not on `main`.
 merge_mode() { [ "${FORGE_VERIFIER_MERGE:-}" = 1 ]; }
 # Return 1: nothing was merged. Return 4: `gh pr merge` ACCEPTED the merge and
-# something after it — the read-back or the completion — did not take. The two
-# must not share a code: after a 4 the work is probably on the base branch, and
-# the card has to be left where the merge-watcher will finish it (see the caller).
-route_merge() {  # $1=result summary, $2=metadata file
+# GitHub did not confirm it afterwards: the work is probably on the base branch,
+# and the card has to be held where the merge-watcher will finish it (see the
+# caller). The completion is NOT made here (no board writes): the caller names
+# `kanban_complete`, with the `merge-pending:` hold as its `on_error`.
+route_merge() {
   # `--match-head-commit` is not belt-and-braces: without it this merges whatever
   # the head is NOW, and every stage above read the PR separately over several
   # minutes. A push in that window would put code on `main` that nothing in this
@@ -496,8 +653,7 @@ route_merge() {  # $1=result summary, $2=metadata file
     >/dev/null 2>&1 < /dev/null || return 1
   gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
     | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 4
-  kanban complete "$CHUNK" --result "$1" --metadata "$(jq -c . "$2" 2>/dev/null)" >/dev/null 2>&1 || return 4
-  [ "$(card_json | jq -r '.task.status')" = done ] || return 4
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -584,29 +740,29 @@ implementer_model_line() {
 # a case can drive the boundary without three round trips; it defaults to 2 and
 # nothing in the pipeline sets it.
 bounce_or_except() {  # $1=reasons  $2=one-line why  $3=metadata file  $4=action [bounce]
-  local rounds budget="${FORGE_VERIFIER_BOUNCE_BUDGET:-2}" rc action="${4:-bounce}"
+  local rounds budget="${FORGE_VERIFIER_BOUNCE_BUDGET:-2}" action="${4:-bounce}"
   rounds="$(bounce_rounds)"
   stash_envelope "$3"
   if [ "$rounds" -lt "$budget" ]; then
-    route_changes "$PR_URL
+    envelope "$action" "$2 (round $((rounds + 1)) of $budget)" "$3" "" 4 \
+      "$(changes_call "$PR_URL
 
-$(implementer_model_line)
+$(implementer_model_line)${LANE_COPY_NOTE:+$(case "$LANE_COPY_NOTE" in *"NOT CHECKED"*) printf '\n%s' "$LANE_COPY_NOTE";; esac)}
 $2
 
-$1" || substrate "other: handoff-integrity — request-changes did not return this card to its implementer"
-    envelope "$action" "$2 (round $((rounds + 1)) of $budget)" "$3" "" 0
+$1")" \
+      "$(term_block "other: handoff-integrity — request-changes did not return this card to its implementer")"
   fi
-  route_recommend "$(decision_message bounce-budget \
+  envelope exception "$2 — bounce budget spent after $rounds rounds" "$3" "" 4 \
+    "$(hold_call "$(decision_message bounce-budget \
     "$2 — and this chunk has now used its $budget bounce rounds" \
     "the verifier bounced it $rounds times with actionable reasons and the work still does not pass; a third machine round is not evidence of anything new" \
     "repair it yourself, amend the contract, or send it back for another round" \
     "the card is blocked and its children stay held; nothing is merged" \
     "fix and push to the PR branch, or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\` to give it another round
 
-$1")"; rc=$?
-  [ "$rc" = 2 ] && substrate "other: handoff-integrity — the exception block was routed to triage, so this chunk is not held for the operator, it is stranded"
-  [ "$rc" = 0 ] || substrate "other: handoff-integrity — the bounce-budget exception did not land as a block"
-  envelope exception "$2 — bounce budget spent after $rounds rounds" "$3" "" 0
+$1")")" \
+    "$(term_block "other: handoff-integrity — the bounce-budget exception did not land as a block")"
 }
 
 # ---------------------------------------------------------------------------
@@ -672,7 +828,16 @@ fi
 # ---------------------------------------------------------------------------
 prompt_file="$TMP/prompt.txt"
 contract_file="$TMP/contract.md"
-cat > "$contract_file"   # the chunk contract, on stdin
+if [ "$CONTRACT_FROM_CARD" = 1 ]; then
+  # The contract IS the card's body (the lane read the same field for Codex), read from the card
+  # this program already identified — not retyped by a driver into a shell command, and not a
+  # stdin a background terminal call does not have.
+  printf '%s' "$CARD0" | jq -r '.task.body // ""' > "$contract_file" 2>/dev/null
+  [ -s "$contract_file" ] && grep -q '[^[:space:]]' "$contract_file" \
+    || substrate "stale-spec: card $CHUNK has an empty body — there is no contract to review against"
+else
+  cat > "$contract_file"   # the chunk contract, on stdin
+fi
 
 # --- PINNED REGION (scorer brief) — three-space indent is load-bearing. ------
 # The heredoc is quoted and NOT `<<-`, so every leading space is part of the
@@ -1114,7 +1279,8 @@ gated="$(jq -c --slurpfile gate "$GATE" '.gate_result = $gate[0]' "$TMP/verdict.
 # whether the rest can be trusted, and run 55 approved a diff without it (F22).
 # ---------------------------------------------------------------------------
 EVIDENCE="$(printf '%s\ngate: clear — %s\nmerged tree: %s\n%s\nverdict: %s — scores %s\nspot-check: %s' \
-  "$(implementer_model_line)" \
+  "$(implementer_model_line)${LANE_COPY_NOTE:+
+$LANE_COPY_NOTE}" \
   "$(jq -r '[.checks[]|select(.status=="warn")|.id]
      | if length==0 then "no warnings" else "warnings: "+join(", ") end' "$GATE")" \
   "$(jq -r '.evidence // "not run"' "$MERGED" 2>/dev/null | head -c 300)" \
@@ -1137,48 +1303,52 @@ case "$VERDICT" in
       || substrate "env: mutation-probe-unrunnable — no passing mutation-probe result, so nothing here may approve"
     # STASHED BEFORE ANY MERGE, not after it. In merge mode the completion is what
     # carries the verdict; if the merge lands and the completion does not, the
-    # merge-watcher finishes the card and this comment is the only copy of the
+    # merge-watcher finishes the card and this file is the only copy of the
     # verdict it can attach.
     stash_envelope "$TMP/verdict.json"
     if merge_mode; then
-      route_merge "merged by forge-verifier: $SUMMARY" "$TMP/verdict.json"; merge_rc=$?
-      [ "$merge_rc" = 0 ] && envelope merged "$SUMMARY" "$TMP/verdict.json" "" 0
-      [ "$merge_rc" = 4 ] \
-        || substrate "other: handoff-integrity — the squash merge did not take, so nothing was merged"
-      # MERGED, BUT NOT COMPLETED. `gh pr merge` accepted it, so the work is
-      # probably on $base_ref already; the read-back or the completion is what
-      # failed. Exiting 3 here used to make the model block this card
-      # `other: handoff-integrity`, which the merge-watcher does not watch — the PR
-      # was on the base branch and the card and its children were held forever.
-      # So the card is held as a `merge-pending:` hold, which the watcher DOES
-      # watch: it asks GitHub, and completes the card (with the verdict stashed
-      # above) once the PR reads MERGED.
-      route_recommend "$(decision_message merge-pending \
+      route_merge; merge_rc=$?
+      [ "$merge_rc" = 1 ] \
+        && substrate "other: handoff-integrity — the squash merge did not take, so nothing was merged"
+      # MERGED, BUT THE CARD IS A SEPARATE QUESTION. `gh pr merge` accepted it, so the
+      # work is probably on $base_ref already. If the completion then fails — or
+      # GitHub would not confirm the merge — the card must be HELD `merge-pending:`,
+      # which the merge-watcher DOES watch: it asks GitHub, and completes the card
+      # (with the verdict stashed above) once the PR reads MERGED. Exiting 3 here
+      # used to make the model block this card `other: handoff-integrity`, which the
+      # watcher does not watch — the PR was on the base branch and the card and its
+      # children were held forever. So the hold is the `on_error` of the completion,
+      # and the terminator itself when the merge was not confirmed.
+      merged_hold="$(decision_message merge-pending \
         "${chunk_title:-this chunk} was squash-merged by the verifier, but this card could not be completed" \
         "\`gh pr merge\` accepted $PR_URL at ${VERIFIED_HEAD:-an unread head}, and then the read-back from GitHub or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
         "confirm $PR_URL is merged; if it is not, merge it or send it back" \
         "until the card completes, its children stay held" \
         "nothing, if the PR shows MERGED — the merge-watcher completes this card on its next sweep — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
 
-$EVIDENCE")"; recommend_rc=$?
-      [ "$recommend_rc" = 2 ] && substrate "other: handoff-integrity — the post-merge hold was routed to triage, so this merged PR's card is stranded"
-      # If even the hold did not land, the reason the model blocks with verbatim
+$EVIDENCE")"
+      if [ "$merge_rc" = 0 ]; then
+        envelope merged "$SUMMARY" "$TMP/verdict.json" "" 4 \
+          "$(call_json kanban_complete "$(task_args '{summary: $s, result: $s, metadata: $m[0]}' \
+              --arg s "merged by forge-verifier: $SUMMARY" --slurpfile m "$TMP/verdict.json")")" \
+          "$(hold_call "$merged_hold")"
+      fi
+      # If even the hold does not land, the reason the driver blocks with verbatim
       # still starts `merge-pending:` and names the PR, so the watcher finds it.
-      [ "$recommend_rc" = 0 ] \
-        || substrate "merge-pending: $PR_URL was squash-merged by the verifier, but neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged"
-      envelope merged-held "$SUMMARY — merged, and held for the merge-watcher because the completion did not take" "$TMP/verdict.json" "" 0
+      envelope merged-held "$SUMMARY — merged, and held for the merge-watcher because GitHub did not confirm it" "$TMP/verdict.json" "" 4 \
+        "$(hold_call "$merged_hold")" \
+        "$(term_block "merge-pending: $PR_URL was squash-merged by the verifier, but neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged")"
     fi
-    route_recommend "$(decision_message merge-pending \
+    envelope recommend "$SUMMARY" "$TMP/verdict.json" "" 4 \
+      "$(hold_call "$(decision_message merge-pending \
       "${chunk_title:-this chunk} is verified and NOT merged — the verifier may only recommend" \
       "the deterministic gate is clear, \`make check\` is green on this branch merged with $base_ref, $PROBE_CLAUSE, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
       "merge the PR, or send it back" \
       "nothing is merged and this card's children stay held until it is" \
       "merge $PR_URL on GitHub — the merge-watcher completes this card — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
 
-$EVIDENCE")"; recommend_rc=$?
-    [ "$recommend_rc" = 2 ] && substrate "other: handoff-integrity — the approval block was routed to triage, so this PR is not waiting for the operator, it is stranded"
-    [ "$recommend_rc" = 0 ] || substrate "other: handoff-integrity — the recommend-only block did not land on this card"
-    envelope recommend "$SUMMARY" "$TMP/verdict.json" "" 0;;
+$EVIDENCE")")" \
+      "$(term_block "other: handoff-integrity — the recommend-only block did not land on this card")";;
   bounce)
     bounce_or_except "$(jq -r '.findings[]? |
         "- **\(.dimension)** (\(.severity)) — \(.evidence)\n  - action: \(.action)"' \

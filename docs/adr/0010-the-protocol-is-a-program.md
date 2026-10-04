@@ -96,6 +96,43 @@ re-enacted each run.
 > forbidden to skip for any reason. A control anchored to a moving ref is not
 > pinned.
 
+> **Amendment, 2026-10-03 (epic S6d, P24) — D10.3's seam moved.** D10.3 said
+> exactly two operations stay with the model, `kanban_complete` and
+> `kanban_block`, "because the completion kernel binds them to the identity of
+> the running task". That was true of the *tools* and false of the *CLI*: the
+> programs below the seam also made board writes (`hermes kanban request-changes`,
+> `block`, `comment`, `heartbeat`), on the assumption that the CLI binds the run
+> id from the worker's environment. Hermes fences a worker's terminal (the CLI
+> refuses every mutation, the task and run ids are scrubbed, and the fence
+> survives a script that removes them: `kanban-worker-lanes.md`, *Descendant
+> process scope*), so the first dispatched lane did the whole chunk and could not
+> hand it off. The fence is a documented, cooperative boundary, and not ours to
+> defeat. **The seam is now: the program decides and validates and NEVER writes
+> the board; the driver makes exactly the one tool call the program's envelope
+> names** — `kanban_request_review`, `kanban_request_changes`, `kanban_block` or
+> `kanban_complete` — and, if the kernel refuses it, the one fallback call the
+> same envelope names. Exit codes: 4 a routed outcome (the call is yours), 3 a
+> substrate fault (the call is a `kanban_block`), 2 a usage error, and 0 only for
+> `--help` and a dry-run: a real run never exits 0, so a driver on stale notes
+> fails loudly instead of silently. Every call carries `task_id`, so the kernel's
+> own check ("worker is scoped to task X") enforces identity. What a read-back
+> used to prove after a transition is the tool's own result now, and what a
+> comment used to carry (the verdict, the park) is a host file or the hand-off
+> summary: a worker's terminal cannot write the board at all. The rest of D10.3
+> stands: the model still decides nothing the program can compute. **What does
+> not stand is that the model retypes nothing** — it DOES retype the call's
+> arguments (the lane's metadata, a hold's or a bounce's reason), which is the price of the
+> fence. What keeps that honest is that a program checks the copy: the verifier
+> compares the metadata the kernel stored on the card with the envelope the lane
+> validated and kept on the host before it reviews anything, tolerating exactly
+> the two rewrites the kernel makes (its session id, and redaction), and the
+> stashed verdict does not pass through the driver (a host file the merge-watcher
+> reads; only merge mode's `kanban_complete` carries it as an argument). A payload the program cannot check, or cannot keep off the driver, is a
+> design smell here.
+> Executed by `lane/*` and `verifier/*` on the installed kernel in an isolated
+> `HERMES_HOME`, with the fenced environment built by Hermes's own
+> `delegated_child_subprocess_env`.
+
 ## Consequences
 
 - What the protocol does is now testable by running it.

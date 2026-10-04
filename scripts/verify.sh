@@ -126,6 +126,38 @@ cleanup() { rm -rf "$TMPROOT" "$LABROOT"; }
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
+# THE TWO HALVES OF A DISPATCHED WORKER, from the INSTALLED Hermes — shared by the lane/ and
+# verifier/ groups (scripts/fixtures/worker-ctx.py; epic S6d, P24). A worker is a driver whose
+# terminal is fenced: the programs run in the terminal and can only READ the board; the driver,
+# unfenced, makes the one tool call the program's envelope names.
+#   _wsnip     the environment a FENCED TERMINAL carries, as a snippet to source in a subshell:
+#              the dispatcher's grant (task, run, claim, DB, workspace, profile home) passed
+#              through Hermes's own delegated_child_subprocess_env, which scrubs
+#              HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK and sets the marker. The marker is never
+#              set by hand. `--poison` plants WRONG values for exactly the scrubbed names.
+#   _wperform  the DRIVER: in a dispatcher-GRANTED context (no marker), the envelope's
+#              `terminate` through Hermes's real tool registry, verbatim; `on_error` if it errors.
+#   _wclaim_review  the dispatcher's own claim of a card in `review`.
+# All three refuse a HERMES_HOME that is not an isolated directory.
+# ---------------------------------------------------------------------------
+WCTX="$REPO_ROOT/scripts/fixtures/worker-ctx.py"
+WCTX_PY="$HOME/.hermes/hermes-agent/venv/bin/python"
+_wsnip() {   # home board task profile [flags] -> path of a snippet (or fails)
+  local out; out="$(mktemp "$TMPROOT/wsnip.XXXXXX")" || return 1
+  HERMES_HOME="$1" "$WCTX_PY" "$WCTX" fenced-env "$2" "$3" "$4" "${@:5}" > "$out" 2>"$out.err" \
+    || { cat "$out.err" >&2; return 1; }
+  printf '%s' "$out"
+}
+_wperform() {   # home board task profile envelope.json -> the driver's calls, one JSON line each
+  HERMES_HOME="$1" "$WCTX_PY" "$WCTX" perform "$2" "$3" "$4" "$5"
+}
+_wclaim_review() { HERMES_HOME="$1" "$WCTX_PY" "$WCTX" claim-review "$2" "$3"; }
+# The verbs the INSTALLED Hermes refuses from a fenced terminal, unioned with the set measured on
+# 0.21.5 so that coverage can only grow: a program run by a worker must call none of them.
+FENCED_VERBS_MEASURED='init|create|swarm|assign|reclaim|reassign|link|unlink|claim|comment|attach|attach-rm|complete|edit|block|schedule|unblock|promote|archive|dispatch|daemon|repair|heartbeat|notify-subscribe|notify-unsubscribe|specify|decompose|request-review|request-changes|reopen-review|gc'
+_fenced_verbs() { printf '%s|%s' "$FENCED_VERBS_MEASURED" "$("$WCTX_PY" "$WCTX" denied-verbs 2>/dev/null)" | sed 's/|$//'; }
+
+# ---------------------------------------------------------------------------
 # cli/ — flags named next to a command must exist in that command's --help.
 #
 # This is the group that would have caught `--body-file` on `hermes kanban
@@ -1706,6 +1738,18 @@ run_config_group() {
         "this host runs profile '$p' and this repo no longer ships hermes/profiles/$p.SOUL.md — it keeps whatever identity it was last given; retire it once no card is in review for it"
     fi
 
+    # THE SKILL SHIM, LIVE HALF (epic S6d F6). Hermes force-loads `sdlc-review` on every review claim; a
+    # profile that ships `hermes/profiles/<p>.sdlc-review.SKILL.md` must carry it over the bundled
+    # copy, or its reviewer is told to read the diff and `kanban_complete` an approval. Same failure
+    # shape as soul-in-sync: right in git, stale on the worker, closed only by profiles-bootstrap.sh.
+    if [ -f "hermes/profiles/$p.sdlc-review.SKILL.md" ]; then
+      if diff -q "$HOME/.hermes/profiles/$p/skills/devops/sdlc-review/SKILL.md" "hermes/profiles/$p.sdlc-review.SKILL.md" >/dev/null 2>&1; then
+        ok "skill-shim-in-sync/$p"
+      else
+        bad "skill-shim-in-sync/$p" "the live sdlc-review is not the shim git ships — a review claim would load Hermes's generic reviewer skill; run ./hermes/profiles-bootstrap.sh"
+      fi
+    fi
+
     # The live half of the driver pin. Same failure shape as soul-in-sync: the
     # value can be correct in git and stale on the worker, and only a republish
     # closes the gap. Reported as a WARN-equivalent skip rather than a failure
@@ -1763,6 +1807,52 @@ run_config_group() {
     bad "lane-skill-scope" "start-chunk/end-chunk are enabled for forge-codex-lane"
   else
     ok "lane-skill-scope"
+  fi
+
+  # F6 (epic S6d): HERMES FORCE-LOADS `sdlc-review` ON EVERY REVIEW CLAIM, and the bundled one is the
+  # opposite of forge-verifier's SOUL: read the diff, `kanban_complete` on approve. A cheap driver
+  # following it could complete the card of a PR nobody merged. It cannot simply be disabled — with
+  # forge-lane already disabled for the verifier, BOTH preloads would be missing and
+  # `finalize_preloaded_skills` raises, so every verifier spawn would crash. So the profile ships a
+  # same-named shim (identity only, ADR-0010/L3) written over the bundled copy's path.
+  # MEASURED, in an isolated HERMES_HOME, not assumed: with the bundled copy seeded, a `--skills
+  # sdlc-review` preload serves the generic skill; with the shim in the profile's own skills dir it
+  # serves ONLY the shim (the profile's dir is searched before external dirs and the bundled sync),
+  # and Hermes's manifest sync leaves a user-customised copy alone, before or after. This case runs
+  # the REAL profiles-bootstrap.sh into a scratch home and asks Hermes's own preload what each
+  # profile would be given; forge-codex-lane has no shim and is the control that the generic text
+  # is what would otherwise load.
+  local sh_home="$TMPROOT/shim-home" sh_detail="" sh_out sh_p
+  if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$WCTX_PY" ]; then
+    skip "the-review-spawn-preloads-the-shim" "hermes (and its venv python) not installed"
+  else
+    rm -rf "$sh_home"; mkdir -p "$sh_home"
+    HERMES_HOME="$sh_home" bash ./hermes/profiles-bootstrap.sh >"$sh_home.log" 2>&1 \
+      || sh_detail="$sh_detail bootstrap-failed($(tail -1 "$sh_home.log"))"
+    cmp -s "hermes/profiles/forge-verifier.sdlc-review.SKILL.md" "$sh_home/profiles/forge-verifier/skills/devops/sdlc-review/SKILL.md" \
+      || sh_detail="$sh_detail the-bootstrap-did-not-install-the-shim"
+    for sh_p in forge-verifier forge-codex-lane; do
+      sh_out="$("$WCTX_PY" "$WCTX" preload-skill "$sh_home/profiles/$sh_p" sdlc-review 2>"$sh_home.err")"
+      if [ "$sh_p" = forge-verifier ]; then
+        printf '%s' "$sh_out" | jq -e '(.loaded == ["sdlc-review"]) and (.missing == [])
+            and (.prompt | contains("sdlc-review — as forge-verifier"))
+            and (.prompt | contains("Review Lenses") | not) and (.prompt | contains("`kanban_complete` | ") | not)' >/dev/null 2>&1 \
+          || sh_detail="$sh_detail the-verifiers-review-spawn-is-not-given-only-the-shim($(printf '%s' "$sh_out" | jq -c '[.loaded,.missing]' 2>/dev/null) $(head -c 100 "$sh_home.err"))"
+      else
+        printf '%s' "$sh_out" | jq -e '(.loaded == ["sdlc-review"]) and (.prompt | contains("Review Lenses"))
+            and (.prompt | contains("forge-verifier") | not)' >/dev/null 2>&1 \
+          || sh_detail="$sh_detail the-control-is-not-the-generic-skill"
+      fi
+    done
+    # a second sync (Hermes runs one at every start) leaves the shim alone
+    "$WCTX_PY" "$WCTX" preload-skill "$sh_home/profiles/forge-verifier" sdlc-review 2>/dev/null \
+      | jq -e '.prompt | contains("sdlc-review — as forge-verifier")' >/dev/null 2>&1 \
+      || sh_detail="$sh_detail a-re-sync-replaced-the-shim"
+    if [ -z "$sh_detail" ]; then
+      ok "the-review-spawn-preloads-the-shim (the real profiles-bootstrap.sh into a scratch home: a --skills sdlc-review preload serves forge-verifier ONLY the identity shim, survives Hermes's own re-sync, and serves forge-codex-lane — the control — the generic reviewer skill)"
+    else
+      bad "the-review-spawn-preloads-the-shim" "the review spawn Hermes force-loads sdlc-review into must be given forge-verifier's shim, not the generic reviewer skill —$sh_detail"
+    fi
   fi
 
   # F1: a worktree card with no workspace_path anchors on the board's
@@ -2473,6 +2563,8 @@ config/external-dirs/<profile>    points at this checkout's skills/, or ~/.forge
 config/soul-in-sync/<profile>     live ~/.hermes SOUL matches the one in git
 config/model-pin-live/<profile>   live model.default matches the pin that would republish it
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
+config/skill-shim-in-sync/<profile>  the live sdlc-review a review claim force-loads is the shim git ships (F6)
+config/the-review-spawn-preloads-the-shim  the REAL profiles-bootstrap.sh into a scratch home: a --skills sdlc-review preload serves forge-verifier only the identity shim (surviving a re-sync); forge-codex-lane, the control, gets the generic reviewer skill (F6)
 config/board-default-workdir      every forge board has a worktree anchor
 config/per-profile/<assignee>             a declared assignee with no profile on disk is named, not trusted (F43)
 config/per-profile                        the per-profile sweep could not run at all (no hermes, or no forge-* profiles)
@@ -2503,8 +2595,10 @@ lane/scratch-is-board-scoped      run ids are board-local; scratch and audit car
 lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_LANE_RUN_KEY instead of recomputing it
 lane/role-boundary-prepended      the contract carries body + operator comments + the boundary, and neither worker chatter nor the verifier's FORGE-VERDICT-V1 envelope
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
-lane/terminator-set-is-closed     kanban_request_review/_changes are named forbidden, not merely unlisted
-lane/terminators-match-the-substrate    every terminator the installed Hermes exposes is accounted for in §7 (--with-hermes)
+lane/terminator-set-is-closed     kanban_request_review only as the call the envelope names; _changes, _complete and _create named forbidden, not merely unlisted
+lane/the-drivers-view-holds-the-whole-envelope  the verifier SOUL's block and the lane skill's launch line, EXECUTED through the installed terminal/process_manage tools against a stub exiting 4 with a run-A-sized envelope: the wait is cut, the log's last line is whole, rc and the call are shown, a foreground call would die (F1/F2/F3)
+lane/the-claim-is-kept-alive-by-the-driver  the installed Hermes still heartbeats a worker's claim from every running tool call (lane.sh no longer heartbeats)
+lane/terminators-match-the-substrate    every terminator the installed Hermes exposes (imported, not parsed: P27) is accounted for in §2; the four the table needs exist; every tool §2 and the verifier SOUL name exists
 lane/blast/missing-run-capture    a check with no current-run immutable baseline cannot pass
 lane/blast/capture-is-single-use  Codex cannot replace the pre-Codex baseline
 lane/blast/check-is-single-use    a completed final audit cannot be overwritten or replayed
@@ -2538,15 +2632,22 @@ lane/dependent-pr-must-be-merged  executed: an unmerged parent PR blocks failing
 lane/graph-parents-are-atomic     dependent cards carry --parent before the dispatcher can claim them
 lane/uv-cache-dir-is-deterministic-and-outside-worktree  one run-specific TMPDIR, no status blind spot
 lane/verification-is-plain-make-check   executed: lane.sh strips UV_OFFLINE/UV_CACHE_DIR from make check
-lane/lane-sh-runs-the-protocol    executed end to end with stub hermes/gh/codex: order, park relay, heartbeat, push, PR, validated envelope
-lane/lane-sh-blocks-before-the-push  a red check and an audit breach block with their class and never push; missing env is 2
-lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers, the handoff included, beside itself
+lane/lane-sh-runs-the-protocol    executed end to end with stub hermes/gh/codex under a fenced-terminal stub: order, push, PR, validated envelope; exits 4 naming kanban_request_review, writes nothing to the board, the park in the summary
+lane/lane-sh-blocks-before-the-push  a red check and an audit breach block with their class and never push, each a kanban_block call; a missing task id or profile is 2
+lane/lane-sh-refuses-a-task-that-is-not-its-card  --task is checked against the board (running, this profile's, one running run, this workspace — an empty workspace_path is not a match, S8); a missing card blocks naming no task; a card claimed from review blocks as handoff-integrity (H1)
+lane/lane-sh-ignores-the-scrubbed-variables  stub variant, no Hermes needed: planted HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK reach neither the card read, the run key nor the hand-off (S7)
+lane/programs-answer-without-jq  lane.sh and prejudge-review.sh with no jq: exit 3, a one-line kanban_block carrying rc, naming no task, embedding nothing typed (S9)
+lane/lane-sh-attempts-no-board-mutation  two full fenced passes on the real kernel with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses
+lane/lane-sh-reads-no-scrubbed-variable  fenced, with wrong values planted for exactly the scrubbed names; it reads its own card and nothing mentions the planted id
+lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers beside itself and names the hand-off as a kanban_request_review call
 lane/lane-sh-reenters-on-a-bounce  FL3, stubs: same card/branch/PR, red baseline tolerated, the implementer's session resumed with the reasons
-lane/bounce-round-trip-on-real-hermes  FL3, real kernel in an isolated HERMES_HOME: handoff, native gate, request-changes, re-entry, approval releases the child
+lane/bounce-round-trip-on-real-hermes  FL3 + P24, real kernel in an isolated HERMES_HOME: a fenced lane names the hand-off, the driver's tool call lands it, native gate, request-changes through the tool, re-entry, approval; lane-handoff.sh refuses under the fence
 lane/lane-handoff-is-fail-closed  validates before the transition, reads the end state back, unparks a blocked human-tier card, and puts the sentinel on an unassigned one before the unblock (P21)
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/verifier-delegates-its-protocol    the SOUL names the script and the script exists (ADR-0010)
-lane/verifier-terminator-mapping        rc 0 -> call nothing (the program transitioned the card), rc 3 -> kanban_block; an outage is not a rejection
+lane/verifier-terminator-mapping        rc 4 and 3 -> the call the envelope names (on_error the fallback), rc 2 -> kanban_block, a real review never exits 0; an outage is not a rejection
+lane/every-script-preflight-lists-is-executable  every script preflight.sh lists (read out of it) is -x on disk and 100755 in git — forge-state.sh, sourced, included (F4)
+lane/exit-tables-match-the-programs     lane.sh and prejudge-review.sh declare exactly 4, 3, 2, 0; the forge-lane table and the verifier SOUL carry exactly those (ADR-0003)
 lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
 lane/verifier-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
 lane/codex-model-reaches-the-envelope   executed: lane.sh copies the runner's recorded Codex model into the chunk envelope (F22)
@@ -2666,7 +2767,8 @@ prejudge/emits-its-own-shape-not-the-verdict-schema  the gate emits forge.gate.v
 prejudge/gate-is-a-stage-not-a-replacement  no model in the gate, and the protocol's scorer still there
 prejudge/scorer-is-the-control-arm  the claude -p call is byte-identical to the recorded baseline (S5's control; never skips)
 prejudge/review-routes-by-gate-result  a gate block bounces with no model spawned, carrying forge.gate.v1
-prejudge/review-emits-a-terminator-envelope  one forge.review.v1 object tells the model which terminator to call
+prejudge/review-ignores-the-scrubbed-variables  stub variant, no Hermes needed: planted HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK never reach a hermes call (S7)
+prejudge/review-emits-a-terminator-envelope  one forge.review.v2 object names the call the driver makes (terminate, on_error); only a dry-run exits 0
 prejudge/review-never-prints-the-diff  a recorded 63 KB patch reaches the prompt file and not stdout
 prejudge/schema-hides-stamped-fields  the model is not asked for the fields the operator stamps
 prejudge/cost-is-storable         the verdict schema takes cost, session_id, worker_session_id and tokens_estimate — storable, never demanded, cache field intact
@@ -2690,7 +2792,13 @@ prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_m
 prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
 prejudge/review-refuses-without-a-board  no board, or no hermes, is substrate before the gate — never a routed outcome with rc 0 that transitioned nothing
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
-verifier/chunk-is-the-running-card  D19.1: --chunk must BE the running card; a mismatch is substrate before Stage 1
+verifier/chunk-is-the-running-card  D19.1 + P24: --chunk is read back off the board (running, this profile's, one running run), not compared with a scrubbed variable; a refusal names no task; the kernel refuses a call aimed at another card
+verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the scorer is given the card's body; an empty body is stale-spec (F2: a background launch has no pipe)
+verifier/the-envelope-lands-on-the-real-kernel  P24 (b),(c): a fail lands ready on the recorded implementer, a recommendation blocked/needs_input — each by the tool's own result; sticky without an assign, decision-first; a refused call leaves the card running and its fallback lands
+verifier/the-review-attempts-no-board-mutation  P24: run fenced with the hermes argv logged — only reads, no verb the fence refuses, the board as the claim left it, for every outcome
+verifier/the-review-reads-no-scrubbed-variable  P24: fenced, with wrong values planted for exactly the scrubbed names; the review is of its own card and nothing mentions the planted id
+verifier/the-lanes-handoff-arrives-intact  P24: the stored hand-off equals the envelope the lane validated (host copy); redactable free text is not an edit; a missing copy and a different PR url are said
+verifier/merge-watcher-finds-the-verdict-the-verifier-left  P24: the fenced verifier writes under $HOME/.forge, a cron-like watcher finds it; the pre-deploy comment is still found; absent or unreadable is said on the completion
 verifier/the-reviewer-profile-exists  the reviewer lane-handoff.sh names ships a SOUL, is created by the bootstrap, and matches lane.sh's default
 verifier/merged-tree-union-is-executed  real repositories: a red union bounces, a green one passes, a conflict is named, an absent branch or target is unrunnable
 verifier/merged-tree-prepares-a-real-project  a stamped python-service, cloned from outside any repo: make setup then a green union; an unbuildable tree is unrunnable
@@ -3216,14 +3324,19 @@ run_lane_group() {
     || { term_ok=0; term_detail="$term_detail request_changes-unnamed"; }
   printf '%s' "$sec7_flat" | grep -Fq 'forbidden' \
     || { term_ok=0; term_detail="$term_detail no-prohibition-word"; }
+  # P24 INVERTED ONE HALF OF THIS. The lane's terminal is fenced, so the lane's hand-off is
+  # `kanban_request_review` — the driver's tool call, named by the program's envelope. It is
+  # therefore allowed, but ONLY as that call; everything else that ends a run stays forbidden,
+  # in the same one clause (a card the lane completes would release its dependents onto
+  # unmerged code, which is ADR-0008's whole point).
   printf '%s' "$sec7_flat" \
-    | grep -Eq 'kanban_request_review.{0,80}kanban_request_changes.{0,80}forbidden' \
-    || { term_ok=0; term_detail="$term_detail prohibition-not-one-clause"; }
+    | grep -Eq 'kanban_request_review. is yours \*\*only\*\* as the call the envelope names.{0,40}kanban_request_changes.{0,80}kanban_complete.{0,80}forbidden' \
+    || { term_ok=0; term_detail="$term_detail request_review-not-confined-to-the-envelope-call-or-the-others-not-forbidden"; }
   if [ "$term_ok" = 1 ]; then
-    ok "terminator-set-is-closed"
+    ok "terminator-set-is-closed (kanban_request_review only as the call the envelope names; request_changes, complete and create forbidden in one clause)"
   else
     bad "terminator-set-is-closed" \
-        "forge-lane §7 must name kanban_request_review and kanban_request_changes as forbidden in one clause — a card left in review is not done, so ADR-0008 never promotes its dependents —$term_detail"
+        "forge-lane §2 must allow kanban_request_review ONLY as the call the program's envelope names and forbid kanban_request_changes and kanban_complete in the same clause — a card left in review is not done, so ADR-0008 never promotes its dependents —$term_detail"
   fi
 
   # And the set has to stay closed as the substrate moves. Enumerate the
@@ -3235,72 +3348,178 @@ run_lane_group() {
   # the safe direction — it costs one name in the list below — and it is the
   # only shape that notices 0.21's next terminator instead of re-learning this
   # lesson in production.
-  # TWO sources, unioned, because they merely overlap. `EXPOSED_TOOLS` in the
-  # MCP transport is the codex_app_server subset (11 kanban tools); toolsets.py's
-  # `kanban` toolset carries 14, and IT is what a lane actually resolves from —
-  # ~/.hermes/profiles/forge-codex-lane/config.yaml declares
-  # `toolsets: [terminal, file, kanban, memory, skills]`. Reading only the MCP
-  # list would miss a terminator added to the toolset and not to the transport,
-  # which is F65's shape reproduced inside the check written to prevent it.
-  # Unioned, neither source moving can silently shrink coverage.
-  local hermes_root="$HOME/.hermes/hermes-agent"
-  local mcp_src="$hermes_root/agent/transports/hermes_tools_mcp_server.py"
-  local ts_src="$hermes_root/toolsets.py"
+  # TWO sources, unioned, because they merely overlap: `EXPOSED_TOOLS` in the MCP transport is the
+  # codex_app_server subset, and the `kanban` TOOLSET (toolsets.py) is the superset a lane actually
+  # resolves from (~/.hermes/profiles/forge-codex-lane/config.yaml declares
+  # `toolsets: [terminal, file, kanban, memory, skills]`). Reading only one would miss a terminator
+  # added to the other, which is F65's shape reproduced inside the check written to prevent it.
+  #
+  # THEY ARE ASKED OF THE INSTALLED HERMES, NOT PARSED OUT OF ITS SOURCE (P27). This case used to
+  # `awk` toolsets.py for a `"kanban": {` literal; Hermes 0.21.5 builds the entry as
+  # `"kanban": _ts(..., [t for t in _HERMES_CORE_TOOLS if t.startswith("kanban_")])`, the awk found
+  # nothing, and the case FAILED on a clean baseline once `--with-hermes` was given (it skipped
+  # without it, which is why nobody saw). Importing the module cannot be fooled by how the list is
+  # spelled. It reads two data structures and runs nothing, so it no longer needs `--with-hermes`.
+  # A reader that yields nothing, or an import that raises, is a FAIL — never a skip, never a pass.
+  local hermes_root="$HOME/.hermes/hermes-agent" tm_detail="" tm_exposed tm_ktool tm_unaccounted=""
   local kanban_nonterminating=" kanban_show kanban_list kanban_comment kanban_heartbeat kanban_create kanban_link kanban_unblock kanban_attach kanban_attach_url kanban_attachments "
-  # Only a missing CHECKOUT skips. A source that is present but yields nothing
-  # is a FAIL: a control that could not run has not passed (F65/F66), and
-  # "the other source still had the names" is precisely how coverage shrinks
-  # unnoticed. A file missing from a present checkout means upstream moved it.
-  if [ "$WITH_HERMES" != 1 ]; then
-    skip "terminators-match-the-substrate" "--with-hermes not given"
-  elif [ ! -d "$hermes_root" ]; then
-    skip "terminators-match-the-substrate" "hermes source not found"
+  if [ ! -d "$hermes_root" ] || [ ! -x "$WCTX_PY" ]; then
+    skip "terminators-match-the-substrate" "hermes source or its venv python not found"
   else
-    # Quoted entries only, and windowed to the declaring list in each file:
-    # both name kanban tools in nearby prose comments, and matching those
-    # would enumerate the wrong set.
-    local mcp_tools="" ts_tools="" exposed unaccounted="" ktool src_detail=""
-    if [ ! -f "$mcp_src" ]; then
-      src_detail="$src_detail mcp-source-missing($mcp_src)"
+    tm_exposed="$( cd "$hermes_root" && "$WCTX_PY" - 2>"$TMPROOT/tm.err" <<'TMPY'
+import sys
+sys.path.insert(0, ".")
+from toolsets import TOOLSETS
+from agent.transports.hermes_tools_mcp_server import EXPOSED_TOOLS
+names = set(TOOLSETS["kanban"]["tools"]) | {t for t in EXPOSED_TOOLS if str(t).startswith("kanban_")}
+print("\n".join(sorted(n for n in names if n.startswith("kanban_"))))
+TMPY
+    )"
+    if [ -z "$tm_exposed" ]; then
+      bad "terminators-match-the-substrate" "the installed Hermes yielded no kanban tools ($(tail -1 "$TMPROOT/tm.err" 2>/dev/null)) — the reader broke, which is not evidence about the skill: fix the reader, do not let this stand in for it"
     else
-      mcp_tools="$(awk '/^EXPOSED_TOOLS/{p=1} p{print} p&&/^\)/{exit}' "$mcp_src" \
-                   | grep -oE '"kanban_[a-z_]+"' | tr -d '"')"
-      [ -n "$mcp_tools" ] || src_detail="$src_detail mcp-source-yielded-no-kanban-tools"
-    fi
-    if [ ! -f "$ts_src" ]; then
-      src_detail="$src_detail toolsets-source-missing($ts_src)"
-    else
-      ts_tools="$(awk '/^[[:space:]]*"kanban":[[:space:]]*\{/{k=1} k&&/"tools":[[:space:]]*\[/{t=1} t{print} t&&/\]/{exit}' \
-                    "$ts_src" | grep -oE '"kanban_[a-z_]+"' | tr -d '"')"
-      [ -n "$ts_tools" ] || src_detail="$src_detail toolsets-source-yielded-no-kanban-tools"
-    fi
-    exposed="$(printf '%s\n%s\n' "$mcp_tools" "$ts_tools" | grep -E '^kanban_' | sort -u)"
-    if [ -n "$src_detail" ]; then
-      bad "terminators-match-the-substrate" \
-          "the kanban tool enumeration broke, which is not evidence about the skill — fix the reader, do not let the other source stand in for it:$src_detail"
-    elif [ -z "$sec7_flat" ]; then
-      bad "terminators-match-the-substrate" \
-          "forge-lane §7 did not delimit — cannot tell which terminators it accounts for"
-    else
-      # Subtract the coordination verbs that hand control straight back; every
-      # name left ENDS the run and §7 must account for it — allowed or
-      # forbidden, this case does not care which, only that a human decided.
-      # The subtraction is deliberately the wrong way round: a new
-      # NON-terminating tool trips this too. That false positive is the safe
-      # direction — it costs one name in the list above — and it is the only
-      # shape that notices 0.21's next terminator instead of re-learning this
-      # lesson in production.
-      for ktool in $exposed; do
-        case "$kanban_nonterminating" in *" $ktool "*) continue;; esac
-        printf '%s' "$sec7_flat" | grep -Fq "$ktool" \
-          || unaccounted="$unaccounted $ktool"
+      # (1) every terminator the installed Hermes exposes is accounted for in §2 — allowed or forbidden
+      for tm_ktool in $tm_exposed; do
+        case "$kanban_nonterminating" in *" $tm_ktool "*) continue;; esac
+        printf '%s' "$sec7_flat" | grep -Fq "$tm_ktool" || tm_unaccounted="$tm_unaccounted $tm_ktool"
       done
-      if [ -z "$unaccounted" ]; then
-        ok "terminators-match-the-substrate ($(printf '%s\n' "$exposed" | grep -c .) kanban tools unioned from EXPOSED_TOOLS + the kanban toolset; every terminator among them is named in §7)"
+      [ -z "$tm_unaccounted" ] || tm_detail="$tm_detail the-installed-hermes-exposes-kanban-tools-section-2-never-mentions:$tm_unaccounted"
+      # (2) the four terminators the §2 table and the verifier SOUL are written around still exist
+      for tm_ktool in kanban_complete kanban_block kanban_request_review kanban_request_changes; do
+        printf '%s\n' "$tm_exposed" | grep -qx "$tm_ktool" || tm_detail="$tm_detail the-installed-hermes-no-longer-has-$tm_ktool"
+      done
+      # (3) every tool §2 or the verifier SOUL names exists: a renamed tool is red, not a driver that
+      # calls a tool the kernel no longer has
+      for tm_ktool in $( { printf '%s' "$sec7_flat"; cat hermes/profiles/forge-verifier.SOUL.md; } | grep -oE 'kanban_[a-z_]+' | sort -u ); do
+        printf '%s\n' "$tm_exposed" | grep -qx "$tm_ktool" || tm_detail="$tm_detail forge-docs-name-a-tool-the-installed-hermes-lacks:$tm_ktool"
+      done
+      if [ -z "$tm_detail" ]; then
+        ok "terminators-match-the-substrate ($(printf '%s\n' "$tm_exposed" | grep -c .) kanban tools imported from the installed toolsets.py + EXPOSED_TOOLS; every terminator is named in §2, the four the table needs exist, and every tool §2 and the verifier SOUL name exists)"
       else
-        bad "terminators-match-the-substrate" \
-            "the installed Hermes exposes kanban tools §7 never mentions:$unaccounted — name each in §7 as allowed or forbidden, or (if it does not end the run) add it to kanban_nonterminating in this case"
+        bad "terminators-match-the-substrate" "the forge-lane §2 table / verifier SOUL and the installed Hermes disagree —$tm_detail"
       fi
+    fi
+  fi
+
+  # THE CLAIM IS KEPT ALIVE BY THE DRIVER, NOT BY THE PROGRAM (forge-lane §1 says so). lane.sh used to
+  # heartbeat the card itself (`hermes kanban heartbeat`); that is a mutation, so it is refused in a
+  # fenced terminal, and the line was removed. What keeps a multi-hour `process wait` from losing its
+  # claim is Hermes's own bridge: every tool call runs under a 30 s activity thread that stamps
+  # `_touch_activity`, which (for a dispatcher-spawned worker) calls
+  # `heartbeat_current_worker_from_env` = `heartbeat_claim` + a `heartbeat` event. Run A's board shows
+  # those events at ~60 s throughout, while every CLI heartbeat from the program failed. This pins the
+  # four places that behaviour lives in the INSTALLED source, so a Hermes that moves it is red, not a
+  # lane whose claim lapses mid-run. A missing checkout is the only skip.
+  local hb_src="$HOME/.hermes/hermes-agent" hb_detail=""
+  if [ ! -d "$hb_src" ]; then
+    skip "the-claim-is-kept-alive-by-the-driver" "hermes source not found"
+  else
+    grep -q '^def heartbeat_current_worker_from_env' "$hb_src/tools/kanban_tools.py" 2>/dev/null \
+      && awk '/^def heartbeat_current_worker_from_env/{f=1} f && /kb\.heartbeat_claim/{ok=1} f && /kbd\.heartbeat_worker/{ok2=1} END{exit !(ok && ok2)}' "$hb_src/tools/kanban_tools.py" \
+      || hb_detail="$hb_detail the-bridge-no-longer-extends-the-claim-and-records-a-heartbeat"
+    grep -q 'heartbeat_current_worker_from_env()' "$hb_src/agent/activity_tracking.py" 2>/dev/null \
+      || hb_detail="$hb_detail _touch_activity-no-longer-calls-the-bridge"
+    grep -q '^def _run_with_activity_heartbeat' "$hb_src/agent/tool_executor.py" 2>/dev/null \
+      && grep -q 'agent\._touch_activity(label)' "$hb_src/agent/tool_executor.py" 2>/dev/null \
+      || hb_detail="$hb_detail a-running-tool-no-longer-stamps-activity"
+    grep -q '^DEFAULT_CLAIM_TTL_SECONDS' "$hb_src/hermes_cli/kanban_db.py" 2>/dev/null \
+      || hb_detail="$hb_detail the-claim-ttl-moved"
+    if [ -z "$hb_detail" ]; then
+      ok "the-claim-is-kept-alive-by-the-driver (the installed Hermes still heartbeats a worker's claim from every running tool call: _run_with_activity_heartbeat -> _touch_activity -> heartbeat_current_worker_from_env -> heartbeat_claim + heartbeat_worker)"
+    else
+      bad "the-claim-is-kept-alive-by-the-driver" "forge-lane §1 says the runtime heartbeats a worker while any tool runs, and lane.sh no longer does —$hb_detail"
+    fi
+  fi
+
+  # WHAT THE DRIVER IS SHOWN. Run A's reviewer found three ways the driver could be handed a program that
+  # worked perfectly and still not be able to make the call it names, none of which a text check on the
+  # SOUL or the skill sees:
+  #   F1  the SOUL's block printed `.action, .summary, .reason` — the exit code and the call never reached
+  #       the model;
+  #   F2  a foreground `terminal` call dies at 420 s (tool_executor.py:131), and a review's own CI wait
+  #       defaults to 600 s, so a review launched in the foreground is killed mid-run;
+  #   F3  `process_manage wait` returns only the LAST 2000 characters (COMPLETION_OUTPUT_CHARS), and the
+  #       call sits near the START of the envelope: with run A's own 1178-byte metadata the envelope lost
+  #       `terminate` and `task_id`, so the driver had nothing to make a call with.
+  # So this EXECUTES what the SOUL and the skill say. The block each one carries is EXTRACTED and run,
+  # as written, through the INSTALLED tool registry in a dispatcher-granted process — `terminal`
+  # (background, pty; Hermes's own terminal tool fences the child), `process_manage wait` until exited,
+  # `process_manage log` — against a stub program that prints what a real run prints: pty noise,
+  # progress lines, then a run-A-sized envelope (scripts/fixtures/envelopes/), and exits 4. What the
+  # model would be shown is then parsed. Both limits are READ from the installed modules, never assumed.
+  local dv_detail="" dv_home="$TMPROOT/driver-home" dv_stub="$TMPROOT/driver-stubhome" dv_t dv_out dv_blk dv_cmd dv_len dv_prog dv_fix dv_tid dv_ci
+  if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$WCTX_PY" ]; then
+    skip "the-drivers-view-holds-the-whole-envelope" "hermes (and its venv python) not installed"
+  else
+    rm -rf "$dv_home" "$dv_stub"; mkdir -p "$dv_home" "$dv_stub/.forge/repo/scripts"
+    HERMES_HOME="$dv_home" hermes kanban boards create drv >/dev/null 2>&1
+    dv_t="$(HERMES_HOME="$dv_home" hermes kanban --board drv create "CHUNK-1: the driver's view" --assignee forge-verifier --json 2>/dev/null | jq -r '.id // empty')"
+    HERMES_HOME="$dv_home" hermes kanban --board drv claim "$dv_t" >/dev/null 2>&1
+    dv_ci="$(sed -n 's/^WAIT_SECS=\([0-9]*\);.*/\1/p' scripts/prejudge-review.sh | head -1)"
+    dv_tid=t_da03d07a
+    for dv_prog in verifier lane; do
+      if [ "$dv_prog" = verifier ]; then
+        dv_fix=scripts/fixtures/envelopes/verifier-recommend.json
+        dv_blk="$(awk '/^```bash$/{f=1;next} /^```$/{f=0} f' hermes/profiles/forge-verifier.SOUL.md)"
+        dv_cmd="export HOME='$dv_stub' pr_url=https://github.com/wielas/Squatfather/pull/2 task_id=$dv_tid HERMES_KANBAN_BOARD=drv
+$dv_blk"
+        cp /dev/null "$dv_stub/.forge/repo/scripts/lane.sh"
+        dv_stubfile="$dv_stub/.forge/repo/scripts/prejudge-review.sh"
+      else
+        dv_fix=scripts/fixtures/envelopes/lane-run-a.json
+        dv_blk="$(awk '/^[[:space:]]*```bash$/{f=1;next} /^[[:space:]]*```$/{f=0} f' skills/forge-lane/SKILL.md | head -1 | sed -e 's/^[[:space:]]*//' -e "s/<task id>/$dv_tid/")"
+        dv_cmd="export HOME='$dv_stub'
+$dv_blk"
+        dv_stubfile="$dv_stub/.forge/repo/scripts/lane.sh"
+      fi
+      [ -n "$dv_blk" ] || { dv_detail="$dv_detail $dv_prog:no-fenced-block-to-extract(went-blind)"; continue; }
+      cat > "$dv_stubfile" <<DVSTUB
+#!/usr/bin/env bash
+for i in 1 2 3 4 5; do echo "tput: No value for \$TERM and no -T specified" >&2; done
+echo "12:00:01Z progress: gate clear, merged tree green, the scorer is running" >&2
+echo "12:00:09Z progress: stage 5, naming the call" >&2
+echo "fence: marker=\${HERMES_DELEGATED_CHILD_CONTEXT:+set} task=\${HERMES_KANBAN_TASK:-unset}" >&2
+cat "$REPO_ROOT/$dv_fix"
+exit 4
+DVSTUB
+      chmod +x "$dv_stubfile"
+      dv_len="$(wc -c < "$dv_fix" | tr -d ' ')"
+      dv_out="$(HERMES_HOME="$dv_home" "$WCTX_PY" "$WCTX" driver-run drv "$dv_t" forge-verifier "$dv_cmd" 2>"$dv_home/driver-run.err")"
+      printf '%s' "$dv_out" | jq -e --arg tid "$dv_tid" --argjson len "$dv_len" --argjson ci "${dv_ci:-0}" '
+          (.launch.exit_code == 0)                                       # the launcher'"'"'s, not the program'"'"'s
+          and (.wait.status == "exited") and (.wait.exit_code == 4)        # the program'"'"'s
+          and (.completion_output_chars < $len and (.wait.output_cut // 0) > 0)  # the hazard is real here
+          and ((.wait.output | split("\n") | map(select(length > 0)) | last | try fromjson catch null) == null)
+          and (.foreground_tool_timeout_s < $ci)                           # a foreground review would die
+          and (.log.output | contains("fence: marker=set task=unset"))     # Hermes'"'"'s own terminal fenced the child
+          and ((.log.output | split("\n") | map(select(length > 0)) | last | fromjson) as $e
+               | $e.rc == 4 and ($e.terminate.tool | startswith("kanban_")) and $e.terminate.args.task_id == $tid
+                 and $e.on_error.tool == "kanban_block" and $e.on_error.args.task_id == $tid)' >/dev/null 2>&1 \
+        || dv_detail="$dv_detail $dv_prog:the-driver-was-not-shown-rc-and-the-call($(printf '%s' "$dv_out" | jq -c '[.launch.exit_code,.wait.status,.wait.exit_code,.wait.output_cut,.completion_output_chars,.foreground_tool_timeout_s]' 2>/dev/null) $(head -c 160 "$dv_home/driver-run.err" 2>/dev/null))"
+    done
+    # F2: both documents tell the driver to launch in the BACKGROUND, and the SOUL says why
+    grep -Fq 'background=true' hermes/profiles/forge-verifier.SOUL.md && grep -Fq '420 s' hermes/profiles/forge-verifier.SOUL.md \
+      || dv_detail="$dv_detail the-soul-does-not-tell-the-driver-to-background-the-review"
+    sed -n '/^## 1\. Run the protocol/,/^## 2\. Terminate/p' skills/forge-lane/SKILL.md | grep -Fq 'background: true' \
+      || dv_detail="$dv_detail the-skill-does-not-tell-the-driver-to-background-the-lane"
+    # The reading half (review S-A): the envelope is read with `log`, never from the cut wait, and
+    # a wait carries a timeout under the runtime's per-call kill (else it errors instead of
+    # returning `status: timeout`). Executing the block above cannot see prose, so the prose is read.
+    grep -Fq 'action="log"' hermes/profiles/forge-verifier.SOUL.md \
+      || dv_detail="$dv_detail the-soul-does-not-tell-the-driver-to-read-the-envelope-with-log"
+    grep -Eq 'action="wait".*timeout=[0-9]+' hermes/profiles/forge-verifier.SOUL.md \
+      || dv_detail="$dv_detail the-soul's-wait-carries-no-timeout"
+    sed -n '/^## 1\. Run the protocol/,/^## 2\. Terminate/p' skills/forge-lane/SKILL.md | grep -Fq 'action: "log"' \
+      || dv_detail="$dv_detail the-skill-does-not-tell-the-driver-to-read-the-envelope-with-log"
+    sed -n '/^## 1\. Run the protocol/,/^## 2\. Terminate/p' skills/forge-lane/SKILL.md | grep -Eq 'timeout: [0-9]+' \
+      || dv_detail="$dv_detail the-skill's-wait-carries-no-timeout"
+    # …and the claims the skill makes about the runtime still hold in the installed source
+    grep -rq 'approvals.single_query_mode' "$HOME/.hermes/hermes-agent/tools" 2>/dev/null \
+      || dv_detail="$dv_detail execute_code-is-no-longer-blocked-in-an-unattended-session(the-skill-says-it-is)"
+    if [ -z "$dv_detail" ]; then
+      ok "the-drivers-view-holds-the-whole-envelope (the verifier SOUL's block and the lane skill's launch line, executed through the installed terminal and process_manage tools: the wait's output is cut and cannot parse, the log's last line is the whole run-A-sized envelope with rc, terminate and on_error, the launcher's exit_code 0 is not the program's 4, a foreground call would die first)"
+    else
+      bad "the-drivers-view-holds-the-whole-envelope" "the driver must be shown the program's rc and the whole call it names, whatever the output size —$dv_detail"
     fi
   fi
 
@@ -3585,29 +3804,33 @@ run_lane_group() {
         && git worktree add -q -b chunk/7-sync-engine "$lwt" main ) >/dev/null 2>&1 || return 1
     # The card: a body, one operator comment and one worker comment. Only the
     # operator's may reach Codex.
-    jq -n '{task: {id: "t_lane", title: "CHUNK-7: Sync engine", status: "running",
-                   assignee: "forge-codex-lane", body: "Implement the sync engine.\nFROZEN-CONTRACT-MARKER"},
+    jq -n --arg ws "$lwt" '{task: {id: "t_lane", title: "CHUNK-7: Sync engine", status: "running",
+                   assignee: "forge-codex-lane", workspace_path: $ws,
+                   body: "Implement the sync engine.\nFROZEN-CONTRACT-MARKER"},
             parents: [], comments: [
               {author: "default", body: "OPERATOR-OVERRIDE-MARKER: use the v2 API", created_at: 1},
               {author: "forge-verifier", body: "WORKER-CHATTER-MARKER", created_at: 2},
                {author: "default", body: "FORGE-VERDICT-V1\n```json\n{\"schema\":\"forge.judge.v1\"}\n```", created_at: 3}],
-            events: [], runs: []}' > "$lstub/cards/t_lane.json"
+            events: [], runs: [{id: 1, status: "running", profile: "forge-codex-lane"}]}' > "$lstub/cards/t_lane.json"
     cat > "$lstub/bin/hermes" <<'LHERMES'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB/hermes.log"
 [ "${1:-}" = kanban ] || exit 2; shift
 [ "${1:-}" = --board ] && shift 2
 verb="$1"; shift
+# A fenced worker terminal cannot mutate the board (kanban_command's fast-fail,
+# hermes_cli/kanban.py:152): this stub refuses exactly those verbs with the same
+# words, unless the case plays the OPERATOR (STUB_OPERATOR=1, lane-handoff.sh).
+if [ -z "${STUB_OPERATOR:-}" ]; then
+  case "$verb" in
+    init|create|swarm|assign|reclaim|reassign|link|unlink|claim|comment|attach|attach-rm|complete|edit|block|\
+    schedule|unblock|promote|archive|dispatch|daemon|repair|heartbeat|notify-subscribe|notify-unsubscribe|\
+    specify|decompose|request-review|request-changes|reopen-review|gc)
+      echo "kanban: delegate_task child contexts cannot mutate Kanban tasks via the CLI" >&2; exit 1;;
+  esac
+fi
 case "$verb" in
   show) f="$STUB/cards/$1.json"; [ -f "$f" ] && cat "$f" || exit 1;;
-  create)
-    title="$1"; shift; body="" parent=""
-    while [ $# -gt 0 ]; do case "$1" in --body) body="$2"; shift 2;; --parent) parent="$2"; shift 2;; *) shift;; esac; done
-    id="t_child$(ls "$STUB/cards" | wc -l | tr -d ' ')"
-    jq -n --arg id "$id" --arg t "$title" --arg b "$body" --arg p "$parent" \
-      '{task: {id: $id, title: $t, body: $b, status: "todo"}, parents: [$p], comments: [], events: [], runs: []}' \
-      > "$STUB/cards/$id.json"
-    printf '{"id":"%s"}\n' "$id";;
   request-review)
     id="$1"; shift; reviewer=""
     while [ $# -gt 0 ]; do case "$1" in --reviewer) reviewer="$2"; shift 2;; *) shift;; esac; done
@@ -3673,14 +3896,21 @@ LCODEX
     chmod +x "$lstub/bin/hermes" "$lstub/bin/gh" "$lstub/bin/codex"
   }
   _lsh_run() { # [VAR=value ...] -> envelope on $lroot/out.json, stderr on $lroot/err, rc on stdout
+    # A FENCED terminal's environment: the board, workspace, branch and profile are
+    # kept; HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK are scrubbed, so they are NOT set
+    # here. The task id is the one explicit argument; the run id is on the card
+    # (LSH_RUN picks which run is the running one, as a re-entry's second run is).
+    jq --argjson r "${LSH_RUN:-1}" '.runs = ((.runs // []) | map(select(.status != "running")))
+          + [{id: $r, status: "running", profile: "forge-codex-lane"}]' \
+      "$lstub/cards/t_lane.json" > "$lstub/t.json" && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
     env PATH="$lstub/bin:$PATH" STUB="$lstub" LANE_CALLS="$lstub/calls" LANE_RED="$lstub/red" \
         TMPDIR="$lroot/tmp" CODEX_HOME="$lroot/codexhome" FORGE_CODEX_BIN="$lstub/bin/codex" \
         FORGE_LANE_AUDIT_ROOT="$lroot/audits" FORGE_LANE_PARK_ROOT="$lroot/parks" \
         FORGE_LANE_SESSION_ROOT="$lroot/sessions" \
-        FORGE_LANE_TICK=1 FORGE_LANE_HEARTBEAT=1 FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
-        HERMES_KANBAN_TASK=t_lane HERMES_KANBAN_WORKSPACE="$lwt" HERMES_KANBAN_RUN_ID="${LSH_RUN:-1}" \
+        FORGE_LANE_TICK=1 FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+        HERMES_KANBAN_WORKSPACE="$lwt" HERMES_PROFILE=forge-codex-lane \
         HERMES_KANBAN_BOARD=vlane HERMES_KANBAN_BRANCH=chunk/7-sync-engine \
-        "$@" "$REPO_ROOT/$lsh" > "$lroot/out.json" 2> "$lroot/err"
+        "$@" "$REPO_ROOT/$lsh" --task "${LSH_TASK-t_lane}" > "$lroot/out.json" 2> "$lroot/err"
     echo $?
   }
   _lsh_env() { jq -r "$1" "$lroot/out.json" 2>/dev/null; }
@@ -3701,12 +3931,29 @@ LCODEX
     git -C "$lroot/main" -c user.email=v@v -c user.name=v commit -q --allow-empty -m parent-merged \
       && git -C "$lroot/main" push -q origin main >/dev/null 2>&1
     lh_rc="$(_lsh_run STUB_LIMIT_ONCE=1 UV_OFFLINE=1 UV_CACHE_DIR="$lroot/leaked-cache")"
-    [ "$lh_rc" = 0 ] || lh_detail="$lh_detail rc=$lh_rc($(_lsh_env .reason))"
-    [ "$(_lsh_env .action)" = handed-off ] || lh_detail="$lh_detail action=$(_lsh_env .action)"
-    grep -q '^kanban --board vlane request-review t_lane --reviewer forge-verifier --summary ' "$lstub/hermes.log"       || lh_detail="$lh_detail no-handoff-with-a-named-reviewer"
-    [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-verifier ]       || lh_detail="$lh_detail card-not-in-review"
-    ! grep -q '^kanban --board vlane create' "$lstub/hermes.log" || lh_detail="$lh_detail a-card-was-created"
+    # rc 4, never 0: a hand-off is NAMED, not made — the terminal is fenced (P24). A real
+    # run that exits 0 would tell a driver on stale notes to call nothing and strand the card.
+    [ "$lh_rc" = 4 ] || lh_detail="$lh_detail rc=$lh_rc($(_lsh_env .reason))"
+    [ "$(_lsh_env .action)" = handoff ] || lh_detail="$lh_detail action=$(_lsh_env .action)"
+    [ "$(_lsh_env .schema)" = forge.lane.v2 ] || lh_detail="$lh_detail schema=$(_lsh_env .schema)"
+    # THE CALL: kanban_request_review, on THIS card, with the reviewer ALWAYS named and the
+    # validated envelope as its metadata; if the kernel refuses it, a kanban_block.
+    jq -e '.terminate.tool == "kanban_request_review"
+        and .terminate.args.task_id == "t_lane" and .terminate.args.reviewer == "forge-verifier"
+        and (.terminate.args.summary | test("PR https://github.com/example/proj/pull/42"))
+        and (.terminate.args.metadata.schema == "forge.chunk.v1")
+        and .on_error.tool == "kanban_block" and .on_error.args.task_id == "t_lane"
+        and (.on_error.args.reason | test("^other: handoff-integrity — "))' "$lroot/out.json" >/dev/null 2>&1 \
+      || lh_detail="$lh_detail terminate-call-wrong($(jq -c '[.terminate.tool,.on_error.tool]' "$lroot/out.json" 2>/dev/null))"
+    # NOTHING is written to the board from the terminal: only reads reach `hermes`.
+    ! grep -vE '^kanban --board vlane show ' "$lstub/hermes.log" | grep -q . \
+      || lh_detail="$lh_detail a-mutation-was-attempted($(grep -vE '^kanban --board vlane show ' "$lstub/hermes.log" | head -2 | tr '\n' ';'))"
+    [ "$(jq -r '.task.status' "$lstub/cards/t_lane.json")" = running ] || lh_detail="$lh_detail the-program-moved-the-card"
     [ "$(_lsh_env '.created_cards | length')" = 0 ] || lh_detail="$lh_detail created-cards-not-empty"
+    # H2: the validated envelope is kept on the host for the verifier to compare.
+    [ -s "$lroot/sessions/vlane-t_lane.metadata.json" ] \
+      && [ "$(jq -S . "$lroot/sessions/vlane-t_lane.metadata.json")" = "$(_lsh_env '.terminate.args.metadata' | jq -S .)" ] \
+      || lh_detail="$lh_detail validated-envelope-not-kept-on-the-host"
     order="$(sed 's/ .*//' "$lstub/calls" 2>/dev/null | tr '\n' ' ')"
     case "$order" in "setup check codex codex check "*) ;; *) lh_detail="$lh_detail order=[$order]";; esac
     git -C "$lorig" rev-parse --verify --quiet refs/heads/chunk/7-sync-engine >/dev/null \
@@ -3714,21 +3961,26 @@ LCODEX
     git -C "$lwt" merge-base --is-ancestor "$(git -C "$lorig" rev-parse main)" HEAD 2>/dev/null \
       || lh_detail="$lh_detail fresh-branch-not-on-origin-main"
     grep -q '^gh pr create' "$lstub/gh.log" 2>/dev/null || lh_detail="$lh_detail no-pr-created"
-    grep -q '^kanban --board vlane comment t_lane PARK-COMMENT env: codex usage limit' "$lstub/hermes.log" \
-      || lh_detail="$lh_detail park-comment-not-posted"
-    grep -q '^kanban --board vlane heartbeat t_lane' "$lstub/hermes.log" || lh_detail="$lh_detail no-heartbeat"
-    lh_meta="$(_lsh_env .metadata)"
+    # The park cannot be posted to the card from a fenced terminal; it is COUNTED and
+    # reported once, in the summary the hand-off carries.
+    _lsh_env .terminate.args.summary | grep -q 'Parked 1x on a Codex usage limit (' \
+      || lh_detail="$lh_detail park-not-in-the-summary($(_lsh_env .terminate.args.summary))"
+    lh_meta="$(_lsh_env .terminate.args.metadata)"
     printf '%s' "$lh_meta" | jq -e '.schema == "forge.chunk.v1" and .chunk_id == "CHUNK-7"
         and .pr == "https://github.com/example/proj/pull/42" and .check.coverage_pct == 90
         and .files_changed == 1 and .branch == "chunk/7-sync-engine"' >/dev/null 2>&1 \
       || lh_detail="$lh_detail metadata-wrong"
     # stdout is ONE small envelope: the driver is metered, and nothing else may reach it.
-    [ "$(jq -s length "$lroot/out.json" 2>/dev/null)" = 1 ] && [ "$(wc -c < "$lroot/out.json")" -lt 4096 ] \
+    [ "$(jq -s length "$lroot/out.json" 2>/dev/null)" = 1 ] && [ "$(wc -c < "$lroot/out.json")" -lt 6144 ] \
       || lh_detail="$lh_detail stdout-is-not-one-small-envelope"
+    # ONE LINE, and its own exit code inside it: the driver reads the envelope with `process_manage log`
+    # (a wait's output is cut), and a pretty-printed envelope spreads the call over dozens of lines.
+    { [ "$(wc -l < "$lroot/out.json" | tr -d ' ')" = 1 ] && [ "$(_lsh_env .rc)" = 4 ]; } \
+      || lh_detail="$lh_detail the-envelope-is-not-one-compact-line-carrying-its-rc($(wc -l < "$lroot/out.json" | tr -d ' ') lines)"
     if [ -z "$lh_detail" ]; then
-      ok "lane-sh-runs-the-protocol (setup, green baseline, codex parked and resumed, plain check, audit, push, PR, validated envelope, handed to the named reviewer on the same card; heartbeats and PARK-COMMENT reach the card; no card created)"
+      ok "lane-sh-runs-the-protocol (setup, green baseline, codex parked and resumed, plain check, audit, push, PR, validated envelope; exits 4 naming kanban_request_review with the reviewer and task_id, writes nothing to the board, keeps the envelope on the host, reports the park in the summary)"
     else
-      bad "lane-sh-runs-the-protocol" "lane.sh must drive the whole chunk and hand back one envelope —$lh_detail"
+      bad "lane-sh-runs-the-protocol" "lane.sh must drive the whole chunk and name the hand-off in one envelope, writing nothing to the board —$lh_detail"
     fi
 
     # The role boundary, ALWAYS, and an operator comment overriding the body.
@@ -3781,8 +4033,8 @@ LCODEX
       touch "$lstub/red"
       : > "$lstub/calls"
       lr_rc="$(LSH_RUN=2 _lsh_run STUB_FIX_RED=1)"
-      [ "$lr_rc" = 0 ] || lr_detail="$lr_detail rc=$lr_rc($(_lsh_env .reason))"
-      [ "$(_lsh_env .action)" = handed-off ] || lr_detail="$lr_detail action=$(_lsh_env .action)"
+      [ "$lr_rc" = 4 ] || lr_detail="$lr_detail rc=$lr_rc($(_lsh_env .reason))"
+      [ "$(_lsh_env .action)" = handoff ] || lr_detail="$lr_detail action=$(_lsh_env .action)"
       grep -q 'resume lane-session-1' "$lstub/codex.last" 2>/dev/null || lr_detail="$lr_detail not-resumed"
       grep -q 'REVIEW-REASON-MARKER' "$lstub/codex.last" 2>/dev/null || lr_detail="$lr_detail change-reason-not-delivered"
       grep -q 'REOPEN-COMMENT-MARKER' "$lstub/codex.last" 2>/dev/null || lr_detail="$lr_detail comment-reason-not-delivered"
@@ -3790,9 +4042,9 @@ LCODEX
       [ "$(grep -c '^gh pr create' "$lstub/gh.log")" = 1 ] || lr_detail="$lr_detail second-pr"
       [ "$(git -C "$lorig" rev-list --count main..chunk/7-sync-engine 2>/dev/null)" = 2 ] \
         || lr_detail="$lr_detail branch-not-extended"
-      [ "$(grep -c 'request-review t_lane --reviewer forge-verifier' "$lstub/hermes.log")" = 2 ] \
-        || lr_detail="$lr_detail reviewer-not-named-twice"
-      ! grep -q '^kanban --board vlane create' "$lstub/hermes.log" || lr_detail="$lr_detail a-card-was-created"
+      _lsh_env '.terminate.args | .reviewer == "forge-verifier" and (.summary | test("after review"))' | grep -q true \
+        || lr_detail="$lr_detail reviewer-not-named-on-the-second-handoff"
+      ! grep -vE '^kanban --board vlane show ' "$lstub/hermes.log" | grep -q . || lr_detail="$lr_detail a-mutation-was-attempted"
     else
       lr_detail=" the happy path above did not run clean"
     fi
@@ -3809,18 +4061,120 @@ LCODEX
     { [ "$lb_rc" = 3 ] && _lsh_env .reason | grep -q '^ci-red: ' \
       && ! git -C "$lorig" rev-parse --verify --quiet refs/heads/chunk/7-sync-engine >/dev/null; } \
       || lb_detail="$lb_detail red-check(rc=$lb_rc,$(_lsh_env .reason))"
+    # A block is a CALL too: exit 3 with kanban_block, the reason verbatim, on this card,
+    # and no fallback (a block that fails has nothing left to fall back to).
+    _lsh_env '.terminate.tool == "kanban_block" and .terminate.args.task_id == "t_lane"
+              and (.terminate.args.reason | startswith("ci-red: ")) and .on_error == null' | grep -q true \
+      || lb_detail="$lb_detail block-is-not-a-kanban_block-call"
     _lsh_fixture breach
     lb_rc="$(_lsh_run STUB_BREACH=1)"
     { [ "$lb_rc" = 3 ] && _lsh_env .reason | grep -q '^other: codex exceeded its contract' \
       && ! git -C "$lorig" rev-parse --verify --quiet refs/heads/chunk/7-sync-engine >/dev/null; } \
       || lb_detail="$lb_detail breach(rc=$lb_rc,$(_lsh_env .reason))"
     _lsh_fixture usage
-    lb_rc="$(_lsh_run HERMES_KANBAN_RUN_ID=)"
-    [ "$lb_rc" = 2 ] || lb_detail="$lb_detail unset-run-id-not-2(rc=$lb_rc)"
+    lb_rc="$(_lsh_run HERMES_PROFILE=)"
+    [ "$lb_rc" = 2 ] || lb_detail="$lb_detail unset-profile-not-2(rc=$lb_rc)"
+    lb_rc="$(LSH_TASK= _lsh_run)"
+    [ "$lb_rc" = 2 ] || lb_detail="$lb_detail missing-task-not-2(rc=$lb_rc)"
     if [ -z "$lb_detail" ]; then
-      ok "lane-sh-blocks-before-the-push (red check -> ci-red, audit breach -> other, both unpushed; missing env -> 2)"
+      ok "lane-sh-blocks-before-the-push (red check -> ci-red, audit breach -> other, both unpushed and both a kanban_block call; a missing task id or profile -> 2)"
     else
       bad "lane-sh-blocks-before-the-push" "a failed step must block with its canonical class and never push —$lb_detail"
+    fi
+
+    # --task IS THE DRIVER'S WORD, AND A FENCED TERMINAL HAS NOTHING TO CHECK IT AGAINST (no
+    # HERMES_KANBAN_TASK). So the card is read back: it must be running, this profile's, hold
+    # one running run, and sit in THIS terminal's workspace — else exit 2 before Codex or setup
+    # starts. And a card the lane's own implementer claimed FROM REVIEW is not a lane run (H1):
+    # a hand-off retyped without its reviewer leaves `review/forge-codex-lane`, which the
+    # dispatcher then claims for the lane to "review" its own work.
+    local lt_detail="" lt_rc
+    _lsh_fixture refuse
+    _lt_card() { # id status assignee workspace  [extra jq]  -> a card the stub serves
+      jq -n --arg id "$1" --arg st "$2" --arg a "$3" --arg ws "$4" \
+        '{task: {id: $id, title: "CHUNK-7: Sync engine", status: $st, assignee: $a, workspace_path: $ws, body: "x"},
+          parents: [], comments: [], events: [], runs: [{id: 1, status: "running"}]}' > "$lstub/cards/$1.json"
+    }
+    _lt_card t_other running forge-verifier "$lwt"
+    lt_rc="$(LSH_TASK=t_other _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "assigned to 'forge-verifier', not to this profile" "$lroot/err" && [ ! -s "$lstub/calls" ]; } \
+      || lt_detail="$lt_detail another-profiles-card(rc=$lt_rc)"
+    _lt_card t_idle ready forge-codex-lane "$lwt"
+    lt_rc="$(LSH_TASK=t_idle _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "is 'ready', not running" "$lroot/err"; } || lt_detail="$lt_detail a-card-that-is-not-running(rc=$lt_rc)"
+    _lt_card t_far running forge-codex-lane "$lroot/some-other-workspace"
+    lt_rc="$(LSH_TASK=t_far _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "workspace is" "$lroot/err"; } || lt_detail="$lt_detail a-card-in-another-workspace(rc=$lt_rc)"
+    jq '.runs = [{id: 1, status: "running"}, {id: 2, status: "running"}]' "$lstub/cards/t_idle.json" \
+      | jq --arg ws "$lwt" '.task.id = "t_two" | .task.status = "running" | .task.workspace_path = $ws' > "$lstub/cards/t_two.json"
+    lt_rc="$(LSH_TASK=t_two _lsh_run)"
+    { [ "$lt_rc" = 2 ] && grep -q "no single running run" "$lroot/err"; } || lt_detail="$lt_detail two-running-runs(rc=$lt_rc)"
+    # S8: an EMPTY workspace_path. `cd ""` succeeds in bash 3.2 and stays where it is, and a driver
+    # runs the program with `workdir` = the workspace, so an unguarded comparison finds the card's
+    # (empty) workspace equal to the terminal's own and the check passes vacuously. Run from IN the
+    # worktree, as the driver does.
+    _lt_card t_nows running forge-codex-lane ""
+    lt_rc="$( cd "$lwt" && LSH_TASK=t_nows _lsh_run )"
+    { [ "$lt_rc" = 2 ] && grep -q "workspace is" "$lroot/err" && [ ! -s "$lstub/calls" ]; } \
+      || lt_detail="$lt_detail a-card-with-no-workspace-passed-the-check(rc=$lt_rc)"
+    # a card that does not exist is substrate (exit 3) whose block names NO task
+    lt_rc="$(LSH_TASK=t_nonexistent _lsh_run)"
+    { [ "$lt_rc" = 3 ] && _lsh_env '.terminate.tool == "kanban_block" and (.terminate.args | has("task_id") | not)
+         and (.terminate.args.reason | startswith("env: cannot read card"))' | grep -q true; } \
+      || lt_detail="$lt_detail a-missing-card-named-a-task(rc=$lt_rc)"
+    # H1: claimed from review by its own implementer
+    _lsh_fixture refuse
+    jq '.events += [{kind: "claimed", created_at: 50, payload: {lock: "h:1", run_id: 1, source_status: "review"}}]' \
+      "$lstub/cards/t_lane.json" > "$lstub/t.json" && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
+    lt_rc="$(_lsh_run)"
+    { [ "$lt_rc" = 3 ] && _lsh_env '.terminate.args.task_id == "t_lane"
+         and (.terminate.args.reason | startswith("other: handoff-integrity — card t_lane was claimed from review"))' | grep -q true \
+      && [ ! -s "$lstub/calls" ]; } \
+      || lt_detail="$lt_detail a-review-claim-ran-codex-again(rc=$lt_rc,$(_lsh_env .reason | head -c 100))"
+    if [ -z "$lt_detail" ]; then
+      ok "lane-sh-refuses-a-task-that-is-not-its-card (another profile's, not-running, another-workspace and two-running-runs cards are exit 2 before any work; a missing card blocks naming no task; a card claimed from review blocks as handoff-integrity)"
+    else
+      bad "lane-sh-refuses-a-task-that-is-not-its-card" "lane.sh must check --task against the board and refuse a review claim, before Codex —$lt_detail"
+    fi
+
+    # THE SCRUBBED-VARIABLE DEFECT, WHERE CI CAN SEE IT. The poisoned cases (lane-sh-reads-no-scrubbed-
+    # variable and the verifier's) need the installed Hermes, and CI has none, so a program that read
+    # HERMES_KANBAN_TASK would be invisible there. This plants WRONG values for the scrubbed names in
+    # the stub run and asserts none reaches the stub `hermes`' log or the run's scratch key.
+    local lx_detail="" lx_rc
+    _lsh_fixture planted
+    lx_rc="$(_lsh_run HERMES_KANBAN_TASK=t_poison00 HERMES_KANBAN_RUN_ID=999 HERMES_KANBAN_CLAIM_LOCK=poison:0:0)"
+    { [ "$lx_rc" = 4 ] && _lsh_env '.terminate.args.task_id == "t_lane"' | grep -q true; } \
+      || lx_detail="$lx_detail the-planted-run-did-not-hand-off-its-own-card(rc=$lx_rc,$(_lsh_env '.reason // .action' | head -c 100))"
+    ! grep -rq 't_poison00' "$lstub/hermes.log" "$lroot/out.json" "$lroot/err" 2>/dev/null || lx_detail="$lx_detail the-planted-task-id-was-touched"
+    [ -d "$lroot/tmp/forge-lane-vlane-1" ] && [ ! -e "$lroot/tmp/forge-lane-vlane-999" ] \
+      || lx_detail="$lx_detail the-run-key-came-from-the-environment(not-the-card)"
+    if [ -z "$lx_detail" ]; then
+      ok "lane-sh-ignores-the-scrubbed-variables (stub, no Hermes needed: planted HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK reach neither the card read, the run key nor the hand-off)"
+    else
+      bad "lane-sh-ignores-the-scrubbed-variables" "lane.sh must take its task from --task and its run from the card even where the scrubbed names hold wrong values —$lx_detail"
+    fi
+
+    # NO jq: both programs still answer with a one-line block the driver can make. The literal is
+    # hand-written (there is no jq to build it with), so it names NO task (a block applies to the
+    # driver's own) and embeds NOTHING a caller typed — a chunk id with a quote in it would have been
+    # pasted into JSON.
+    local lj_detail="" lj_out lj_rc lj_bin="$TMPROOT/nojq-bin" lj_t
+    rm -rf "$lj_bin"; mkdir -p "$lj_bin"
+    for lj_t in dirname basename date mktemp rm cat sed tr grep head awk uname; do ln -s "$(command -v $lj_t)" "$lj_bin/$lj_t" 2>/dev/null; done
+    ! env PATH="$lj_bin" /bin/sh -c 'command -v jq' >/dev/null 2>&1 || lj_detail="$lj_detail the-control-still-has-jq"
+    lj_out="$(env PATH="$lj_bin" HERMES_KANBAN_WORKSPACE=/x HERMES_KANBAN_BOARD=b HERMES_PROFILE=p /bin/bash "$REPO_ROOT/$lsh" --task t_x 2>/dev/null)"; lj_rc=$?
+    { [ "$lj_rc" = 3 ] && printf '%s' "$lj_out" | jq -e '.rc == 3 and .terminate.tool == "kanban_block" and .terminate.args.reason == "env: jq missing"
+        and (.terminate.args | has("task_id") | not) and .on_error == null' >/dev/null 2>&1; } \
+      || lj_detail="$lj_detail lane(rc=$lj_rc,$(printf '%s' "$lj_out" | head -c 120))"
+    lj_out="$(printf 'x' | env PATH="$lj_bin" /bin/bash "$REPO_ROOT/scripts/prejudge-review.sh" https://example.invalid/pull/9 --chunk 't_x"},"evil":{"' 2>/dev/null)"; lj_rc=$?
+    { [ "$lj_rc" = 3 ] && ! printf '%s' "$lj_out" | grep -q evil \
+      && printf '%s' "$lj_out" | jq -e '.rc == 3 and .terminate.tool == "kanban_block" and (.terminate.args | has("task_id") | not)' >/dev/null 2>&1; } \
+      || lj_detail="$lj_detail verifier(rc=$lj_rc,$(printf '%s' "$lj_out" | head -c 120))"
+    if [ -z "$lj_detail" ]; then
+      ok "programs-answer-without-jq (lane.sh and prejudge-review.sh with no jq: exit 3, a one-line kanban_block carrying rc, naming no task and embedding nothing the caller typed)"
+    else
+      bad "programs-answer-without-jq" "with no jq a program must still hand the driver one valid block and embed nothing it was given —$lj_detail"
     fi
 
     # ADR-0008's rule, as ADR-0019 D19.5 keeps it: native gating should make
@@ -3852,8 +4206,11 @@ LCODEX
      && grep -Fq '"$HERE/lane-setup.sh" "$WS" "$RUN_ID"' "$lsh" \
      && grep -Fq '"$HERE/codex-run.sh" "$WS" "$RUN_ID" "$TASK"' "$lsh" \
      && grep -Fq '"$HERE/lane-blast-radius.sh" check "$WS" "$FORGE_LANE_RUN_KEY"' "$lsh" \
-     && grep -Fq '"$HERE/validate-metadata.py" --profile forge-codex-lane' "$lsh"      && grep -Fq '"$HERE/lane-handoff.sh" "$TASK"' "$lsh"      && grep -Fq '"$HERE/validate-metadata.py" --profile forge-codex-lane' scripts/lane-handoff.sh; then
-    ok "lane-sh-is-reached-through-forge-repo (skill and SOUL call ~/.forge/repo/scripts/lane.sh; lane.sh calls its helpers, the handoff included, beside itself)"
+     && grep -Fq '"$HERE/validate-metadata.py" --profile forge-codex-lane' "$lsh" \
+     && grep -Fq 'call_json kanban_request_review' "$lsh" \
+     && ! grep -q '"$HERE/lane-handoff.sh"' "$lsh" \
+     && grep -Fq '"$HERE/validate-metadata.py" --profile forge-codex-lane' scripts/lane-handoff.sh; then
+    ok "lane-sh-is-reached-through-forge-repo (skill and SOUL call ~/.forge/repo/scripts/lane.sh; lane.sh calls its helpers beside itself, names the hand-off as a kanban_request_review call and no longer runs lane-handoff.sh, which is the operator's)"
   else
     bad "lane-sh-is-reached-through-forge-repo" \
         "forge-lane and the SOUL must invoke ~/.forge/repo/scripts/lane.sh, and lane.sh must call lane-setup, codex-run, the blast-radius check and the validator from its own directory"
@@ -3879,60 +4236,96 @@ LCODEX
   local rh_src="$HOME/.hermes/hermes-agent" rh_detail="" rh_p rh_c rh_run rh_rc rh_bin
   if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$rh_py" ]; then
     skip "bounce-round-trip-on-real-hermes" "hermes (and its venv python) not installed"
+    skip "lane-sh-attempts-no-board-mutation" "hermes (and its venv python) not installed"
   elif [ ! -x "$lsh" ]; then
     bad "bounce-round-trip-on-real-hermes" "$lsh is missing"
   else
     _lsh_fixture real
     rh_bin="$lroot/realbin"; mkdir -p "$rh_bin"
     cp "$lstub/bin/gh" "$lstub/bin/codex" "$rh_bin/"
+    # Every `hermes` the lane runs is LOGGED, then run for real (a swallowed refusal is invisible
+    # to an outcome check — run A's lane went on past `heartbeat failed (continuing)` eleven times).
+    local rh_log="$lroot/rh-hermes.log" rh_verbs
+    rh_verbs="$(_fenced_verbs)"; : > "$rh_log"
+    cat > "$rh_bin/hermes" <<RHLOG
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$rh_log"
+exec "$(command -v hermes)" "\$@"
+RHLOG
+    chmod +x "$rh_bin/hermes"
     rm -rf "$rh_home"; mkdir -p "$rh_home"
     _rh() { HERMES_HOME="$rh_home" hermes kanban --board lanelab "$@"; }
     _rh_status() { _rh show "$1" --json 2>/dev/null | jq -r '[.task.status, .task.assignee] | join("/")'; }
     _rh_claim() { _rh claim "$1" >/dev/null 2>&1 && _rh show "$1" --json | jq -r '.runs | max_by(.id).id'; }
-    _rh_reviewer() { # $1=task $2=verb: claim the review run as the dispatcher does, then act
-      ( cd "$rh_src" && HERMES_HOME="$rh_home" HERMES_KANBAN_BOARD=lanelab "$rh_py" -c "
-from hermes_cli import kanban_db as kb, kanban_db_connect as kbc
-with kbc.connect_closing() as c:
-    t = kb.claim_review_task(c, '$1')
-    raise SystemExit(0 if t is not None else 1)" ) >/dev/null 2>&1 || return 1
-      local rid; rid="$(_rh show "$1" --json | jq -r '.runs | max_by(.id).id')"
-      case "$2" in
-        changes) HERMES_KANBAN_TASK="$1" HERMES_KANBAN_RUN_ID="$rid" \
-                   _rh request-changes "$1" "REVIEW-REASON-MARKER: mutant survived at foo.py:12" >/dev/null 2>&1;;
-        approve) HERMES_KANBAN_TASK="$1" HERMES_KANBAN_RUN_ID="$rid" \
-                   _rh complete "$1" --result "approved" >/dev/null 2>&1;;
-      esac
+    _rh_events() { _rh show "$1" --json 2>/dev/null | jq '.events | length'; }
+    _rh_lane() { # $1=task, then extra env: the lane, run in a FENCED terminal, with its one argument
+      local task="$1" snip rc; shift
+      snip="$(_wsnip "$rh_home" lanelab "$task" forge-codex-lane --branch chunk/7-sync-engine ${RH_POISON:+--poison})" || return 99
+      # the control: a poisoned run really carries the planted values for the scrubbed names
+      if [ -n "${RH_POISON:-}" ]; then
+        { grep -q '^export HERMES_KANBAN_TASK=t_poison00' "$snip" && grep -q '^export HERMES_KANBAN_RUN_ID=999' "$snip" \
+          && grep -q '^export HERMES_KANBAN_CLAIM_LOCK=poison:0:0' "$snip"; } && : > "$lroot/poison-control.ok"
+      fi
+      ( . "$snip"
+        env PATH="$rh_bin:$PATH" STUB="$lstub" LANE_CALLS="$lstub/calls" LANE_RED="$lstub/red" \
+            TMPDIR="$lroot/tmp" CODEX_HOME="$lroot/codexhome" \
+            FORGE_CODEX_BIN="$rh_bin/codex" FORGE_LANE_AUDIT_ROOT="$lroot/audits" \
+            FORGE_LANE_PARK_ROOT="$lroot/parks" FORGE_LANE_SESSION_ROOT="$lroot/sessions" \
+            FORGE_LANE_TICK=1 "$@" "$REPO_ROOT/$lsh" --task "$task" ) > "$lroot/out.json" 2> "$lroot/err"
+      rc=$?; rm -f "$snip" "$snip.err"; echo "$rc"
     }
-    _rh_lane() { # $1=run id, then extra env
-      local rid="$1"; shift
-      env PATH="$rh_bin:$PATH" STUB="$lstub" LANE_CALLS="$lstub/calls" LANE_RED="$lstub/red" \
-          HERMES_HOME="$rh_home" TMPDIR="$lroot/tmp" CODEX_HOME="$lroot/codexhome" \
-          FORGE_CODEX_BIN="$rh_bin/codex" FORGE_LANE_AUDIT_ROOT="$lroot/audits" \
-          FORGE_LANE_PARK_ROOT="$lroot/parks" FORGE_LANE_SESSION_ROOT="$lroot/sessions" \
-          FORGE_LANE_TICK=1 FORGE_LANE_HEARTBEAT=1 \
-          HERMES_KANBAN_TASK="$rh_p" HERMES_KANBAN_WORKSPACE="$lwt" HERMES_KANBAN_RUN_ID="$rid" \
-          HERMES_KANBAN_BOARD=lanelab HERMES_KANBAN_BRANCH=chunk/7-sync-engine \
-          "$@" "$REPO_ROOT/$lsh" > "$lroot/out.json" 2> "$lroot/err"
-      echo $?
+    # The REVIEWER'S side, as the dispatcher runs it: claim the card from review, then the
+    # driver's call (a verdict the verifier program would have named) through the real tool.
+    _rh_review() { # $1=task $2=changes|approve
+      local env_file="$lroot/review-env.json"
+      _wclaim_review "$rh_home" lanelab "$1" || return 1
+      case "$2" in
+        changes) jq -n --arg t "$1" '{terminate: {tool: "kanban_request_changes", args: {task_id: $t,
+                    reason: "REVIEW-REASON-MARKER: mutant survived at foo.py:12"}}}' > "$env_file";;
+        approve) jq -n --arg t "$1" '{terminate: {tool: "kanban_complete", args: {task_id: $t,
+                    summary: "approved", result: "approved"}}}' > "$env_file";;
+      esac
+      _wperform "$rh_home" lanelab "$1" forge-verifier "$env_file" > "$lroot/review-calls.json" 2>&1
     }
     HERMES_HOME="$rh_home" hermes kanban boards create lanelab >/dev/null 2>&1 \
       || rh_detail="$rh_detail board-create-failed"
-    rh_p="$(_rh create "CHUNK-7: Sync engine" --assignee forge-codex-lane \
+    # `dir:` pins the card's workspace to the worktree the fixture built, so the
+    # program's check that the card is THIS terminal's (its workspace) is the real one.
+    rh_p="$(_rh create "CHUNK-7: Sync engine" --assignee forge-codex-lane --workspace "dir:$lwt" \
               --body "Implement the sync engine." --json 2>/dev/null | jq -r '.id // empty')"
     rh_c="$(_rh create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$rh_p" \
               --body "child" --json 2>/dev/null | jq -r '.id // empty')"
     [ -n "$rh_p" ] && [ -n "$rh_c" ] || rh_detail="$rh_detail cards-not-created"
 
-    # 1. first pass
+    # 1. first pass: the program names the hand-off; the board is untouched until the driver acts
     rh_run="$(_rh_claim "$rh_p")"
-    rh_rc="$(_rh_lane "$rh_run")"
-    [ "$rh_rc" = 0 ] || rh_detail="$rh_detail pass1-rc=$rh_rc($(_lsh_env .reason))"
+    rh_ev="$(_rh_events "$rh_p")"
+    # pass 1 runs with WRONG values planted for exactly the scrubbed names (a fence alone only makes
+    # them absent, which a `${HERMES_KANBAN_RUN_ID:-...}` fallback survives): the scratch it builds
+    # must be keyed on the card's own run, and nothing it runs may mention the planted task.
+    rm -f "$lroot/poison-control.ok"
+    rh_rc="$(RH_POISON=1 _rh_lane "$rh_p")"
+    [ "$rh_rc" = 4 ] || rh_detail="$rh_detail pass1-rc=$rh_rc($(jq -r '.reason // .action' "$lroot/out.json" 2>/dev/null))"
+    [ -e "$lroot/poison-control.ok" ] || rh_detail="$rh_detail the-poison-control-did-not-hold"
+    [ -d "$lroot/tmp/forge-lane-lanelab-$rh_run" ] && [ ! -e "$lroot/tmp/forge-lane-lanelab-999" ] \
+      || rh_detail="$rh_detail the-run-key-did-not-come-from-the-card($(ls "$lroot/tmp" 2>/dev/null | tr '\n' ' '))"
+    ! grep -q 't_poison00' "$rh_log" "$lroot/out.json" "$lroot/err" 2>/dev/null || rh_detail="$rh_detail the-poisoned-task-id-was-touched"
+    [ "$(_rh_status "$rh_p")" = running/forge-codex-lane ] && [ "$(_rh_events "$rh_p")" = "$rh_ev" ] \
+      || rh_detail="$rh_detail the-program-wrote-the-board($(_rh_status "$rh_p"),events $rh_ev->$(_rh_events "$rh_p"))"
+    cp "$lroot/out.json" "$lroot/pass1.json"
+    _wperform "$rh_home" lanelab "$rh_p" forge-codex-lane "$lroot/pass1.json" > "$lroot/drv.json" 2>&1
+    [ "$?" = 0 ] || rh_detail="$rh_detail pass1-terminate-failed($(head -c 200 "$lroot/drv.json"))"
     [ "$(_rh_status "$rh_p")" = review/forge-verifier ] || rh_detail="$rh_detail pass1-not-in-review($(_rh_status "$rh_p"))"
-    # The envelope must arrive intact: request_review passes it through the
-    # kernel's redaction, and the verifier and /retro read the stored copy.
-    [ -n "$(_lsh_env .metadata.pr)" ] \
-      && [ "$(_rh show "$rh_p" --json | jq -S '[.runs[] | select(.outcome == "review_requested")] | last | .metadata')" \
-           = "$(jq -S .metadata "$lroot/out.json")" ] || rh_detail="$rh_detail envelope-altered-in-transit"
+    _rh show "$rh_p" --json | jq -e '[.events[] | select(.kind == "review_requested")] | last | .payload
+        | .implementer == "forge-codex-lane" and .reviewer == "forge-verifier"' >/dev/null 2>&1 \
+      || rh_detail="$rh_detail implementer-not-recorded"
+    # The envelope must arrive intact. The kernel adds ONE key (its own worker_session_id)
+    # and redacts secret-shaped strings; the verifier and /retro read the stored copy.
+    [ -n "$(jq -r '.terminate.args.metadata.pr // empty' "$lroot/pass1.json")" ] \
+      && [ "$(_rh show "$rh_p" --json | jq -S '[.runs[] | select(.outcome == "review_requested")] | last | .metadata | del(.worker_session_id)')" \
+           = "$(jq -S '.terminate.args.metadata' "$lroot/pass1.json")" ] \
+      && [ "$(_rh show "$rh_p" --json | jq -r '[.runs[] | select(.outcome == "review_requested")] | last | .metadata.worker_session_id')" = s6d-lab-session-0001 ] \
+      || rh_detail="$rh_detail envelope-altered-in-transit"
     # 2. the native gate
     [ "$(_rh_status "$rh_c" | cut -d/ -f1)" = todo ] || rh_detail="$rh_detail child-released-early"
     ! _rh claim "$rh_c" >/dev/null 2>&1 || rh_detail="$rh_detail child-claimable-while-parent-in-review"
@@ -3941,27 +4334,116 @@ with kbc.connect_closing() as c:
       || rh_detail="$rh_detail lane-could-complete-after-handoff"
     [ "$(_rh_status "$rh_p" | cut -d/ -f1)" = review ] || rh_detail="$rh_detail handoff-undone"
     # 4. bounce
-    _rh_reviewer "$rh_p" changes || rh_detail="$rh_detail request-changes-failed"
+    _rh_review "$rh_p" changes || rh_detail="$rh_detail request-changes-failed($(head -c 200 "$lroot/review-calls.json"))"
     [ "$(_rh_status "$rh_p")" = ready/forge-codex-lane ] || rh_detail="$rh_detail not-returned-to-lane($(_rh_status "$rh_p"))"
-    # 5. re-entry on a red baseline
+    # 5. re-entry on a red baseline: the card now carries a handoff AND a request-changes
     touch "$lstub/red"
     rh_run="$(_rh_claim "$rh_p")"
-    rh_rc="$(_rh_lane "$rh_run" STUB_FIX_RED=1)"
-    [ "$rh_rc" = 0 ] || rh_detail="$rh_detail pass2-rc=$rh_rc($(_lsh_env .reason))"
+    rh_rc="$(_rh_lane "$rh_p" STUB_FIX_RED=1)"
+    [ "$rh_rc" = 4 ] || rh_detail="$rh_detail pass2-rc=$rh_rc($(jq -r '.reason // .action' "$lroot/out.json" 2>/dev/null))"
+    cp "$lroot/out.json" "$lroot/pass2.json"
+    _wperform "$rh_home" lanelab "$rh_p" forge-codex-lane "$lroot/pass2.json" > "$lroot/drv.json" 2>&1
     [ "$(_rh_status "$rh_p")" = review/forge-verifier ] || rh_detail="$rh_detail pass2-not-in-review($(_rh_status "$rh_p"))"
     grep -q 'resume lane-session-1' "$lstub/codex.last" 2>/dev/null || rh_detail="$rh_detail not-resumed"
     grep -q 'REVIEW-REASON-MARKER' "$lstub/codex.last" 2>/dev/null || rh_detail="$rh_detail reason-not-delivered"
     [ "$(grep -c '^gh pr create' "$lstub/gh.log" 2>/dev/null)" = 1 ] || rh_detail="$rh_detail second-pr"
     [ "$(_rh list --json 2>/dev/null | jq length)" = 2 ] || rh_detail="$rh_detail card-count-not-2"
     # 6. approval releases the child
-    _rh_reviewer "$rh_p" approve || rh_detail="$rh_detail approve-failed"
+    _rh_review "$rh_p" approve || rh_detail="$rh_detail approve-failed($(head -c 200 "$lroot/review-calls.json"))"
     [ "$(_rh_status "$rh_p" | cut -d/ -f1)" = done ] || rh_detail="$rh_detail not-done"
     [ "$(_rh_status "$rh_c" | cut -d/ -f1)" = ready ] || rh_detail="$rh_detail child-not-released($(_rh_status "$rh_c"))"
+    # The lane's whole run, twice, attempted NO board mutation: only reads reached `hermes`.
+    local rh_mut_detail=""
+    grep -q ' show ' "$rh_log" || rh_mut_detail="$rh_mut_detail the-wrapper-saw-no-read(the-check-went-blind)"
+    ! grep -Eq "^kanban( --board [^ ]+)? ($rh_verbs)( |\$)" "$rh_log" \
+      || rh_mut_detail="$rh_mut_detail ATTEMPTED($(grep -Eo "^kanban( --board [^ ]+)? ($rh_verbs)" "$rh_log" | sort | uniq -c | head -3 | tr '\n' ';'))"
+    if [ -z "$rh_mut_detail" ]; then
+      ok "lane-sh-attempts-no-board-mutation (two full passes, fenced, with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses — no heartbeat, no comment, no hand-off from the terminal)"
+    else
+      bad "lane-sh-attempts-no-board-mutation" "a worker's lane must not attempt a board mutation from its terminal —$rh_mut_detail"
+    fi
+    # 8. THE RECOVERY THE LANE'S ON_ERROR NAMES WORKS. A hand-off the kernel refuses (here: the driver
+    # retyped `metadata` as a string) leaves the branch pushed and the PR open, and an operator who
+    # just `unblock`s the card re-enters the lane, which runs Codex again over finished work (REENTRY=0).
+    # So the reason names `lane-handoff.sh <task> --board B --summary S --metadata <host copy>`; this
+    # takes the reason lane.sh REALLY wrote, runs the command in it as the operator, and checks the card.
+    local rh_r rh_rec rh_cmd rh_rcv
+    rh_r="$(_rh create "CHUNK-10: recovery" --assignee forge-codex-lane --workspace "dir:$lwt" --body x --json 2>/dev/null | jq -r '.id // empty')"
+    _rh_claim "$rh_r" >/dev/null
+    sed "s/$rh_p/$rh_r/g" "$lroot/pass1.json" | jq -c '.terminate.args.metadata = "garbled by the driver"' > "$lroot/recover.json"
+    cp "$lroot/sessions/lanelab-$rh_p.metadata.json" "$lroot/sessions/lanelab-$rh_r.metadata.json" 2>/dev/null
+    _wperform "$rh_home" lanelab "$rh_r" forge-codex-lane "$lroot/recover.json" > "$lroot/recover.out" 2>&1; rh_rcv=$?
+    [ "$rh_rcv" = 10 ] && [ "$(_rh_status "$rh_r" | cut -d/ -f1)" = blocked ] \
+      || rh_detail="$rh_detail the-refused-handoff-did-not-leave-the-card-blocked(perform-rc=$rh_rcv,$(_rh_status "$rh_r"))"
+    rh_rec="$(_rh show "$rh_r" --json | jq -r '[.events[] | select(.kind == "blocked")] | last | .payload.reason')"
+    printf '%s' "$rh_rec" | grep -q 'Do NOT just unblock the card' || rh_detail="$rh_detail the-reason-does-not-warn-against-unblock"
+    rh_cmd="$(printf '%s' "$rh_rec" | sed -n 's/.*Recover with: \(.*\)$/\1/p' | sed -e "s#~/.forge/repo/scripts/#$REPO_ROOT/scripts/#" -e 's#"<one line>"#"recovered by the operator"#')"
+    [ -n "$rh_cmd" ] && env HERMES_HOME="$rh_home" PATH="$rh_bin:$PATH" bash -c "$rh_cmd" > "$lroot/recover-run.out" 2>&1 \
+      || rh_detail="$rh_detail the-named-recovery-failed($(tail -1 "$lroot/recover-run.out" 2>/dev/null | head -c 160))"
+    { [ "$(_rh_status "$rh_r")" = review/forge-verifier ] \
+      && [ "$(_rh show "$rh_r" --json | jq -S '[.runs[] | select(.outcome == "review_requested")] | last | .metadata')" \
+           = "$(jq -S . "$lroot/sessions/lanelab-$rh_r.metadata.json")" ]; } \
+      || rh_detail="$rh_detail the-recovery-did-not-land-the-validated-envelope-in-review($(_rh_status "$rh_r"))"
+    # 7. the operator's tool refuses under the fence (it is not the worker's), with a message
+    #    that says why — and the board is untouched
+    local rh_h rh_snip rh_hmsg
+    rh_h="$(_rh create "CHUNK-9: fenced handoff" --assignee forge-codex-lane --workspace "dir:$lwt" --body x --json 2>/dev/null | jq -r '.id // empty')"
+    _rh_claim "$rh_h" >/dev/null
+    rh_snip="$(_wsnip "$rh_home" lanelab "$rh_h" forge-codex-lane)" || rh_detail="$rh_detail fenced-env-failed"
+    rh_ev="$(_rh_events "$rh_h")"
+    rh_hmsg="$( ( . "$rh_snip"; "$REPO_ROOT/scripts/lane-handoff.sh" "$rh_h" --board lanelab --summary s \
+                   --metadata "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json" ) 2>&1 )"; rh_rc=$?
+    { [ "$rh_rc" = 3 ] && printf '%s' "$rh_hmsg" | grep -q "operator's path and this is a fenced worker terminal" \
+      && [ "$(_rh_status "$rh_h")" = running/forge-codex-lane ] && [ "$(_rh_events "$rh_h")" = "$rh_ev" ]; } \
+      || rh_detail="$rh_detail lane-handoff-did-not-refuse-under-the-fence(rc=$rh_rc,$(printf '%s' "$rh_hmsg" | tail -1 | head -c 120))"
+    rm -f "$rh_snip" "$rh_snip.err"
     if [ -z "$rh_detail" ]; then
-      ok "bounce-round-trip-on-real-hermes (one card, two cards on the board: handoff with the envelope stored intact, native gate, no completion by habit, request-changes, re-entry on a red baseline with the session resumed, approval releases the child)"
+      ok "bounce-round-trip-on-real-hermes (fenced lane names the hand-off and writes nothing; the driver's call lands review/forge-verifier with the implementer recorded and the envelope intact; native gate; no completion by habit; request-changes through the tool; re-entry on a red baseline with the session resumed; approval releases the child; a refused hand-off blocks the card and the recovery its reason names lands the validated envelope in review; lane-handoff.sh refuses under the fence)"
     else
       bad "bounce-round-trip-on-real-hermes" "the same-card round trip broke against the installed kernel —$rh_detail"
     fi
+  fi
+
+  # THE LANE READS NO SCRUBBED VARIABLE. The fence only makes HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK
+  # ABSENT, so a program that falls back to them ("${HERMES_KANBAN_TASK:-$arg}") passes against a
+  # clean fence. The same fenced environment is therefore given WRONG values for exactly the names
+  # Hermes scrubs (read from the installed module). A card with an empty body keeps it fast: the
+  # lane reads the card, checks its identity, and blocks `stale-spec` before any work.
+  local lp_home="$TMPROOT/lane-poison-home" lp_task lp_snip lp_rc lp_detail="" lp_log="$TMPROOT/lane-poison-argv.log"
+  if command -v hermes >/dev/null 2>&1 && [ -x "$WCTX_PY" ] && [ -x "$lsh" ]; then
+    _lsh_fixture poison
+    rm -rf "$lp_home" "$lroot/poisonbin"; mkdir -p "$lp_home" "$lroot/poisonbin"
+    cat > "$lroot/poisonbin/hermes" <<LPLOG
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$lp_log"
+exec "$(command -v hermes)" "\$@"
+LPLOG
+    chmod +x "$lroot/poisonbin/hermes"; : > "$lp_log"
+    HERMES_HOME="$lp_home" hermes kanban boards create lanepoison >/dev/null 2>&1
+    lp_task="$(HERMES_HOME="$lp_home" hermes kanban --board lanepoison create "CHUNK-7: no body" --assignee forge-codex-lane \
+                 --workspace "dir:$lwt" --json 2>/dev/null | jq -r '.id // empty')"
+    HERMES_HOME="$lp_home" hermes kanban --board lanepoison claim "$lp_task" >/dev/null 2>&1
+    lp_snip="$(_wsnip "$lp_home" lanepoison "$lp_task" forge-codex-lane --poison)" || lp_detail="$lp_detail snippet-failed"
+    grep -q '^export HERMES_KANBAN_TASK=t_poison00' "$lp_snip" 2>/dev/null \
+      && grep -q '^export HERMES_KANBAN_RUN_ID=999' "$lp_snip" 2>/dev/null \
+      && grep -q '^export HERMES_KANBAN_CLAIM_LOCK=poison:0:0' "$lp_snip" 2>/dev/null \
+      || lp_detail="$lp_detail the-control-is-not-poisoned"
+    ( . "$lp_snip"; env PATH="$lroot/poisonbin:$PATH" TMPDIR="$lroot/tmp" FORGE_LANE_SESSION_ROOT="$lroot/sessions" \
+        "$REPO_ROOT/$lsh" --task "$lp_task" ) > "$lroot/out.json" 2> "$lroot/err"; lp_rc=$?
+    rm -f "$lp_snip" "$lp_snip.err"
+    { [ "$lp_rc" = 3 ] && _lsh_env '.terminate.tool == "kanban_block" and .terminate.args.task_id == "'"$lp_task"'"
+          and (.terminate.args.reason | startswith("stale-spec: card '"$lp_task"' has an empty body"))' | grep -q true; } \
+      || lp_detail="$lp_detail the-poisoned-run-did-not-read-its-own-card(rc=$lp_rc,$(_lsh_env '.reason // .action' | head -c 120))"
+    ! grep -rq 't_poison00' "$lp_log" "$lroot/out.json" "$lroot/err" 2>/dev/null || lp_detail="$lp_detail the-poisoned-id-was-touched"
+    grep -q " show $lp_task " "$lp_log" || lp_detail="$lp_detail the-card-was-never-read(the-check-went-blind)"
+    ! ls "$lroot"/tmp 2>/dev/null | grep -q -- '-999' || lp_detail="$lp_detail the-poisoned-run-id-keyed-the-scratch"
+    if [ -z "$lp_detail" ]; then
+      ok "lane-sh-reads-no-scrubbed-variable (fenced, with WRONG values planted for exactly the scrubbed names: it reads its own card, blocks it by id, and nothing it ran mentions the planted id)"
+    else
+      bad "lane-sh-reads-no-scrubbed-variable" "lane.sh must take its task from --task and its run from the card, never from HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK —$lp_detail"
+    fi
+  else
+    skip "lane-sh-reads-no-scrubbed-variable" "hermes (and its venv python) not installed"
   fi
 
   # lane-handoff.sh on its own: the three promises end-chunk §5 makes for it.
@@ -3972,19 +4454,20 @@ with kbc.connect_closing() as c:
   if [ ! -x "$lho" ] || [ ! -s "$lho_meta" ]; then
     bad "lane-handoff-is-fail-closed" "$lho is missing, or the happy path left no envelope to hand off"
   else
-    _lho() { env PATH="$lstub/bin:$PATH" STUB="$lstub" "$@" > "$lroot/lho.out" 2>&1; echo $?; }
+    # The OPERATOR's shell: no fence, so the stub hermes accepts the mutations (STUB_OPERATOR).
+    _lho() { env PATH="$lstub/bin:$PATH" STUB="$lstub" STUB_OPERATOR=1 "$@" > "$lroot/lho.out" 2>&1; echo $?; }
     _lsh_fixture handoff
     printf '{"schema":"forge.chunk.v1"}\n' > "$lroot/bad-meta.json"
-    lho_rc="$(_lho HERMES_KANBAN_TASK=t_lane HERMES_KANBAN_RUN_ID=1 "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lroot/bad-meta.json")"
+    lho_rc="$(_lho "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lroot/bad-meta.json")"
     { [ "$lho_rc" = 3 ] && tail -1 "$lroot/lho.out" | grep -q '^other: the handoff envelope failed its contract' \
       && ! grep -q request-review "$lstub/hermes.log" 2>/dev/null; } || lho_detail="$lho_detail invalid-envelope-transitioned(rc=$lho_rc)"
     _lsh_fixture handoff
-    lho_rc="$(_lho STUB_RR_LIES=1 HERMES_KANBAN_TASK=t_lane HERMES_KANBAN_RUN_ID=1 "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
+    lho_rc="$(_lho STUB_RR_LIES=1 "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
     { [ "$lho_rc" = 3 ] && tail -1 "$lroot/lho.out" | grep -q "did not land"; } || lho_detail="$lho_detail kernel-word-trusted(rc=$lho_rc)"
     _lsh_fixture handoff
     jq '.task.status = "blocked" | .task.assignee = "forge-operator-handoff"' "$lstub/cards/t_lane.json" > "$lstub/t.json" \
       && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
-    lho_rc="$(_lho HERMES_KANBAN_TASK= HERMES_KANBAN_RUN_ID= "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
+    lho_rc="$(_lho "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
     { [ "$lho_rc" = 0 ] && [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-verifier ] \
       && [ "$(grep -oE '(unblock|request-review) t_lane' "$lstub/hermes.log" | awk '{ print $1 }' | tr '\n' ' ')" = "unblock request-review " ]; } \
       || lho_detail="$lho_detail human-chunk-not-handed-off(rc=$lho_rc,$(tail -1 "$lroot/lho.out"))"
@@ -3996,7 +4479,7 @@ with kbc.connect_closing() as c:
     _lsh_fixture handoff
     jq '.task.status = "blocked" | .task.assignee = null' "$lstub/cards/t_lane.json" > "$lstub/t.json" \
       && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
-    lho_rc="$(_lho HERMES_KANBAN_TASK= HERMES_KANBAN_RUN_ID= "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
+    lho_rc="$(_lho "$REPO_ROOT/$lho" t_lane --board vlane --summary s --metadata "$lho_meta")"
     { [ "$lho_rc" = 0 ] && [ "$(jq -r '.task.status + "/" + .task.assignee' "$lstub/cards/t_lane.json")" = review/forge-verifier ] \
       && [ "$(grep -oE '(assign t_lane forge-operator-handoff|unblock t_lane|request-review t_lane)' "$lstub/hermes.log" | awk '{ print $1 }' | tr '\n' ' ')" = "assign unblock request-review " ]; } \
       || lho_detail="$lho_detail unassigned-human-chunk-not-given-the-sentinel-first(rc=$lho_rc,$(grep -oE '(assign|unblock|request-review) t_lane[^ ]*( [^ ]+)?' "$lstub/hermes.log" | tr '\n' ';'))"
@@ -4129,14 +4612,73 @@ with kbc.connect_closing() as c:
   # the SOUL has to say so in the row a model reads. rc 3 is still
   # `kanban_block`: nothing transitioned, so the model is still the only one who
   # can end the run, and a substrate fault must never read as a rejection.
-  if grep -Eq '^ *\| 0 \|.*\*\*nothing\.\*\*' "$soul" \
-     && ! grep -Eq '^ *\| 0 \|.*kanban_complete' "$soul" \
-     && grep -Eq '^ *\| 3 \|.*kanban_block' "$soul" \
+  # P24 moved it again: the terminal is fenced, so the program transitions NOTHING. Both
+  # routed outcomes (4) and substrate faults (3) are a call the program names — the model makes
+  # exactly that call, with `on_error` as the one fallback — and 0 is no longer "the program
+  # already did it": a real review never exits 0, so an old note saying "0 = call nothing"
+  # cannot silently strand a card.
+  if grep -Eq '^ *\| 4 or 3 \|.*terminate\.tool.*terminate\.args.*verbatim.*on_error' "$soul" \
+     && grep -Eq '^ *\| 2 \|.*kanban_block' "$soul" \
+     && grep -Eq '^ *\| 0 \|.*A real review never exits 0' "$soul" \
+     && ! grep -Eq '^ *\| 0 \|.*\*\*nothing\.\*\*' "$soul" \
+     && ! grep -Fq 'HERMES_KANBAN_TASK' "$soul" \
+     && grep -Fq -- '--chunk "$task_id"' "$soul" \
      && grep -Fq 'never report an outage as a rejection' "$soul"; then
-    ok "verifier-terminator-mapping"
+    ok "verifier-terminator-mapping (rc 4 and 3 -> the call the envelope names, on_error as the fallback; 2 -> kanban_block; 0 is never a real review; the id is passed from kanban_show, not the scrubbed HERMES_KANBAN_TASK)"
   else
     bad "verifier-terminator-mapping" \
-        "the SOUL must map rc 0 to calling nothing (the program transitioned the card) and rc 3 to kanban_block, and must not tell a model to complete on rc 0"
+        "the SOUL must map rc 4 and 3 to the envelope's terminate call with on_error as the fallback, rc 2 to kanban_block, say a real review never exits 0, and pass --chunk the id from kanban_show — never the scrubbed \$HERMES_KANBAN_TASK"
+  fi
+
+  # THE EXIT TABLES THE DRIVERS READ ARE THE PROGRAMS' OWN (ADR-0003: a claim in a skill body
+  # needs the check that executes it). Each program declares its codes in its header's `Exit:`
+  # block; the skill and the SOUL must carry exactly that set, and the skill must name every tool
+  # lane.sh can put in an envelope. The behaviours themselves are EXECUTED elsewhere (lane-sh-
+  # runs-the-protocol and lane-sh-blocks-before-the-push for the lane; the verifier group for the
+  # verifier): a real run exits 4, 3 or 2 and never 0.
+  local ex_detail="" ex_prog ex_doc ex_have ex_want
+  _exit_codes_declared() { grep -E '^# Exit: [0-9] |^#       [0-9] ' "$1" | sed -E 's/^# (Exit: )? *([0-9]) .*/\2/' | sort -u | tr '\n' ' '; }
+  ex_want="$(_exit_codes_declared scripts/lane.sh)"
+  ex_have="$(sed -n '/^## 2\. Terminate/,/^## Hard rules/p' "$lane" | grep -oE '^\| [0-9] \|' | grep -oE '[0-9]' | sort -u | tr '\n' ' ')"
+  [ "$ex_want" = "0 2 3 4 " ] && [ "$ex_have" = "$ex_want" ] \
+    || ex_detail="$ex_detail lane(program declares [$ex_want], skill table [$ex_have])"
+  for ex_tool in $(grep -oE 'call_json kanban_[a-z_]+' scripts/lane.sh | awk '{print $2}' | sort -u); do
+    printf '%s' "$sec7_flat" | grep -Fq "$ex_tool" || ex_detail="$ex_detail lane-skill-never-names-$ex_tool"
+  done
+  ex_want="$(_exit_codes_declared scripts/prejudge-review.sh)"
+  ex_have="$(grep -E '^ *\| (4 or 3|2|0) \|' "$soul" | sed -E 's/^ *\| ([0-9 or]+) \|.*/\1/' | grep -oE '[0-9]' | sort -u | tr '\n' ' ')"
+  [ "$ex_want" = "0 2 3 4 " ] && [ "$ex_have" = "$ex_want" ] \
+    || ex_detail="$ex_detail verifier(program declares [$ex_want], SOUL table [$ex_have])"
+  if [ -z "$ex_detail" ]; then
+    ok "exit-tables-match-the-programs (lane.sh and prejudge-review.sh each declare exactly 4, 3, 2 and 0; the forge-lane table and the verifier SOUL carry exactly those, and the skill names every tool lane.sh can emit)"
+  else
+    bad "exit-tables-match-the-programs" \
+        "the exit table a driver reads must be the program's own set of codes — a stale table is a driver that fails silently —$ex_detail"
+  fi
+
+  # EVERY SCRIPT PREFLIGHT LISTS IS EXECUTABLE IN THE REPO. `make preflight` FAILs any script it
+  # lists whose file under ~/.forge/repo is not `-x` ("an unattended lane cannot repair this"),
+  # and S6d added `forge-state.sh` — a SOURCED file, which nobody `chmod +x`s by habit — to that
+  # list. Without this case the first post-deploy preflight is the first thing to notice. The
+  # names are read OUT OF preflight.sh itself, so a name added there is covered the moment it
+  # is added; a reader that finds none is red, not blind (F65).
+  local pf_names pf_detail="" pf_n
+  pf_names="$(awk '/^for _lscript in /{f=1} f{print} f && /; do$/{exit}' scripts/preflight.sh \
+              | sed -e 's/^for _lscript in //' -e 's/; do$//' -e 's/\\$//' | tr -s ' \t' '\n\n' | grep -E '^[a-z][a-z0-9_.-]*\.(sh|py)$')"
+  pf_n="$(printf '%s\n' "$pf_names" | grep -c .)"
+  [ "$pf_n" -ge 10 ] || pf_detail="$pf_detail the-reader-found-only-$pf_n-names(went-blind)"
+  for pf in $pf_names; do
+    [ -x "scripts/$pf" ] || pf_detail="$pf_detail $pf-not-executable-on-disk"
+    case "$(git ls-files -s "scripts/$pf" 2>/dev/null | cut -c1-6)" in
+      100755) ;;
+      "")     pf_detail="$pf_detail $pf-not-tracked";;
+      *)      pf_detail="$pf_detail $pf-not-100755-in-git";;
+    esac
+  done
+  if [ -z "$pf_detail" ]; then
+    ok "every-script-preflight-lists-is-executable ($pf_n scripts read out of preflight.sh, each -x on disk and 100755 in git — forge-state.sh, a sourced file, included)"
+  else
+    bad "every-script-preflight-lists-is-executable" "make preflight FAILs a listed script that is not executable, so the first post-deploy preflight would —$pf_detail"
   fi
 
   # The prohibition stays prose because it constrains the model. The
@@ -4191,8 +4733,8 @@ with kbc.connect_closing() as c:
       fi
       _lsh_fixture "mut-$lmut"
       lmut_rc="$(lsh="$TMPROOT/lane-mut-$lmut/scripts/lane.sh" REPO_ROOT="" _lsh_run)"
-      lmut_meta="$(_lsh_env .metadata)"
-      if [ "$lmut_rc" != 0 ]; then
+      lmut_meta="$(_lsh_env .terminate.args.metadata)"
+      if [ "$lmut_rc" != 4 ]; then
         lmut_detail="$lmut_detail $lmut-did-not-run(rc=$lmut_rc: $(_lsh_env .reason))"
       elif printf '%s' "$lmut_meta" | jq -e '.codex_model == "gpt-fixture-7" and .codex_model_source == "rollout"' >/dev/null 2>&1; then
         lmut_detail="$lmut_detail $lmut-still-green"
@@ -6306,8 +6848,11 @@ run_metadata_group() {
   validate_line="$(grep -Fn '"$HERE/validate-metadata.py" --profile forge-codex-lane' \
                     scripts/lane.sh | head -1 | cut -d: -f1)"
   # Since FL3 the envelope rides the handoff, and lane-handoff.sh validates it
-  # a second time, immediately before the transition it is attached to.
-  complete_line="$(grep -n '^"$HERE/lane-handoff.sh"' scripts/lane.sh | head -1 | cut -d: -f1)"
+  # a second time, immediately before the transition it is attached to. Since P24 the lane
+  # does not make the transition — it NAMES it (`envelope handoff`, a kanban_request_review
+  # call), so the validation must come before that line; lane-handoff.sh is the operator's
+  # path now and keeps its own.
+  complete_line="$(grep -n '^envelope handoff' scripts/lane.sh | head -1 | cut -d: -f1)"
   if [ -n "$validate_line" ] && [ -n "$complete_line" ] \
      && [ "$validate_line" -lt "$complete_line" ] \
      && [ "$(grep -n 'validate-metadata.py" --profile forge-codex-lane' scripts/lane-handoff.sh | head -1 | cut -d: -f1)" \
@@ -6315,7 +6860,7 @@ run_metadata_group() {
     ok "lane-validates-before-complete"
   else
     bad "lane-validates-before-complete" \
-        "lane.sh must validate the envelope before the handoff, and lane-handoff.sh must validate it again before request-review"
+        "lane.sh must validate the envelope before it names the handoff, and lane-handoff.sh (the operator's) must validate it again before request-review"
   fi
 
   local valid_ok=1 name profile gate_rc
@@ -6642,6 +7187,11 @@ run_metadata_group() {
   # A class starts with a letter: `declare -F decision_message >/dev/null` (the
   # check that the shared formatter was sourced, GW1) must not sweep as "".
   metadata_sweep decision 's/.*decision_message \([a-z][a-z-]*\).*/\1:/p' scripts/prejudge-review.sh
+  # Since epic S6d the verifier's board writes are CALLS it names (`term_block "<class>: …"`),
+  # and the lane's fallback reason sits inside a jq program: neither is a `substrate "` or an
+  # `echo "`, so each has its own rule, and a producer that stops matching goes red, not blind.
+  metadata_sweep term_block 's/.*term_block "\([a-z0-9=-]*:\).*/\1/p' scripts/prejudge-review.sh
+  metadata_sweep jq_reason  's/.*reason: ("\([a-z0-9=-]*:\).*/\1/p'  scripts/lane.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-setup.sh
   metadata_sweep echo     's/.*echo "\([a-z0-9=-]*:\).*/\1/p'       scripts/lane-blast-radius.sh
   metadata_sweep reason   's/.*reason="\([a-z0-9=-]*:\).*/\1/p'     hermes/profiles/forge-verifier.SOUL.md
@@ -6669,7 +7219,7 @@ run_metadata_group() {
   done
   grep -Fq 'run-metadata-contract.json' scripts/metrics.sh || reason_ok=0
   if [ "$reason_ok" = 1 ] && [ -z "$silent" ] && [ -z "$legacy" ]; then
-    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 10 producer rules)"
+    ok "blocked-reason-contract ($(grep -c . "$swept") classes swept from 12 producer rules)"
   else
     bad "blocked-reason-contract" \
         "${silent:+no class matched in:$silent — the sweep went blind, not green; }${legacy:+the retired reason-class form is back in: $legacy; }a producer or metrics consumer diverges from rubrics/run-metadata-contract.json"
@@ -7474,15 +8024,21 @@ FROZEN_FEATURE
   # nothing is spawned. The action names the outcome, and the stored metadata is
   # the gate object, never a manufactured verdict.
   local b8
+  local b8_rc
   b8="$(printf '%s' "$contract" | "$review" https://example.invalid/pull/8 \
-        --chunk t_fixture --fixture "$prs/pr-8" --dry-run 2>/dev/null)"
-  if printf '%s' "$b8" | jq -e '
+        --chunk t_fixture --fixture "$prs/pr-8" --dry-run 2>/dev/null)"; b8_rc=$?
+  # Routed outcomes exit 4 and NAME the call (P24: the terminal is fenced, so nothing is
+  # transitioned here); a dry-run shows the routing and still exits 4 for one.
+  if [ "$b8_rc" = 4 ] && printf '%s' "$b8" | jq -e '
         .action == "gate-block"
+        and .terminate.tool == "kanban_request_changes" and .terminate.args.task_id == "t_fixture"
+        and (.terminate.args.reason | test("branch-name") and test("scenario-count"))
+        and .on_error.tool == "kanban_block"
         and .metadata.schema == "forge.gate.v1"
         and ((.metadata.blocks | sort) == ["branch-name","scenario-count"])
         and (.metadata | has("scores") | not)
         and .created_cards == []' >/dev/null 2>&1; then
-    ok "review-routes-by-gate-result (a block bounces with no model spawned)"
+    ok "review-routes-by-gate-result (a block bounces with no model spawned: exit 4, a kanban_request_changes call carrying the findings, kanban_block as the fallback)"
   else
     bad "review-routes-by-gate-result" \
         "$review must route a gate block to a bounce carrying the forge.gate.v1 object and no verdict"
@@ -7502,7 +8058,8 @@ FROZEN_FEATURE
         "$review" https://example.invalid/pull/8 --chunk t_fixture --fixture "$prs/pr-8" 2>/dev/null)"
   nb_rc=$?
   { [ "$nb_rc" = 3 ] && printf '%s' "$nb_out" | jq -e '.action == "substrate-block"
-        and (.reason | test("^env: no-board")) and (.metadata == null)' >/dev/null 2>&1; } \
+        and (.reason | test("^env: no-board")) and (.metadata == null)
+        and .terminate.tool == "kanban_block" and (.terminate.args | has("task_id") | not)' >/dev/null 2>&1; } \
     || nb_detail="$nb_detail unset-board(rc=$nb_rc,$(printf '%s' "$nb_out" | jq -c '{action,reason}' 2>/dev/null | head -c 160))"
   rm -rf "$nb_bin"; mkdir -p "$nb_bin"; ln -s "$(command -v jq)" "$nb_bin/jq"
   nb_out="$(printf '%s' "$contract" | env -u HERMES_KANBAN_TASK PATH="$nb_bin:/usr/bin:/bin" \
@@ -7517,14 +8074,47 @@ FROZEN_FEATURE
     || bad "review-refuses-without-a-board" \
         "a run that cannot transition the card must exit 3, never report a routed outcome with rc 0 —$nb_detail"
 
+  # THE SCRUBBED-VARIABLE DEFECT, WHERE CI CAN SEE IT (the verifier's half; the lane's is
+  # lane/lane-sh-ignores-the-scrubbed-variables). A stub `hermes` answers `show t_stub` with a running
+  # card of this profile and refuses everything else; the scrubbed names hold WRONG values. The run
+  # must go on to review t_stub — it reaches the merged-tree stage and stops there, `skipped` with no
+  # check binary — and no `hermes` call may name the planted task.
+  local pv_bin="$TMPROOT/planted-bin" pv_log="$TMPROOT/planted-argv.log" pv_detail="" pv_out pv_rc
+  rm -rf "$pv_bin"; mkdir -p "$pv_bin"; : > "$pv_log"
+  cat > "$pv_bin/hermes" <<'PVH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PV_LOG"
+[ "${1:-}" = kanban ] || exit 2; shift; [ "${1:-}" = --board ] && shift 2
+case "$1" in
+  show) jq -n '{task: {id: "t_stub", title: "CHUNK-7: x", status: "running", assignee: "forge-verifier", workspace_path: ""},
+                parents: [], comments: [], events: [], runs: [{id: 1, status: "running"}]}';;
+  *) exit 1;;
+esac
+PVH
+  chmod +x "$pv_bin/hermes"
+  pv_out="$(printf '%s' "$contract" | env PATH="$pv_bin:$PATH" PV_LOG="$pv_log" HERMES_PROFILE=forge-verifier HERMES_KANBAN_BOARD=stubboard \
+        FORGE_STATE_ROOT="$TMPROOT/planted-state" HERMES_KANBAN_TASK=t_poison00 HERMES_KANBAN_RUN_ID=999 HERMES_KANBAN_CLAIM_LOCK=poison:0:0 \
+        "$REPO_ROOT/$review" https://example.invalid/pull/9 --chunk t_stub --fixture "$REPO_ROOT/$prs/pr-9" 2>/dev/null)"; pv_rc=$?
+  { [ "$pv_rc" = 3 ] && printf '%s' "$pv_out" | jq -e '(.reason | test("^env: merge-check-unrunnable")) and .terminate.args.task_id == "t_stub"' >/dev/null 2>&1; } \
+    || pv_detail="$pv_detail the-planted-run-did-not-review-t_stub(rc=$pv_rc,$(printf '%s' "$pv_out" | jq -r '.reason // .action' 2>/dev/null | head -c 120))"
+  grep -q ' show t_stub ' "$pv_log" || pv_detail="$pv_detail t_stub-was-never-read(the-check-went-blind)"
+  ! grep -q 't_poison00' "$pv_log" "$TMPROOT/planted-state" 2>/dev/null || pv_detail="$pv_detail the-planted-task-id-was-touched"
+  [ -z "$pv_detail" ] \
+    && ok "review-ignores-the-scrubbed-variables (stub, no Hermes needed: planted HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK never reach a hermes call; the run reviews --chunk's own card)" \
+    || bad "review-ignores-the-scrubbed-variables" \
+        "prejudge-review.sh must take its identity from --chunk and the board even where the scrubbed names hold wrong values —$pv_detail"
+
   # The envelope is the entire contract between the program and the model, so
   # every field the terminator needs must be present and typed.
   local c9
+  local c9_rc
   c9="$(printf '%s' "$contract" | "$review" https://example.invalid/pull/9 \
-        --chunk t_fixture --fixture "$prs/pr-9" --dry-run 2>/dev/null)"
-  if printf '%s' "$c9" | jq -e '
-        .schema == "forge.review.v1"
+        --chunk t_fixture --fixture "$prs/pr-9" --dry-run 2>/dev/null)"; c9_rc=$?
+  # A dry-run transitions nothing, so it names nothing and exits 0: the ONE place a review exits 0.
+  if [ "$c9_rc" = 0 ] && printf '%s' "$c9" | jq -e '
+        .schema == "forge.review.v2"
         and .action == "would-score"
+        and .terminate == null and .on_error == null
         and ((.summary | type) == "string")
         and (.reason == null)
         and ((.created_cards | type) == "array")
@@ -7532,7 +8122,7 @@ FROZEN_FEATURE
     ok "review-emits-a-terminator-envelope"
   else
     bad "review-emits-a-terminator-envelope" \
-        "$review must emit one forge.review.v1 object carrying action, summary, reason, metadata and created_cards"
+        "$review must emit one forge.review.v2 object carrying action, summary, reason, metadata, terminate, on_error and created_cards, and exit 0 only for a dry-run"
   fi
 
   # F32's rule, finally measured instead of asserted. The driver is the only
@@ -8168,30 +8758,11 @@ run_verifier_group() {
 - **Scenarios:** 3'
 
   # -------------------------------------------------------------------------
-  # 1. --chunk IS the running card (the inverse of the retired prejudge case).
-  # Refused before Stage 1, with no gate, no model and no board — exit 3, never
-  # 1 or 2, which a caller under `set -e` would read as a crash.
+  # 1. --chunk IS the running card: `verifier/chunk-is-the-running-card` (below, in the
+  # real-kernel lab). It used to run here with --dry-run, comparing --chunk with
+  # $HERMES_KANBAN_TASK — which a fenced terminal does not carry (P24), so the comparison
+  # passed vacuously for ANY id. The card itself is asked now, so it needs a board.
   # -------------------------------------------------------------------------
-  local ci_out ci_rc ci_detail=""
-  ci_out="$(printf '%s' "$contract" | HERMES_KANBAN_TASK=t_running "$review" \
-        https://example.invalid/pull/9 --chunk t_other --fixture "$prs/pr-9" --dry-run 2>/dev/null)"
-  ci_rc=$?
-  [ "$ci_rc" = 3 ] || ci_detail="$ci_detail mismatch-not-substrate(rc=$ci_rc)"
-  printf '%s' "$ci_out" | jq -e '.action == "substrate-block"
-      and (.reason | test("^env: chunk-identity"))
-      and (.reason | test("is not the running card"))
-      and .created_cards == []' >/dev/null 2>&1 \
-    || ci_detail="$ci_detail mismatch-reason-wrong"
-  ci_out="$(printf '%s' "$contract" | HERMES_KANBAN_TASK=t_same "$review" \
-        https://example.invalid/pull/9 --chunk t_same --fixture "$prs/pr-9" --dry-run 2>/dev/null)"
-  ci_rc=$?
-  [ "$ci_rc" = 0 ] || ci_detail="$ci_detail same-card-refused(rc=$ci_rc)"
-  printf '%s' "$ci_out" | jq -e '.action == "would-score"' >/dev/null 2>&1 \
-    || ci_detail="$ci_detail same-card-did-not-reach-the-prompt"
-  [ -z "$ci_detail" ] \
-    && ok "chunk-is-the-running-card (D19.1: the same id passes, a different one is substrate before Stage 1)" \
-    || bad "chunk-is-the-running-card" \
-        "under a worker --chunk must be \$HERMES_KANBAN_TASK and a mismatch must exit 3 before the gate —$ci_detail"
 
   # -------------------------------------------------------------------------
   # 1b. The reviewer the handoff names must be a profile that EXISTS.
@@ -8678,11 +9249,14 @@ MCCGH
   # Hermes. A parent chunk P and its child C exist throughout, because half of
   # what an outcome means is what it does to the child (D19.5's native gate).
   # -------------------------------------------------------------------------
-  local vhome="$TMPROOT/verifier-home" vbin="$TMPROOT/verifier-bin"
+  local vhome="$TMPROOT/verifier-home" vbin="$TMPROOT/verifier-bin" vstate="$TMPROOT/verifier-state"
   local vpy="$HOME/.hermes/hermes-agent/venv/bin/python" vsrc="$HOME/.hermes/hermes-agent"
   local vP vC vdetail vrc vout vfx="$TMPROOT/verifier-fx"
   if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$vpy" ]; then
-    for c in recommend-only-holds-the-card merge-mode-merges-and-completes \
+    for c in chunk-is-the-running-card the-contract-comes-from-the-card the-envelope-lands-on-the-real-kernel \
+             the-review-attempts-no-board-mutation the-review-reads-no-scrubbed-variable \
+             the-lanes-handoff-arrives-intact merge-watcher-finds-the-verdict-the-verifier-left \
+             recommend-only-holds-the-card merge-mode-merges-and-completes \
              a-red-ci-pr-never-merges bounce-returns-the-same-card \
              bounce-budget-becomes-an-exception a-hold-is-never-triage \
              hold-kind-mutation-is-caught disagree-path-parks-before-it-unblocks \
@@ -8745,7 +9319,7 @@ VGH
     cat > "$vbin/claude" <<'VCLAUDE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$VSTUB/claude.log"
-cat > /dev/null    # the prompt is consumed and never echoed
+cat > "$VSTUB/prompt.last"    # the prompt is consumed and never echoed — only kept, for the cases that ask what the scorer was given
 if [ "${VF_VERDICT:-approve}" = bounce ]; then
   scores='{"spec_fidelity":1,"scenario_integrity":1,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
   verdict=bounce
@@ -8812,30 +9386,58 @@ with kbc.connect_closing() as c:
     raise SystemExit(0 if kb.claim_review_task(c, '$1') is not None else 1)" ) >/dev/null 2>&1
     }
     # The lane's half of the same-card protocol (FL3), so the review run the
-    # verifier claims is a real one with a real review_requested envelope.
+    # verifier claims is a real one with a real review_requested envelope. The metadata is
+    # what a lane would have validated, and the HOST copy of it is kept where lane.sh keeps it
+    # (the verifier compares the two before it reviews anything).
+    local vmeta='{"schema":"forge.chunk.v1","pr":"https://example.invalid/wielas/proj/pull/9","codex_model":"gpt-5.6-luna","codex_reasoning_effort":"xhigh","codex_model_source":"rollout"}'
     _vhandoff() {
       local r
       _v claim "$1" >/dev/null 2>&1; r="$(_vrid "$1")"
+      mkdir -p "$vstate/lane-sessions"
+      printf '%s' "$vmeta" | jq -S . > "$vstate/lane-sessions/vlab-$1.metadata.json"
       HERMES_KANBAN_TASK="$1" HERMES_KANBAN_RUN_ID="$r" _v request-review "$1" \
-        --reviewer forge-verifier --summary "implemented CHUNK-7" \
-        --metadata '{"schema":"forge.chunk.v1","pr":"https://example.invalid/wielas/proj/pull/9","codex_model":"gpt-5.6-luna","codex_reasoning_effort":"xhigh","codex_model_source":"rollout"}' \
+        --reviewer forge-verifier --summary "implemented CHUNK-7" --metadata "$vmeta" \
         >/dev/null 2>&1
     }
-    # The verifier, as the dispatcher would run it: claimed on the review run,
-    # with its own id as --chunk.
+    # The verifier PROGRAM, as a worker's terminal runs it: claimed on the review run, in the
+    # FENCED environment (the task id is NOT in it; --chunk carries it), with the board only
+    # readable. The program's rc is what this returns (4 = a routed outcome, 3 = substrate).
+    # Then the DRIVER does what the envelope says, through Hermes's real tool handler:
+    # `terminate`, and `on_error` if the kernel refuses it (VPERFORM=0 leaves the card alone;
+    # VF_POISON=1 plants wrong values for the scrubbed variables). The driver's calls land in
+    # $vbin/perform.json. Every other assertion in this group reads the CARD afterwards, as
+    # it did when the program wrote the card itself.
     _vrun() {   # extra env=value pairs as arguments
-      local r; _vclaim_review "$vP" || return 9
-      r="$(_vrid "$vP")"
-      printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" \
-        HERMES_HOME="$vhome" HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$r" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
-        "$REPO_ROOT/$review" https://example.invalid/wielas/proj/pull/9 \
-        --chunk "$vP" --board vlab --fixture "$REPO_ROOT/$prs/pr-9" \
+      local snip rc
+      _vclaim_review "$vP" || { echo 9; return; }
+      snip="$(_wsnip "$vhome" vlab "$vP" forge-verifier ${VF_POISON:+--poison})" || { echo 99; return; }
+      # VCONTRACT=card: the contract is read from the card (--contract-from-card) and NOTHING is piped,
+      # as a background terminal call has no pipe; otherwise it arrives on stdin, as the offline cases do.
+      if [ "${VCONTRACT:-}" = card ]; then
+        ( . "$snip"
+          env PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
+            FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
+            "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
+            --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" --contract-from-card < /dev/null ) \
+          > "$vbin/out.json" 2> "$vbin/err.txt"
+      else
+      printf '%s' "$contract" | ( . "$snip"
+        env PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
+          FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
+          "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
+          --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" ) \
         > "$vbin/out.json" 2> "$vbin/err.txt"
-      echo $?
+      fi
+      rc=$?
+      rm -f "$snip" "$snip.err"
+      : > "$vbin/perform.json"
+      if [ "${VPERFORM:-1}" = 1 ] && { [ "$rc" = 4 ] || [ "$rc" = 3 ]; }; then
+        _wperform "$vhome" vlab "$vP" forge-verifier "$vbin/out.json" > "$vbin/perform.json" 2>&1
+      fi
+      echo "$rc"
     }
     _vboard() {   # a fresh board with P and its child C
-      rm -rf "$vhome" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
+      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
              "$vbin/base" "$vbin/state-down"
       mkdir -p "$vhome"
       # The live head starts equal to the one the recorded PR carries, because in
@@ -8843,10 +9445,312 @@ with kbc.connect_closing() as c:
       # about, and a case moves this file when it wants a push to have landed.
       jq -r '.headRefOid' "$REPO_ROOT/$prs/pr-9/pr.json" > "$vbin/head"
       HERMES_HOME="$vhome" hermes kanban boards create vlab >/dev/null 2>&1
-      vP="$(_v create "CHUNK-7: Sync engine" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+      vP="$(_v create "CHUNK-7: Sync engine" --assignee forge-codex-lane --body "$contract" --json 2>/dev/null | jq -r '.id')"
       vC="$(_v create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$vP" --json 2>/dev/null | jq -r '.id')"
       _vhandoff "$vP"
     }
+
+    # =========================================================================
+    # P24 (epic S6d). The verifier's terminal is FENCED: Hermes refuses every
+    # `hermes kanban` mutation from a shell a worker started, and scrubs
+    # HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK from it. So `prejudge-review.sh`
+    # decides and NAMES the one call (rc 4, `terminate` / `on_error`); the DRIVER
+    # makes it. Every case below runs the real program in the fenced environment
+    # Hermes's own helper builds (`_wsnip`), and the driver's calls through Hermes's
+    # real tool handler (`_wperform`), on the real kernel in an isolated HERMES_HOME.
+    # =========================================================================
+    local vx vlogbin="$TMPROOT/verifier-log" vlog="$TMPROOT/verifier-argv.log" vverbs vev vcase
+    vverbs="$(_fenced_verbs)"
+    rm -rf "$vlogbin"; mkdir -p "$vlogbin"
+    cat > "$vlogbin/hermes" <<VLOGH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$vlog"
+exec "$(command -v hermes)" "\$@"
+VLOGH
+    chmod +x "$vlogbin/hermes"
+    _vkinds() { _v show "$vP" --json 2>/dev/null | jq -r '[.events[].kind] | join(",")'; }
+    _vdigest() { HERMES_HOME="$vhome" TZ=UTC "$REPO_ROOT/scripts/digest.sh" --board vlab --day 2026-10-03 2>/dev/null; }
+
+    # ---- --chunk is a card THIS profile is running --------------------------
+    # The guard compared --chunk with $HERMES_KANBAN_TASK, which the fence scrubs: it passed
+    # for any id. The card is read back now — status, assignee, one running run — and a
+    # refused id names NO task in the block it asks the driver for (the kernel would refuse a
+    # block on a card that is not the driver's own, and the failure would go unreported).
+    vdetail=""; _vboard
+    vrc="$(VPERFORM=0 VCHUNK="$vC" _vrun)"                 # a card of this board that is not running
+    { [ "$vrc" = 3 ] && jq -e '(.reason | test("^env: chunk-identity — --chunk \\(")) and .terminate.tool == "kanban_block"
+          and (.terminate.args | has("task_id") | not)' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-card-that-is-not-running-was-accepted(rc=$vrc,$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 120))"
+    _wperform "$vhome" vlab "$vP" forge-verifier "$vbin/out.json" >/dev/null 2>&1
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+      || vdetail="$vdetail the-refusal-did-not-land-on-the-drivers-own-card($(_vst "$vP"),$(_vst "$vC"))"
+    _vboard
+    vx="$(_v create "CHUNK-9: somebody else's chunk" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+    _v claim "$vx" >/dev/null 2>&1                          # running — but on ANOTHER profile
+    vrc="$(VPERFORM=0 VCHUNK="$vx" _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^env: chunk-identity — .*not a card this profile \\(forge-verifier\\) is running")' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail another-profiles-running-card-was-accepted(rc=$vrc,$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 120))"
+    _vboard; vrc="$(VPERFORM=0 VCHUNK=t_nonexistent _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^env: chunk-identity")' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-missing-card-was-accepted(rc=$vrc)"
+    _vboard; vrc="$(VPERFORM=0 _vrun HERMES_PROFILE=)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("HERMES_PROFILE is unset")' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail no-profile-was-not-refused(rc=$vrc)"
+    _vboard; vrc="$(_vrun)"                                 # the right id, the real kernel: the control
+    { [ "$vrc" = 4 ] && jq -e '.terminate.args.task_id == "'"$vP"'"' "$vbin/out.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
+      || vdetail="$vdetail the-right-card-was-refused(rc=$vrc,$(_vst "$vP"))"
+    # The KERNEL enforces the same fact when the call is made: an envelope whose task_id was
+    # pointed at another running card is refused by the tool, that card does not move, and the
+    # fallback — which names THIS card — is what lands.
+    _vboard
+    vx="$(_v create "CHUNK-9: somebody else's chunk" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+    _v claim "$vx" >/dev/null 2>&1
+    vrc="$(VPERFORM=0 _vrun)"
+    jq --arg x "$vx" '.terminate.args.task_id = $x' "$vbin/out.json" > "$vbin/out-misdirected.json"
+    _wperform "$vhome" vlab "$vP" forge-verifier "$vbin/out-misdirected.json" > "$vbin/perform.json" 2>&1; vrc=$?
+    { [ "$vrc" = 10 ] && jq -e 'select(.call == "terminate") | .result.error | test("scoped to task")' "$vbin/perform.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vx")" = running/forge-codex-lane ]; } \
+      || vdetail="$vdetail the-kernel-did-not-refuse-a-call-on-another-card(perform-rc=$vrc,$(_vst "$vx"))"
+    [ -z "$vdetail" ] \
+      && ok "chunk-is-the-running-card (the card is read back: not-running, another profile's, missing and no-profile are substrate whose block names no task; the right id passes; the kernel refuses a call aimed at another card)" \
+      || bad "chunk-is-the-running-card" \
+          "--chunk must be a card this profile is running, checked off the board — a fenced terminal has no HERMES_KANBAN_TASK to compare with —$vdetail"
+
+    # ---- the contract is read from the card, so a background launch needs no pipe ------
+    # A driver launches the review with `terminal(background=true, pty=true)`: there is no stdin to
+    # pipe a multi-KB contract into, and retyping it into a shell command is a quoting hazard. So the
+    # SOUL passes `--contract-from-card`, and the program reads the body of the card it identified.
+    vdetail=""; _vboard; : > "$vbin/prompt.last"
+    vrc="$(VCONTRACT=card _vrun)"
+    { [ "$vrc" = 4 ] && grep -q 'Touches' "$vbin/prompt.last" && grep -q 'CHUNK-7: Sync engine' "$vbin/prompt.last" \
+      && grep -q 'forgeboard_report/domain.py' "$vbin/prompt.last"; } \
+      || vdetail="$vdetail the-scorer-was-not-given-the-cards-body(rc=$vrc,$(wc -c < "$vbin/prompt.last" | tr -d ' ')B)"
+    # an empty body has no contract to review against: substrate, before anything is spent
+    _vboard; _v edit "$vP" --body "" >/dev/null 2>&1; : > "$vbin/claude.log"
+    vrc="$(VPERFORM=0 VCONTRACT=card _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^stale-spec: card .* has an empty body")' "$vbin/out.json" >/dev/null 2>&1 \
+      && ! grep -q . "$vbin/claude.log" 2>/dev/null; } \
+      || vdetail="$vdetail an-empty-card-body-was-reviewed(rc=$vrc)"
+    [ -z "$vdetail" ] \
+      && ok "the-contract-comes-from-the-card (--contract-from-card: no stdin, the scorer is given the card's own body; an empty body is stale-spec before any stage runs)" \
+      || bad "the-contract-comes-from-the-card" \
+          "a background launch has no pipe: the review must read its contract from the card —$vdetail"
+
+    # ---- each envelope's call lands on the real kernel, through the real tool ---
+    # Done-when (b) and (c) of P24 (the lane's (a) is lane/bounce-round-trip-on-real-hermes, the
+    # human chunk's (d) is a-human-chunk-can-be-bounced). The tool's own RESULT is the read-back
+    # the program can no longer make after the terminator: the end state, named.
+    vdetail=""; _vboard
+    vrc="$(VF_VERDICT=bounce _vrun)"
+    { [ "$vrc" = 4 ] && jq -e 'select(.call == "terminate") | .tool == "kanban_request_changes"
+          and .result.ok == true and .result.status == "ready" and .result.implementer == "forge-codex-lane"' "$vbin/perform.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vP")" = ready/forge-codex-lane ]; } \
+      || vdetail="$vdetail (b)-fail-did-not-land-ready-on-the-implementer(rc=$vrc,$(_vst "$vP"),$(head -c 160 "$vbin/perform.json"))"
+    # The premise of the lane's own safeguard (H1): a REVIEW claim says so in its `claimed` event.
+    _vboard; _vclaim_review "$vP"
+    _v show "$vP" --json | jq -e '[.events[] | select(.kind == "claimed")] | last | .payload.source_status == "review"' >/dev/null 2>&1 \
+      || vdetail="$vdetail a-review-claim-does-not-carry-source_status-review"
+    _vboard; vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && jq -e 'select(.call == "terminate") | .tool == "kanban_block"
+          and .result.ok == true and .result.status == "blocked" and .result.block_kind == "needs_input"' "$vbin/perform.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail (c)-recommend-did-not-land-blocked-needs_input(rc=$vrc,$(head -c 160 "$vbin/perform.json"))"
+    # the envelope the driver reads: ONE compact line, with the program's own exit code in it
+    { [ "$(wc -l < "$vbin/out.json" | tr -d ' ')" = 1 ] && jq -e '.rc == 4' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail the-envelope-is-not-one-compact-line-carrying-its-rc"
+    # sticky without any assign: the hold is the `blocked` event, and a dispatch pass leaves it be
+    [ "$(_v dispatch --dry-run --json 2>/dev/null | jq -r --arg id "$vP" '[.spawned[]?.task_id] | index($id) // "none"')" = none ] \
+      || vdetail="$vdetail the-hold-is-spawnable"
+    _vdigest | grep -q "^Decision needed: merge the PR, or send it back" \
+      || vdetail="$vdetail the-digest-does-not-render-the-hold-decision-first"
+    # A call the kernel refuses leaves the card running, and the fallback is what lands: here a
+    # driver that dropped the reasons of a bounce.
+    _vboard; vrc="$(VPERFORM=0 VF_VERDICT=bounce _vrun)"
+    jq '.terminate.args.reason = ""' "$vbin/out.json" > "$vbin/out-dropped.json"
+    _wperform "$vhome" vlab "$vP" forge-verifier "$vbin/out-dropped.json" > "$vbin/perform.json" 2>&1; vrc=$?
+    { [ "$vrc" = 10 ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && _v show "$vP" --json | jq -e '
+          [.events[] | select(.kind == "blocked")] | last | .payload.reason
+          | startswith("other: handoff-integrity — request-changes did not return this card")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail the-fallback-did-not-land(perform-rc=$vrc,$(_vst "$vP"))"
+    # The claim forge-lane §2 makes about a hand-off that drops its reviewer: it lands on the
+    # implementer itself, and the dispatcher would claim it for the lane to "review" its own work.
+    _vboard
+    vx="$(_v create "CHUNK-9: no reviewer" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"; _v claim "$vx" >/dev/null 2>&1
+    jq -n --arg t "$vx" --argjson m "$vmeta" '{terminate: {tool: "kanban_request_review", args: {task_id: $t, summary: "x", metadata: $m}}}' > "$vbin/out-noreviewer.json"
+    _wperform "$vhome" vlab "$vx" forge-codex-lane "$vbin/out-noreviewer.json" > "$vbin/perform.json" 2>&1
+    { [ "$(_v show "$vx" --json | jq -r '[.task.status, .task.assignee] | join("/")')" = review/forge-codex-lane ] \
+      && [ "$(_v dispatch --dry-run --json 2>/dev/null | jq -r --arg id "$vx" '[.spawned[]? | select(.task_id == $id) | .assignee] | first // "none"')" = forge-codex-lane ]; } \
+      || vdetail="$vdetail a-hand-off-without-a-reviewer-did-not-land-spawnable-on-the-implementer"
+    [ -z "$vdetail" ] \
+      && ok "the-envelope-lands-on-the-real-kernel (a fail lands ready on the recorded implementer and a recommendation lands blocked/needs_input, each named by the tool's own result; the hold is sticky without an assign and renders decision-first; a refused call leaves the card running and its fallback lands)" \
+      || bad "the-envelope-lands-on-the-real-kernel" \
+          "the call each envelope names must land its transition on the installed kernel, through Hermes's real tool handler —$vdetail"
+
+    # ---- the program attempts NO board mutation -------------------------------
+    # The outcome of a swallowed failure is invisible to an outcome check: run A's lane
+    # kept running past `heartbeat failed (continuing)` on every one of eleven attempts. So
+    # the argv of every `hermes` the program runs is LOGGED (a wrapper that execs the real
+    # one) and must hold no verb the fence refuses, whatever the program then did about the
+    # refusal — and the board, driver held back, must be exactly as the claim left it.
+    vdetail=""
+    for vcase in "bounce:VF_VERDICT=bounce" "recommend:VF_VERDICT=approve" "exception:VF_VERDICT=bounce FORGE_VERIFIER_BOUNCE_BUDGET=0" \
+                 "merge:FORGE_VERIFIER_MERGE=1" "merged-tree-bounce:VF_MERGED_TREE=check-failed" "substrate:VF_MERGED_TREE=unrunnable"; do
+      _vboard; : > "$vlog"; vev="$(_vkinds)"
+      # shellcheck disable=SC2086
+      vrc="$(VPERFORM=0 _vrun PATH="$vlogbin:$vbin:$PATH" ${vcase#*:})"
+      case "${vcase%%:*}" in substrate) [ "$vrc" = 3 ] || vdetail="$vdetail ${vcase%%:*}:rc=$vrc";; *) [ "$vrc" = 4 ] || vdetail="$vdetail ${vcase%%:*}:rc=$vrc";; esac
+      grep -q ' show ' "$vlog" || vdetail="$vdetail ${vcase%%:*}:the-wrapper-saw-no-read(the-check-went-blind)"
+      ! grep -Eq "^kanban( --board [^ ]+)? ($vverbs)( |\$)" "$vlog" \
+        || vdetail="$vdetail ${vcase%%:*}:ATTEMPTED($(grep -Eo "^kanban( --board [^ ]+)? ($vverbs)" "$vlog" | head -2 | tr '\n' ';'))"
+      # the claim added exactly one event (`claimed`); the PROGRAM added none
+      { [ "$(_vst "$vP")" = running/forge-verifier ] && [ "$(_vkinds)" = "$vev,claimed" ]; } \
+        || vdetail="$vdetail ${vcase%%:*}:the-program-moved-the-card($(_vst "$vP"),$(_vkinds))"
+    done
+    [ -z "$vdetail" ] \
+      && ok "the-review-attempts-no-board-mutation (bounce, recommend, exception, merge, a merged-tree bounce and a substrate fault, run fenced with the hermes argv logged: only reads, no verb the fence refuses, and the board exactly as the claim left it)" \
+      || bad "the-review-attempts-no-board-mutation" \
+          "a worker's program must not attempt a board mutation from its terminal — it names the call; the driver makes it —$vdetail"
+
+    # ---- the program reads no scrubbed variable -------------------------------
+    # A fence-only env would let a program that falls back to `${HERMES_KANBAN_TASK:-$x}` pass,
+    # because the variables are simply absent. So the same fenced environment is given WRONG
+    # values for exactly the names Hermes scrubs (KANBAN_ENV_KEYS, read from the installed
+    # module): nothing the program does may touch the poisoned id.
+    vdetail=""; _vboard; : > "$vlog"
+    # the control: a claimed card, whose fenced snippet really carries the planted values
+    vx="$(_v create "CHUNK-9: control" --assignee forge-verifier --json 2>/dev/null | jq -r '.id')"; _v claim "$vx" >/dev/null 2>&1
+    vcase="$(_wsnip "$vhome" vlab "$vx" forge-verifier --poison)" || vdetail="$vdetail poison-snippet-failed"
+    { grep -q "^export HERMES_KANBAN_TASK=t_poison00" "$vcase" && grep -q "^export HERMES_KANBAN_RUN_ID=999" "$vcase" \
+      && grep -q "^export HERMES_KANBAN_CLAIM_LOCK=poison:0:0" "$vcase" && grep -q "^export HERMES_DELEGATED_CHILD_CONTEXT=" "$vcase"; } 2>/dev/null \
+      || vdetail="$vdetail the-control-is-not-poisoned"
+    rm -f "$vcase" "$vcase.err"
+    vrc="$(VF_POISON=1 _vrun PATH="$vlogbin:$vbin:$PATH")"
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend" and .terminate.args.task_id == "'"$vP"'"' "$vbin/out.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
+      || vdetail="$vdetail the-poisoned-run-did-not-review-its-own-card(rc=$vrc,$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 140))"
+    ! grep -rq 't_poison00' "$vlog" "$vbin/out.json" "$vbin/err.txt" "$vbin/perform.json" 2>/dev/null \
+      || vdetail="$vdetail the-poisoned-id-was-touched"
+    [ -z "$vdetail" ] \
+      && ok "the-review-reads-no-scrubbed-variable (fenced, with WRONG values planted for exactly the scrubbed names: the review is of its own card, and nothing it ran mentions the planted id)" \
+      || bad "the-review-reads-no-scrubbed-variable" \
+          "prejudge-review.sh must take its identity from --chunk and the board, never from HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK —$vdetail"
+
+    # ---- the lane's hand-off arrives intact ----------------------------------
+    # The driver retyped the lane's metadata, the reviewer and the PR url into
+    # `kanban_request_review`. This is the only place anything can still notice: the run's stored
+    # metadata is compared with what the lane validated and kept on the host.
+    vdetail=""
+    _vboard; vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && _v show "$vP" --json | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason
+        | test("lane envelope: stored copy equals the one the lane validated")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail an-intact-handoff-was-not-recorded-as-checked(rc=$vrc)"
+    _vboard; jq '.codex_model = "gpt-hand-edited"' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
+      && mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
+    : > "$vbin/claude.log"; vrc="$(VPERFORM=0 _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^other: handoff-integrity — the chunk envelope stored on this card differs")' "$vbin/out.json" >/dev/null 2>&1 \
+      && ! grep -q . "$vbin/claude.log" 2>/dev/null && ! grep -q . "$vbin/mc.log" 2>/dev/null; } \
+      || vdetail="$vdetail an-altered-handoff-was-reviewed-anyway(rc=$vrc)"
+    # THE KERNEL REDACTS WHAT THE LANE VALIDATED, and that must not read as tampering — a false
+    # `handoff-integrity` is a run A stop rule. A secret-shaped line in `decisions` AND a secret-shaped
+    # FILE NAME in `changed_files` are both rewritten on the way in (`API_KEY=***`, `ghp_ab...6789.json`).
+    # The hand-off below goes through the real kernel with such values, so the stored copy genuinely
+    # differs from the host copy; the control asserts that, so the case cannot pass vacuously.
+    local vmeta_plain="$vmeta"
+    vmeta="$(printf '%s' "$vmeta_plain" | jq -c '. + {changed_files: ["src/a.py", "secrets/API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789.txt", "tests/ghp_abcdefghijklmnopqrstuvwxyz0123456789.json"],
+          decisions: ["2026-10-03 rotated API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789 out of the fixture"], debt: [], card_proposals: []}')"
+    _vboard
+    _v show "$vP" --json | jq -e '[.runs[] | select(.outcome == "review_requested")] | last | .metadata
+          | (.changed_files[1] | endswith("***")) and (.changed_files[2] | contains("...")) and (.decisions[0] | contains("***"))' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-control-failed-the-kernel-did-not-redact-the-hand-off"
+    vrc="$(VPERFORM=0 _vrun)"
+    [ "$vrc" = 4 ] || vdetail="$vdetail a-redacted-file-name-or-line-read-as-tampering(rc=$vrc,$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 120))"
+    # …but the free-text lists are compared by LENGTH: an item that vanished is an edit
+    _vboard
+    jq '.decisions = ["x", "y"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json"
+    mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
+    : > "$vbin/claude.log"; vrc="$(VPERFORM=0 _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^other: handoff-integrity")' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-changed-number-of-decisions-was-not-caught(rc=$vrc)"
+    # …and a redaction-SHAPED edit is not a redaction. The STORED value (what the driver sent) carries the
+    # mark here, and the host copy (what the lane validated) is not secret-shaped, so nothing the
+    # installed Hermes redacts could have produced the difference. Two shapes, each refused:
+    #   (a) the mark is in the wrong place: nothing before it is what the lane validated;
+    #   (b) the right prefix, but the stored value is LONGER than the validated one — a mask never adds text.
+    vmeta="$(printf '%s' "$vmeta_plain" | jq -c '. + {changed_files: ["src/zzz..."]}')"
+    # (the validated name is LONGER than the stored one, so only the position of the mark can refuse it)
+    _vboard; jq '.changed_files = ["src/a_long_module_name.py"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
+      && mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
+    vrc="$(VPERFORM=0 _vrun)"
+    [ "$vrc" = 3 ] || vdetail="$vdetail a-mark-in-the-wrong-place-was-accepted-as-a-redaction(rc=$vrc)"
+    vmeta="$(printf '%s' "$vmeta_plain" | jq -c '. + {changed_files: ["src/a.py***"]}')"
+    _vboard; jq '.changed_files = ["src/a.py"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
+      && mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
+    vrc="$(VPERFORM=0 _vrun)"
+    [ "$vrc" = 3 ] || vdetail="$vdetail a-stored-value-longer-than-the-validated-one-was-accepted-as-a-redaction(rc=$vrc)"
+    vmeta="$vmeta_plain"
+    # No host copy (a card handed off before the deploy): reviewed, and the hold SAYS it was not checked.
+    _vboard; rm -f "$vstate/lane-sessions/vlab-$vP.metadata.json"; vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && _v show "$vP" --json | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason
+        | test("lane envelope: NOT CHECKED")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-missing-copy-was-silent(rc=$vrc)"
+    # On the BOUNCE path too: the implementer and the operator who reads the reasons are told the
+    # hand-off was not compared (the bounce is the path an operator reads most).
+    _vboard; rm -f "$vstate/lane-sessions/vlab-$vP.metadata.json"; vrc="$(VF_VERDICT=bounce _vrun)"
+    { [ "$vrc" = 4 ] && _v show "$vP" --json | jq -e '[.events[] | select(.kind == "changes_requested")] | last | .payload.reason
+        | test("lane envelope: NOT CHECKED")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-bounce-with-no-host-copy-was-silent(rc=$vrc)"
+    # The PR url the driver was given must be the one the lane recorded.
+    _vboard; vrc="$(VPERFORM=0 VPRURL=https://example.invalid/wielas/proj/pull/77 _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^env: chunk-identity — the PR url given")' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-different-pr-was-reviewed(rc=$vrc)"
+    [ -z "$vdetail" ] \
+      && ok "the-lanes-handoff-arrives-intact (the stored envelope equals the one the lane validated; an edit is handoff-integrity before any stage runs, redactable free text is not an edit, a missing copy is said so on the hold, and a different PR url is refused)" \
+      || bad "the-lanes-handoff-arrives-intact" \
+          "the verifier must compare what the driver stored on the card with what the lane validated, and the PR url with the lane's —$vdetail"
+
+    # ---- the watcher finds the verdict the verifier left ----------------------
+    # Writer: the FENCED verifier. Reader: the merge-watcher, in a cron-like environment (nothing
+    # but HOME and PATH). They share ONE definition of the root (scripts/forge-state.sh) and, with
+    # no override anywhere, the same default: $HOME/.forge. A verifier that wrote somewhere else,
+    # or a watcher that looked somewhere else, completes every merged card with no verdict — and
+    # `make metrics` counts zero reviews (F3/P4's shape, again).
+    local vh2="$TMPROOT/verifier-home-dir"
+    rm -rf "$vh2"; mkdir -p "$vh2/.forge"; ln -s "$REPO_ROOT/rubrics" "$vh2/.forge/rubrics"
+    vcron() { env -i HOME="$vh2" PATH="$vbin:$(dirname "$(command -v hermes)"):$(dirname "$(command -v jq)"):/usr/bin:/bin" \
+                VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab; }
+    vdetail=""; _vboard
+    vrc="$(_vrun HOME="$vh2" FORGE_STATE_ROOT=)"
+    [ -s "$vh2/.forge/verdicts/vlab-$vP.json" ] \
+      || vdetail="$vdetail the-verifier-did-not-write-under-HOME/.forge/verdicts"
+    touch "$vbin/merged"; vout="$(vcron 2>"$vbin/mw.err")"   # (_vboard clears the merged marker, so it is set after it)
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = done ] && _v show "$vP" --json | jq -e '
+          [.runs[] | select(.outcome == "completed")] | last | .metadata.schema == "forge.judge.v1"' >/dev/null 2>&1; } \
+      || vdetail="$vdetail the-cron-watcher-did-not-find-the-fenced-verifiers-verdict($(_vst "$vP"))"
+    # A card stashed BEFORE the deploy carries its verdict as a comment: still found.
+    _vboard; vrc="$(_vrun HOME="$vh2" FORGE_STATE_ROOT=)"
+    _v comment "$vP" "FORGE-VERDICT-V1
+\`\`\`json
+$(jq -c . "$vh2/.forge/verdicts/vlab-$vP.json")
+\`\`\`" >/dev/null 2>&1
+    rm -f "$vh2/.forge/verdicts/vlab-$vP.json"
+    touch "$vbin/merged"; vout="$(vcron 2>"$vbin/mw.err")"
+    _v show "$vP" --json | jq -e '[.runs[] | select(.outcome == "completed")] | last | .metadata.schema == "forge.judge.v1"' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-comment-fallback-was-lost($(_vst "$vP"),$(tail -1 "$vbin/mw.err"))"
+    # Neither: the merge still completes, and it SAYS no verdict was stored — never silently.
+    _vboard; vrc="$(_vrun HOME="$vh2" FORGE_STATE_ROOT=)"; rm -f "$vh2/.forge/verdicts/vlab-$vP.json"
+    touch "$vbin/merged"; vout="$(vcron 2>"$vbin/mw.err")"
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = done ] && _v show "$vP" --json | jq -e '.task.result | test("NO stored verdict envelope")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail no-verdict-was-not-said-on-the-completion"
+    # A stash that is not a JSON object is reported on stderr, not attached, not trusted.
+    _vboard; vrc="$(_vrun HOME="$vh2" FORGE_STATE_ROOT=)"; printf 'not json' > "$vh2/.forge/verdicts/vlab-$vP.json"
+    touch "$vbin/merged"; vout="$(vcron 2>"$vbin/mw.err")"
+    { grep -q "is not a JSON object" "$vbin/mw.err" && _v show "$vP" --json | jq -e '.task.result | test("NO stored verdict envelope")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail an-unreadable-stash-was-silent"
+    rm -f "$vbin/merged"
+    [ -z "$vdetail" ] \
+      && ok "merge-watcher-finds-the-verdict-the-verifier-left (the fenced verifier writes under \$HOME/.forge and a cron-like watcher finds it; a pre-deploy comment is still found; no stash, or an unreadable one, completes the card saying so)" \
+      || bad "merge-watcher-finds-the-verdict-the-verifier-left" \
+          "the verifier and the watcher must share one state root, and an absent or unreadable verdict must be said, not swallowed —$vdetail"
 
     # ---- recommend-only ---------------------------------------------------
     # D19.3, and the first of the three transitions it had only read: the
@@ -8855,7 +9759,7 @@ with kbc.connect_closing() as c:
     vdetail=""; _vboard
     [ "$(_vst "$vP")" = review/forge-verifier ] || vdetail="$vdetail handoff-did-not-land($(_vst "$vP"))"
     vrc="$(_vrun)"
-    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
     jq -e '.action == "recommend" and .created_cards == []' "$vbin/out.json" >/dev/null 2>&1 \
       || vdetail="$vdetail envelope-not-a-recommendation($(jq -r .action "$vbin/out.json" 2>/dev/null))"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail card-not-held($(_vst "$vP"))"
@@ -8888,7 +9792,7 @@ with kbc.connect_closing() as c:
     # passes nothing on — or says "merged with main" on the hold — is caught.
     vdetail=""; _vboard; printf 'master\n' > "$vbin/base"
     vrc="$(_vrun)"
-    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
     grep -q -- '--base-ref master' "$vbin/mc.log" 2>/dev/null \
       || vdetail="$vdetail merge-check-not-given-the-prs-base($(cat "$vbin/mc.log" 2>/dev/null))"
     _v show "$vP" --json | jq -e '
@@ -8897,7 +9801,7 @@ with kbc.connect_closing() as c:
       || vdetail="$vdetail hold-does-not-name-the-base-it-was-checked-against"
     # A base that cannot be read fails closed. Falling back to `main` is the bug.
     _vboard; : > "$vbin/base"
-    vrc="$(_vrun)"
+    vrc="$(VPERFORM=0 _vrun)"   # held back: what the PROGRAM did, not what the driver then does
     { [ "$vrc" = 3 ] && [ "$(_vst "$vP")" = running/forge-verifier ] \
       && jq -e '(.reason | test("^env: merge-check-unrunnable"))' "$vbin/out.json" >/dev/null 2>&1 \
       && ! grep -q . "$vbin/mc.log" 2>/dev/null; } \
@@ -8912,7 +9816,7 @@ with kbc.connect_closing() as c:
     # means something where merging is possible at all.
     vdetail=""; _vboard
     vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
-    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc($(tail -1 "$vbin/err.txt" 2>/dev/null))"
     jq -e '.action == "merged"' "$vbin/out.json" >/dev/null 2>&1 || vdetail="$vdetail envelope-not-merged"
     # D19.6's three parts, AND the SHA this run verified: each stage read the PR
     # separately, so a merge that does not pin the head can land a push that
@@ -8960,7 +9864,16 @@ with kbc.connect_closing() as c:
     # stashed it. Now the card is held `merge-pending:` with the verdict stashed,
     # and the REAL merge-watcher finishes it. Two ways in: a `hermes` wrapper that
     # refuses only `complete`, and a GitHub read-back that fails.
-    local vwrap="$TMPROOT/verifier-wrap" vreal vmode
+    # Two ways in, on the real kernel. (1) The completion the program NAMED is refused: the
+    # driver retyped its arguments wrongly — `metadata` is not an object, which the kernel's
+    # `kanban_complete` rejects with the card untouched — so `on_error`, the merge-pending hold,
+    # is what lands. (2) GitHub would not confirm the merge, so the program itself names the
+    # hold. (The old hermes-CLI wrapper that refused `complete` cannot reach a tool call.)
+    local vmode vperf_rc
+    # A `hermes` that refuses only `kanban complete`: for the WATCHER, which is cron's unfenced CLI
+    # and still completes through it (merge-watcher-reports-once, below). The VERIFIER no longer
+    # runs `complete` — its completion is the driver's tool call.
+    local vwrap="$TMPROOT/verifier-wrap" vreal
     vreal="$(command -v hermes)"
     rm -rf "$vwrap"; mkdir -p "$vwrap"
     cat > "$vwrap/hermes" <<VWRAP
@@ -8973,13 +9886,26 @@ VWRAP
     for vmode in complete-refused readback-failed; do
       _vboard
       if [ "$vmode" = complete-refused ]; then
-        vrc="$(_vrun FORGE_VERIFIER_MERGE=1 PATH="$vwrap:$vbin:$PATH")"
+        vrc="$(VPERFORM=0 _vrun FORGE_VERIFIER_MERGE=1)"
+        jq '.terminate.args.metadata = "garbled by the driver"' "$vbin/out.json" > "$vbin/out-garbled.json"
+        _wperform "$vhome" vlab "$vP" forge-verifier "$vbin/out-garbled.json" > "$vbin/perform.json" 2>&1; vperf_rc=$?
+        [ "$vperf_rc" = 10 ] || vdetail="$vdetail $vmode:driver-fallback-did-not-land(perform-rc=$vperf_rc)"
+        jq -e 'select(.call == "terminate") | .result | has("error")' "$vbin/perform.json" >/dev/null 2>&1 \
+          || vdetail="$vdetail $vmode:kernel-did-not-refuse-the-garbled-call"
       else
         touch "$vbin/state-down"; vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
       fi
-      [ "$vrc" = 0 ] || vdetail="$vdetail $vmode:rc=$vrc($(jq -r .reason "$vbin/out.json" 2>/dev/null | head -c 120))"
-      jq -e '.action == "merged-held"' "$vbin/out.json" >/dev/null 2>&1 \
-        || vdetail="$vdetail $vmode:envelope-not-merged-held($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+      [ "$vrc" = 4 ] || vdetail="$vdetail $vmode:rc=$vrc($(jq -r .reason "$vbin/out.json" 2>/dev/null | head -c 120))"
+      if [ "$vmode" = complete-refused ]; then
+        jq -e '.action == "merged" and .terminate.tool == "kanban_complete" and .terminate.args.task_id == "'"$vP"'"
+               and .on_error.tool == "kanban_block" and (.on_error.args.reason | startswith("merge-pending: "))
+               and (.on_error.args.kind | IN("needs_input","capability"))' "$vbin/out.json" >/dev/null 2>&1 \
+          || vdetail="$vdetail $vmode:envelope-not-a-complete-with-a-merge-pending-fallback($(jq -c '[.action,.terminate.tool,.on_error.tool]' "$vbin/out.json" 2>/dev/null))"
+      else
+        jq -e '.action == "merged-held" and .terminate.tool == "kanban_block"
+               and (.terminate.args.reason | startswith("merge-pending: "))' "$vbin/out.json" >/dev/null 2>&1 \
+          || vdetail="$vdetail $vmode:envelope-not-merged-held($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+      fi
       grep -q '^pr merge --squash' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail $vmode:nothing-was-merged"
       [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail $vmode:card-not-held($(_vst "$vP"))"
       [ "$(_vst "$vC" | cut -d/ -f1)" = todo ] || vdetail="$vdetail $vmode:child-released-early($(_vst "$vC"))"
@@ -8987,12 +9913,12 @@ VWRAP
           [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
           | startswith("merge-pending: ") and test("squash-merged by the verifier")' >/dev/null 2>&1 \
         || vdetail="$vdetail $vmode:hold-is-not-a-merge-pending-hold"
-      _v show "$vP" --json | jq -e '
-          [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | length == 1' >/dev/null 2>&1 \
+      # The verdict is a HOST file, written before the merge (nothing is retyped by the driver).
+      jq -e '.schema == "forge.judge.v1"' "$vstate/verdicts/vlab-$vP.json" >/dev/null 2>&1 \
         || vdetail="$vdetail $vmode:verdict-not-stashed-before-the-merge"
-      # The watcher, unwrapped and with GitHub back, finishes what the verifier could not.
+      # The watcher, with GitHub back, finishes what the driver's call could not.
       rm -f "$vbin/state-down"
-      vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+      vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>&1)"
       [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail $vmode:watcher-did-not-complete($(_vst "$vP"),'$vout')"
       [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail $vmode:child-never-released($(_vst "$vC"))"
       _v show "$vP" --json | jq -r '
@@ -9003,7 +9929,7 @@ VWRAP
         || vdetail="$vdetail $vmode:verdict-did-not-reach-the-completion($(jq -r '.schema // "none"' "$vbin/completed-meta.json" 2>/dev/null))"
     done
     [ -z "$vdetail" ] \
-      && ok "merge-mode-survives-a-failed-completion (complete refused, or the read-back down: the card is held merge-pending with the verdict stashed, and the merge-watcher completes it with that verdict)" \
+      && ok "merge-mode-survives-a-failed-completion (the named completion refused by the kernel, or the read-back down: the card is held merge-pending, the verdict is on the host, and the merge-watcher completes it with that verdict)" \
       || bad "merge-mode-survives-a-failed-completion" \
           "a merge that landed must leave its card where the merge-watcher will finish it, with the verdict it can attach —$vdetail"
 
@@ -9016,13 +9942,8 @@ VWRAP
     jq '.statusCheckRollup = [{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"FAILURE","workflowName":"ci","detailsUrl":"https://example.invalid/run/1"}]' \
       "$REPO_ROOT/$prs/pr-9/pr.json" > "$vfx/pr.json"
     _vboard
-    vrc="$(printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" \
-        HERMES_HOME="$vhome" HERMES_KANBAN_TASK="$vP" \
-        HERMES_KANBAN_RUN_ID="$( _vclaim_review "$vP" && _vrid "$vP")" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" FORGE_VERIFIER_MERGE=1 \
-        "$REPO_ROOT/$review" https://example.invalid/wielas/proj/pull/9 \
-        --chunk "$vP" --board vlab --fixture "$vfx" > "$vbin/out.json" 2>"$vbin/err.txt"; echo $?)"
-    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc"
+    vrc="$(VFIXTURE="$vfx" _vrun FORGE_VERIFIER_MERGE=1)"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc"
     jq -e '.action == "gate-block" and (.metadata.blocks | index("ci-state"))' "$vbin/out.json" >/dev/null 2>&1 \
       || vdetail="$vdetail gate-did-not-block-on-ci($(jq -c '.action,.metadata.blocks' "$vbin/out.json" 2>/dev/null | tr '\n' ' '))"
     ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail RED-CI-WAS-MERGED"
@@ -9037,7 +9958,7 @@ VWRAP
     # ---- a bounce is the same card, back to its implementer ---------------
     vdetail=""; _vboard
     vrc="$(_vrun VF_VERDICT=bounce)"
-    [ "$vrc" = 0 ] || vdetail="$vdetail rc=$vrc"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc"
     jq -e '.action == "bounce" and (.summary | test("round 1 of 2")) and .created_cards == []' "$vbin/out.json" >/dev/null 2>&1 \
       || vdetail="$vdetail envelope-not-a-first-round-bounce($(jq -r .action "$vbin/out.json" 2>/dev/null))"
     [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail not-back-with-the-lane($(_vst "$vP"))"
@@ -9055,20 +9976,26 @@ VWRAP
       || vdetail="$vdetail reason-and-action-not-on-the-card"
     # And the merged tree is a bounce reason of its own, with no scorer spawned.
     _vboard; vrc="$(_vrun VF_MERGED_TREE=check-failed)"
-    { [ "$vrc" = 0 ] && [ "$(_vst "$vP")" = ready/forge-codex-lane ] \
+    { [ "$vrc" = 4 ] && [ "$(_vst "$vP")" = ready/forge-codex-lane ] \
       && ! grep -q . "$vbin/claude.log" 2>/dev/null; } \
       || vdetail="$vdetail red-union-did-not-bounce-before-the-scorer(rc=$vrc,$(_vst "$vP"))"
     # An UNRUNNABLE merged-tree check is not a pass and not a bounce: it is
     # substrate, and it must not transition the card at all.
     # A claimed review run leaves the card `running` with `source_status=review`
-    # (ADR-0019 D19.3's first transition, executed): substrate means the card is
-    # exactly where the claim left it, with no transition of its own.
-    _vboard; vrc="$(_vrun VF_MERGED_TREE=unrunnable)"
+    # (ADR-0019 D19.3's first transition, executed): substrate means the PROGRAM left the
+    # card exactly where the claim left it — held back from the driver here, whose
+    # kanban_block is the only thing that then ends the run (asserted just below).
+    _vboard; vrc="$(VPERFORM=0 _vrun VF_MERGED_TREE=unrunnable)"
     { [ "$vrc" = 3 ] && [ "$(_vst "$vP")" = running/forge-verifier ] \
       && jq -e '(.reason | test("^env: merge-check-unrunnable"))' "$vbin/out.json" >/dev/null 2>&1; } \
       || vdetail="$vdetail unrunnable-union-was-not-substrate(rc=$vrc,$(_vst "$vP"))"
+    # …and the substrate fault is the DRIVER's kanban_block, verbatim: held, with the reason.
+    _wperform "$vhome" vlab "$vP" forge-verifier "$vbin/out.json" >/dev/null 2>&1
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && _v show "$vP" --json | jq -e '
+        [ .events[] | select(.kind == "blocked") ] | last | .payload.reason | startswith("env: merge-check-unrunnable")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail the-substrate-block-did-not-land($(_vst "$vP"))"
     [ -z "$vdetail" ] \
-      && ok "bounce-returns-the-same-card (request-changes to the lane with the reasons on the card, no card created; a red union bounces before the scorer; an unrunnable one is substrate)" \
+      && ok "bounce-returns-the-same-card (request-changes to the lane with the reasons on the card, no card created; a red union bounces before the scorer; an unrunnable one is substrate, held by the driver's kanban_block)" \
       || bad "bounce-returns-the-same-card" \
           "a bounce must return THIS card to its implementer with actionable reasons and create nothing —$vdetail"
 
@@ -9082,7 +10009,7 @@ VWRAP
     # the merged-tree stage proved green: the SAME directory, via `--keep-at`.
     vdetail=""; _vboard
     vrc="$(_vrun VF_MUTATION=survived)"
-    { [ "$vrc" = 0 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
       || vdetail="$vdetail report-only-survivors-did-not-reach-a-recommendation(rc=$vrc,$(jq -r .action "$vbin/out.json" 2>/dev/null))"
     grep -q . "$vbin/claude.log" 2>/dev/null || vdetail="$vdetail report-only-skipped-the-scorer"
     _v show "$vP" --json | jq -e '
@@ -9115,17 +10042,17 @@ VWRAP
       || vdetail="$vdetail the-line-and-the-mutations-are-not-on-the-card"
     # A probe that could not run: substrate when it gates, named on the hold when
     # it reports — never a pass in either mode.
-    _vboard; vrc="$(_vrun VF_MUTATION=unrunnable FORGE_MUTATION_PROBE_BOUNCE=1)"
+    _vboard; vrc="$(VPERFORM=0 _vrun VF_MUTATION=unrunnable FORGE_MUTATION_PROBE_BOUNCE=1)"
     { [ "$vrc" = 3 ] && [ "$(_vst "$vP")" = running/forge-verifier ] \
       && jq -e '(.reason | test("^env: mutation-probe-unrunnable"))' "$vbin/out.json" >/dev/null 2>&1 \
       && ! grep -q . "$vbin/claude.log" 2>/dev/null; } \
       || vdetail="$vdetail switched-on-unrunnable-was-not-substrate(rc=$vrc,$(_vst "$vP"))"
     _vboard; vrc="$(_vrun VF_MUTATION=unrunnable)"
-    { [ "$vrc" = 0 ] && _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+    { [ "$vrc" = 4 ] && _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
            | test("mutation probe: DID NOT RUN") and test("did not run") and (test("observed by a test") | not)' >/dev/null 2>&1; } \
       || vdetail="$vdetail report-only-unrunnable-not-named-on-the-hold(rc=$vrc)"
     _vboard; vrc="$(_vrun VF_MUTATION=pass)"
-    { [ "$vrc" = 0 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
       && _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
            | test("mutation probe: every one of 4 probed changed line")
              and test("every changed line it probed is observed by a test")' >/dev/null 2>&1; } \
@@ -9150,7 +10077,7 @@ VWRAP
       || vdetail="$vdetail round2-not-a-bounce($(jq -r '.action,.summary' "$vbin/out.json" 2>/dev/null | tr '\n' ' '))"
     [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail round2-did-not-return-the-card"
     _vhandoff "$vP"; vrc="$(_vrun VF_VERDICT=bounce)"
-    [ "$vrc" = 0 ] || vdetail="$vdetail exception-rc=$vrc($(tail -1 "$vbin/err.txt"))"
+    [ "$vrc" = 4 ] || vdetail="$vdetail exception-rc=$vrc($(tail -1 "$vbin/err.txt"))"
     jq -e '.action == "exception"' "$vbin/out.json" >/dev/null 2>&1 \
       || vdetail="$vdetail third-round-not-an-exception($(jq -r .action "$vbin/out.json" 2>/dev/null))"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
@@ -9184,7 +10111,7 @@ VWRAP
       || vdetail="$vdetail disagree-failed"
     [ "$(_vst "$vP")" = ready/forge-codex-lane ] || vdetail="$vdetail not-back-with-the-lane($(_vst "$vP"))"
     _vhandoff "$vP"; vrc="$(_vrun)"
-    [ "$vrc" = 0 ] || vdetail="$vdetail second-hold-rc=$vrc($(tail -1 "$vbin/err.txt"))"
+    [ "$vrc" = 4 ] || vdetail="$vdetail second-hold-rc=$vrc($(tail -1 "$vbin/err.txt"))"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
       || vdetail="$vdetail SECOND-HOLD-IS-$(_vst "$vP" | cut -d/ -f1)-NOT-BLOCKED"
     _v show "$vP" --json | jq -e '
@@ -9217,30 +10144,30 @@ VWRAP
       bad "hold-kind-mutation-is-caught" \
           "the mutation changed nothing in $review — next_block_kind moved, so this probe proves nothing (F65)"
     else
+      # The mutant is the REAL program with the rotation removed, run fenced like any other;
+      # the driver's call (kanban_block, kind needs_input twice) then lands on the real kernel.
       vdetail=""; _vboard
-      _vclaim_review "$vP" >/dev/null
-      printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" \
-        HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$(_vrid "$vP")" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$vmut" \
-        https://example.invalid/wielas/proj/pull/9 --chunk "$vP" --board vlab \
-        --fixture "$REPO_ROOT/$prs/pr-9" >/dev/null 2>&1
+      VREVIEW="$vmut" _vrun >/dev/null
       env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" "operator: disagrees" --board vlab >/dev/null 2>&1
-      _vhandoff "$vP"; _vclaim_review "$vP" >/dev/null
-      printf '%s' "$contract" | env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" \
-        HERMES_KANBAN_TASK="$vP" HERMES_KANBAN_RUN_ID="$(_vrid "$vP")" \
-        FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$vmut" \
-        https://example.invalid/wielas/proj/pull/9 --chunk "$vP" --board vlab \
-        --fixture "$REPO_ROOT/$prs/pr-9" > "$vbin/mut.json" 2>&1
+      _vhandoff "$vP"
+      VREVIEW="$vmut" _vrun >/dev/null
       [ "$(_vst "$vP" | cut -d/ -f1)" = triage ] \
         || vdetail="$vdetail a-pinned-kind-did-not-reach-triage($(_vst "$vP"))"
       ! _v complete "$vP" --result "merged" >/dev/null 2>&1 \
         || vdetail="$vdetail triage-was-completable-after-all"
-      jq -e '.action == "substrate-block" and (.reason | test("stranded"))' "$vbin/mut.json" >/dev/null 2>&1 \
-        || vdetail="$vdetail stranding-was-not-reported($(jq -r '.action' "$vbin/mut.json" 2>/dev/null))"
+      # The program ended with the run, so it cannot report the stranding any more (the old
+      # read-back is impossible after the terminator). Two things do, and both are asserted:
+      # the kernel's own result to the driver names the status, and the digest lists the card
+      # as one no script can complete (epic P8).
+      jq -e 'select(.call == "terminate") | .result.status == "triage"' "$vbin/perform.json" >/dev/null 2>&1 \
+        || vdetail="$vdetail the-drivers-result-did-not-name-triage($(head -c 200 "$vbin/perform.json"))"
+      HERMES_HOME="$vhome" TZ=UTC "$REPO_ROOT/scripts/digest.sh" --board vlab --day 2026-10-03 2>/dev/null \
+        | grep -q 'the card is in triage' \
+        || vdetail="$vdetail the-digest-did-not-list-the-stranded-card"
       [ -z "$vdetail" ] \
-        && ok "hold-kind-mutation-is-caught (a pinned needs_input reaches triage on the real kernel, cannot be completed, and the script reports it as stranded rather than as a hold)" \
+        && ok "hold-kind-mutation-is-caught (a pinned needs_input reaches triage on the real kernel through the driver's call, cannot be completed, and is reported as stranded — by the kernel's result and by the digest — rather than as a hold)" \
         || bad "hold-kind-mutation-is-caught" \
-            "with the rotation removed the second hold must reach triage, be uncompletable, and be reported —$vdetail"
+            "with the rotation removed the second hold must reach triage, be uncompletable, and be reported by the driver's result and the digest —$vdetail"
     fi
 
     # ---- the disagree path: it parks before it unblocks --------------------
@@ -9325,8 +10252,11 @@ VWRAP
       "$(bash -c '. "$1" && printf %s "$INTERACTIVE_HOLD_REASON"' _ "$REPO_ROOT/scripts/decision-message.sh")" >/dev/null 2>&1
     _v assign "$vP" none >/dev/null 2>&1
     [ "$(_vst "$vP")" = blocked/- ] || vdetail="$vdetail not-bootstrap-shaped($(_vst "$vP"))"
+    # The operator's own envelope names its PR (the validator wants a github.com URL, which the
+    # lab's recorded PR is not), and the verifier cross-checks the url it is given against it.
+    VPRURL="$(jq -r .pr "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json")"
     _vhand() {  # the operator's handoff, from outside any worker
-      env PATH="$vbin:$PATH" HERMES_HOME="$vhome" HERMES_KANBAN_TASK= HERMES_KANBAN_RUN_ID= \
+      env PATH="$vbin:$PATH" HERMES_HOME="$vhome" \
         "$REPO_ROOT/scripts/lane-handoff.sh" "$vP" --board vlab --summary "CHUNK-5, by hand" \
         --metadata "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json" > "$vbin/hand.out" 2>&1
       echo $?
@@ -9337,7 +10267,7 @@ VWRAP
     # 1. The verifier bounces it — before the scorer, on a red union — and the
     #    card goes back to the operator, on the sentinel nothing spawns.
     vrc="$(_vrun VF_MERGED_TREE=check-failed)"
-    { [ "$vrc" = 0 ] && jq -e '.action == "bounce"' "$vbin/out.json" >/dev/null 2>&1; } \
+    { [ "$vrc" = 4 ] && jq -e '.action == "bounce"' "$vbin/out.json" >/dev/null 2>&1; } \
       || vdetail="$vdetail not-bounced(rc=$vrc,$(jq -r '.action + " " + (.reason // "")' "$vbin/out.json" 2>/dev/null | head -c 160))"
     [ "$(_vst "$vP")" = ready/forge-operator-handoff ] || vdetail="$vdetail bounce-landed($(_vst "$vP"))"
     _v show "$vP" --json | jq -e 'any(.events[]; .kind == "changes_requested")' >/dev/null 2>&1 \
@@ -9354,7 +10284,7 @@ VWRAP
     { [ "$vrc" = 0 ] && [ "$(_vst "$vP")" = review/forge-verifier ]; } \
       || vdetail="$vdetail second-handoff(rc=$vrc,$(_vst "$vP"),$(tail -1 "$vbin/hand.out"))"
     vrc="$(_vrun)"
-    { [ "$vrc" = 0 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
       && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
       || vdetail="$vdetail not-held(rc=$vrc,$(_vst "$vP"))"
     # 4. The operator disagrees: bounce.sh returns it to the operator and says so.
@@ -9364,9 +10294,10 @@ VWRAP
       && printf '%s' "$vout" | grep -q "back with the operator"; } \
       || vdetail="$vdetail bounce-sh(rc=$vrc,$(_vst "$vP"),$vout)"
     [ -z "$vdetail" ] \
-      && ok "a-human-chunk-can-be-bounced (the bootstrap's card, handed off by hand: the verifier's bounce lands on the sentinel and the digest lists it as waiting; handed off again it is held; bounce.sh returns it to the operator)" \
+      && ok "a-human-chunk-can-be-bounced (the bootstrap's card, handed off by hand unfenced: the FENCED verifier's kanban_request_changes lands on the sentinel and the digest lists it as waiting; handed off again it is held; bounce.sh returns it to the operator)" \
       || bad "a-human-chunk-can-be-bounced" \
           "a human-tier chunk must survive the whole review loop on the real kernel —$vdetail"
+    VPRURL=""
 
     # ---- the merge-watcher ------------------------------------------------
     # The other half of recommend-only: something has to notice the operator's
@@ -9374,15 +10305,15 @@ VWRAP
     # second transition, executed here through the script that depends on it.
     vdetail=""; _vboard; vrc="$(_vrun)"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail no-hold-to-watch"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"; vrc=$?
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>&1)"; vrc=$?
     { [ "$vrc" = 0 ] && [ -z "$vout" ]; } || vdetail="$vdetail open-pr-was-not-silent(rc=$vrc,'$vout')"
     touch "$vbin/closed"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>&1)"
     { printf '%s' "$vout" | grep -q "CLOSED without merging" \
       && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
       || vdetail="$vdetail closed-pr-was-completed-or-unreported($(_vst "$vP"))"
     rm -f "$vbin/closed"; touch "$vbin/merged"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"; vrc=$?
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>&1)"; vrc=$?
     [ "$vrc" = 0 ] || vdetail="$vdetail merged-run-rc=$vrc"
     printf '%s' "$vout" | grep -q "$vP: done" || vdetail="$vdetail merge-not-reported('$vout')"
     [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail card-not-completed($(_vst "$vP"))"
@@ -9399,21 +10330,16 @@ VWRAP
     # it: the watcher's FORGE-WATCHER-NOTIFIED comment is not one, and
     # completing from `blocked` must not have written an `unblocked` event.
     #
-    # ONE THING IS RESTORED, ON A COPY. The kernel authors a comment as the
-    # profile the writer runs as (hermes_cli/profiles.py current_profile_name),
-    # and the dispatcher pins HERMES_PROFILE_NAME on every worker it spawns. The
-    # lab runs the verifier OUTSIDE a dispatcher, so its `BLOCKED: …` and
-    # `FORGE-VERDICT-V1` comments carry the host's name instead of
-    # `forge-verifier` — which the metrics would rightly count as a human. The
-    # copy gets the author a spawned verifier would have written; the watcher's
-    # comment keeps the lab's, because cron really does run it as the host.
+    # NOTHING NEEDS RESTORING ANY MORE. The kernel authors a comment as the profile the
+    # writer runs as, and this lab used to run the verifier's CLI outside a dispatcher, so
+    # its `BLOCKED: …` and `FORGE-VERDICT-V1` comments carried the host's name and had to be
+    # re-authored on a copy. The verifier no longer writes comments at all (its calls are the
+    # driver's tools, authored `forge-verifier`; its verdict is a host file), and the
+    # watcher's own comment keeps the lab's name, because cron really does run it as the host.
     local nsk="$vbin/ns-kanban"
     rm -rf "$nsk"; mkdir -p "$nsk/boards/vlab"
     cp "$(HERMES_HOME="$vhome" "$REPO_ROOT/scripts/board-snapshot.sh" "$vhome/kanban/boards/vlab/kanban.db" "$vbin/ns-snap" 2>/dev/null)" \
        "$nsk/boards/vlab/kanban.db" 2>/dev/null
-    sqlite3 "$nsk/boards/vlab/kanban.db" \
-      "UPDATE task_comments SET author='forge-verifier'
-        WHERE body LIKE 'BLOCKED: merge-pending:%' OR body LIKE 'FORGE-VERDICT-V1%';" 2>/dev/null
     HERMES_HOME="$vhome" HERMES_KANBAN_HOME="$nsk" "$REPO_ROOT/scripts/metrics.sh" vlab --json > "$vbin/ns.json" 2>"$vbin/ns.err" \
       || vdetail="$vdetail metrics-could-not-read-the-lab-board($(head -1 "$vbin/ns.err"))"
     jq -e '.north_star.chunks == 1
@@ -9423,7 +10349,7 @@ VWRAP
            and .north_star.operator_actions.touches == 0' "$vbin/ns.json" >/dev/null 2>&1 \
       || vdetail="$vdetail north-star-misreads-the-real-kernel($(jq -c '[.north_star.chunks, .north_star.merged, .north_star.pr_open_to_merge_hours.n, .envelope, .operator.comments, .operator.unblocks]' "$vbin/ns.json" 2>/dev/null | head -c 300))"
     # THE VERDICT HAS TO END UP ON A RUN. `block` takes no --metadata, so the
-    # verifier stashed the envelope as a comment and this completion is the only
+    # verifier stashed the envelope on the host and this completion is the only
     # write that can store it. Without this assertion the whole stash/attach path
     # could be deleted and every other arm here would still pass, while
     # `make metrics` would count zero reviews — which is the F3/P4 shape.
@@ -9433,9 +10359,12 @@ VWRAP
           and (.metadata.schema == "forge.judge.v1")
           and (.metadata.scores.spec_fidelity == 3)' >/dev/null 2>&1 \
       || vdetail="$vdetail verdict-envelope-did-not-reach-a-run"
-    _v show "$vP" --json | jq -e '
-        [ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | length == 1' >/dev/null 2>&1 \
-      || vdetail="$vdetail verdict-was-not-stashed-on-the-card"
+    # …where: a HOST file, written by the fenced verifier (which cannot comment) and read by the
+    # watcher under the same state root. No `FORGE-VERDICT-V1` comment is written any more.
+    jq -e '.schema == "forge.judge.v1"' "$vstate/verdicts/vlab-$vP.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail verdict-was-not-stashed-on-the-host"
+    _v show "$vP" --json | jq -e '[ .comments[]? | select(.body | test("^FORGE-VERDICT-V1")) ] | length == 0' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-verifier-still-writes-a-verdict-comment"
     _v show "$vP" --json | jq -r '
         [ .runs[] | select(.outcome == "completed") ] | last | .metadata // empty' \
       > "$vbin/completed-meta.json" 2>/dev/null
@@ -9450,12 +10379,12 @@ VWRAP
     # The operator made that merge; the digest reports it under "landed". So the
     # completion is asserted on the board and on stderr, and stdout must be EMPTY.
     _vboard; vrc="$(_vrun)"; touch "$vbin/merged"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" 2>"$vbin/mw.err")"; vrc=$?
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" 2>"$vbin/mw.err")"; vrc=$?
     { [ "$vrc" = 0 ] && grep -q "$vP: done" "$vbin/mw.err" \
       && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
       || vdetail="$vdetail no-board-sweep-did-not-find-the-hold(rc=$vrc,'$vout')"
     [ -z "$vout" ] || vdetail="$vdetail a-completed-merge-reached-stdout('$vout')"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --nope 2>/dev/null)"; vrc=$?
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --nope 2>/dev/null)"; vrc=$?
     { [ "$vrc" = 2 ] && [ -z "$vout" ]; } \
       || vdetail="$vdetail usage-reached-stdout(rc=$vrc,'$vout')"
     # FL6's exception is watchable too: the operator's answer to one is often "I
@@ -9464,7 +10393,7 @@ VWRAP
     vrc="$(_vrun VF_MERGED_TREE=check-failed FORGE_VERIFIER_BOUNCE_BUDGET=0)"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail no-exception-to-watch($(_vst "$vP"))"
     touch "$vbin/merged"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>&1)"
     { printf '%s' "$vout" | grep -q "$vP: done" && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
       || vdetail="$vdetail bounce-budget-hold-was-not-watched($(_vst "$vP"),'$vout')"
     # WHATEVER THE WATCHER COMPLETES WITH MUST SATISFY THE REGISTRY, on both hold
@@ -9491,7 +10420,7 @@ VWRAP
     _v block --kind needs_input "$vother" "env: something the lane could not do" >/dev/null 2>&1
     [ "$(_vst "$vother" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail control-card-not-blocked($(_vst "$vother"))"
     touch "$vbin/merged"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>&1)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>&1)"
     [ "$(_vst "$vother" | cut -d/ -f1)" = blocked ] \
       || vdetail="$vdetail completed-a-card-that-was-not-a-merge-hold($(_vst "$vother"))"
     [ -z "$vdetail" ] \
@@ -9507,7 +10436,7 @@ VWRAP
     # cannot tell a notification from a diagnostic.
     local vnourl
     vdetail=""; _vboard; vrc="$(_vrun)"; touch "$vbin/closed"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     printf '%s' "$vout" | grep -q "$vP: .*CLOSED without merging" || vdetail="$vdetail closed-not-reported-at-all('$vout')"
     # ... and in the one decision-first format (GW1), with a reply naming the card.
     { printf '%s\n' "$vout" | grep -q '^merge-pending: ' \
@@ -9516,20 +10445,20 @@ VWRAP
       && printf '%s\n' "$vout" | grep -q '^Risk: ' \
       && printf '%s\n' "$vout" | grep -q "^Reply: .*bounce.sh $vP"; } \
       || vdetail="$vdetail closed-finding-is-not-decision-first('$(printf '%s' "$vout" | head -3 | tr '\n' ' ')')"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     [ -z "$vout" ] || vdetail="$vdetail closed-reported-again('$vout')"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail closed-pr-card-moved($(_vst "$vP"))"
     rm -f "$vbin/closed"
     # A hold with no PR url anywhere on it: the same rule.
     vnourl="$(_v create "CHUNK-9: held with no PR" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
     _v block --kind needs_input "$vnourl" "merge-pending: a hold that names no pull request" >/dev/null 2>&1
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     printf '%s' "$vout" | grep -q "$vnourl: held for merge but no PR url" || vdetail="$vdetail no-url-not-reported-at-all('$vout')"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     [ -z "$vout" ] || vdetail="$vdetail no-url-reported-again('$vout')"
     # GitHub unreadable is a diagnostic, not a finding: stderr, and a non-zero exit.
     touch "$vbin/state-down"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>"$vbin/mw.err")"; vrc=$?
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>"$vbin/mw.err")"; vrc=$?
     { [ -z "$vout" ] && [ "$vrc" = 1 ] && grep -q "$vP: cannot read" "$vbin/mw.err"; } \
       || vdetail="$vdetail github-outage-reached-stdout(rc=$vrc,'$vout')"
     rm -f "$vbin/state-down"
@@ -9537,18 +10466,18 @@ VWRAP
     # card stays blocked with the same reason, so this was a message every sweep.
     # The lab's wrapper refuses only `kanban complete`.
     rm -f "$vbin/closed"; touch "$vbin/merged"
-    vout="$(env PATH="$vwrap:$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"; vrc=$?
+    vout="$(env PATH="$vwrap:$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"; vrc=$?
     { [ "$vrc" = 1 ] && printf '%s' "$vout" | grep -q "$vP: .*is merged but the card did not complete" \
       && printf '%s\n' "$vout" | grep -q '^Decision needed: complete the card by hand'; } \
       || vdetail="$vdetail not-completed-not-reported-decision-first(rc=$vrc,'$(printf '%s' "$vout" | head -2 | tr '\n' ' ')')"
-    vout="$(env PATH="$vwrap:$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    vout="$(env PATH="$vwrap:$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     [ -z "$vout" ] || vdetail="$vdetail not-completed-reported-again('$(printf '%s' "$vout" | head -1)')"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail refused-completion-moved-the-card($(_vst "$vP"))"
     rm -f "$vbin/merged"
     # A NEW hold on the same card is a new finding: bounce it, re-hold it, close it.
     env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/$bo" "$vP" "operator: again" --board vlab >/dev/null 2>&1
     _vhandoff "$vP"; vrc="$(_vrun)"; touch "$vbin/closed"
-    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
+    vout="$(env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" --board vlab 2>/dev/null)"
     printf '%s' "$vout" | grep -q "$vP: .*CLOSED without merging" || vdetail="$vdetail a-new-hold-was-silenced-by-the-old-marker('$vout')"
     [ -z "$vdetail" ] \
       && ok "merge-watcher-reports-once (a closed PR, a url-less hold and a merge whose card will not complete reach stdout once per hold, decision-first; a new hold is reported afresh, and a GitHub outage goes to stderr only)" \
@@ -13062,8 +13991,9 @@ QPIN
 
   # The other half: a runner the lane does not call is dead code. §4 must reach
   # it through ~/.forge/repo, the only path that resolves from a worktree.
-  # Since FL2 the caller is scripts/lane.sh, beside the runner; the PARK-COMMENT
-  # relay is executed by lane/lane-sh-runs-the-protocol.
+  # Since FL2 the caller is scripts/lane.sh, beside the runner; its park count (the runner's
+  # PARK-COMMENT lines, reported in the hand-off summary since P24 — a fenced terminal cannot
+  # post them to the card) is executed by lane/lane-sh-runs-the-protocol.
   if grep -Fq '"$HERE/codex-run.sh" "$WS" "$RUN_ID" "$TASK"' scripts/lane.sh \
      && grep -Fq 'PARK-COMMENT' scripts/lane.sh \
      && ! grep -Eq 'codex exec' scripts/lane.sh \
@@ -13071,7 +14001,7 @@ QPIN
     ok "lane-invokes-the-runner"
   else
     bad "lane-invokes-the-runner" \
-        "lane.sh must call codex-run.sh beside itself, relay its PARK-COMMENT, and never invoke codex exec inline"
+        "lane.sh must call codex-run.sh beside itself, count its PARK-COMMENT lines, and never invoke codex exec inline"
   fi
 }
 wants quota     && run_quota_group

@@ -738,7 +738,8 @@ closes.
 | S6 | Plan the new project — operator-led. *The project is **The Squatfather** (`the-squatfather`), a local AI strength coach for the operator alone. It keeps their training history, notes, goals and weight. Once a week it reviews the week's Garmin Fenix 7 Pro workouts with them and adjusts the plan (progressive overload, new exercises, travel and one-off events), then loads the next week onto the watch. Nutrition and other users are out. It runs on this machine, through Hermes or Claude. It was stamped at `~/dev/the-squatfather` from `templates/python-service` at `78f6f1f`, and its repo is `wielas/Squatfather`, private, so `merge-gate.sh` reports `UNAVAILABLE` and commissioning records `posture: UNGATED`. Done when (**proposed at S6's opening — this row had none**): `plan-check --stage scope` and `--stage architect` are CLEAR, with every verdict backed by a real `spikes/` directory; `roadmap-check` is CLEAR, or the sign-off answers each finding; `acceptance-freeze` writes `contract-freeze.json`; the plan has three milestones, `GATE-M1`–`GATE-M3`, each with a probe holding at least one `realistic` case (records ≥ 2) and one `adversarial` case; and the operator signed off each stage. M3 is tiered `strong` and re-tiered in S12 (operator's call, S6's opening). If S5b bumps the probe to `forge.probe.v2`, these probes are re-declared. Commission and bootstrap are S7's. **Closed 2026-10-01: met.** Scope, architect and roadmap were each signed off by the operator. Read from the runtime at `78f6f1f`: `plan-check` scope CLEAR (6 pass) and architect CLEAR (4 pass), with two spikes, `garmin-lib` proven and `garmin-live` disproven (a 429 on one login attempt); `roadmap-check` CLEAR (14 pass, 0 warn); `acceptance-freeze` 30 contracts, byte-identical to the committed manifest. The plan is 3 milestones and 10 chunks (5 / 3 / 2) against a budget of 3 and 10. The probes hold 2 realistic + 3 adversarial cases (M1), 2 + 2 (M2) and 2 + 1 (M3). There is one root, CHUNK-1. M1's one human chunk, CHUNK-5, has parents, so P13 is promoted to row S6b. `GATE-M1` is also held on a live Garmin spike the operator runs during M1. The plan reaches `main` through Squatfather PR #1.* | Scope → architect with spikes → roadmap, three milestones | done | #81 |
 | S6b | P13 *(promoted at S6's close)*. *Done when (**proposed at S6b's opening — neither the row nor P13 had one**): the digest's waiting list skips a `blocked` card whose last block reason is the bootstrap's interactive hold while any parent is not `done` or `archived`, and lists it as before once all are; that reason is one string both scripts source, and what the bootstrap really writes is checked against it; `digest/fixture-message-exact`'s expected text is unchanged; and every new case has been seen red against its defect. **Closed 2026-10-01: met.** Measured first on Hermes 0.21.5 in an isolated `HERMES_HOME`: the hold survives `link`, and `main`'s digest listed the chunk while its only parent was `ready`. Three cases, all red before the fix: `digest/an-interactive-chunk-speaks-only-when-its-parents-are-done` (CHUNK-5's two parents, with four controls), `bootstrap/interactive-hold-is-the-reason-the-digest-skips`, and the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. Eight mutants each reddened their case. `make verify` went from 486 / 0 / 10 to 488 / 0 / 11; the extra skip is the opt-in case. One discovery, P16.* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | done | #82 |
 | S6c | P16, P21 *(promoted at S7's opening)*. *Done when (**proposed at S7's opening**): a human-tier chunk handed off through `lane-handoff.sh` can be bounced. The kernel records an implementer, so `request-changes` lands the card `ready` on the non-spawnable `forge-operator-handoff`. `bounce.sh` accepts that sentinel as a human chunk's implementer. A bounced human chunk is listed under "waiting on you". Its interactive hold renders decision-first rather than as `other`. Every new case is seen red against its defect, and the human-handoff bounce runs on the installed kernel. **Closed 2026-10-02: met.** `lane-handoff.sh` gives an unassigned card `forge-operator-handoff` before it unblocks it, so the kernel records an implementer. `bounce.sh` accepts the sentinel as a human chunk's implementer and reports "back with the operator". The digest lists a returned human chunk under "waiting on you" (`returned:`), not in flight. `INTERACTIVE_HOLD_REASON` is a decision-first `interactive:` message. Three new cases, and `lane/lane-handoff-is-fail-closed` widened: `verifier/a-human-chunk-can-be-bounced` runs the whole loop on the installed kernel in an isolated `HERMES_HOME`, with the real scripts and the card the bootstrap makes; `digest/an-interactive-hold-is-decision-first`; `digest/a-returned-human-chunk-waits-on-you`. Six mutants, one per fix, each reddened exactly the cases it targets. With the sentinel left off, the real-kernel case fails with P21's own `handoff-integrity` refusal. The opt-in `bootstrap --with-hermes` is 16 / 0 / 0 with the new hold. `make verify` went from 506 / 0 / 11 (`main` @ `5989f1c`) to 509 / 0 / 11. Folded in at the opening: two `docs/run-a.md` defects found by #85's review. One discovery, P23, folded in at the close as a one-line `docs/run-a.md` fix.* | Run A's seeded defect goes through CHUNK-5, the human chunk. Today any verifier bounce of a human chunk strands it as `other: handoff-integrity`, and its hold reads "risk unknown" | done | #86 |
-| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)*; FL5's precision and its switch *(deferred from S3b; decided below)*. *Opened 2026-10-02. The protocol is `docs/run-a.md`. This row's first PR registers it before launch, and a second PR adds the results at the end of M1. That departs from "one session, one PR" by **the operator's decision at the opening**: the run spans days, and S6c must see its row on `main`. The protocol is frozen at `RUN_START`, as the launch record's `FORGE_SHA`, so S6c and S3b may still edit it. Preconditions: S6c and S3b (#84, rebased) merge and deploy before `RUN_START`. Decided at the opening, before launch:*<br>*– The seeded defect is S-1, which the operator plants in CHUNK-5. Only the scorer's verdict decides whether it was caught. A gate or merged-tree bounce unrelated to the seed voids the attempt.*<br>*– A reporting mutation probe's "would bounce" is not a bounce. S3b defers two things to this row: the probe's precision, measured from the holds, and the operator's decision on its switch at M1's checkpoint. Both read `docs/run-a.md`'s list of each recommended PR's probe verdict beside the operator's judgement of it.*<br>*– FL4's clause is met by drill D-1 on CHUNK-2, declared in advance and excluded from the flip count.*<br>*– Claude Code and Codex are not frozen; they stay current. Run A records the versions it ran on, and a version that moves mid-run is recorded rather than a stop. That amends* Hold still during the epic*. Hermes alone stays held.*<br>*– `GATE-M1` is not completed in run A.*<br>*Done when (**proposed at S7's opening — the row had none**): `docs/run-a.md` is executed to its end state. CHUNK-1 to CHUNK-5 are merged, each on a green PR, and their cards are done. `GATE-M1` has been probed and is still held. S-1 and D-1 are recorded, and seven digests judged. Its* Results *hold only pasted output, and the flip verdict is recorded clause by clause. Baseline at the opening (`main` @ `affc967`): 505 / 0 / 11.* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | in progress — protocol registered, run not started | #85 (registration) |
+| S6d | P24 *(promoted at run A attempt 1's halt, 2026-10-03)*. *Done when (**proposed at S6d's opening**; clause 1 corrected at the design review: `bounce.sh` is the operator's tool, not the verifier's): (1) under the fence a real worker's terminal carries — built with Hermes's own `delegated_child_subprocess_env`, never by hand — neither the lane's program (`lane.sh`, `lane-handoff.sh`) nor the verifier's (`prejudge-review.sh`) attempts a board mutation, and each exits with a code distinct from "nothing to do" and an envelope naming exactly one lifecycle tool and its arguments; (2) the lane's program takes its inputs only from what the fenced terminal keeps plus explicit arguments whose source the skill names, and so does the verifier's invocation in its SOUL; (3) on the installed kernel, in an isolated `HERMES_HOME`, performing each envelope's call through Hermes's real worker tool handler, in a dispatcher-granted context, lands the lane's hand-off in `review` on `forge-verifier` with the implementer recorded, a verifier fail `ready` on the recorded implementer, a recommend-only pass `blocked` with the decision-first hold, and a human chunk handed off by the operator still bounceable to `forge-operator-handoff`; (4) `metadata-live.sh`, `make metrics` and the merge-watcher still read what run A measures; (5) the `forge-lane` skill's and the verifier SOUL's exit tables match the programs, and `verify` asserts it; (6) every new case is seen red against its defect, including a restored CLI mutation in worker mode and a read of a scrubbed variable. Baseline at the opening (`main` @ `6ab619f`): 515 / 0 / 12. **Closed 2026-10-04: met.** `lane.sh --task` and `prejudge-review.sh --contract-from-card` never write the board. Each prints one compact `forge.lane.v2` / `forge.review.v2` envelope line naming one lifecycle call (`terminate`, with `on_error`), and the driver makes it verbatim (exit 4 routed, 3 substrate, 2 usage; a real run never exits 0). Both run in the background and are read with `process_manage log`, because a foreground call dies at 420 s and a wait keeps 2000 characters. The run id is read off the card. H1: the lane refuses a review claim. H2: the verifier checks the hand-off against the lane's host copy, redaction-consistently, and checks the PR URL. The verdict is a host file under one state root (`scripts/forge-state.sh`), which the merge-watcher reads first. PARK is a `parked N×` line in the hand-off summary. `forge-verifier` ships an identity-only `sdlc-review` shim (P28). ADR-0010 D10.3 and ADR-0019 carry dated amendments. 18 new cases, each running a real program in the fence that Hermes's own `delegated_child_subprocess_env` builds, then making the envelope's call through the real tool registry in an isolated `HERMES_HOME`. Among them, the SOUL's block and the skill's launch line are executed through the installed `terminal`/`process_manage`. 37 mutants in two rounds, all caught. The two that restore a CLI call are seen only by the argv-log cases, and one survivor (R9) was closed with a case. An independent review asked for changes (F1–F6, S1–S9), and all were made. Folded in at the close: P27 (the terminator pin, which now imports the installed toolset and runs by default) and P28. `make verify` went from 515 / 0 / 12 to 531 / 3 / 11 before deploy. The three reds are the live-profile sync checks (`config/soul-in-sync/forge-codex-lane`, `…/forge-verifier`, `config/skill-shim-in-sync/forge-verifier`), which go green when `profiles-bootstrap.sh` runs. The skip that went is `lane/terminators-match-the-substrate`.* | Run A cannot pass a single handoff until the lane and the verifier end their runs through the worker's own tools | done | #87 |
+| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)*; FL5's precision and its switch *(deferred from S3b; decided below)*. *Opened 2026-10-02. The protocol is `docs/run-a.md`. This row's first PR registers it before launch, and a second PR adds the results at the end of M1. That departs from "one session, one PR" by **the operator's decision at the opening**: the run spans days, and S6c must see its row on `main`. The protocol is frozen at `RUN_START`, as the launch record's `FORGE_SHA`, so S6c and S3b may still edit it. Preconditions: S6c and S3b (#84, rebased) merge and deploy before `RUN_START`. Decided at the opening, before launch:*<br>*– The seeded defect is S-1, which the operator plants in CHUNK-5. Only the scorer's verdict decides whether it was caught. A gate or merged-tree bounce unrelated to the seed voids the attempt.*<br>*– A reporting mutation probe's "would bounce" is not a bounce. S3b defers two things to this row: the probe's precision, measured from the holds, and the operator's decision on its switch at M1's checkpoint. Both read `docs/run-a.md`'s list of each recommended PR's probe verdict beside the operator's judgement of it.*<br>*– FL4's clause is met by drill D-1 on CHUNK-2, declared in advance and excluded from the flip count.*<br>*– Claude Code and Codex are not frozen; they stay current. Run A records the versions it ran on, and a version that moves mid-run is recorded rather than a stop. That amends* Hold still during the epic*. Hermes alone stays held.*<br>*– `GATE-M1` is not completed in run A.*<br>*Done when (**proposed at S7's opening — the row had none**): `docs/run-a.md` is executed to its end state. CHUNK-1 to CHUNK-5 are merged, each on a green PR, and their cards are done. `GATE-M1` has been probed and is still held. S-1 and D-1 are recorded, and seven digests judged. Its* Results *hold only pasted output, and the flip verdict is recorded clause by clause. Baseline at the opening (`main` @ `affc967`): 505 / 0 / 11.*<br>*Attempt 1 launched 2026-10-03T07:43:39Z and halted the same day at CHUNK-1's handoff: the kernel's descendant fence refused the lane's CLI handoff (P24), and the chunk had re-sorted three frozen probes (P25). Attempt 2 runs after S6d, on board `squatfather-run-a2`, under `docs/run-a.md`'s amendment of 2026-10-03.* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | in progress — attempt 1 halted (P24); attempt 2 after S6d | #85 (registration) |
 | S8 | MS3, MS4, MS5, GW3, WL1; MS2's "failures become chunk cards" *(moved from S5b at its opening)* | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
 | S10 | EN5, EN1, EN2 | Engine groundwork | planned | |
@@ -1358,6 +1359,143 @@ opens between S6c and `RUN_START` to triage it. S6c's opening folded in two
 `local` only. Every other* Inputs *row read back unchanged on 2026-10-02: the
 driver pin, the product at `388d78d` (clean), both switches unset, the
 gateway's four values, and both crons.*
+
+**P24 (run A, attempt 1). Neither the lane's program nor the verifier's can
+move its own card: Hermes fences every process a worker's terminal starts.**
+Run A launched at 2026-10-03T07:43:39Z. Codex finished CHUNK-1 in eleven
+minutes, with the branch pushed at `ad3fd63` and PR #2 green. The card never
+reached the verifier. `lane-handoff.sh`'s `hermes kanban request-review` exited
+1 with `kanban: delegate_task child contexts cannot mutate Kanban tasks via the
+CLI`. The driver blocked the card with the envelope's reason, and run A halted
+under its stop rules.
+
+The mechanism, on Hermes 0.21.5 (local `1a3bee0e`):
+- The terminal tool builds every child's environment through
+  `delegated_child_subprocess_env` (`tools/environments/local.py:284`).
+- For a dispatcher worker, that strips `HERMES_KANBAN_TASK`, `_RUN_ID` and
+  `_CLAIM_LOCK`, and sets `HERMES_DELEGATED_CHILD_CONTEXT` to the board root.
+- Under that marker every `hermes kanban` mutation refuses: at the CLI
+  (`hermes_cli/kanban.py:152`) and in the database layer
+  (`kanban_db.py::_assert_not_delegated_child_mutation`).
+
+This is the kernel's documented contract, not a bug. "A task assignment belongs
+to the dispatcher worker, not to every program it starts", and a worker ends its
+run through one lifecycle tool (`kanban-worker-lanes.md`, *Descendant process
+scope*). The fence predates registration: Hermes commit `a7dcf97` is in every
+kernel this Mac has run since 2026-08-27. So no Input moved. The defect is
+Forge's, latent since S2 made the handoff a program.
+
+The same run hit it three more ways:
+- `lane.sh` first exited 2, because `HERMES_KANBAN_TASK` had been stripped. The
+  driver improvised `export HERMES_KANBAN_TASK=… HERMES_KANBAN_RUN_ID=1` and
+  happened to get both right.
+- Every heartbeat `lane.sh` sent failed.
+- The verifier was next. Its SOUL passed `--chunk "$HERMES_KANBAN_TASK"`, and
+  `prejudge-review.sh` transitioned the card through the CLI.
+
+`lane.sh`'s PARK comment would also have failed, silently.
+
+Why nothing caught it:
+- `verify` and `commission` ran these scripts from an ordinary shell, which
+  carries no fence.
+- `state.md` listed the gap ("No dispatcher-spawned driver has run them yet").
+- No board on this Mac had ever recorded a review handoff.
+
+Evidence is in `~/dev/the-squatfather/.forge/run-a-attempt-1/`: the driver's
+transcript, the lane's tmp dir, a board copy, the card and PR #2. *Promoted to
+S6d at the halt.*
+
+**P25 (run A, attempt 1). A planned project's frozen probes do not stay
+lint-clean as its chunks add modules.** CHUNK-1's PR #2 changed
+`tests/probes/m{1,2,3}/run.py`, three files that `contract-freeze.json` hashes.
+The edits only re-sort imports.
+
+The cause:
+- The project's ruff config selects `I` but names no first-party package, so
+  ruff classes a `the_squatfather.*` submodule as first-party only once its file
+  exists.
+- CHUNK-1 created `domain` and `store`. The frozen probes then failed `I001`,
+  `make check` went red, and the lane re-sorted them.
+- The verifier's gate (`prejudge.sh` ~624) refuses a changed frozen file, so
+  CHUNK-1 would have bounced.
+- Every chunk that adds a module hits the same contradiction, CHUNK-5's seeded
+  attempt included.
+
+Measured on scratch copies, and reproduced by an independent review, with
+`known-first-party = ["the_squatfather"]`:
+- the frozen probes lint clean at `388d78d`, with CHUNK-1's code, and with stubs
+  for every module the probes and docs name;
+- `make check` is green;
+- all 30 hashes are intact.
+
+Without the pin, the probes are red in every intermediate state. The product
+side is Squatfather PR #3, which must merge before run A's relaunch. Forge's
+side is open:
+- `templates/python-service/template/pyproject.toml.jinja` pins no first-party
+  package, so every Forge-planned project carries the defect.
+- `roadmap-check` does not test that frozen files stay lint-clean as the planned
+  modules appear.
+
+Triage when the next session opens.
+
+**P26 (S6d). A long lane run costs the driver one turn every 420 seconds.** In
+attempt 1, the driver's `process_manage wait` with `timeout: 1800` returned at
+420 s ("timed out after 420.0s"). The tool bridge caps a concurrent tool call at
+`_DEFAULT_CONCURRENT_TOOL_TIMEOUT_S` (`agent/tool_executor.py:131`). So a
+4-hour quota park is about 35 wait turns, and a 2-hour Codex run about 17.
+
+The budget looks safe, but this is read from records, not from a run that hit a
+cap:
+- The fenced terminal's env carried `HERMES_MAX_ITERATIONS=60`. That is the
+  gateway bridging `~/.hermes/config.yaml`.
+- The lane session recorded `max_iterations: 500`, which is the default
+  (`agent/iteration_budget.py:4`). The lane profile sets no `agent.max_turns`.
+
+Attempt 1's CHUNK-1 used 12 tool calls. Triage when the next session opens.
+*Found by S6d's design pass; outside P24.* *S6d's review found the sharp end of the same cap. A **foreground** call dies at
+420 s, so the verifier's review program, whose CI wait alone is 600 s, could
+never have returned its envelope. A wait also shows only the last 2000
+characters of output, which cut off the lane's envelope. Both are fixed in S6d
+(review F2, F3): both programs launch in the background and print one compact
+envelope line, which the driver reads with `process_manage log`. The turn
+budget itself stays parked.*
+
+**P27 (S6d). `lane/terminators-match-the-substrate` is blind on the installed
+Hermes.** With `--with-hermes` it fails on `main` @ `6ab619f`:
+"toolsets-source-yielded-no-kanban-tools". The installed `toolsets.py` moved,
+and the reader extracts nothing. Without the flag the case skips, so the 12-skip
+baseline hides the failure. It is the only check that matches the `forge-lane`
+terminator table against the kernel's tools, and that is the table S6d rewrote.
+*Folded into S6d at its close, because no session opens between S6d and run A's
+relaunch to triage it.*
+
+**P28 (S6d review). Hermes force-loads its generic `sdlc-review` skill into
+every review claim.** `kanban_db_dispatch.py` (~2083) appends `sdlc-review` to a
+review claim's skills. `kanban.review_dispatch` defaults to true and is unset on
+this host. That skill and the verifier SOUL disagree:
+
+| | `sdlc-review` | Verifier SOUL |
+|---|---|---|
+| The diff | Read it | Never read it |
+| An approval | `kanban_complete` | Recommend-only holds with `kanban_block` |
+
+A cheap driver that followed the skill could complete an unmerged PR's card,
+which is ADR-0008's failure. No verifier had ever been dispatcher-spawned, and
+every verifier case claims its review directly, so nothing saw it. Adding the
+skill to `skills.disabled` is not a fix: `forge-lane` is already disabled for
+the verifier, so both preloads would be missing, and
+`finalize_preloaded_skills` would crash every verifier spawn.
+
+*Folded into S6d at its close (review F6), on the same ground as P27. Measured
+in an isolated `HERMES_HOME` with Hermes's own `sync_skills` and
+`build_preloaded_skills_prompt`:*
+- *A profile-local `skills/devops/sdlc-review/SKILL.md` wins, because the
+  profile's skills dir is searched before external dirs and the bundled copy.*
+- *Hermes's re-sync treats that file as user-customised and leaves it alone.*
+
+*So `forge-verifier` now ships an identity-only shim that `profiles-bootstrap.sh`
+installs. `hermes skills reset` restores the generic copy (a simulated `hermes update` re-sync left the shim alone);
+`config/skill-shim-in-sync/forge-verifier` turns red when that happens.*
 
 ## Open questions
 

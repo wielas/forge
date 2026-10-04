@@ -84,15 +84,36 @@ the card as the model saw it. Usually the card was ambiguous, not the model stup
 primary,secondary until …` hit a Codex usage limit and is sleeping until the
 provider's own stated reset, then resuming the same session (ADR-0016). Leave
 it. `~/.forge/lane-parks/<task-id>.json` says which windows blocked, when it
-wakes, and which session it will resume; the same facts are on the card as a
-`PARK-COMMENT` comment. Two things are worth checking rather than assuming:
-that heartbeats are still landing (a window can outlast the 4h stale timeout,
-and the heartbeat is all that keeps the card alive), and — if you need the
+wakes, and which session it will resume. **The park is not on the card while it
+lasts** — a worker's terminal cannot write the board (epic S6d), so the lane
+no longer posts a `PARK-COMMENT`; the runner's own log has it
+(`PARK-COMMENT env: codex usage limit on …`, under the run's scratch
+directory), and the lane's hand-off summary says `Parked N× on a Codex usage
+limit (<windows>)` once it is done. Two things are worth checking rather than
+assuming: that heartbeats are still landing (they now come from the driver
+process, one `heartbeat` event about a minute apart, not from the lane's own
+script; a window can outlast the 4h stale timeout, and the heartbeat is all that
+keeps the card alive), and — if you need the
 worktree back sooner — that you set `FORGE_QUOTA_MAX_WAIT`, since the default
 is to wait however long it takes. **It is a whole number of seconds**, not a
 duration: `14400`, not `4h`. Every knob is validated at startup and a value the
 runner cannot read exits `2` naming the knob, rather than quietly dropping the
 bound you thought you had set.
+
+**A lane card blocked `other: handoff-integrity — the review hand-off of <id> was
+refused by the kernel`** did all the work — the branch is pushed and the PR is open —
+and only the driver's `kanban_request_review` call failed (typically its arguments
+were retyped wrongly). **Do not just `unblock` it:** a blocked card with no hand-off
+re-enters the lane, which runs Codex again over finished work. The block's reason names
+the recovery; it is the operator's tool, from your own shell:
+
+```bash
+~/.forge/repo/scripts/lane-handoff.sh <id> --board <board> --summary "<one line>" \
+  --metadata ~/.forge/lane-sessions/<board>-<id>.metadata.json
+```
+
+That file is the envelope the lane validated, kept on the host; the script validates it
+again, unblocks the card, and hands it to `forge-verifier` with the reviewer named.
 
 **Things that look like bugs but aren't:** a card that reverted to `ready` was
 *reclaimed* (no heartbeat in an hour) — benign, it re-runs. A card that refuses to

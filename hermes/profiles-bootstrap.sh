@@ -245,6 +245,21 @@ for spec in "${PROFILES[@]}"; do
     echo "  WARN no SOUL file at $soul"
   fi
 
+  # A PROFILE-LOCAL SKILL THAT SHADOWS ONE HERMES FORCE-LOADS. The dispatcher adds `sdlc-review` to
+  # EVERY review claim (kanban_db_dispatch.py: `if lane == "review": claimed.skills += ["sdlc-review"]`),
+  # and the bundled skill tells a reviewer to read the diff and `kanban_complete` on approve — the
+  # opposite of forge-verifier's SOUL. It cannot be disabled (with forge-lane already disabled for the
+  # verifier, both preloads would be missing and `finalize_preloaded_skills` raises: every verifier
+  # spawn would crash). A skill in the PROFILE's own skills dir wins over the bundled sync and over
+  # external dirs, and Hermes's manifest sync leaves a user-customised copy alone (measured, S6d F6);
+  # so the shim is written over the bundled copy's path. Identity only, no methodology (ADR-0010/L3).
+  shim="$HERE/profiles/$name.sdlc-review.SKILL.md"
+  shim_dest="$HERMES_ROOT/profiles/$name/skills/devops/sdlc-review/SKILL.md"
+  if [ -f "$shim" ]; then
+    if [ "$DRY" = 1 ]; then echo "  + cp $shim -> $shim_dest"
+    else mkdir -p "$(dirname "$shim_dest")" && cp "$shim" "$shim_dest" && echo "  wrote $shim_dest"; fi
+  fi
+
   cfg="$HERMES_ROOT/profiles/$name/config.yaml"
   if [ "$DRY" = 1 ]; then
     echo "  + write $cfg :"
