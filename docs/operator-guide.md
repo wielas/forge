@@ -100,6 +100,21 @@ duration: `14400`, not `4h`. Every knob is validated at startup and a value the
 runner cannot read exits `2` naming the knob, rather than quietly dropping the
 bound you thought you had set.
 
+**A lane card blocked `other: handoff-integrity — the review hand-off of <id> was
+refused by the kernel`** did all the work — the branch is pushed and the PR is open —
+and only the driver's `kanban_request_review` call failed (typically its arguments
+were retyped wrongly). **Do not just `unblock` it:** a blocked card with no hand-off
+re-enters the lane, which runs Codex again over finished work. The block's reason names
+the recovery; it is the operator's tool, from your own shell:
+
+```bash
+~/.forge/repo/scripts/lane-handoff.sh <id> --board <board> --summary "<one line>" \
+  --metadata ~/.forge/lane-sessions/<board>-<id>.metadata.json
+```
+
+That file is the envelope the lane validated, kept on the host; the script validates it
+again, unblocks the card, and hands it to `forge-verifier` with the reviewer named.
+
 **Things that look like bugs but aren't:** a card that reverted to `ready` was
 *reclaimed* (no heartbeat in an hour) — benign, it re-runs. A card that refuses to
 re-spawn hit the **respawn guard**: quota/auth error, a recent success, or a

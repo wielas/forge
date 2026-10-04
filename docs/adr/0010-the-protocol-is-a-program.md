@@ -119,9 +119,16 @@ re-enacted each run.
 > used to prove after a transition is the tool's own result now, and what a
 > comment used to carry (the verdict, the park) is a host file or the hand-off
 > summary: a worker's terminal cannot write the board at all. The rest of D10.3
-> stands: the model still decides nothing the program can compute, and does not
-> retype a payload the program can name (the lane's validated envelope and the
-> verdict are kept on the host and compared or read by programs, not by models).
+> stands: the model still decides nothing the program can compute. **What does
+> not stand is that the model retypes nothing** — it DOES retype the call's
+> arguments (the lane's metadata, a hold's reason), which is the price of the
+> fence. What keeps that honest is that a program checks the copy: the verifier
+> compares the metadata the kernel stored on the card with the envelope the lane
+> validated and kept on the host before it reviews anything, tolerating exactly
+> the two rewrites the kernel makes (its session id, and redaction), and the
+> verdict never passes through the driver at all (a host file the merge-watcher
+> reads). A payload the program cannot check, or cannot keep off the driver, is a
+> design smell here.
 > Executed by `lane/*` and `verifier/*` on the installed kernel in an isolated
 > `HERMES_HOME`, with the fenced environment built by Hermes's own
 > `delegated_child_subprocess_env`.
