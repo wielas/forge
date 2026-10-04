@@ -9666,7 +9666,8 @@ VLOGH
     #   (a) the mark is in the wrong place: nothing before it is what the lane validated;
     #   (b) the right prefix, but the stored value is LONGER than the validated one — a mask never adds text.
     vmeta="$(printf '%s' "$vmeta_plain" | jq -c '. + {changed_files: ["src/zzz..."]}')"
-    _vboard; jq '.changed_files = ["src/a.py"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
+    # (the validated name is LONGER than the stored one, so only the position of the mark can refuse it)
+    _vboard; jq '.changed_files = ["src/a_long_module_name.py"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
       && mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
     vrc="$(VPERFORM=0 _vrun)"
     [ "$vrc" = 3 ] || vdetail="$vdetail a-mark-in-the-wrong-place-was-accepted-as-a-redaction(rc=$vrc)"
