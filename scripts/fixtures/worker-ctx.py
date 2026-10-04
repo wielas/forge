@@ -38,6 +38,12 @@ needs, from the INSTALLED Hermes and never by hand:
       it, read from the installed modules, never assumed: `completion_output_chars` (a wait's output is
       cut to this tail) and `foreground_tool_timeout_s` (a foreground tool call dies at this).
 
+  preload-skill <profile-home> <skill>
+      What a spawn's `--skills <skill>` preload serves from that profile home: Hermes's own startup
+      sync of its bundled skills (`sync_skills`), then `build_preloaded_skills_prompt`. Prints JSON
+      {loaded, missing, prompt}. (A review claim force-loads `sdlc-review`; this is how a case sees
+      which copy wins.) Refuses the operator's real home.
+
   denied-verbs
       The `hermes kanban` verbs the installed Hermes refuses from a fenced terminal
       (`_DELEGATED_CHILD_DENIED_ACTIONS`), `|`-joined — the set a program run by a worker
@@ -226,6 +232,20 @@ def cmd_driver_run(argv):
     return 0 if waited.get("status") == "exited" else 12
 
 
+def cmd_preload_skill(argv):
+    if len(argv) != 2:
+        die("usage: preload-skill <profile-home> <skill>")
+    home, skill = argv
+    os.environ["HERMES_HOME"] = home
+    isolated_home()
+    from tools import skills_sync
+    skills_sync.sync_skills(quiet=True)
+    from agent.skill_commands import build_preloaded_skills_prompt
+    prompt, loaded, missing = build_preloaded_skills_prompt([skill])
+    print(json.dumps({"loaded": loaded, "missing": missing, "prompt": prompt}))
+    return 0
+
+
 def cmd_denied_verbs(argv):
     try:
         from hermes_cli.kanban import _DELEGATED_CHILD_DENIED_ACTIONS as denied
@@ -237,13 +257,14 @@ def cmd_denied_verbs(argv):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs", "driver-run"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs", "driver-run", "preload-skill"):
         die(__doc__.split("\n\n")[0] + " — see the module docstring")
     cmd, rest = sys.argv[1], sys.argv[2:]
-    if cmd != "denied-verbs":
+    if cmd not in ("denied-verbs", "preload-skill"):
         isolated_home()
     sys.exit({"fenced-env": cmd_fenced_env, "perform": cmd_perform, "denied-verbs": cmd_denied_verbs,
-              "driver-run": cmd_driver_run, "claim-review": cmd_claim_review}[cmd](rest) or 0)
+              "driver-run": cmd_driver_run, "preload-skill": cmd_preload_skill,
+              "claim-review": cmd_claim_review}[cmd](rest) or 0)
 
 
 if __name__ == "__main__":

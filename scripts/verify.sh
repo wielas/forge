@@ -1738,6 +1738,18 @@ run_config_group() {
         "this host runs profile '$p' and this repo no longer ships hermes/profiles/$p.SOUL.md — it keeps whatever identity it was last given; retire it once no card is in review for it"
     fi
 
+    # THE SKILL SHIM, LIVE HALF (epic S6d F6). Hermes force-loads `sdlc-review` on every review claim; a
+    # profile that ships `hermes/profiles/<p>.sdlc-review.SKILL.md` must carry it over the bundled
+    # copy, or its reviewer is told to read the diff and `kanban_complete` an approval. Same failure
+    # shape as soul-in-sync: right in git, stale on the worker, closed only by profiles-bootstrap.sh.
+    if [ -f "hermes/profiles/$p.sdlc-review.SKILL.md" ]; then
+      if diff -q "$HOME/.hermes/profiles/$p/skills/devops/sdlc-review/SKILL.md" "hermes/profiles/$p.sdlc-review.SKILL.md" >/dev/null 2>&1; then
+        ok "skill-shim-in-sync/$p"
+      else
+        bad "skill-shim-in-sync/$p" "the live sdlc-review is not the shim git ships — a review claim would load Hermes's generic reviewer skill; run ./hermes/profiles-bootstrap.sh"
+      fi
+    fi
+
     # The live half of the driver pin. Same failure shape as soul-in-sync: the
     # value can be correct in git and stale on the worker, and only a republish
     # closes the gap. Reported as a WARN-equivalent skip rather than a failure
@@ -1795,6 +1807,52 @@ run_config_group() {
     bad "lane-skill-scope" "start-chunk/end-chunk are enabled for forge-codex-lane"
   else
     ok "lane-skill-scope"
+  fi
+
+  # F6 (epic S6d): HERMES FORCE-LOADS `sdlc-review` ON EVERY REVIEW CLAIM, and the bundled one is the
+  # opposite of forge-verifier's SOUL: read the diff, `kanban_complete` on approve. A cheap driver
+  # following it could complete the card of a PR nobody merged. It cannot simply be disabled — with
+  # forge-lane already disabled for the verifier, BOTH preloads would be missing and
+  # `finalize_preloaded_skills` raises, so every verifier spawn would crash. So the profile ships a
+  # same-named shim (identity only, ADR-0010/L3) written over the bundled copy's path.
+  # MEASURED, in an isolated HERMES_HOME, not assumed: with the bundled copy seeded, a `--skills
+  # sdlc-review` preload serves the generic skill; with the shim in the profile's own skills dir it
+  # serves ONLY the shim (the profile's dir is searched before external dirs and the bundled sync),
+  # and Hermes's manifest sync leaves a user-customised copy alone, before or after. This case runs
+  # the REAL profiles-bootstrap.sh into a scratch home and asks Hermes's own preload what each
+  # profile would be given; forge-codex-lane has no shim and is the control that the generic text
+  # is what would otherwise load.
+  local sh_home="$TMPROOT/shim-home" sh_detail="" sh_out sh_p
+  if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$WCTX_PY" ]; then
+    skip "the-review-spawn-preloads-the-shim" "hermes (and its venv python) not installed"
+  else
+    rm -rf "$sh_home"; mkdir -p "$sh_home"
+    HERMES_HOME="$sh_home" bash ./hermes/profiles-bootstrap.sh >"$sh_home.log" 2>&1 \
+      || sh_detail="$sh_detail bootstrap-failed($(tail -1 "$sh_home.log"))"
+    cmp -s "hermes/profiles/forge-verifier.sdlc-review.SKILL.md" "$sh_home/profiles/forge-verifier/skills/devops/sdlc-review/SKILL.md" \
+      || sh_detail="$sh_detail the-bootstrap-did-not-install-the-shim"
+    for sh_p in forge-verifier forge-codex-lane; do
+      sh_out="$("$WCTX_PY" "$WCTX" preload-skill "$sh_home/profiles/$sh_p" sdlc-review 2>"$sh_home.err")"
+      if [ "$sh_p" = forge-verifier ]; then
+        printf '%s' "$sh_out" | jq -e '(.loaded == ["sdlc-review"]) and (.missing == [])
+            and (.prompt | contains("sdlc-review — as forge-verifier"))
+            and (.prompt | contains("Review Lenses") | not) and (.prompt | contains("`kanban_complete` | ") | not)' >/dev/null 2>&1 \
+          || sh_detail="$sh_detail the-verifiers-review-spawn-is-not-given-only-the-shim($(printf '%s' "$sh_out" | jq -c '[.loaded,.missing]' 2>/dev/null) $(head -c 100 "$sh_home.err"))"
+      else
+        printf '%s' "$sh_out" | jq -e '(.loaded == ["sdlc-review"]) and (.prompt | contains("Review Lenses"))
+            and (.prompt | contains("forge-verifier") | not)' >/dev/null 2>&1 \
+          || sh_detail="$sh_detail the-control-is-not-the-generic-skill"
+      fi
+    done
+    # a second sync (Hermes runs one at every start) leaves the shim alone
+    "$WCTX_PY" "$WCTX" preload-skill "$sh_home/profiles/forge-verifier" sdlc-review 2>/dev/null \
+      | jq -e '.prompt | contains("sdlc-review — as forge-verifier")' >/dev/null 2>&1 \
+      || sh_detail="$sh_detail a-re-sync-replaced-the-shim"
+    if [ -z "$sh_detail" ]; then
+      ok "the-review-spawn-preloads-the-shim (the real profiles-bootstrap.sh into a scratch home: a --skills sdlc-review preload serves forge-verifier ONLY the identity shim, survives Hermes's own re-sync, and serves forge-codex-lane — the control — the generic reviewer skill)"
+    else
+      bad "the-review-spawn-preloads-the-shim" "the review spawn Hermes force-loads sdlc-review into must be given forge-verifier's shim, not the generic reviewer skill —$sh_detail"
+    fi
   fi
 
   # F1: a worktree card with no workspace_path anchors on the board's
@@ -2505,6 +2563,8 @@ config/external-dirs/<profile>    points at this checkout's skills/, or ~/.forge
 config/soul-in-sync/<profile>     live ~/.hermes SOUL matches the one in git
 config/model-pin-live/<profile>   live model.default matches the pin that would republish it
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
+config/skill-shim-in-sync/<profile>  the live sdlc-review a review claim force-loads is the shim git ships (F6)
+config/the-review-spawn-preloads-the-shim  the REAL profiles-bootstrap.sh into a scratch home: a --skills sdlc-review preload serves forge-verifier only the identity shim (surviving a re-sync); forge-codex-lane, the control, gets the generic reviewer skill (F6)
 config/board-default-workdir      every forge board has a worktree anchor
 config/per-profile/<assignee>             a declared assignee with no profile on disk is named, not trusted (F43)
 config/per-profile                        the per-profile sweep could not run at all (no hermes, or no forge-* profiles)

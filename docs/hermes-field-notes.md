@@ -396,6 +396,43 @@ runs under a 30 s activity thread that heartbeats the claim (`heartbeat_claim`, 
 `heartbeat` event) at least a minute apart; run A's board shows eleven of them
 while all of the lane script's own heartbeats were refused.
 
+**What a driver is shown of a background program (epic S6d, review F2/F3).** A foreground
+tool call dies at 420 s (`agent/tool_executor.py`, `_DEFAULT_CONCURRENT_TOOL_TIMEOUT_S`;
+run A's driver read "Error executing tool 'process_manage': timed out after 420.0s"
+after asking for a 1800 s wait), so anything longer than that is launched with
+`terminal(background=true, pty=true)` and waited on in short `process_manage wait`
+calls — each returns `status: timeout` while the process lives. The launch result's
+`exit_code: 0` is the launcher's; the program's is on the wait result whose `status`
+is `exited`. **A wait's `output` is only the last 2000 characters**
+(`tools/process_registry.py` `COMPLETION_OUTPUT_CHARS`, with `output_cut` giving how
+many were dropped); `process_manage log` returns the last 200 lines (`limit`). So a
+program whose stdout is a JSON object the driver must act on prints it as ONE
+compact line, last, and the driver reads it with `log`: run A's own 1178-byte
+metadata made a pretty-printed envelope 2379 characters and the wait lost its
+`terminate` and `task_id`. pty output carries `tput: No value for $TERM` lines before
+anything the program prints. `process_manage` is a deferred tool (reach it through
+`tool_search` / `tool_call`); `execute_code` is refused in an unattended session.
+
+**Hermes force-loads `sdlc-review` on every review claim, and a profile-local copy
+shadows it (measured, epic S6d, review F6).** `kanban_db_dispatch.py` adds
+`sdlc-review` to the skills of any card claimed from `review`. The bundled skill
+tells a reviewer to read the diff and `kanban_complete` on approve — for
+forge-verifier, whose approval is a hold the merge-watcher completes, the opposite
+of its SOUL. It cannot be put in `skills.disabled`: forge-lane is already disabled
+for the verifier, so both preloads would be missing and `finalize_preloaded_skills`
+raises ("every requested skill was unknown"), crashing every verifier spawn. Measured
+in an isolated HERMES_HOME with Hermes's own `build_preloaded_skills_prompt`: with the
+bundled copy seeded (it lives in each profile's own `skills/devops/sdlc-review/`, put
+there by the startup sync), the preload serves the generic skill; overwriting that
+path with a shim makes the preload serve ONLY the shim; a second `sync_skills`, or
+one run after the shim was written first, leaves it alone (`skipped`, the manifest
+treats a customised copy as the user's). The search order is project dirs, then the
+profile's own skills dir, then external dirs, first name wins. So
+`hermes/profiles/forge-verifier.sdlc-review.SKILL.md` is installed over that path by
+`profiles-bootstrap.sh`, and `config/the-review-spawn-preloads-the-shim` runs the real
+bootstrap into a scratch home and asks the preload. `hermes update` and
+`hermes skills reset` are the two things that could put the generic copy back.
+
 **Crash-after-push is recoverable when the worktree and intent are durable.**
 Measured on card `t_6e2b8528`: run 8 pushed SHA `88ad60f`, recorded that SHA in
 a card comment, then was killed with signal 9 before PR creation. The dispatcher
