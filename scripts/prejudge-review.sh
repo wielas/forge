@@ -316,13 +316,15 @@ if board_live; then
     #   * every other leaf must be equal, or differ ONLY as a redaction does: the stored copy
     #     carries a mark (`***` or `...`) and everything BEFORE the mark is the same text the
     #     lane validated (`secrets/API_KEY=***` against `secrets/API_KEY=sk-…`). A mark that
-    #     replaces text which was not there is an edit, not a redaction.
+    #     replaces text which was not there is an edit, not a redaction. And a mask never
+    #     adds text: a stored value LONGER than the one the lane validated is an edit.
     # A leaf changed to anything else, a key added or removed, a list shortened: red.
     handoff_matches() {  # $1=the stored run (json) $2=the lane's host copy (file) -> 0 if the same hand-off
       jq -en --argjson run "$1" --slurpfile host "$2" '
         def redacted(a; b): (a | type) == "string" and (b | type) == "string" and a != b
                             and ((a | capture("^(?<p>.*?)(?:[*][*][*]|[.][.][.])") // null) as $m
-                                 | $m != null and (b | startswith($m.p)));
+                                 | $m != null and (b | startswith($m.p))
+                                   and ((a | length) <= (b | length)));   # a mask never ADDS text
         def texty: [.decisions, .debt, .card_proposals] | map(length);
         ($run.metadata | del(.worker_session_id)) as $a
         | ($host[0] | del(.worker_session_id)) as $b

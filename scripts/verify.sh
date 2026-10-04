@@ -9660,11 +9660,21 @@ VLOGH
     : > "$vbin/claude.log"; vrc="$(VPERFORM=0 _vrun)"
     { [ "$vrc" = 3 ] && jq -e '.reason | test("^other: handoff-integrity")' "$vbin/out.json" >/dev/null 2>&1; } \
       || vdetail="$vdetail a-changed-number-of-decisions-was-not-caught(rc=$vrc)"
-    # …and a redaction-SHAPED edit is not a redaction: a mark that replaces text which was never there
-    _vboard; jq '.changed_files[0] = "src/zzz..."' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
+    # …and a redaction-SHAPED edit is not a redaction. The STORED value (what the driver sent) carries the
+    # mark here, and the host copy (what the lane validated) is not secret-shaped, so nothing the
+    # installed Hermes redacts could have produced the difference. Two shapes, each refused:
+    #   (a) the mark is in the wrong place: nothing before it is what the lane validated;
+    #   (b) the right prefix, but the stored value is LONGER than the validated one — a mask never adds text.
+    vmeta="$(printf '%s' "$vmeta_plain" | jq -c '. + {changed_files: ["src/zzz..."]}')"
+    _vboard; jq '.changed_files = ["src/a.py"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
       && mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
     vrc="$(VPERFORM=0 _vrun)"
-    [ "$vrc" = 3 ] || vdetail="$vdetail a-mark-that-redacts-nothing-was-accepted(rc=$vrc)"
+    [ "$vrc" = 3 ] || vdetail="$vdetail a-mark-in-the-wrong-place-was-accepted-as-a-redaction(rc=$vrc)"
+    vmeta="$(printf '%s' "$vmeta_plain" | jq -c '. + {changed_files: ["src/a.py***"]}')"
+    _vboard; jq '.changed_files = ["src/a.py"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
+      && mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
+    vrc="$(VPERFORM=0 _vrun)"
+    [ "$vrc" = 3 ] || vdetail="$vdetail a-stored-value-longer-than-the-validated-one-was-accepted-as-a-redaction(rc=$vrc)"
     vmeta="$vmeta_plain"
     # No host copy (a card handed off before the deploy): reviewed, and the hold SAYS it was not checked.
     _vboard; rm -f "$vstate/lane-sessions/vlab-$vP.metadata.json"; vrc="$(_vrun)"
