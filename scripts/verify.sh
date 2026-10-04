@@ -2537,7 +2537,7 @@ lane/role-boundary-prepended      the contract carries body + operator comments 
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/terminator-set-is-closed     kanban_request_review only as the call the envelope names; _changes, _complete and _create named forbidden, not merely unlisted
 lane/the-claim-is-kept-alive-by-the-driver  the installed Hermes still heartbeats a worker's claim from every running tool call (lane.sh no longer heartbeats)
-lane/terminators-match-the-substrate    every terminator the installed Hermes exposes is accounted for in §7 (--with-hermes)
+lane/terminators-match-the-substrate    every terminator the installed Hermes exposes (imported, not parsed: P27) is accounted for in §2; the four the table needs exist; every tool §2 and the verifier SOUL name exists
 lane/blast/missing-run-capture    a check with no current-run immutable baseline cannot pass
 lane/blast/capture-is-single-use  Codex cannot replace the pre-Codex baseline
 lane/blast/check-is-single-use    a completed final audit cannot be overwritten or replayed
@@ -3283,71 +3283,55 @@ run_lane_group() {
   # the safe direction — it costs one name in the list below — and it is the
   # only shape that notices 0.21's next terminator instead of re-learning this
   # lesson in production.
-  # TWO sources, unioned, because they merely overlap. `EXPOSED_TOOLS` in the
-  # MCP transport is the codex_app_server subset (11 kanban tools); toolsets.py's
-  # `kanban` toolset carries 14, and IT is what a lane actually resolves from —
-  # ~/.hermes/profiles/forge-codex-lane/config.yaml declares
-  # `toolsets: [terminal, file, kanban, memory, skills]`. Reading only the MCP
-  # list would miss a terminator added to the toolset and not to the transport,
-  # which is F65's shape reproduced inside the check written to prevent it.
-  # Unioned, neither source moving can silently shrink coverage.
-  local hermes_root="$HOME/.hermes/hermes-agent"
-  local mcp_src="$hermes_root/agent/transports/hermes_tools_mcp_server.py"
-  local ts_src="$hermes_root/toolsets.py"
+  # TWO sources, unioned, because they merely overlap: `EXPOSED_TOOLS` in the MCP transport is the
+  # codex_app_server subset, and the `kanban` TOOLSET (toolsets.py) is the superset a lane actually
+  # resolves from (~/.hermes/profiles/forge-codex-lane/config.yaml declares
+  # `toolsets: [terminal, file, kanban, memory, skills]`). Reading only one would miss a terminator
+  # added to the other, which is F65's shape reproduced inside the check written to prevent it.
+  #
+  # THEY ARE ASKED OF THE INSTALLED HERMES, NOT PARSED OUT OF ITS SOURCE (P27). This case used to
+  # `awk` toolsets.py for a `"kanban": {` literal; Hermes 0.21.5 builds the entry as
+  # `"kanban": _ts(..., [t for t in _HERMES_CORE_TOOLS if t.startswith("kanban_")])`, the awk found
+  # nothing, and the case FAILED on a clean baseline once `--with-hermes` was given (it skipped
+  # without it, which is why nobody saw). Importing the module cannot be fooled by how the list is
+  # spelled. It reads two data structures and runs nothing, so it no longer needs `--with-hermes`.
+  # A reader that yields nothing, or an import that raises, is a FAIL — never a skip, never a pass.
+  local hermes_root="$HOME/.hermes/hermes-agent" tm_detail="" tm_exposed tm_ktool tm_unaccounted=""
   local kanban_nonterminating=" kanban_show kanban_list kanban_comment kanban_heartbeat kanban_create kanban_link kanban_unblock kanban_attach kanban_attach_url kanban_attachments "
-  # Only a missing CHECKOUT skips. A source that is present but yields nothing
-  # is a FAIL: a control that could not run has not passed (F65/F66), and
-  # "the other source still had the names" is precisely how coverage shrinks
-  # unnoticed. A file missing from a present checkout means upstream moved it.
-  if [ "$WITH_HERMES" != 1 ]; then
-    skip "terminators-match-the-substrate" "--with-hermes not given"
-  elif [ ! -d "$hermes_root" ]; then
-    skip "terminators-match-the-substrate" "hermes source not found"
+  if [ ! -d "$hermes_root" ] || [ ! -x "$WCTX_PY" ]; then
+    skip "terminators-match-the-substrate" "hermes source or its venv python not found"
   else
-    # Quoted entries only, and windowed to the declaring list in each file:
-    # both name kanban tools in nearby prose comments, and matching those
-    # would enumerate the wrong set.
-    local mcp_tools="" ts_tools="" exposed unaccounted="" ktool src_detail=""
-    if [ ! -f "$mcp_src" ]; then
-      src_detail="$src_detail mcp-source-missing($mcp_src)"
+    tm_exposed="$( cd "$hermes_root" && "$WCTX_PY" - 2>"$TMPROOT/tm.err" <<'TMPY'
+import sys
+sys.path.insert(0, ".")
+from toolsets import TOOLSETS
+from agent.transports.hermes_tools_mcp_server import EXPOSED_TOOLS
+names = set(TOOLSETS["kanban"]["tools"]) | {t for t in EXPOSED_TOOLS if str(t).startswith("kanban_")}
+print("\n".join(sorted(n for n in names if n.startswith("kanban_"))))
+TMPY
+    )"
+    if [ -z "$tm_exposed" ]; then
+      bad "terminators-match-the-substrate" "the installed Hermes yielded no kanban tools ($(tail -1 "$TMPROOT/tm.err" 2>/dev/null)) — the reader broke, which is not evidence about the skill: fix the reader, do not let this stand in for it"
     else
-      mcp_tools="$(awk '/^EXPOSED_TOOLS/{p=1} p{print} p&&/^\)/{exit}' "$mcp_src" \
-                   | grep -oE '"kanban_[a-z_]+"' | tr -d '"')"
-      [ -n "$mcp_tools" ] || src_detail="$src_detail mcp-source-yielded-no-kanban-tools"
-    fi
-    if [ ! -f "$ts_src" ]; then
-      src_detail="$src_detail toolsets-source-missing($ts_src)"
-    else
-      ts_tools="$(awk '/^[[:space:]]*"kanban":[[:space:]]*\{/{k=1} k&&/"tools":[[:space:]]*\[/{t=1} t{print} t&&/\]/{exit}' \
-                    "$ts_src" | grep -oE '"kanban_[a-z_]+"' | tr -d '"')"
-      [ -n "$ts_tools" ] || src_detail="$src_detail toolsets-source-yielded-no-kanban-tools"
-    fi
-    exposed="$(printf '%s\n%s\n' "$mcp_tools" "$ts_tools" | grep -E '^kanban_' | sort -u)"
-    if [ -n "$src_detail" ]; then
-      bad "terminators-match-the-substrate" \
-          "the kanban tool enumeration broke, which is not evidence about the skill — fix the reader, do not let the other source stand in for it:$src_detail"
-    elif [ -z "$sec7_flat" ]; then
-      bad "terminators-match-the-substrate" \
-          "forge-lane §7 did not delimit — cannot tell which terminators it accounts for"
-    else
-      # Subtract the coordination verbs that hand control straight back; every
-      # name left ENDS the run and §7 must account for it — allowed or
-      # forbidden, this case does not care which, only that a human decided.
-      # The subtraction is deliberately the wrong way round: a new
-      # NON-terminating tool trips this too. That false positive is the safe
-      # direction — it costs one name in the list above — and it is the only
-      # shape that notices 0.21's next terminator instead of re-learning this
-      # lesson in production.
-      for ktool in $exposed; do
-        case "$kanban_nonterminating" in *" $ktool "*) continue;; esac
-        printf '%s' "$sec7_flat" | grep -Fq "$ktool" \
-          || unaccounted="$unaccounted $ktool"
+      # (1) every terminator the installed Hermes exposes is accounted for in §2 — allowed or forbidden
+      for tm_ktool in $tm_exposed; do
+        case "$kanban_nonterminating" in *" $tm_ktool "*) continue;; esac
+        printf '%s' "$sec7_flat" | grep -Fq "$tm_ktool" || tm_unaccounted="$tm_unaccounted $tm_ktool"
       done
-      if [ -z "$unaccounted" ]; then
-        ok "terminators-match-the-substrate ($(printf '%s\n' "$exposed" | grep -c .) kanban tools unioned from EXPOSED_TOOLS + the kanban toolset; every terminator among them is named in §7)"
+      [ -z "$tm_unaccounted" ] || tm_detail="$tm_detail the-installed-hermes-exposes-kanban-tools-section-2-never-mentions:$tm_unaccounted"
+      # (2) the four terminators the §2 table and the verifier SOUL are written around still exist
+      for tm_ktool in kanban_complete kanban_block kanban_request_review kanban_request_changes; do
+        printf '%s\n' "$tm_exposed" | grep -qx "$tm_ktool" || tm_detail="$tm_detail the-installed-hermes-no-longer-has-$tm_ktool"
+      done
+      # (3) every tool §2 or the verifier SOUL names exists: a renamed tool is red, not a driver that
+      # calls a tool the kernel no longer has
+      for tm_ktool in $( { printf '%s' "$sec7_flat"; cat hermes/profiles/forge-verifier.SOUL.md; } | grep -oE 'kanban_[a-z_]+' | sort -u ); do
+        printf '%s\n' "$tm_exposed" | grep -qx "$tm_ktool" || tm_detail="$tm_detail forge-docs-name-a-tool-the-installed-hermes-lacks:$tm_ktool"
+      done
+      if [ -z "$tm_detail" ]; then
+        ok "terminators-match-the-substrate ($(printf '%s\n' "$tm_exposed" | grep -c .) kanban tools imported from the installed toolsets.py + EXPOSED_TOOLS; every terminator is named in §2, the four the table needs exist, and every tool §2 and the verifier SOUL name exists)"
       else
-        bad "terminators-match-the-substrate" \
-            "the installed Hermes exposes kanban tools §7 never mentions:$unaccounted — name each in §7 as allowed or forbidden, or (if it does not end the run) add it to kanban_nonterminating in this case"
+        bad "terminators-match-the-substrate" "the forge-lane §2 table / verifier SOUL and the installed Hermes disagree —$tm_detail"
       fi
     fi
   fi
