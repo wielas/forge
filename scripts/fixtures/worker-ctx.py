@@ -29,6 +29,15 @@ needs, from the INSTALLED Hermes and never by hand:
   claim-review <board> <task>
       The dispatcher's own claim of a card in `review` (`claim_review_task`).
 
+  driver-run <board> <task> <profile> <shell-command>
+      The driver launching a program the way forge-lane / the verifier SOUL tell it to, through the
+      installed tool registry in a dispatcher-GRANTED process (so Hermes's own terminal tool fences
+      the child, which is the point): `terminal(background, pty)`, then `process_manage wait` until the
+      process has exited, then `process_manage log`. Prints ONE JSON object — what the model is shown
+      at each step (`launch`, `wait` with its `output_cut`, `log`) — plus the two limits that shape
+      it, read from the installed modules, never assumed: `completion_output_chars` (a wait's output is
+      cut to this tail) and `foreground_tool_timeout_s` (a foreground tool call dies at this).
+
   denied-verbs
       The `hermes kanban` verbs the installed Hermes refuses from a fenced terminal
       (`_DELEGATED_CHILD_DENIED_ACTIONS`), `|`-joined — the set a program run by a worker
@@ -189,6 +198,34 @@ def cmd_claim_review(argv):
         return 0 if kb.claim_review_task(conn, task) is not None else 1
 
 
+def cmd_driver_run(argv):
+    if len(argv) != 4:
+        die("usage: driver-run <board> <task> <profile> <shell-command>")
+    board, task, profile, command = argv
+    granted = granted_env(board, task, profile)
+    os.environ.clear()
+    os.environ.update(granted)                 # the driver's process: granted, unfenced
+    import tools.terminal_tool, tools.process_registry          # noqa: F401  (register the tools)
+    from tools.process_registry import COMPLETION_OUTPUT_CHARS
+    from agent import tool_executor
+    out = {"completion_output_chars": COMPLETION_OUTPUT_CHARS,
+           "foreground_tool_timeout_s": getattr(tool_executor, "_DEFAULT_CONCURRENT_TOOL_TIMEOUT_S", None)}
+    launch = _call("terminal", {"command": command, "background": True, "pty": True, "workdir": os.getcwd()})
+    out["launch"] = launch
+    sid = launch.get("session_id")
+    if not sid:
+        print(json.dumps(out)); return 11
+    waited = {}
+    for _ in range(30):                        # each wait is short; a model repeats it on `timeout`
+        waited = _call("process_manage", {"action": "wait", "session_id": sid, "timeout": 10})
+        if waited.get("status") == "exited":
+            break
+    out["wait"] = waited
+    out["log"] = _call("process_manage", {"action": "log", "session_id": sid})
+    print(json.dumps(out))
+    return 0 if waited.get("status") == "exited" else 12
+
+
 def cmd_denied_verbs(argv):
     try:
         from hermes_cli.kanban import _DELEGATED_CHILD_DENIED_ACTIONS as denied
@@ -200,13 +237,13 @@ def cmd_denied_verbs(argv):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs", "driver-run"):
         die(__doc__.split("\n\n")[0] + " — see the module docstring")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd != "denied-verbs":
         isolated_home()
     sys.exit({"fenced-env": cmd_fenced_env, "perform": cmd_perform, "denied-verbs": cmd_denied_verbs,
-              "claim-review": cmd_claim_review}[cmd](rest) or 0)
+              "driver-run": cmd_driver_run, "claim-review": cmd_claim_review}[cmd](rest) or 0)
 
 
 if __name__ == "__main__":

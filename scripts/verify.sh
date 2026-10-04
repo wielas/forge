@@ -2536,6 +2536,7 @@ lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_L
 lane/role-boundary-prepended      the contract carries body + operator comments + the boundary, and neither worker chatter nor the verifier's FORGE-VERDICT-V1 envelope
 lane/driver-never-authors-diff    the cheap driver cannot substitute a direct patch for codex exec
 lane/terminator-set-is-closed     kanban_request_review only as the call the envelope names; _changes, _complete and _create named forbidden, not merely unlisted
+lane/the-drivers-view-holds-the-whole-envelope  the verifier SOUL's block and the lane skill's launch line, EXECUTED through the installed terminal/process_manage tools against a stub exiting 4 with a run-A-sized envelope: the wait is cut, the log's last line is whole, rc and the call are shown, a foreground call would die (F1/F2/F3)
 lane/the-claim-is-kept-alive-by-the-driver  the installed Hermes still heartbeats a worker's claim from every running tool call (lane.sh no longer heartbeats)
 lane/terminators-match-the-substrate    every terminator the installed Hermes exposes (imported, not parsed: P27) is accounted for in §2; the four the table needs exist; every tool §2 and the verifier SOUL name exists
 lane/blast/missing-run-capture    a check with no current-run immutable baseline cannot pass
@@ -3366,6 +3367,87 @@ TMPY
     fi
   fi
 
+  # WHAT THE DRIVER IS SHOWN. Run A's reviewer found three ways the driver could be handed a program that
+  # worked perfectly and still not be able to make the call it names, none of which a text check on the
+  # SOUL or the skill sees:
+  #   F1  the SOUL's block printed `.action, .summary, .reason` — the exit code and the call never reached
+  #       the model;
+  #   F2  a foreground `terminal` call dies at 420 s (tool_executor.py:131), and a review's own CI wait
+  #       defaults to 600 s, so a review launched in the foreground is killed mid-run;
+  #   F3  `process_manage wait` returns only the LAST 2000 characters (COMPLETION_OUTPUT_CHARS), and the
+  #       call sits near the START of the envelope: with run A's own 1178-byte metadata the envelope lost
+  #       `terminate` and `task_id`, so the driver had nothing to make a call with.
+  # So this EXECUTES what the SOUL and the skill say. The block each one carries is EXTRACTED and run,
+  # as written, through the INSTALLED tool registry in a dispatcher-granted process — `terminal`
+  # (background, pty; Hermes's own terminal tool fences the child), `process_manage wait` until exited,
+  # `process_manage log` — against a stub program that prints what a real run prints: pty noise,
+  # progress lines, then a run-A-sized envelope (scripts/fixtures/envelopes/), and exits 4. What the
+  # model would be shown is then parsed. Both limits are READ from the installed modules, never assumed.
+  local dv_detail="" dv_home="$TMPROOT/driver-home" dv_stub="$TMPROOT/driver-stubhome" dv_t dv_out dv_blk dv_cmd dv_len dv_prog dv_fix dv_tid dv_ci
+  if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$WCTX_PY" ]; then
+    skip "the-drivers-view-holds-the-whole-envelope" "hermes (and its venv python) not installed"
+  else
+    rm -rf "$dv_home" "$dv_stub"; mkdir -p "$dv_home" "$dv_stub/.forge/repo/scripts"
+    HERMES_HOME="$dv_home" hermes kanban boards create drv >/dev/null 2>&1
+    dv_t="$(HERMES_HOME="$dv_home" hermes kanban --board drv create "CHUNK-1: the driver's view" --assignee forge-verifier --json 2>/dev/null | jq -r '.id // empty')"
+    HERMES_HOME="$dv_home" hermes kanban --board drv claim "$dv_t" >/dev/null 2>&1
+    dv_ci="$(sed -n 's/^WAIT_SECS=\([0-9]*\);.*/\1/p' scripts/prejudge-review.sh | head -1)"
+    dv_tid=t_da03d07a
+    for dv_prog in verifier lane; do
+      if [ "$dv_prog" = verifier ]; then
+        dv_fix=scripts/fixtures/envelopes/verifier-recommend.json
+        dv_blk="$(awk '/^```bash$/{f=1;next} /^```$/{f=0} f' hermes/profiles/forge-verifier.SOUL.md)"
+        dv_cmd="export HOME='$dv_stub' pr_url=https://github.com/wielas/Squatfather/pull/2 task_id=$dv_tid HERMES_KANBAN_BOARD=drv
+$dv_blk"
+        cp /dev/null "$dv_stub/.forge/repo/scripts/lane.sh"
+        dv_stubfile="$dv_stub/.forge/repo/scripts/prejudge-review.sh"
+      else
+        dv_fix=scripts/fixtures/envelopes/lane-run-a.json
+        dv_blk="$(awk '/^[[:space:]]*```bash$/{f=1;next} /^[[:space:]]*```$/{f=0} f' skills/forge-lane/SKILL.md | head -1 | sed -e 's/^[[:space:]]*//' -e "s/<task id>/$dv_tid/")"
+        dv_cmd="export HOME='$dv_stub'
+$dv_blk"
+        dv_stubfile="$dv_stub/.forge/repo/scripts/lane.sh"
+      fi
+      [ -n "$dv_blk" ] || { dv_detail="$dv_detail $dv_prog:no-fenced-block-to-extract(went-blind)"; continue; }
+      cat > "$dv_stubfile" <<DVSTUB
+#!/usr/bin/env bash
+for i in 1 2 3 4 5; do echo "tput: No value for \$TERM and no -T specified" >&2; done
+echo "12:00:01Z progress: gate clear, merged tree green, the scorer is running" >&2
+echo "12:00:09Z progress: stage 5, naming the call" >&2
+echo "fence: marker=\${HERMES_DELEGATED_CHILD_CONTEXT:+set} task=\${HERMES_KANBAN_TASK:-unset}" >&2
+cat "$REPO_ROOT/$dv_fix"
+exit 4
+DVSTUB
+      chmod +x "$dv_stubfile"
+      dv_len="$(wc -c < "$dv_fix" | tr -d ' ')"
+      dv_out="$(HERMES_HOME="$dv_home" "$WCTX_PY" "$WCTX" driver-run drv "$dv_t" forge-verifier "$dv_cmd" 2>"$dv_home/driver-run.err")"
+      printf '%s' "$dv_out" | jq -e --arg tid "$dv_tid" --argjson len "$dv_len" --argjson ci "${dv_ci:-0}" '
+          (.launch.exit_code == 0)                                       # the launcher'"'"'s, not the program'"'"'s
+          and (.wait.status == "exited") and (.wait.exit_code == 4)        # the program'"'"'s
+          and (.completion_output_chars < $len and (.wait.output_cut // 0) > 0)  # the hazard is real here
+          and ((.wait.output | split("\n") | map(select(length > 0)) | last | try fromjson catch null) == null)
+          and (.foreground_tool_timeout_s < $ci)                           # a foreground review would die
+          and (.log.output | contains("fence: marker=set task=unset"))     # Hermes'"'"'s own terminal fenced the child
+          and ((.log.output | split("\n") | map(select(length > 0)) | last | fromjson) as $e
+               | $e.rc == 4 and ($e.terminate.tool | startswith("kanban_")) and $e.terminate.args.task_id == $tid
+                 and $e.on_error.tool == "kanban_block" and $e.on_error.args.task_id == $tid)' >/dev/null 2>&1 \
+        || dv_detail="$dv_detail $dv_prog:the-driver-was-not-shown-rc-and-the-call($(printf '%s' "$dv_out" | jq -c '[.launch.exit_code,.wait.status,.wait.exit_code,.wait.output_cut,.completion_output_chars,.foreground_tool_timeout_s]' 2>/dev/null) $(head -c 160 "$dv_home/driver-run.err" 2>/dev/null))"
+    done
+    # F2: both documents tell the driver to launch in the BACKGROUND, and the SOUL says why
+    grep -Fq 'background=true' hermes/profiles/forge-verifier.SOUL.md && grep -Fq '420 s' hermes/profiles/forge-verifier.SOUL.md \
+      || dv_detail="$dv_detail the-soul-does-not-tell-the-driver-to-background-the-review"
+    sed -n '/^## 1\. Run the protocol/,/^## 2\. Terminate/p' skills/forge-lane/SKILL.md | grep -Fq 'background: true' \
+      || dv_detail="$dv_detail the-skill-does-not-tell-the-driver-to-background-the-lane"
+    # …and the claims the skill makes about the runtime still hold in the installed source
+    grep -rq 'approvals.single_query_mode' "$HOME/.hermes/hermes-agent/tools" 2>/dev/null \
+      || dv_detail="$dv_detail execute_code-is-no-longer-blocked-in-an-unattended-session(the-skill-says-it-is)"
+    if [ -z "$dv_detail" ]; then
+      ok "the-drivers-view-holds-the-whole-envelope (the verifier SOUL's block and the lane skill's launch line, executed through the installed terminal and process_manage tools: the wait's output is cut and cannot parse, the log's last line is the whole run-A-sized envelope with rc, terminate and on_error, the launcher's exit_code 0 is not the program's 4, a foreground call would die first)"
+    else
+      bad "the-drivers-view-holds-the-whole-envelope" "the driver must be shown the program's rc and the whole call it names, whatever the output size —$dv_detail"
+    fi
+  fi
+
   # The grant is bounded by a NAMED set, not by freezing the shared .git. An
   # earlier revision asserted whole-.git immutability and blocked clean chunks
   # on a sibling lane's commit, on any fetch, and on pre-existing malformed
@@ -3816,6 +3898,10 @@ LCODEX
     # stdout is ONE small envelope: the driver is metered, and nothing else may reach it.
     [ "$(jq -s length "$lroot/out.json" 2>/dev/null)" = 1 ] && [ "$(wc -c < "$lroot/out.json")" -lt 6144 ] \
       || lh_detail="$lh_detail stdout-is-not-one-small-envelope"
+    # ONE LINE, and its own exit code inside it: the driver reads the envelope with `process_manage log`
+    # (a wait's output is cut), and a pretty-printed envelope spreads the call over dozens of lines.
+    { [ "$(wc -l < "$lroot/out.json" | tr -d ' ')" = 1 ] && [ "$(_lsh_env .rc)" = 4 ]; } \
+      || lh_detail="$lh_detail the-envelope-is-not-one-compact-line-carrying-its-rc($(wc -l < "$lroot/out.json" | tr -d ' ') lines)"
     if [ -z "$lh_detail" ]; then
       ok "lane-sh-runs-the-protocol (setup, green baseline, codex parked and resumed, plain check, audit, push, PR, validated envelope; exits 4 naming kanban_request_review with the reviewer and task_id, writes nothing to the board, keeps the envelope on the host, reports the park in the summary)"
     else
@@ -9263,6 +9349,9 @@ VLOGH
     { [ "$vrc" = 4 ] && jq -e 'select(.call == "terminate") | .tool == "kanban_block"
           and .result.ok == true and .result.status == "blocked" and .result.block_kind == "needs_input"' "$vbin/perform.json" >/dev/null 2>&1; } \
       || vdetail="$vdetail (c)-recommend-did-not-land-blocked-needs_input(rc=$vrc,$(head -c 160 "$vbin/perform.json"))"
+    # the envelope the driver reads: ONE compact line, with the program's own exit code in it
+    { [ "$(wc -l < "$vbin/out.json" | tr -d ' ')" = 1 ] && jq -e '.rc == 4' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail the-envelope-is-not-one-compact-line-carrying-its-rc"
     # sticky without any assign: the hold is the `blocked` event, and a dispatch pass leaves it be
     [ "$(_v dispatch --dry-run --json 2>/dev/null | jq -r --arg id "$vP" '[.spawned[]?.task_id] | index($id) // "none"')" = none ] \
       || vdetail="$vdetail the-hold-is-spawnable"

@@ -41,18 +41,36 @@ card that is not yours, not `running`, or not in this workspace.
 
 ## 1. Run the protocol
 
-```python
-r = terminal(command="~/.forge/repo/scripts/lane.sh --task <your task id>", workdir=WS,
-             background=True, pty=True, notify_on_complete=True)
-process(action="wait", session_id=r["session_id"])   # then read the exit code
-```
+Four tool calls, in this order. Do not use `execute_code` (it is blocked in an
+unattended session) and do not pass `notify_on_complete`.
 
-Background, always: a chunk — and a quota park inside it — outlasts
-`terminal.timeout` (1800s), and a `wait` can return before the program has
-exited, so wait again until it does. Your own tool calls keep the card's claim
-alive (the runtime heartbeats a worker while any tool runs); the program does not
-and cannot. `~/.forge/repo` is the only path that resolves from a project worktree;
-never a relative one.
+1. **Launch it in the background.** Call `terminal` with `background: true`,
+   `pty: true`, `workdir` = your workspace and this `command`, with your own task
+   id (`kanban_show().task.id`) in place of `<task id>`:
+
+   ```bash
+   ~/.forge/repo/scripts/lane.sh --task <task id>
+   ```
+
+   A chunk — and a quota park inside it — runs for hours and outlasts
+   `terminal.timeout` (1800s). The result is "Background process started" with a
+   `session_id`; the `exit_code: 0` on it is the launcher's, **not** the program's.
+2. **Wait until it exits.** Call `process_manage` with `action: "wait"`, that
+   `session_id` and `timeout: 400`. `process_manage` is a deferred tool: if it is
+   not among your tools, find it with `tool_search`, then call it through
+   `tool_call`. A wait is cut at about 7 minutes by the runtime and returns
+   `status: "timeout"`: wait again, as often as it takes. Your own tool calls keep
+   the card's claim alive (the runtime heartbeats a worker while any tool runs); the
+   program does not and cannot.
+3. **The program's exit code** is `exit_code` on the wait result whose `status` is
+   `"exited"`.
+4. **Read the whole envelope.** Call `process_manage` with `action: "log"` and the
+   same `session_id`. Its `output`'s **last line** is the envelope, one line of JSON.
+   Never read it from the wait: a wait shows only the last 2000 characters, and the
+   call sits near the start of the envelope.
+
+`~/.forge/repo` is the only path that resolves from a project worktree; never a
+relative one.
 
 What it runs, in order, each step a script covered by `make verify`: the card
 and its operator comments (a comment overrides the body); a guard that every
@@ -72,8 +90,8 @@ session that wrote it with the reviewer's reasons.
   runner **passes** it as `-m`/`-c model_reasoning_effort` on both argv branches, so
   `~/.codex/config.toml` never governs a run. Override with `FORGE_CODEX_MODEL`/`FORGE_CODEX_EFFORT`; record what ran in the completion metadata.
 
-Its stdout is ONE small JSON envelope, `forge.lane.v2`: `action`, `summary`,
-`reason`, `terminate`, `on_error`, `created_cards`. Read only that. Every log —
+Its stdout is ONE small JSON envelope on ONE line, `forge.lane.v2`: `action`, `summary`,
+`reason`, `rc`, `terminate`, `on_error`, `created_cards`. Read only that. Every log —
 the Codex transcript, `make check`, the audit — stays in files; never read them
 into your context, and never render the diff.
 
