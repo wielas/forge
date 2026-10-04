@@ -274,7 +274,13 @@ this writing” below. Run it in CI, after every `hermes update`, and after ever
   the fenced environment built by Hermes's own `delegated_child_subprocess_env`
   and the call performed through its real tool handler
   (`lane/bounce-round-trip-on-real-hermes`, `lane-sh-attempts-no-board-mutation`,
-  `lane-sh-reads-no-scrubbed-variable`). **Not proven:** a live model making the
+  `lane-sh-reads-no-scrubbed-variable`). What the driver is SHOWN is proven
+  too (`lane/the-drivers-view-holds-the-whole-envelope`): the SOUL's block and the
+  skill's launch line are executed through the installed `terminal` and
+  `process_manage` tools — launched in the background (a foreground call dies at
+  420 s), the exit code read from the wait, and the envelope, one compact line,
+  read with `process_manage log`, because a wait's output is cut to 2000 characters.
+  **Not proven:** a live model making the
   call with its arguments intact (the lane's validated envelope is kept on the
   host and the verifier compares the stored copy with it, so a garbled copy is
   caught, not prevented), and the claim surviving a multi-hour park (by source
