@@ -3502,6 +3502,17 @@ DVSTUB
       || dv_detail="$dv_detail the-soul-does-not-tell-the-driver-to-background-the-review"
     sed -n '/^## 1\. Run the protocol/,/^## 2\. Terminate/p' skills/forge-lane/SKILL.md | grep -Fq 'background: true' \
       || dv_detail="$dv_detail the-skill-does-not-tell-the-driver-to-background-the-lane"
+    # The reading half (review S-A): the envelope is read with `log`, never from the cut wait, and
+    # a wait carries a timeout under the runtime's per-call kill (else it errors instead of
+    # returning `status: timeout`). Executing the block above cannot see prose, so the prose is read.
+    grep -Fq 'action="log"' hermes/profiles/forge-verifier.SOUL.md \
+      || dv_detail="$dv_detail the-soul-does-not-tell-the-driver-to-read-the-envelope-with-log"
+    grep -Eq 'action="wait".*timeout=[0-9]+' hermes/profiles/forge-verifier.SOUL.md \
+      || dv_detail="$dv_detail the-soul's-wait-carries-no-timeout"
+    sed -n '/^## 1\. Run the protocol/,/^## 2\. Terminate/p' skills/forge-lane/SKILL.md | grep -Fq 'action: "log"' \
+      || dv_detail="$dv_detail the-skill-does-not-tell-the-driver-to-read-the-envelope-with-log"
+    sed -n '/^## 1\. Run the protocol/,/^## 2\. Terminate/p' skills/forge-lane/SKILL.md | grep -Eq 'timeout: [0-9]+' \
+      || dv_detail="$dv_detail the-skill's-wait-carries-no-timeout"
     # …and the claims the skill makes about the runtime still hold in the installed source
     grep -rq 'approvals.single_query_mode' "$HOME/.hermes/hermes-agent/tools" 2>/dev/null \
       || dv_detail="$dv_detail execute_code-is-no-longer-blocked-in-an-unattended-session(the-skill-says-it-is)"

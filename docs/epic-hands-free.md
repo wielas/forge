@@ -1494,7 +1494,7 @@ in an isolated `HERMES_HOME` with Hermes's own `sync_skills` and
 - *Hermes's re-sync treats that file as user-customised and leaves it alone.*
 
 *So `forge-verifier` now ships an identity-only shim that `profiles-bootstrap.sh`
-installs. `hermes update` or `hermes skills reset` restores the generic copy;
+installs. `hermes skills reset` restores the generic copy (a simulated `hermes update` re-sync left the shim alone);
 `config/skill-shim-in-sync/forge-verifier` turns red when that happens.*
 
 ## Open questions

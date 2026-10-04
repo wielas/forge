@@ -121,13 +121,13 @@ re-enacted each run.
 > summary: a worker's terminal cannot write the board at all. The rest of D10.3
 > stands: the model still decides nothing the program can compute. **What does
 > not stand is that the model retypes nothing** — it DOES retype the call's
-> arguments (the lane's metadata, a hold's reason), which is the price of the
+> arguments (the lane's metadata, a hold's or a bounce's reason), which is the price of the
 > fence. What keeps that honest is that a program checks the copy: the verifier
 > compares the metadata the kernel stored on the card with the envelope the lane
 > validated and kept on the host before it reviews anything, tolerating exactly
 > the two rewrites the kernel makes (its session id, and redaction), and the
-> verdict never passes through the driver at all (a host file the merge-watcher
-> reads). A payload the program cannot check, or cannot keep off the driver, is a
+> stashed verdict does not pass through the driver (a host file the merge-watcher
+> reads; only merge mode's `kanban_complete` carries it as an argument). A payload the program cannot check, or cannot keep off the driver, is a
 > design smell here.
 > Executed by `lane/*` and `verifier/*` on the installed kernel in an isolated
 > `HERMES_HOME`, with the fenced environment built by Hermes's own

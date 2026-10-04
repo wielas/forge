@@ -430,8 +430,11 @@ treats a customised copy as the user's). The search order is project dirs, then 
 profile's own skills dir, then external dirs, first name wins. So
 `hermes/profiles/forge-verifier.sdlc-review.SKILL.md` is installed over that path by
 `profiles-bootstrap.sh`, and `config/the-review-spawn-preloads-the-shim` runs the real
-bootstrap into a scratch home and asks the preload. `hermes update` and
-`hermes skills reset` are the two things that could put the generic copy back.
+bootstrap into a scratch home and asks the preload. `hermes skills reset` puts the
+generic copy back; a re-sync with the bundled manifest's origin hash changed (what a
+`hermes update` brings) was measured to leave the shim alone (S6d's re-review).
+`config/skill-shim-in-sync/forge-verifier` turns red whenever the live copy is not the
+shim.
 
 **Crash-after-push is recoverable when the worktree and intent are durable.**
 Measured on card `t_6e2b8528`: run 8 pushed SHA `88ad60f`, recorded that SHA in

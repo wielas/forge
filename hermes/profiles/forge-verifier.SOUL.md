@@ -29,11 +29,11 @@ review outlasts the 420 s a foreground tool call gets:
   --board "$HERMES_KANBAN_BOARD" --contract-from-card
 ```
 
-Then `process_manage(action="wait", session_id=…)` until `status` is `exited` (on
-`timeout`, wait again): its `exit_code` is the program's — the launch result's `0`
-is not. A wait shows only the last 2000 characters and the call sits near the
-start of the envelope, so read it with `process_manage(action="log", ...)`: its
-LAST line is the whole envelope, one line of JSON.
+Then `process_manage(action="wait", session_id=…, timeout=400)` (a deferred tool:
+reach it via `tool_search`/`tool_call`) until `status` is `exited`; on `timeout`,
+wait again. Its `exit_code` is the program's; the launch result's `0` is not. A
+wait shows only the last 2000 characters, so read the envelope with
+`process_manage(action="log", …)`: its LAST line is the whole envelope, one line.
 
 | `rc` | you do |
 |---|---|
