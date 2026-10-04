@@ -313,20 +313,23 @@ if board_live; then
     # file NAME in `changed_files`. A false `handoff-integrity` is a run A stop rule, so:
     #   * `worker_session_id` is dropped from both sides;
     #   * the three free-text lists are compared by LENGTH (an item cannot vanish);
-    #   * every other leaf must be equal, or differ ONLY by carrying a redaction mark
-    #     (`***` or `...`) in the stored copy — the shape of a redaction, not an edit.
+    #   * every other leaf must be equal, or differ ONLY as a redaction does: the stored copy
+    #     carries a mark (`***` or `...`) and everything BEFORE the mark is the same text the
+    #     lane validated (`secrets/API_KEY=***` against `secrets/API_KEY=sk-…`). A mark that
+    #     replaces text which was not there is an edit, not a redaction.
     # A leaf changed to anything else, a key added or removed, a list shortened: red.
     handoff_matches() {  # $1=the stored run (json) $2=the lane's host copy (file) -> 0 if the same hand-off
       jq -en --argjson run "$1" --slurpfile host "$2" '
         def redacted(a; b): (a | type) == "string" and (b | type) == "string" and a != b
-                            and (a | test("[*][*][*]|[.][.][.]"));
+                            and ((a | capture("^(?<p>.*?)(?:[*][*][*]|[.][.][.])") // null) as $m
+                                 | $m != null and (b | startswith($m.p)));
         def texty: [.decisions, .debt, .card_proposals] | map(length);
         ($run.metadata | del(.worker_session_id)) as $a
         | ($host[0] | del(.worker_session_id)) as $b
         | ($a | del(.decisions, .debt, .card_proposals)) as $x
         | ($b | del(.decisions, .debt, .card_proposals)) as $y
         | (($a | texty) == ($b | texty))
-          and ([$x | paths(scalars)] == [$y | paths(scalars)])
+          and (([$x | paths(scalars)] | sort) == ([$y | paths(scalars)] | sort))   # key ORDER is not content
           and all([$y | paths(scalars)][];
                   . as $p | ($x | getpath($p)) as $u | ($y | getpath($p)) as $v
                   | $u == $v or redacted($u; $v))' >/dev/null 2>&1
@@ -742,7 +745,7 @@ bounce_or_except() {  # $1=reasons  $2=one-line why  $3=metadata file  $4=action
     envelope "$action" "$2 (round $((rounds + 1)) of $budget)" "$3" "" 4 \
       "$(changes_call "$PR_URL
 
-$(implementer_model_line)
+$(implementer_model_line)${LANE_COPY_NOTE:+$(case "$LANE_COPY_NOTE" in *"NOT CHECKED"*) printf '\n%s' "$LANE_COPY_NOTE";; esac)}
 $2
 
 $1")" \

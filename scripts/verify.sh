@@ -2730,6 +2730,7 @@ prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/le
 prejudge/review-refuses-without-a-board  no board, or no hermes, is substrate before the gate — never a routed outcome with rc 0 that transitioned nothing
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 verifier/chunk-is-the-running-card  D19.1 + P24: --chunk is read back off the board (running, this profile's, one running run), not compared with a scrubbed variable; a refusal names no task; the kernel refuses a call aimed at another card
+verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the scorer is given the card's body; an empty body is stale-spec (F2: a background launch has no pipe)
 verifier/the-envelope-lands-on-the-real-kernel  P24 (b),(c): a fail lands ready on the recorded implementer, a recommendation blocked/needs_input — each by the tool's own result; sticky without an assign, decision-first; a refused call leaves the card running and its fallback lands
 verifier/the-review-attempts-no-board-mutation  P24: run fenced with the hermes argv logged — only reads, no verb the fence refuses, the board as the claim left it, for every outcome
 verifier/the-review-reads-no-scrubbed-variable  P24: fenced, with wrong values planted for exactly the scrubbed names; the review is of its own card and nothing mentions the planted id
@@ -9078,7 +9079,7 @@ MCCGH
   local vpy="$HOME/.hermes/hermes-agent/venv/bin/python" vsrc="$HOME/.hermes/hermes-agent"
   local vP vC vdetail vrc vout vfx="$TMPROOT/verifier-fx"
   if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$vpy" ]; then
-    for c in chunk-is-the-running-card the-envelope-lands-on-the-real-kernel \
+    for c in chunk-is-the-running-card the-contract-comes-from-the-card the-envelope-lands-on-the-real-kernel \
              the-review-attempts-no-board-mutation the-review-reads-no-scrubbed-variable \
              the-lanes-handoff-arrives-intact merge-watcher-finds-the-verdict-the-verifier-left \
              recommend-only-holds-the-card merge-mode-merges-and-completes \
@@ -9144,7 +9145,7 @@ VGH
     cat > "$vbin/claude" <<'VCLAUDE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$VSTUB/claude.log"
-cat > /dev/null    # the prompt is consumed and never echoed
+cat > "$VSTUB/prompt.last"    # the prompt is consumed and never echoed — only kept, for the cases that ask what the scorer was given
 if [ "${VF_VERDICT:-approve}" = bounce ]; then
   scores='{"spec_fidelity":1,"scenario_integrity":1,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
   verdict=bounce
@@ -9236,12 +9237,23 @@ with kbc.connect_closing() as c:
       local snip rc
       _vclaim_review "$vP" || { echo 9; return; }
       snip="$(_wsnip "$vhome" vlab "$vP" forge-verifier ${VF_POISON:+--poison})" || { echo 99; return; }
+      # VCONTRACT=card: the contract is read from the card (--contract-from-card) and NOTHING is piped,
+      # as a background terminal call has no pipe; otherwise it arrives on stdin, as the offline cases do.
+      if [ "${VCONTRACT:-}" = card ]; then
+        ( . "$snip"
+          env PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
+            FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
+            "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
+            --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" --contract-from-card < /dev/null ) \
+          > "$vbin/out.json" 2> "$vbin/err.txt"
+      else
       printf '%s' "$contract" | ( . "$snip"
         env PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
           FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
           "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
           --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" ) \
         > "$vbin/out.json" 2> "$vbin/err.txt"
+      fi
       rc=$?
       rm -f "$snip" "$snip.err"
       : > "$vbin/perform.json"
@@ -9259,7 +9271,7 @@ with kbc.connect_closing() as c:
       # about, and a case moves this file when it wants a push to have landed.
       jq -r '.headRefOid' "$REPO_ROOT/$prs/pr-9/pr.json" > "$vbin/head"
       HERMES_HOME="$vhome" hermes kanban boards create vlab >/dev/null 2>&1
-      vP="$(_v create "CHUNK-7: Sync engine" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+      vP="$(_v create "CHUNK-7: Sync engine" --assignee forge-codex-lane --body "$contract" --json 2>/dev/null | jq -r '.id')"
       vC="$(_v create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$vP" --json 2>/dev/null | jq -r '.id')"
       _vhandoff "$vP"
     }
@@ -9330,6 +9342,26 @@ VLOGH
       && ok "chunk-is-the-running-card (the card is read back: not-running, another profile's, missing and no-profile are substrate whose block names no task; the right id passes; the kernel refuses a call aimed at another card)" \
       || bad "chunk-is-the-running-card" \
           "--chunk must be a card this profile is running, checked off the board — a fenced terminal has no HERMES_KANBAN_TASK to compare with —$vdetail"
+
+    # ---- the contract is read from the card, so a background launch needs no pipe ------
+    # A driver launches the review with `terminal(background=true, pty=true)`: there is no stdin to
+    # pipe a multi-KB contract into, and retyping it into a shell command is a quoting hazard. So the
+    # SOUL passes `--contract-from-card`, and the program reads the body of the card it identified.
+    vdetail=""; _vboard; : > "$vbin/prompt.last"
+    vrc="$(VCONTRACT=card _vrun)"
+    { [ "$vrc" = 4 ] && grep -q 'Touches' "$vbin/prompt.last" && grep -q 'CHUNK-7: Sync engine' "$vbin/prompt.last" \
+      && grep -q 'forgeboard_report/domain.py' "$vbin/prompt.last"; } \
+      || vdetail="$vdetail the-scorer-was-not-given-the-cards-body(rc=$vrc,$(wc -c < "$vbin/prompt.last" | tr -d ' ')B)"
+    # an empty body has no contract to review against: substrate, before anything is spent
+    _vboard; _v edit "$vP" --body "" >/dev/null 2>&1; : > "$vbin/claude.log"
+    vrc="$(VPERFORM=0 VCONTRACT=card _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^stale-spec: card .* has an empty body")' "$vbin/out.json" >/dev/null 2>&1 \
+      && ! grep -q . "$vbin/claude.log" 2>/dev/null; } \
+      || vdetail="$vdetail an-empty-card-body-was-reviewed(rc=$vrc)"
+    [ -z "$vdetail" ] \
+      && ok "the-contract-comes-from-the-card (--contract-from-card: no stdin, the scorer is given the card's own body; an empty body is stale-spec before any stage runs)" \
+      || bad "the-contract-comes-from-the-card" \
+          "a background launch has no pipe: the review must read its contract from the card —$vdetail"
 
     # ---- each envelope's call lands on the real kernel, through the real tool ---
     # Done-when (b) and (c) of P24 (the lane's (a) is lane/bounce-round-trip-on-real-hermes, the
@@ -9444,15 +9476,44 @@ VLOGH
     { [ "$vrc" = 3 ] && jq -e '.reason | test("^other: handoff-integrity — the chunk envelope stored on this card differs")' "$vbin/out.json" >/dev/null 2>&1 \
       && ! grep -q . "$vbin/claude.log" 2>/dev/null && ! grep -q . "$vbin/mc.log" 2>/dev/null; } \
       || vdetail="$vdetail an-altered-handoff-was-reviewed-anyway(rc=$vrc)"
-    # Free-text lifted from the diff may be rewritten by the kernel's redaction: not tampering.
-    _vboard; jq '. + {decisions: ["API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"]}' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
+    # THE KERNEL REDACTS WHAT THE LANE VALIDATED, and that must not read as tampering — a false
+    # `handoff-integrity` is a run A stop rule. A secret-shaped line in `decisions` AND a secret-shaped
+    # FILE NAME in `changed_files` are both rewritten on the way in (`API_KEY=***`, `ghp_ab...6789.json`).
+    # The hand-off below goes through the real kernel with such values, so the stored copy genuinely
+    # differs from the host copy; the control asserts that, so the case cannot pass vacuously.
+    local vmeta_plain="$vmeta"
+    vmeta="$(printf '%s' "$vmeta_plain" | jq -c '. + {changed_files: ["src/a.py", "secrets/API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789.txt", "tests/ghp_abcdefghijklmnopqrstuvwxyz0123456789.json"],
+          decisions: ["2026-10-03 rotated API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789 out of the fixture"], debt: [], card_proposals: []}')"
+    _vboard
+    _v show "$vP" --json | jq -e '[.runs[] | select(.outcome == "review_requested")] | last | .metadata
+          | (.changed_files[1] | endswith("***")) and (.changed_files[2] | contains("...")) and (.decisions[0] | contains("***"))' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-control-failed-the-kernel-did-not-redact-the-hand-off"
+    vrc="$(VPERFORM=0 _vrun)"
+    [ "$vrc" = 4 ] || vdetail="$vdetail a-redacted-file-name-or-line-read-as-tampering(rc=$vrc,$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 120))"
+    # …but the free-text lists are compared by LENGTH: an item that vanished is an edit
+    _vboard
+    jq '.decisions = ["x", "y"]' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json"
+    mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
+    : > "$vbin/claude.log"; vrc="$(VPERFORM=0 _vrun)"
+    { [ "$vrc" = 3 ] && jq -e '.reason | test("^other: handoff-integrity")' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-changed-number-of-decisions-was-not-caught(rc=$vrc)"
+    # …and a redaction-SHAPED edit is not a redaction: a mark that replaces text which was never there
+    _vboard; jq '.changed_files[0] = "src/zzz..."' "$vstate/lane-sessions/vlab-$vP.metadata.json" > "$vstate/t.json" \
       && mv "$vstate/t.json" "$vstate/lane-sessions/vlab-$vP.metadata.json"
-    vrc="$(VPERFORM=0 _vrun)"; [ "$vrc" = 4 ] || vdetail="$vdetail redactable-free-text-read-as-tampering(rc=$vrc)"
+    vrc="$(VPERFORM=0 _vrun)"
+    [ "$vrc" = 3 ] || vdetail="$vdetail a-mark-that-redacts-nothing-was-accepted(rc=$vrc)"
+    vmeta="$vmeta_plain"
     # No host copy (a card handed off before the deploy): reviewed, and the hold SAYS it was not checked.
     _vboard; rm -f "$vstate/lane-sessions/vlab-$vP.metadata.json"; vrc="$(_vrun)"
     { [ "$vrc" = 4 ] && _v show "$vP" --json | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason
         | test("lane envelope: NOT CHECKED")' >/dev/null 2>&1; } \
       || vdetail="$vdetail a-missing-copy-was-silent(rc=$vrc)"
+    # On the BOUNCE path too: the implementer and the operator who reads the reasons are told the
+    # hand-off was not compared (the bounce is the path an operator reads most).
+    _vboard; rm -f "$vstate/lane-sessions/vlab-$vP.metadata.json"; vrc="$(VF_VERDICT=bounce _vrun)"
+    { [ "$vrc" = 4 ] && _v show "$vP" --json | jq -e '[.events[] | select(.kind == "changes_requested")] | last | .payload.reason
+        | test("lane envelope: NOT CHECKED")' >/dev/null 2>&1; } \
+      || vdetail="$vdetail a-bounce-with-no-host-copy-was-silent(rc=$vrc)"
     # The PR url the driver was given must be the one the lane recorded.
     _vboard; vrc="$(VPERFORM=0 VPRURL=https://example.invalid/wielas/proj/pull/77 _vrun)"
     { [ "$vrc" = 3 ] && jq -e '.reason | test("^env: chunk-identity — the PR url given")' "$vbin/out.json" >/dev/null 2>&1; } \
