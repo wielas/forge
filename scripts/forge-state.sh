@@ -21,7 +21,9 @@
 # profile-local `home/.forge` exists. A host that gave a profile its own HOME
 # would break `~/.forge/repo/...` first.
 #
-# Sourced, never executed. Every consumer is bash; do not add a second parser
+# Sourced, never executed — but it carries +x all the same: preflight FAILs any script it lists
+# that is not executable (preflight.sh, the `_lscript` loop), and a sourced file is listed.
+# Every consumer is bash; do not add a second parser
 # or a second formula for these paths. `FORGE_STATE_ROOT` and the two narrower
 # overrides exist so a case can aim a program at a throwaway directory.
 # =============================================================================

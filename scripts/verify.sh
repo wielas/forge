@@ -2583,6 +2583,7 @@ lane/lane-handoff-is-fail-closed  validates before the transition, reads the end
 lane/template-agents-scopes-ceremonies  AGENTS.md scopes ceremonies to the operator
 lane/verifier-delegates-its-protocol    the SOUL names the script and the script exists (ADR-0010)
 lane/verifier-terminator-mapping        rc 4 and 3 -> the call the envelope names (on_error the fallback), rc 2 -> kanban_block, a real review never exits 0; an outage is not a rejection
+lane/every-script-preflight-lists-is-executable  every script preflight.sh lists (read out of it) is -x on disk and 100755 in git — forge-state.sh, sourced, included (F4)
 lane/exit-tables-match-the-programs     lane.sh and prejudge-review.sh declare exactly 4, 3, 2, 0; the forge-lane table and the verifier SOUL carry exactly those (ADR-0003)
 lane/driver-never-reads-the-diff        the metered driver redirects the diff; it never renders one
 lane/verifier-stores-what-happened      gate result or verdict, never a manufactured one; ci-red sentinel retired
@@ -4438,6 +4439,31 @@ LPLOG
   else
     bad "exit-tables-match-the-programs" \
         "the exit table a driver reads must be the program's own set of codes — a stale table is a driver that fails silently —$ex_detail"
+  fi
+
+  # EVERY SCRIPT PREFLIGHT LISTS IS EXECUTABLE IN THE REPO. `make preflight` FAILs any script it
+  # lists whose file under ~/.forge/repo is not `-x` ("an unattended lane cannot repair this"),
+  # and S6d added `forge-state.sh` — a SOURCED file, which nobody `chmod +x`s by habit — to that
+  # list. Without this case the first post-deploy preflight is the first thing to notice. The
+  # names are read OUT OF preflight.sh itself, so a name added there is covered the moment it
+  # is added; a reader that finds none is red, not blind (F65).
+  local pf_names pf_detail="" pf_n
+  pf_names="$(awk '/^for _lscript in /{f=1} f{print} f && /; do$/{exit}' scripts/preflight.sh \
+              | sed -e 's/^for _lscript in //' -e 's/; do$//' -e 's/\\$//' | tr -s ' \t' '\n\n' | grep -E '^[a-z][a-z0-9_.-]*\.(sh|py)$')"
+  pf_n="$(printf '%s\n' "$pf_names" | grep -c .)"
+  [ "$pf_n" -ge 10 ] || pf_detail="$pf_detail the-reader-found-only-$pf_n-names(went-blind)"
+  for pf in $pf_names; do
+    [ -x "scripts/$pf" ] || pf_detail="$pf_detail $pf-not-executable-on-disk"
+    case "$(git ls-files -s "scripts/$pf" 2>/dev/null | cut -c1-6)" in
+      100755) ;;
+      "")     pf_detail="$pf_detail $pf-not-tracked";;
+      *)      pf_detail="$pf_detail $pf-not-100755-in-git";;
+    esac
+  done
+  if [ -z "$pf_detail" ]; then
+    ok "every-script-preflight-lists-is-executable ($pf_n scripts read out of preflight.sh, each -x on disk and 100755 in git — forge-state.sh, a sourced file, included)"
+  else
+    bad "every-script-preflight-lists-is-executable" "make preflight FAILs a listed script that is not executable, so the first post-deploy preflight would —$pf_detail"
   fi
 
   # The prohibition stays prose because it constrains the model. The
