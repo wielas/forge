@@ -699,9 +699,12 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 
 ## Environment as of this writing
 
+Tool versions re-read 2026-10-26 (codex, Claude Code, gh, uv); Hermes is held at
+its recorded version.
+
 ```
-Hermes 0.21.5 · codex-cli 0.157.1 · Claude Code 2.1.287 · gh 2.101.0
-lefthook 2.1.10 · uv 0.12.19 · copier 9.17.0
+Hermes 0.21.5 · codex-cli 0.164.0 · Claude Code 2.1.310 · gh 2.103.2
+lefthook 2.1.10 · uv 0.13.5 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator, forge-codex-lane, forge-verifier,
           forge-digest (glm-5.3-flash) · codex pinned gpt-5.6-luna xhigh

@@ -568,12 +568,15 @@ this entry governs attempt 2.
 *Inputs re-read on 2026-10-26.*
 - **Forge:** `main` = runtime = `bd255a4` (S6d, #87), measured after the deploy:
   `make verify` 534 passed / 0 failed / 11 skipped; `make preflight` PASS 105 /
-  WARN 4 / FAIL 0. That is a baseline, not the launch reading. The P25 PR
-  (template first-party pin) and the PR that carries this entry both merge
-  after it, so `main` moves. Precondition 2 is re-run after both merge
-  (`git -C ~/dev/forge-runtime pull --ff-only`, then the `runtime=main` test),
-  and precondition 3 is re-measured on that `main`. Its numbers, not 534, go in
-  the launch record.
+  WARN 4 / FAIL 0. That is a baseline, not the launch reading. The P25 PR (#88,
+  the template's first-party pin, merged as `0ee3ab6`, one new verify case) and
+  the PR that carries this entry both land after it, so `main` moves. After #88
+  `main` is expected at `make verify` 535 / 0 / 11. The PR that carries this
+  entry also updates `docs/state.md`'s recorded tool versions, so a preflight
+  WARN for recorded-environment drift is expected to go. Precondition 2 is
+  re-run after this PR merges (`git -C ~/dev/forge-runtime pull --ff-only`, then
+  the `runtime=main` test), and precondition 3 is re-measured on that `main` and
+  that deployed runtime. Its numbers, not 534 or 535, go in the launch record.
 - **Product:** *Launch* step 1 says `HEAD` must be `388d78d`. For attempt 2 that
   is superseded by **`b66be28`** (Squatfather PR #3, the isort first-party pin,
   merged 2026-10-04; clean tree, CI green, `roadmap-check` CLEAR with 14 pass).

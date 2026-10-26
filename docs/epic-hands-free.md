@@ -724,7 +724,7 @@ closes.
 
 | Session | Items | Why here | Status | PR |
 |---|---|---|---|---|
-| S0 | this document; operator: merge it, Q3, remove `builder` | Plan agreed | done — #73 merged 2026-09-25; `builder` is gone (no such profile, `kanban.default_assignee` unset, read 2026-10-26). Q3's last clause, Hermes authenticated against the OpenAI subscription, is the operator's to confirm | #73 |
+| S0 | this document; operator: merge it, Q3, remove `builder` | Plan agreed | done — #73 merged 2026-09-25; `builder` is gone (no such profile, `kanban.default_assignee` unset, read 2026-10-26). Q3's last clause, Hermes authenticated against the OpenAI subscription, confirmed by the operator on 2026-10-26 | #73 |
 | S1 | Q1, Q2, Q4, FL1 | Decisions recorded; epic discoverable | done | #74 |
 | S1b | P1 *(promoted from the parking lot when S2 opened)* | A red baseline on clean `main` weakens every closing comparison to "the same 4" | done | #75 |
 | S2 | FL2, FL3, FL7 | Lane as a program; one card per chunk | done | #76 |
