@@ -31,6 +31,12 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.isort]
+# Pinned, not inferred: ruff otherwise classes a {{ package_name }} submodule as
+# first-party only once its file exists, so each chunk that adds one re-sorts
+# the frozen probes' imports and `make check` demands an edit the freeze forbids.
+known-first-party = ["{{ package_name }}"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --cov=src --cov-report=term-missing --cov-fail-under={{ coverage_floor }}"
