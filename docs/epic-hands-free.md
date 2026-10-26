@@ -1436,7 +1436,20 @@ side is open:
 - `roadmap-check` does not test that frozen files stay lint-clean as the planned
   modules appear.
 
-Triage when the next session opens.
+*Triaged 2026-10-26: split.*
+- **Template side, done:** `pyproject.toml.jinja` now pins
+  `known-first-party = ["{{ package_name }}"]`, proved by
+  `template/first-party-pinned` (`slice/p25-template-first-party-pin`). It
+  stamps a project and lints one probe file with no planned module on disk and
+  again with them written; a mis-sorted control must still be flagged. Seen red
+  against the old template and against the pin deleted from a stamp.
+- **Run A does not depend on it.** Squatfather PR #3 carries the product pin,
+  and `roadmap-check` reads no lint config. It merges before attempt 2's launch,
+  alongside the pre-launch `run-a.md` amendment. No profile executes the
+  template, so no profile redeploy is needed.
+- **`roadmap-check` testing that frozen files stay lint-clean** as planned
+  modules appear: parked, unscheduled. It needs a design that stubs the planned
+  modules and runs the linter.
 
 **P26 (S6d). A long lane run costs the driver one turn every 420 seconds.** In
 attempt 1, the driver's `process_manage wait` with `timeout: 1800` returned at

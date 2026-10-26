@@ -2510,6 +2510,41 @@ run_template_group() {
   else
     bad "python-pinned" ".python-version says $want but the venv is $have"
   fi
+
+  # Epic P25, measured on run A's attempt 1. The stamp selects ruff's `I` but
+  # named no first-party package, so ruff classed `<pkg>.<module>` as
+  # first-party only once that module's file existed. A planned project's frozen
+  # probes import modules the chunks have not written yet, so each chunk that
+  # added one flipped the probes' import order and `make check` demanded an edit
+  # the contract freeze forbids. So run it: the same probe file must lint clean
+  # with no planned module on disk and again with them written. A control that
+  # sorts the imports wrongly must still be flagged, or "clean" proves only that
+  # `I` was not running.
+  local p25_pkg p25_dir="$dest/tests/probes/p25" p25_ok=1
+  p25_pkg="$(ls "$dest/src" 2>/dev/null | grep -v '^__' | head -1)"
+  if [ -z "$p25_pkg" ] || [ ! -x "$dest/.venv/bin/ruff" ]; then
+    bad "first-party-pinned" "no stamped package under src/ or no ruff in the venv — the check went blind, which is not a pass (F65)"
+    return
+  fi
+  mkdir -p "$p25_dir"
+  printf 'import json\n\nimport pytest\n\nfrom %s import domain\nfrom %s.store import thing\n' \
+    "$p25_pkg" "$p25_pkg" > "$p25_dir/run.py"
+  printf 'from %s import domain\n\nimport json\n\nimport pytest\n\nfrom %s.store import thing\n' \
+    "$p25_pkg" "$p25_pkg" > "$p25_dir/control.py"
+  p25_lint() { (cd "$dest" && .venv/bin/ruff check --no-cache --select I "$@" >/dev/null 2>&1); }
+  p25_lint tests/probes/p25/run.py || p25_ok=0
+  mkdir -p "$dest/src/$p25_pkg/store"
+  : > "$dest/src/$p25_pkg/domain.py"; : > "$dest/src/$p25_pkg/store/__init__.py"
+  p25_lint tests/probes/p25/run.py || p25_ok=0
+  if p25_lint tests/probes/p25/control.py; then
+    bad "first-party-pinned" "the mis-sorted control file linted clean — ruff's I rule is not judging this project"
+  elif [ "$p25_ok" = 1 ]; then
+    ok "first-party-pinned ($p25_pkg: one probe file lints clean with and without its planned modules on disk)"
+  else
+    bad "first-party-pinned" \
+        "the same probe file's import order flips when a planned $p25_pkg module appears — the stamp names no first-party package (known-first-party), so a frozen probe cannot stay lint-clean as chunks land (P25)"
+  fi
+  rm -rf "$p25_dir" "$dest/src/$p25_pkg/domain.py" "$dest/src/$p25_pkg/store"
 }
 
 # ---------------------------------------------------------------------------
@@ -2590,6 +2625,7 @@ template/branch-rule-has-one-source  lefthook and CI defer to one script; neithe
 template/branch-name-judges-by-argument  the CI path (branch passed in, detached HEAD) is correct
 template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
+template/first-party-pinned       the stamp names its package first-party: a probe file lints clean before and after a planned module exists (P25)
 lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
 lane/scratch-is-board-scoped      run ids are board-local; scratch and audit carry the board, same-board reuse still refuses
 lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_LANE_RUN_KEY instead of recomputing it
