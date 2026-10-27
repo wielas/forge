@@ -5,6 +5,8 @@
 #   board-bootstrap.sh <board> --root-only validate graph + load its ONE root
 #   board-bootstrap.sh <board> --hello    init board + ONE hello-chunk card
 #                                         (the day-one risk burn-down test)
+#   ... --branch-suffix <s>               in any mode: append -<s> to every lane
+#                                         card's branch (see below)
 # Run from the project repo root.
 #
 # Every flag below was verified against `hermes kanban create --help` on 0.19.0
@@ -24,17 +26,87 @@
 # There is NO --body-file. Pass file contents with --body "$(cat f)".
 # =============================================================================
 set -euo pipefail
-BOARD="${1:?usage: board-bootstrap.sh <board> [--root-only|--hello]}"
-MODE="${2:-full}"
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: board-bootstrap.sh <board> [full|--root-only|--hello] [--branch-suffix <s>]
+
+  --branch-suffix <s>  append -<s> to the branch of every lane card this run
+                       creates (chunk/<id>-<slug>-<s>; --hello: chunk/hello-1-greet-<s>).
+                       <s> is a lowercase slug, ^[a-z0-9]+(-[a-z0-9]+)*$, at most 32
+                       characters. GitHub keeps a PR tied to its head branch name
+                       for ever, and the lane BLOCKS on a CLOSED or MERGED PR only
+                       after a paid run — so a re-run of a chunk, or a rehearsal on
+                       a name an earlier run spent, needs a name nothing has used.
+                       Interactive cards (claude-interactive, GATE-*) carry no
+                       --branch, so the suffix does not apply to them.
+                       Pass the SAME suffix on every later run of the same board:
+                       a card already on the board is left untouched, and the
+                       suffix is part of how it is recognised.
+
+Before it creates a card that carries a branch this script asks GitHub, for each
+such card, whether that branch already has a PR in ANY state or exists on origin.
+  exit 3  the branch is spent (a PR or a remote branch exists): pick another suffix
+  exit 2  GitHub, origin or the board could not be asked: not the same as "free"
+  exit 1  usage, a bad suffix, a bad graph, or any other FATAL
+A refusal creates no card.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0;;
+esac
+BOARD="${1:?usage: board-bootstrap.sh <board> [full|--root-only|--hello] [--branch-suffix <s>]}"
+shift
 LANE_ASSIGNEE="${FORGE_LANE_ASSIGNEE:-forge-codex-lane}"
 
-case "$MODE" in
-  full|--root-only|--hello) ;;
-  *)
-    echo "usage: board-bootstrap.sh <board> [--root-only|--hello]" >&2
+MODE=full
+MODE_SET=0
+BRANCH_SUFFIX=""
+BRANCH_SUFFIX_SET=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    full|--root-only|--hello)
+      if [ "$MODE_SET" = 1 ]; then
+        echo "board-bootstrap: more than one mode given ('$MODE' and '$1')" >&2
+        usage
+        exit 1
+      fi
+      MODE="$1"; MODE_SET=1; shift
+      ;;
+    --branch-suffix)
+      if [ $# -lt 2 ]; then
+        echo "board-bootstrap: --branch-suffix needs a value" >&2
+        exit 1
+      fi
+      BRANCH_SUFFIX="$2"; BRANCH_SUFFIX_SET=1; shift 2
+      ;;
+    --branch-suffix=*)
+      BRANCH_SUFFIX="${1#--branch-suffix=}"; BRANCH_SUFFIX_SET=1; shift
+      ;;
+    *)
+      echo "board-bootstrap: unknown argument '$1'" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+# The suffix is validated before anything else, so a bad one can never reach the
+# board. The alphabet is the <slug> half of the branch rule (no capitals, no
+# slash, no dot, no leading, trailing or doubled hyphen), so `<branch>-<s>` is a
+# branch the rule accepts whenever `<branch>` was. The length cap is ours, not a
+# downstream one: neither branch-name.sh nor prejudge.sh limits a branch's
+# length, and branch_for caps its own slug at 48; 32 more keeps every name far
+# under the 255 bytes a git ref component may be.
+if [ "$BRANCH_SUFFIX_SET" = 1 ]; then
+  if ! printf '%s' "$BRANCH_SUFFIX" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' \
+     || [ "${#BRANCH_SUFFIX}" -gt 32 ]; then
+    echo "board-bootstrap: --branch-suffix '$BRANCH_SUFFIX' is not a lowercase slug of at most 32 characters" >&2
+    echo "                 (^[a-z0-9]+(-[a-z0-9]+)*\$: no capitals, no slash, no leading or doubled hyphen). No card was created." >&2
     exit 1
-    ;;
-esac
+  fi
+fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 GRAPH=docs/chunks/graph.json
@@ -256,19 +328,33 @@ branch_for() {  # $1=chunk id (CHUNK-C9.1) $2=card title -> chunk/<id>-<slug>
   # `untitled` says why it carries no words.
   [ -n "$slug" ] || slug="untitled"
 
-  # The producer asks its own consumer. A stamped product carries the ONE copy
-  # of this rule at scripts/branch-name.sh; asking it here is the difference
-  # between failing now, before any card exists, and failing in that product's
-  # CI after the chunk has been implemented and paid for. Products stamped from
-  # another template have nothing to ask, and are not blocked on its absence.
+  finish_branch "$id" "chunk/$bare-$slug"
+}
+
+# The --branch-suffix goes on LAST, after branch_for has cut its slug to budget,
+# so no cap can ever truncate it. Neither consumer limits a branch's length
+# (branch-name.sh and prejudge.sh test shape only), so there is no budget to
+# squeeze the slug under; the suffix's own length is capped at parse time.
+# `<base>-<s>` stays a name the rule accepts and `prejudge.sh` still reads the
+# chunk id from: the id is the first token after `chunk/`, and an appended
+# lowercase slug cannot move it.
+#
+# The producer asks its own consumer. A stamped product carries the ONE copy
+# of this rule at scripts/branch-name.sh; asking it here is the difference
+# between failing now, before any card exists, and failing in that product's
+# CI after the chunk has been implemented and paid for. Products stamped from
+# another template have nothing to ask, and are not blocked on its absence.
+# It is asked about the FINAL name, suffix included.
+finish_branch() {  # $1=chunk id (for the message) $2=unsuffixed branch -> final branch
+  local id="$1" name="$2"
+  [ -z "$BRANCH_SUFFIX" ] || name="$name-$BRANCH_SUFFIX"
   if [ -x "$REPO_ROOT/scripts/branch-name.sh" ] \
-     && ! "$REPO_ROOT/scripts/branch-name.sh" "chunk/$bare-$slug" >/dev/null 2>&1; then
-    echo "FATAL: $id would get branch 'chunk/$bare-$slug', which" >&2
+     && ! "$REPO_ROOT/scripts/branch-name.sh" "$name" >/dev/null 2>&1; then
+    echo "FATAL: $id would get branch '$name', which" >&2
     echo "       $REPO_ROOT/scripts/branch-name.sh rejects. No card was created." >&2
     return 1
   fi
-
-  printf 'chunk/%s-%s\n' "$bare" "$slug"
+  printf '%s\n' "$name"
 }
 
 create_card() {  # $1=title $2=bodyfile $3=assignee $4=idempotency-key $5=branch [extra...]
@@ -403,6 +489,121 @@ create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [--parent
   printf '%s\n' "$cid"
 }
 
+# -----------------------------------------------------------------------------
+# The branch guard. GitHub ties a PR to its head branch NAME for ever, and
+# scripts/lane.sh adopts an OPEN PR, creates one if there is none, and BLOCKS on
+# a CLOSED or MERGED one — after the paid Codex run, the green `make check` and
+# the push. A card handed a spent name therefore costs a whole run and halts.
+# Run A attempt 1 left CLOSED PR #2 on `chunk/1-store-owner-history-in-a-migrated-
+# sqlite`, and `--hello`'s fixed `chunk/hello-1-greet` already had three MERGED
+# ones; the last rehearsal died on exactly that. So before any card is created
+# this asks GitHub about every branch it is about to hand out.
+#
+#   `gh pr list --head <b> --state all`   EVERY PR on the name, in any state.
+#                                         `gh pr view <b>` returns ONE, and the
+#                                         one it picks is not the one that blocks.
+#   `git ls-remote --heads origin`        a pushed branch with no PR yet.
+#
+# Exit 3 = the name is spent. Exit 2 = it could not be asked (gh failed, origin
+# unreadable, the board's card list unreadable, or an answer that is not JSON):
+# "could not ask" is not "nothing there", and a guard that waves a name through
+# on an error is the one that costs the paid run. Neither is a skip.
+#
+# ONLY a card this run would CREATE is asked about. Bootstrap is idempotent on
+# `--idempotency-key`, and `create` hands back the existing card for a key it
+# has seen; the later full run re-visits the root card, whose branch by now has
+# an OPEN PR, and that must pass untouched. `kanban list --json` carries no
+# idempotency key, so a card "already exists" when the board holds one with the
+# SAME title AND the SAME branch — the pair this script derives from the key's
+# chunk. A card that fails to match is asked about, which fails closed: the
+# worst a mismatch can do is refuse a re-run that would have been fine.
+#
+# Everything is asked before the first card is created, so a refusal leaves the
+# board with no new card. (The board itself, its workdir and the assignee check
+# above are idempotent and already done by then: telling a card that exists from
+# one to create needs the board's card list, so the guard cannot run before the
+# board does.) `kanban list` runs recompute_ready, so it is not a pure read: the
+# same promotion the dispatcher performs every tick, and a no-op on the empty
+# board of a first run.
+# -----------------------------------------------------------------------------
+origin_slug() {  # -> owner/repo of the project's origin, or return 1
+  local url path
+  url="$(git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$url" in
+    https://github.com/*|http://github.com/*|ssh://git@github.com/*|ssh://github.com/*|git@github.com:*) ;;
+    *) return 1;;
+  esac
+  path="${url#*github.com}"
+  path="${path#[:/]}"; path="${path%/}"; path="${path%.git}"
+  printf '%s' "$path" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || return 1
+  printf '%s\n' "$path"
+}
+
+run_guard() {  # $1=file of "<branch><TAB><card title>" lines
+  local queue="$1" slug cards br title prs heads errf
+  local spent=0 unasked=0 here
+  [ -s "$queue" ] || return 0
+  errf="$(mktemp)"
+
+  if ! slug="$(origin_slug)"; then
+    echo "REFUSED (could not ask, exit 2): $REPO_ROOT has no GitHub 'origin' this script can read" >&2
+    echo "       ($(git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null || echo 'no remote.origin.url')). Whether a branch is spent was not checked. No card was created." >&2
+    rm -f "$errf"; exit 2
+  fi
+  if ! cards="$(hermes kanban --board "$BOARD" list --json 2>"$errf")" \
+     || ! printf '%s' "$cards" | jq -e '(if type == "object" then .tasks else . end) | type == "array"' >/dev/null 2>&1; then
+    echo "REFUSED (could not ask, exit 2): the card list of board '$BOARD' could not be read, so a card that already exists cannot be told from one to create." >&2
+    echo "       $(head -1 "$errf" 2>/dev/null) No card was created." >&2
+    rm -f "$errf"; exit 2
+  fi
+
+  while IFS=$'\t' read -r br title; do
+    [ -n "$br" ] || continue
+    if printf '%s' "$cards" | jq -e --arg t "$title" --arg b "$br" \
+         '(if type == "object" then .tasks else . end)
+          | any(.[]; .title == $t and .branch_name == $b)' >/dev/null 2>&1; then
+      echo "exists   $br (already a card on board '$BOARD'; not asked)"
+      continue
+    fi
+
+    here=0
+    if ! prs="$(gh pr list --repo "$slug" --head "$br" --state all \
+                  --json number,state --limit 100 2>"$errf")" \
+       || ! printf '%s' "$prs" | jq -e '
+            type == "array"
+            and all(.[]; (.number | type) == "number" and (.state | type) == "string")
+          ' >/dev/null 2>&1; then
+      echo "REFUSED (could not ask, exit 2): 'gh pr list --repo $slug --head $br --state all' failed or did not answer in JSON." >&2
+      echo "       $(head -1 "$errf" 2>/dev/null) Whether '$br' is spent was not checked." >&2
+      unasked=1; here=1
+    elif [ "$(printf '%s' "$prs" | jq 'length')" != 0 ]; then
+      echo "REFUSED (branch spent, exit 3): '$br' already has $(printf '%s' "$prs" | jq -r '[.[] | "PR #\(.number) (\(.state))"] | join(", ")') on $slug." >&2
+      spent=1; here=1
+    fi
+
+    if ! heads="$(GIT_TERMINAL_PROMPT=0 git -C "$REPO_ROOT" ls-remote --heads origin "refs/heads/$br" 2>"$errf")"; then
+      echo "REFUSED (could not ask, exit 2): 'git ls-remote --heads origin $br' failed in $REPO_ROOT." >&2
+      echo "       $(head -1 "$errf" 2>/dev/null) Whether '$br' is spent was not checked." >&2
+      unasked=1; here=1
+    elif [ -n "$heads" ]; then
+      echo "REFUSED (branch spent, exit 3): '$br' already exists on origin ($slug) with no card on board '$BOARD'." >&2
+      spent=1; here=1
+    fi
+    [ "$here" = 1 ] || echo "free     $br"
+  done < "$queue"
+  rm -f "$errf"
+
+  if [ "$unasked" = 1 ]; then
+    echo "No card was created. Fix what could not be asked and re-run." >&2
+    exit 2
+  fi
+  if [ "$spent" = 1 ]; then
+    echo "No card was created. GitHub keeps a PR tied to its head branch name for ever, and the lane blocks on a CLOSED or MERGED PR only after a paid run." >&2
+    echo "       Re-run with a --branch-suffix nothing has ever used (a name you have not typed before)." >&2
+    exit 3
+  fi
+}
+
 if [ "$MODE" = "--hello" ]; then
   tmp=$(mktemp)
   cat > "$tmp" << 'EOF'
@@ -417,8 +618,13 @@ if [ "$MODE" = "--hello" ]; then
 - **Done when:** make check green + scenario passes + PR open
 - **Lane:** forge-codex-lane · **Risk:** low
 EOF
-  create_card "CHUNK-HELLO-1: Add greet(name) with a BDD scenario" \
-              "$tmp" "$LANE_ASSIGNEE" "hello-1" "chunk/hello-1-greet"
+  hello_title="CHUNK-HELLO-1: Add greet(name) with a BDD scenario"
+  hello_branch="$(finish_branch CHUNK-HELLO-1 chunk/hello-1-greet)" || { rm -f "$tmp"; exit 1; }
+  hello_queue="$(mktemp)"
+  printf '%s\t%s\n' "$hello_branch" "$hello_title" > "$hello_queue"
+  run_guard "$hello_queue"
+  rm -f "$hello_queue"
+  create_card "$hello_title" "$tmp" "$LANE_ASSIGNEE" "hello-1" "$hello_branch"
   rm -f "$tmp"
   echo "hello card created on board '$BOARD'. Watch every step:"
   echo "  hermes kanban --board $BOARD watch"
@@ -446,8 +652,28 @@ jq -e 'type == "array" and length > 0' "$GRAPH" >/dev/null \
 # A flat TSV file, not an associative array: /usr/bin/env bash on macOS is 3.2,
 # where `declare -A` does not exist.
 IDMAP=$(mktemp)
-trap 'rm -f "$IDMAP"' EXIT
+GUARDQ=$(mktemp)
+trap 'rm -f "$IDMAP" "$GUARDQ"' EXIT
 card_id_of() { awk -F'\t' -v k="$1" '$1==k{print $2; found=1} END{exit !found}' "$IDMAP"; }
+
+# The branch guard, for every card this run will create that carries a branch,
+# BEFORE the first one is created. Interactive cards and gates carry none.
+while IFS= read -r id; do
+  [ "$MODE" != "--root-only" ] || [ "$id" = "$ROOT_ID" ] || continue
+  case "$id" in GATE-*) continue;; esac
+  lane=$(jq -r --arg id "$id" --arg lane "$LANE_ASSIGNEE" \
+    '.[] | select(.id == $id) | (.lane // $lane)' "$GRAPH")
+  [ "$lane" != "claude-interactive" ] || continue
+  f="docs/chunks/$id.md"
+  [ -f "$f" ] || {
+    echo "FATAL: $GRAPH names $id but $f does not exist" >&2
+    exit 1
+  }
+  title=$(head -1 "$f" | sed 's/^#* *//')
+  branch=$(branch_for "$id" "${title:-$id}")
+  printf '%s\t%s\n' "$branch" "${title:-$id}" >> "$GUARDQ"
+done < <(jq -r '.[].id' "$GRAPH")
+run_guard "$GUARDQ"
 
 declared=$(jq '[.[].depends_on // [] | length] | add // 0' "$GRAPH")
 created=0
