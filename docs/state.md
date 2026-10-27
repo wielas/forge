@@ -1,10 +1,14 @@
 # Forge — current state
 
-**Updated 2026-08-11 after the independent first-run readiness stack merged.**
-`origin/main` contains CHUNK-1 through CHUNK-10 at `bb8ade6`; the staged launch
-machinery and its reviewed proofs are integrated. Earlier dated measurements
-below remain the observations they were. The measured pre-readiness baseline
-was:
+**Updated 2026-10-26 (this header and the driver-model note below; the rest is
+as dated).** `origin/main` is `bd255a4` (epic S6d, #87), which measured `make
+verify` 534 passed / 0 failed / 11 skipped and `make preflight` PASS 105 / WARN 4
+/ FAIL 0 after its deploy. What is done and what is next is the epic's session
+table (`docs/epic-hands-free.md`), not this file. The 2026-08-11 text that
+follows, written when the independent first-run readiness stack merged
+(CHUNK-1 through CHUNK-10 at `bb8ade6`; the staged launch machinery and its
+reviewed proofs), and every other dated measurement below remain the
+observations they were. The measured pre-readiness baseline was:
 
 ```
 main                fc006eb
@@ -219,16 +223,22 @@ F25, F26, and F44 await that run. ADR-0011 still awaits ten reviews.
 | Staged root-only bootstrap is fixture-proven | `make verify SUITES=bootstrap` runs the real `board-bootstrap.sh` against a stateful Hermes stub: invalid multi-root graphs invoke no Hermes command; a valid graph creates one root; full bootstrap reuses that key and attaches the remaining parents atomically; missing full-mode parent readback still fails |
 | Codex commits inside a worktree | `--add-dir "$(git rev-parse --git-common-dir)"`, measured both ways |
 
-**The driver model moved on 2026-08-07, and that makes one Proven row
-historical.** `MODEL_DRIVER` is now `deepseek/deepseek-v4-flash-0731`; every row
-above measuring the lane driver was measured on `deepseek-v4-flash`, the 0423
-snapshot. Both are pinned snapshots — the floating `-latest` alias was
-deliberately rejected, because a pin that moves under a run is F22 verbatim. But
-the consequence stands: **the first genuine product run will also be the first
-run on this driver**, which is a second new variable alongside the run itself,
-against this file's own rule of one at a time. That is an accepted operator
-choice, recorded here so the run stays interpretable — if the lane misbehaves,
-the driver is in the cause set.
+**The driver model has moved twice, and that makes one Proven row historical.**
+Every row above measuring the lane driver was measured on `deepseek-v4-flash`,
+the 0423 snapshot. On 2026-08-07 `MODEL_DRIVER` moved to
+`deepseek/deepseek-v4-flash-0731`, and on 2026-09-08 (#61) the driver and router
+both moved to `z-ai/glm-5.3-flash`, with Codex on `gpt-5.6-luna` at `xhigh`. That
+is the current pin: `scripts/model-pins.sh` is its one source (ADR-0018), and the
+environment block below names it. The pins are snapshots or ids, never a floating
+`-latest` alias, because a pin that moves under a run is F22 verbatim. But the
+consequence stands: **a genuine product run is also the first run on its driver**,
+a second new variable alongside the run itself, against this file's own rule of
+one at a time. Run A's first attempt (2026-10-03) ran on `glm-5.3-flash` (its lane
+session recorded it) and halted at the hand-off (epic P24), so what that driver
+does with a whole chunk and its termination calls is still not proven; see *The
+lane as a program, live* below. That is an accepted operator choice, recorded here
+so a run stays interpretable — if the lane misbehaves, the driver is in the cause
+set.
 
 A second, independent climb on 2026-07-28 (`ladder-forge`, three chunks, one
 per rung) reproduced the whole chain and found eight more findings — see
@@ -689,9 +699,12 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 
 ## Environment as of this writing
 
+Tool versions re-read 2026-10-26 (codex, Claude Code, gh, uv); Hermes is held at
+its recorded version.
+
 ```
-Hermes 0.21.5 · codex-cli 0.157.1 · Claude Code 2.1.287 · gh 2.101.0
-lefthook 2.1.10 · uv 0.12.19 · copier 9.17.0
+Hermes 0.21.5 · codex-cli 0.164.0 · Claude Code 2.1.310 · gh 2.103.2
+lefthook 2.1.10 · uv 0.13.5 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator, forge-codex-lane, forge-verifier,
           forge-digest (glm-5.3-flash) · codex pinned gpt-5.6-luna xhigh
