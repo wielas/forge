@@ -2787,6 +2787,7 @@ bootstrap/generated-branch-names-pass-the-branch-name-rule  the branch board-boo
 bootstrap/suffix-lands-after-the-slug-cap  --branch-suffix goes on after the slug cap (literal CHUNK-1 name, a 48-letter capped slug, a 32-character suffix); no suffix leaves names unchanged
 bootstrap/suffixed-names-pass-the-branch-name-rule  every suffixed name is accepted by the product's own branch-name.sh
 bootstrap/hello-branch-takes-the-suffix  --hello with --branch-suffix a2b names chunk/HELLO-1-greet-a2b; without it, chunk/HELLO-1-greet
+bootstrap/init-does-not-touch-the-current-board  P35: no `kanban init` precedes `boards create` in what the bootstrap issues (it initialised the CURRENT board, not the new one); two premises measured on the installed Hermes
 bootstrap/hello-branch-satisfies-the-envelope-contract  the title and branch --hello emits, put into a completion envelope the way the lane builds one, pass validate-metadata.py
 bootstrap/invalid-suffix-is-refused-before-any-write  capitals, a leading dash, a slash, ... exit 1 before any Hermes command or gh call
 bootstrap/guard-refuses-pr-closed      a card whose branch has a CLOSED PR is refused (exit 3, no card); a never-used suffix is created
@@ -5721,6 +5722,38 @@ EOF2
     ok "hello-branch-takes-the-suffix (chunk/HELLO-1-greet-a2b; no suffix unchanged)"
   else
     bad "hello-branch-takes-the-suffix" "the --hello branch is a literal:$hel_detail"
+  fi
+
+  # -- P35: the bootstrap must not initialise the board that is merely CURRENT --------------------
+  # `hermes kanban init` ran before `boards create`. Hermes honours HERMES_KANBAN_BOARD only for a
+  # board that EXISTS, so with the new board not yet created it fell through to
+  # ~/.hermes/kanban/current and re-ran the schema and migrations there (rehearsals 3 and 4 both
+  # printed `Kanban DB initialized at …/boards/forge-ladder/kanban.db`). `boards create` already
+  # initialises its own board. The order is read off the commands the bootstrap issues (stub); the two
+  # facts that make the order matter are measured on the installed Hermes in an isolated home.
+  local ini="$TMPROOT/bootstrap-init" ini_detail="" ini_create ini_first ini_home="$TMPROOT/bootstrap-init-home" ini_out
+  _bootstrap_fixture "$ini" normal; _bootstrap_product "$ini"
+  out="$(_bootstrap_runx "$ini" --hello 2>&1)"; rc=$?
+  ini_create="$(grep -n '^boards create ' "$ini/state/commands.log" 2>/dev/null | head -1 | cut -d: -f1)"
+  ini_first="$(grep -n '^init' "$ini/state/commands.log" 2>/dev/null | head -1 | cut -d: -f1)"
+  { [ "$rc" = 0 ] && [ -n "$ini_create" ]; } || ini_detail="$ini_detail the-bootstrap-did-not-create-a-board(rc=$rc)"
+  [ -z "$ini_first" ] || [ -z "$ini_create" ] || [ "$ini_first" -gt "$ini_create" ] \
+    || ini_detail="$ini_detail init-runs-before-boards-create(line $ini_first before $ini_create)"
+  if command -v hermes >/dev/null 2>&1; then
+    rm -rf "$ini_home"; mkdir -p "$ini_home"
+    HERMES_HOME="$ini_home" hermes kanban boards create p35current >/dev/null 2>&1
+    HERMES_HOME="$ini_home" hermes kanban boards switch p35current >/dev/null 2>&1
+    ini_out="$(HERMES_HOME="$ini_home" HERMES_KANBAN_BOARD=p35new hermes kanban init 2>&1 | head -1)"
+    case "$ini_out" in *"/boards/p35current/kanban.db"*) ;; *)
+      ini_detail="$ini_detail premise-1-moved(an init for a board that does not exist yet reports: $ini_out)";; esac
+    HERMES_HOME="$ini_home" hermes kanban boards create p35new >/dev/null 2>&1
+    [ -s "$ini_home/kanban/boards/p35new/kanban.db" ] \
+      || ini_detail="$ini_detail premise-2-moved(boards-create-did-not-initialise-its-board)"
+  fi
+  if [ -z "$ini_detail" ]; then
+    ok "init-does-not-touch-the-current-board (no init precedes boards create in what the bootstrap issues; on the installed Hermes an init for a board that does not exist yet reports the CURRENT board, and boards create initialises its own)"
+  else
+    bad "init-does-not-touch-the-current-board" "board-bootstrap.sh must not run kanban init before its board exists —$ini_detail"
   fi
 
   # -- the hello card's title and branch satisfy the envelope contract ------------
