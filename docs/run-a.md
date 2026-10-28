@@ -1807,7 +1807,8 @@ not apply.
 - **Deploy.** Rehearsal 3's R2 runs the deployed script. **Until the deploy the old
   one builds the lower-case name** and the card would block again after a paid run,
   with a suffix nobody had used. Hence the check before R2 below.
-- `make verify` at the code commit measured **553 passed / 0 failed / 11 skipped**, and
+- `make verify` at the code commit measured **553 passed / 0 failed / 11 skipped** with
+  `hello-rehearsal-a2b` still live (see *FORGE_SHA and the baseline* below), and
   `./scripts/verify.sh bootstrap --with-hermes` (an isolated real Hermes) 32 / 0 / 0.
   The mutation check: with `--hello` put back on the lower-case literal, three bootstrap
   cases go red (the new one, `hello-branch-takes-the-suffix` and the spent-name seed);
@@ -1820,16 +1821,22 @@ and PR #7. The branch is read back from the card, so it is the lower-case name t
 card carried. It does not need the P33 deploy and can run now. The failure was
 diagnosed, so R6's "leave everything" is over; its evidence is in `$EV` and pasted
 under *Results*. Run C1 to C6 in one shell; each depends on the
-variables C1 sets. The worktree `$H/.worktrees/t_318f003c` must be clean at the tip
-before anything is archived, because the archive reaps a clean, fully pushed
+variables C1 sets. **Each of C1 to C5 is one chained command that prints `STOP:` and
+fails when any step fails, and C1 to C5 set a flag (`C1OK` to `C4OK`) that the later
+blocks require, so a pasted block does not run past a failed precondition. Do not paste
+the next block after a `STOP:`: read what failed.** A block run in a fresh shell finds
+its flag unset and stops. The worktree `$H/.worktrees/t_318f003c` must be clean at the
+tip before anything is archived, because the archive reaps a clean, fully pushed
 worktree (substrate behaviour 1 above).
 
 C1, record and check. Pass: the card id and the branch; `status:` followed by
 nothing; `HEAD:` and `TIP=` both `093c30c71ff25795ad15882ace7af723911e246f`;
-`tip-as-recorded`; `tip-is-remote-head`; then `true`. A dirty worktree, a tip that is
-not the recorded one, or `false`: stop, copy the worktree's state out, and look.
+`tip-as-recorded`; `tip-is-remote-head`; `worktree-clean`; `true`; then `C1OK=1`. A
+dirty worktree, a tip that is not the recorded one, or `C1OK=0`: stop, copy the
+worktree's state out, and look.
 ```bash
 H="$HOME/dev/hello-forge"; R=wielas/hello-forge; P="$HOME/dev/the-squatfather"; RB=hello-rehearsal-a2b; K=2
+C1OK=0; C2OK=0; C3OK=0; C4OK=0
 EV="$P/.forge/run-a-attempt-2-rehearsal-2"
 ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
 BR="$(hermes kanban --board "$RB" show "$ID" --json | jq -r .task.branch_name)"
@@ -1838,46 +1845,65 @@ echo "$ID $BR"
 git -C "$H" fetch origin
 { echo "status:"; git -C "$WT" status --porcelain; echo "HEAD: $(git -C "$WT" rev-parse HEAD)"; } | tee "$EV/worktree-before-archive-cleanup.txt"
 TIP="$(git -C "$WT" rev-parse HEAD)"; echo "TIP=$TIP"
-test "$TIP" = 093c30c71ff25795ad15882ace7af723911e246f && echo tip-as-recorded
-git -C "$H" ls-remote --heads origin "$BR" | cut -f1 | grep -qx "$TIP" && echo tip-is-remote-head
-gh pr view 7 --repo "$R" --json state,headRefName,headRefOid | jq -e --arg b "$BR" --arg t "$TIP" '.state == "OPEN" and .headRefName == $b and .headRefOid == $t'
+[ -n "$ID" ] && [ -n "$BR" ] &&
+[ "$TIP" = 093c30c71ff25795ad15882ace7af723911e246f ] && echo tip-as-recorded &&
+git -C "$H" ls-remote --heads origin "$BR" | cut -f1 | grep -qx "$TIP" && echo tip-is-remote-head &&
+[ -z "$(git -C "$WT" status --porcelain)" ] && echo worktree-clean &&
+gh pr view 7 --repo "$R" --json state,headRefName,headRefOid | jq -e --arg b "$BR" --arg t "$TIP" '.state == "OPEN" and .headRefName == $b and .headRefOid == $t' &&
+C1OK=1 ||
+{ echo "STOP: C1 did not pass, nothing below may run"; false; }
+echo "C1OK=$C1OK"
 ```
 C2, tag the tip and publish the tag through `gh api` (the pre-push hook refuses every
-push made from `main`). Same shell as C1. Pass: `refs/tags/run-a-attempt-2/rehearsal-2`,
+push made from `main`). Same shell. Pass: `refs/tags/run-a-attempt-2/rehearsal-2`,
 then `tag-at-tip`.
 ```bash
-git -C "$H" tag "run-a-attempt-2/rehearsal-$K" "$TIP"
-gh api "repos/$R/git/refs" -f ref="refs/tags/run-a-attempt-2/rehearsal-$K" -f sha="$TIP" --jq .ref
-git -C "$H" ls-remote --tags origin "run-a-attempt-2/rehearsal-$K" | cut -f1 | grep -qx "$TIP" && echo tag-at-tip
+[ "$C1OK" = 1 ] && [ "$TIP" = 093c30c71ff25795ad15882ace7af723911e246f ] &&
+git -C "$H" tag "run-a-attempt-2/rehearsal-$K" "$TIP" &&
+gh api "repos/$R/git/refs" -f ref="refs/tags/run-a-attempt-2/rehearsal-$K" -f sha="$TIP" --jq .ref &&
+git -C "$H" ls-remote --tags origin "run-a-attempt-2/rehearsal-$K" | cut -f1 | grep -qx "$TIP" && echo tag-at-tip &&
+C2OK=1 ||
+{ echo "STOP: C2 did not complete, do not archive or close anything"; false; }
 ```
 C3, archive the card first (the merge-watcher sweeps every board every ten minutes,
 and a blocked card whose PR is then closed unmerged would be reported once as a
-decision). Same shell. Pass: `Archived t_318f003c`, `true`, `worktree-reaped`; if the
-last does not print, C5 removes the worktree.
+decision). Same shell. Needs C1 and C2. Pass: `Archived t_318f003c`, `true`, then
+`worktree-reaped`; if `worktree-still-there` prints instead, C5 removes the worktree.
 ```bash
-hermes kanban --board "$RB" archive "$ID"
-hermes kanban --board "$RB" show "$ID" --json | jq -e '.task.status == "archived"'
-test ! -e "$WT" && echo worktree-reaped
+[ "$C1OK" = 1 ] && [ "$C2OK" = 1 ] &&
+hermes kanban --board "$RB" archive "$ID" &&
+hermes kanban --board "$RB" show "$ID" --json | jq -e '.task.status == "archived"' &&
+C3OK=1 &&
+{ test ! -e "$WT" && echo worktree-reaped || echo worktree-still-there; } ||
+{ echo "STOP: C3 did not complete, do not close the PR"; false; }
 ```
 C4, close PR #7 (arm A). The close runs in a subshell in `$P`, a directory that is
-not `$H`, so that `--delete-branch` deletes the remote branch only. Same shell. Pass:
-`PR 7`, gh's two confirmation lines, `true`, and then nothing from the `ls-remote`.
+not `$H`, so that `--delete-branch` deletes the remote branch only. Same shell. Needs
+C3. The guard refuses any PR number but 7. Pass: `PR 7`, gh's two confirmation lines,
+`true`, then `remote-branch-gone`.
 ```bash
 N="$(gh pr list --repo "$R" --head "$BR" --state open --json number -q '.[0].number')"; echo "PR $N"
-(cd "$P" && gh pr close "$N" --repo "$R" --delete-branch --comment "Run A attempt 2 rehearsal $K: verdict recorded, closed unmerged.")
-gh pr view "$N" --repo "$R" --json state | jq -e '.state == "CLOSED"'
-git -C "$H" ls-remote --heads origin "$BR"
+[ "$C3OK" = 1 ] && [ "$N" = 7 ] &&
+(cd "$P" && gh pr close "$N" --repo "$R" --delete-branch --comment "Run A attempt 2 rehearsal $K: verdict recorded, closed unmerged.") &&
+gh pr view "$N" --repo "$R" --json state | jq -e '.state == "CLOSED"' &&
+[ -z "$(git -C "$H" ls-remote --heads origin "$BR")" ] && echo remote-branch-gone &&
+C4OK=1 ||
+{ echo "STOP: C4 did not complete, do not remove the worktree, branch or board"; false; }
 ```
-C5, the worktree if C3 left it, the local branch, the prune, and the board. `worktree
-remove` runs without `--force`; if it refuses, stop and look. `boards rm` is a soft
-move under `boards/_archived/`; never `--delete`. Same shell. Pass: the first line
-prints nothing when the worktree was reaped; then the branch's SHA and `Deleted
-branch chunk/hello-1-greet-a2b (was 093c30c).`; then the board move.
+C5, the worktree if C3 left it, the local branch, the prune, and the board. Same
+shell. Needs C2 and C4. `worktree remove` runs without `--force`; if it refuses, the
+block stops there and the board stays. `boards rm` runs only after the worktree and the
+local branch are gone and the prune has succeeded, and it is a soft move under
+`boards/_archived/`; never `--delete`. Pass: the branch's SHA and `Deleted branch
+chunk/hello-1-greet-a2b (was 093c30c).` (nothing for the worktree when it was reaped),
+then the board move.
 ```bash
-[ -e "$WT" ] && git -C "$H" worktree remove ".worktrees/$ID"
-git -C "$H" rev-parse --verify --quiet "refs/heads/$BR" && git -C "$H" branch -D "$BR"
-git -C "$H" fetch --prune origin
-hermes kanban boards rm "$RB"
+[ "$C2OK" = 1 ] && [ "$C4OK" = 1 ] &&
+{ [ ! -e "$WT" ] || git -C "$H" worktree remove ".worktrees/$ID"; } &&
+{ ! git -C "$H" rev-parse --verify --quiet "refs/heads/$BR" || git -C "$H" branch -D "$BR"; } &&
+git -C "$H" fetch --prune origin &&
+hermes kanban boards rm "$RB" ||
+{ echo "STOP: C5 did not complete, the board was not moved"; false; }
 ```
 C6, confirm the state rehearsal 3 assumes. Same shell. Pass, in order: `##
 main...origin/main` and nothing else; `$H` alone; `refs/heads/main` alone; the tags
@@ -1972,8 +1998,11 @@ test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse 
 - **R3 (supersedes the 2026-10-27 R3 block, and its `watch` and `tail`).** Rehearsal
   2 found that `hermes kanban watch` and `tail -f` never exit, so no pass check may
   hang on them. The wait is a poll with a ceiling: every 150 s for at most 36 polls,
-  which is 90 minutes, and it stops early when the verifier's run has ended or when
-  the card is `blocked` before any verifier run. In the second terminal:
+  which is 90 minutes. It stops early when a verifier run has ended (`DONE=1`), when
+  the card is `blocked` (`DONE=2`), or when the card is `done` or `archived`
+  without a finished verifier run (`DONE=3`; Hermes has no `failed` status, so a card
+  that ended without the verifier would otherwise spin to the ceiling). In the second
+  terminal:
   ```bash
   SUF=a2c; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
   export P="$HOME/dev/the-squatfather"
@@ -1986,23 +2015,28 @@ test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse 
     printf '%s\n' "$J" | jq -r '[.task.status, (.events | last | .kind), "verifier runs: \([.runs[] | select(.profile == "forge-verifier")] | length)"] | @tsv'
     printf '%s\n' "$J" | jq -e '[.runs[] | select(.profile == "forge-verifier")] | last | .ended_at != null' >/dev/null && { DONE=1; break; }
     printf '%s\n' "$J" | jq -e '.task.status == "blocked"' >/dev/null && { DONE=2; break; }
+    printf '%s\n' "$J" | jq -e '.task.status | IN("done","archived")' >/dev/null && { DONE=3; break; }
     sleep 150
   done
   echo "DONE=$DONE"
   hermes kanban --board "$RB" runs "$ID"
   hermes kanban --board "$RB" log "$ID" | tail -40
   gh pr list --repo "$R" --head "$BR" --state all
+  [ "$DONE" = 1 ] && echo "R3 poll: a verifier run ended, R4 decides" || { echo "STOP: R3 poll ended with DONE=$DONE, read the prose before R4"; false; }
   ```
-  **Pass: the last line of the loop's output is `DONE=1`.** Each poll prints the
-  elapsed minutes, the card's status, its last event and the verifier's run count.
-  `DONE=2` is a card blocked before the verifier ever ran: it is R6's case (read the
-  block reason in `show`; an `other:` reason is a stop). `DONE=0` is the ceiling,
-  90 minutes with no verifier run ended: it is R6's case too, unless the log's tail
-  shows a Codex usage-limit park (a park keeps the card `running` and resumes
-  itself, as *Stop rules* says), in which case re-run this block, which polls
-  again from the start. The ceiling is 90 minutes and not the 60 of the 2026-10-26
-  entry's R3: a hold takes the verifier's CI wait of up to ten minutes after a
-  lane run of two to four, and 90 gives a park room to be seen. `runs`, `log` and
+  **Pass: `DONE=1`, then the last line `R3 poll: a verifier run ended, R4 decides`, and
+  the block's exit status is 0** (the final check, not the `gh pr list` before it,
+  sets it). **`DONE=1` means a verifier run ended, not that the verdict was good:**
+  R4's checks decide. Each poll prints the elapsed minutes, the card's status, its last
+  event and the verifier's run count. `DONE=2` is a card blocked: it is R6's case (read
+  the block reason in `show`; an `other:` reason is a stop). `DONE=3` is a card
+  `done` or `archived` that no verifier run finished: R4's first check is unmet, and it
+  is R6's case too. `DONE=0` is the ceiling, 90 minutes with none of these: R6's case
+  as well, unless the log's tail shows a Codex usage-limit park (a park keeps the card
+  `running` and resumes itself, as *Stop rules* says), in which case re-run this block,
+  which polls again from the start. The ceiling is 90 minutes and not the 60 of the
+  2026-10-26 entry's R3: a hold takes the verifier's CI wait of up to ten minutes after
+  a lane run of two to four, and 90 gives a park room to be seen. `runs`, `log` and
   `gh pr list` end on their own. The lane opens the PR from `$BR`.
 - **R4's wait (supersedes the `until` loop in the 2026-10-27 R4 block).** That loop
   had no ceiling. R3's poll has waited for the verifier's run to end, so the wait
@@ -2052,11 +2086,12 @@ then *Launch*. A failed rehearsal still costs no commission probe. Run A's own
 branches come from `branch_for` and keep the case of numeric ids; this entry does
 not change them.
 
-*P29, a second instance.* The digest renders rehearsal 2's block as "Risk: unknown":
+*P29, a further instance.* The digest renders rehearsal 2's block as "Risk: unknown":
 the reason begins `other:`, `class_decision other` answers "unknown — the card holds
 until someone looks", and the card's cause is known and specific. It is P29's
-symptom, with this card as its second instance (the first was rehearsal 1's
-`t_412a7d2c`); P29's entry in the epic records it. P29 stays parked until after run A.
+symptom again: rehearsal 1's `t_412a7d2c` and the dead attempt-1 card `t_da03d07a`
+are already listed, and this card is a further instance. P29's entry in the epic
+records it. P29 stays parked until after run A.
 
 *FORGE_SHA and the baseline.* Following the 2026-10-27 entry:
 - **`FORGE_SHA` is the merge commit of the PR that carries this entry** (squash, so
@@ -2066,13 +2101,20 @@ symptom, with this card as its second instance (the first was rehearsal 1's
   rev-parse HEAD` prints at *Launch* step 2, and it must equal `git -C ~/dev/forge
   rev-parse HEAD`.
 - *Inputs*' **Forge runtime** row reads "this PR's merge commit, or a later `main`".
-  Its baseline, **551 / 0 / 11** in the 2026-10-27 entry, becomes **553 / 0 / 11**
-  on this PR's head: the 551, plus the new case, plus one row for the live board
-  `hello-rehearsal-a2b`, because `metrics/live-schema-has-fixture-columns` has one row per
-  live board. The total therefore follows the boards (552 once C5 archives that board)
-  and is not a property of the code; this entry changes no check.
-  Precondition 3 is still re-measured on the deployed `main`, and its numbers go in
-  the launch record.
+  Its baseline, **551 / 0 / 11** in the 2026-10-27 entry, is restated here as
+  **failed 0, skipped 11, passed = 552 + one per extra live board under
+  `~/.hermes/kanban/boards` (not `_archived`)**. The 552 is the reading after C1 to C6,
+  which move `hello-rehearsal-a2b` out: the 551, plus the new case. It reads 553 again
+  while `hello-rehearsal-a2c` is live (rehearsal 3), because
+  `metrics/live-schema-has-fixture-columns` has one row per live board. The total
+  follows the boards and is not a property of the code; this entry changes no check.
+  The live-board count, in the same terms as that check:
+  ```bash
+  find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " "
+  ```
+  Precondition 3 is still re-measured on the deployed `main`, and the operator records
+  this count next to the reading in the launch record. On the dev machine on
+  2026-10-28 it printed 8 with `a2b` live, so 7 after C5 is the 552 case.
 - `PRODUCT_SHA` stays `b66be28`.
 
 *Decisions this entry makes that the operator may overrule before rehearsal 3.*

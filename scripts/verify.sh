@@ -5620,11 +5620,13 @@ EOF2
   else
     grep -Fq "sed -n '$hec_sed'" "$REPO_ROOT/scripts/lane.sh" \
       || hec_detail="$hec_detail lane.sh-no-longer-derives-chunk_id-with-this-sed"
+    grep -Fq 'CHUNK_ID="${CHUNK_ID%.}"' "$REPO_ROOT/scripts/lane.sh" \
+      || hec_detail="$hec_detail lane.sh-no-longer-strips-a-trailing-dot-from-chunk_id"
     _bootstrap_fixture "$hec" normal; _bootstrap_product "$hec"
     out="$(_bootstrap_runx "$hec" --hello --branch-suffix a2c 2>&1)"; rc=$?
     hec_title="$(cut -f4 "$hec/state/creates.tsv" 2>/dev/null | head -1)"
     hec_branch="$(cat "$hec/state/branches.txt" 2>/dev/null | head -1)"
-    hec_id="$(printf '%s' "$hec_title" | sed -n "$hec_sed")"
+    hec_id="$(printf '%s' "$hec_title" | sed -n "$hec_sed")"; hec_id="${hec_id%.}"
     [ "$rc" = 0 ] && [ -n "$hec_title" ] && [ -n "$hec_branch" ] && [ -n "$hec_id" ] \
       || hec_detail="$hec_detail stub-run(exit $rc, title '$hec_title', branch '$hec_branch', id '$hec_id')"
     if [ -z "$hec_detail" ]; then
