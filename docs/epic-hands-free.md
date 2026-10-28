@@ -1791,13 +1791,17 @@ envelope's `on_error`, which is always a `kanban_block`. The driver's raw call i
   bootstrap not installing the hook (`config/profiles-carry-the-driver-call-hook` and four
   verifier cases), writing `fail_closed: true` (that case, and the bootstrap's own readback
   fails) and writing a bare path (that case and `lane/the-hook-is-reached-through-forge-repo`);
+  the session comparison removed (`…refuses-a-record-that-is-not-this-runs`), the stdin-profile
+  agreement removed (`…policy-keeps-an-exit-open`), each of preflight's missing-block, matcher,
+  `fail_closed` and `--check` branches removed (`config/preflight-reads-the-hook-block`), the
+  session field not written (`lane/the-program-records-its-call`),
   and P35's `init` put back (`bootstrap/init-does-not-touch-the-current-board`). A hook that is
   only `exit 2` is the in-case control that Hermes refuses a block on that code.
-- `make verify` measured **563 passed / 0 failed / 11 skipped** with `hello-rehearsal-a2d` live (the total
+- `make verify` measured **564 passed / 0 failed / 11 skipped** with `hello-rehearsal-a2d` live (the total
   includes one `metrics/live-schema-has-fixture-columns` row per live board, so it follows
-  the boards: 562 with the baseline's seven), up from 552 by ten new cases (lane 2,
-  verifier 6, config 1, bootstrap 1); `./scripts/verify.sh bootstrap --with-hermes` 33 / 0 / 0.
-  Per group in the full run: lane 64, verifier 38 (one skip, the opt-in replays), config 33,
+  the boards: 563 with the baseline's seven), up from 552 by eleven new cases (lane 2,
+  verifier 6, config 2, bootstrap 1); `./scripts/verify.sh bootstrap --with-hermes` 33 / 0 / 0.
+  Per group in the full run: lane 64, verifier 38 (one skip, the opt-in replays), config 34,
   bootstrap 33.
 - Not settled, by design: the hook cannot be proved against a real worker without a paid
   run, so rehearsal 5's R4 reads the verifier record's `used` count (the hook ran) and compares

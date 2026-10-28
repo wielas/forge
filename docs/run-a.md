@@ -2683,8 +2683,8 @@ fidelity stops mattering.
   `boards create`. Rehearsals 3 and 4 both printed `Kanban DB initialized at …/boards/forge-ladder/kanban.db`
   at R2: the new board did not exist yet, so the call initialised the current board. `boards
   create` initialises its own board.
-- `make verify` measured **563 passed / 0 failed / 11 skipped** with `hello-rehearsal-a2d` live,
-  up from 552 by ten new cases; `./scripts/verify.sh bootstrap --with-hermes` 33 / 0 / 0. Every
+- `make verify` measured **564 passed / 0 failed / 11 skipped** with `hello-rehearsal-a2d` live,
+  up from 552 by eleven new cases; `./scripts/verify.sh bootstrap --with-hermes` 33 / 0 / 0. Every
   mutant of the hook, the two programs, the bootstrap and P35 reddened its case (listed in the
   epic's P34). `make preflight` from the clean dev checkout, before the deploy, reads PASS 106 / WARN 7 /
   FAIL 3: the three FAILs are the deployed runtime lacking the hook (two profiles without
