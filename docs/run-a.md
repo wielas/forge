@@ -1180,7 +1180,7 @@ first commit of the PR that carries this entry).
   HEAD`.
 - *Inputs*' **Forge runtime** row (line 41) reads "this PR's merge commit, or a
   later `main`". Its baseline, expected `make verify` 535 / 0 / 11 in the
-  2026-10-26 entry, becomes **549 / 0 / 11** on this PR's head (the code slice's
+  2026-10-26 entry, becomes **551 / 0 / 11** on this PR's head (the code slice's
   reading, plus P31's `template/pytest-capped`; this entry changes no check). Precondition 3 is still re-measured on
   the deployed `main`, and its numbers go in the launch record.
 - **`PRODUCT_SHA` stays `b66be28`** (the 2026-10-26 entry). Nothing in
@@ -1235,15 +1235,18 @@ test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse 
 
 **Rehearsal 2.** R0 to R7 stand as the 2026-10-26 entry wrote them, except for
 the following, which supersede by line and step. Where a block changes, the whole
-block is given, so that nothing is hand-edited: every block below sets the
-variables it uses.
+block is given, so that nothing is hand-edited. R0 to R3 and R7 step 1 each
+export the variables they use. **R4, and R7 steps 2 to 6, do not:** they depend on
+the shell that set them. Run R4 in the same shell as R3, which exports `RB`, `R`,
+`BR`, `ID` and `P` and in which R4 sets `N`; run R7 steps 2 to 6 in the same shell
+as R7 step 1, which sets `K`, `WT` and `TIP`.
 
 - **R0 (supersedes lines 648-671, and the variable blocks at 651 and 747).**
-  `RB=hello-rehearsal-a2b`, and `BR=chunk/hello-1-greet-a2b`. The evidence
+  `SUF=a2b`, `RB=hello-rehearsal-$SUF` and `BR=chunk/hello-1-greet-$SUF`. The evidence
   directory is a new one, `$P/.forge/run-a-attempt-2-rehearsal-2` (the first holds
   rehearsal 1). Run the replacement precondition 8 above with `SKIP=-` first. Then:
   ```bash
-  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  SUF=a2b; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/hello-1-greet-$SUF"
   export P="$HOME/dev/the-squatfather"
   export EV="$P/.forge/run-a-attempt-2-rehearsal-2"; mkdir -p "$EV"
   hermes gateway status | sed -n 2,3p
@@ -1277,10 +1280,10 @@ variables it uses.
 - **R2 (supersedes lines 712-713, 716, 725-728, 736-739).** Run the deployed-script
   check above, then create the board and the card through the certified path:
   ```bash
-  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  SUF=a2b; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/hello-1-greet-$SUF"
   export P="$HOME/dev/the-squatfather"
   export EV="$P/.forge/run-a-attempt-2-rehearsal-2"
-  cd "$H" && ~/.forge/repo/hermes/board-bootstrap.sh "$RB" --hello --branch-suffix a2b; echo "bootstrap exit=$?"
+  cd "$H" && ~/.forge/repo/hermes/board-bootstrap.sh "$RB" --hello --branch-suffix "$SUF"; echo "bootstrap exit=$?"
   ```
   It must print `free     chunk/hello-1-greet-a2b`, create the card, and print
   `bootstrap exit=0`. The raw `create` at lines 725-728 shows only what the script
@@ -1292,18 +1295,20 @@ variables it uses.
   ```bash
   export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"; echo "$ID"
   hermes kanban --board "$RB" show "$ID" --json | jq -e --arg b "$BR" '.task | .assignee == "forge-codex-lane" and .workspace_kind == "worktree" and .branch_name == $b and .max_retries == 1 and .skills == ["forge-lane"]'
-  test "$BR" = chunk/hello-1-greet-a2b && echo branch-pinned
   ```
-  Expected: the card id, `true`, `branch-pinned`. A mismatch is a FAIL of the
-  rehearsal's own setup. **A refused bootstrap** (exit 3 or 2) creates no card but
+  Expected: the card id, then `true`. The `jq` compares the branch the board
+  holds for that card, read back through `show`, with `$BR`; a mismatch is a FAIL
+  of the rehearsal's own setup. (An earlier line compared `$BR` with a literal,
+  which can only pass.) **A refused bootstrap** (exit 3 or 2) creates no card but
   leaves an empty board. After exit 2 (could not ask), fix the cause and re-run
   the same command on the same board with the same suffix. After exit 3 (spent)
   the suffix `a2b` is spent: re-run on the same, empty board with a new
-  never-used suffix, and set `BR` to match (`chunk/hello-1-greet-` plus it).
+  never-used suffix: set `SUF` to it in the first line of every block that has one
+(`RB` and `BR` follow from it).
   Caveat 2 binds a board that holds a card, and this one holds none.
 - **R3 (supersedes lines 747-755).** In the second terminal:
   ```bash
-  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  SUF=a2b; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/hello-1-greet-$SUF"
   export P="$HOME/dev/the-squatfather"
   export EV="$P/.forge/run-a-attempt-2-rehearsal-2"
   export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
@@ -1314,7 +1319,9 @@ variables it uses.
   gh pr list --repo "$R" --head "$BR" --state all
   ```
   `watch` follows live; leave it with Ctrl+C. The lane opens the PR from `$BR`.
-- **R4 (supersedes lines 780-781 and 858).** The wait, and the open PR. The name
+- **R4 (supersedes lines 780-781 and 858).** R4's and R5's standing blocks, which
+  this entry does not repeat, carry `# must print …` comments: **paste them into
+  bash, or run `setopt interactive_comments` first.** The wait, and the open PR. The name
   is new, so an open PR on it is the lane's:
   ```bash
   until hermes kanban --board "$RB" show "$ID" --json | jq -e '[.runs[] | select(.profile == "forge-verifier")] | last | .ended_at != null' >/dev/null; do sleep 30; done; sleep 120
@@ -1322,7 +1329,7 @@ variables it uses.
   ```
   The last check of R4 is, in place of line 858:
   ```bash
-  gh pr view "$N" --repo "$R" --json state,headRefName -q '.state == "OPEN" and .headRefName == "chunk/hello-1-greet-a2b"'
+  gh pr view "$N" --repo "$R" --json state,headRefName | jq -e --arg b "$BR" '.state == "OPEN" and .headRefName == $b'
   gh pr view "$N" --repo "$R" --json url -q .url
   ```
   It prints `true`, then the URL the hold names. Every other R4 block stands
@@ -1344,7 +1351,7 @@ variables it uses.
   Step 1, record. `K` is the rehearsal number; the tag is
   `run-a-attempt-2/rehearsal-$K`:
   ```bash
-  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  SUF=a2b; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/hello-1-greet-$SUF"
   export P="$HOME/dev/the-squatfather"
   export EV="$P/.forge/run-a-attempt-2-rehearsal-2"
   export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
@@ -1492,20 +1499,37 @@ steps 1, 2 and 4 stand with it. Each block below sets `P` and `B` itself, so tha
 none is run with a stale value. Run all of them from `$P`.
 - **Before step 2 (the launch record).** The deployed-script check above, which
   must print a number greater than 0 and `runtime=main`. It comes before the
-  record because the record fixes `FORGE_SHA`.
-- **Step 3a, the root.**
+  record because the record fixes `FORGE_SHA`. Then, in the shell that runs step
+  2, this line, which **replaces the frozen `P="$HOME/dev/the-squatfather";
+  B=squatfather-run-a` at line 133** (the *Launch* header block, which steps 1, 2
+  and 4 would otherwise run on, writing `BOARD=squatfather-run-a` into the record):
   ```bash
   P="$HOME/dev/the-squatfather"; B=squatfather-run-a2
-  cd "$P" && ~/.forge/repo/hermes/board-bootstrap.sh "$B" --root-only --branch-suffix a2; echo "bootstrap exit=$?"
-  test "$B" = squatfather-run-a2 && echo board-OK
-  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/squatfather-run-a2/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
+  ```
+  Step 2's pass check, after the record is written, is that the record names the
+  right board and no other:
+  ```bash
+  grep -x 'BOARD=squatfather-run-a2' "$P/.forge/run-a-launch.txt"
+  ```
+  It prints `BOARD=squatfather-run-a2` and exits 0. If it prints nothing, the
+  record is wrong: delete `$P/.forge/run-a-launch.txt`, fix `B`, and write it again
+  before the root card exists. (The same line also replaces the `B=` on line 328,
+  *What is measured*, in any new shell.)
+- **Step 3a, the root.**
+  ```bash
+  P="$HOME/dev/the-squatfather"; B=squatfather-run-a2; SUF=a2
+  cd "$P" && ~/.forge/repo/hermes/board-bootstrap.sh "$B" --root-only --branch-suffix "$SUF"; echo "bootstrap exit=$?"
+  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$B/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
   sqlite3 "$SNAP" "select title, branch_name from tasks"
+  sqlite3 "$SNAP" "select count(*) from tasks where branch_name like '%-$SUF'"
   ```
   Pass: it printed `free     chunk/1-store-owner-history-in-a-migrated-sqlite-a2`
-  and `bootstrap exit=0`; then `board-OK`; then the query, run on the snapshot of
-  **`squatfather-run-a2`** by its literal path, prints exactly one row whose
-  branch is that name. A card made on the wrong board fails twice: `board-OK` does
-  not print, and that board holds no such row. On **exit 2** (could not ask), fix
+  and `bootstrap exit=0`; then the first query, run on the snapshot of the board
+  at `$B`'s path (a board that does not exist fails the snapshot), prints exactly
+  one row, whose branch ends `-a2`; then the count, `1`. A card made on the wrong
+  board leaves that board without the row, and the snapshot of `$B` fails or
+  prints no row. The check reads the board and the branch back; it does not
+  compare a variable with a literal. On **exit 2** (could not ask), fix
   the cause and re-run the same command: the board is empty and exists, and
   precondition 6's "absent" check does not apply to the re-run. On **exit 3**, a
   name with the suffix `a2` is already spent: stop and read which PR or branch the
@@ -1514,7 +1538,9 @@ none is run with a stale value. Run all of them from `$P`.
   empty, so it may be reused (caveat 2 binds a board that holds a card).
 - **Step 3b, the digest wrapper:** the `sed` repoint exactly where the 2026-10-26
   entry put it (lines 595-607), after `squatfather-run-a2` exists, with its pass
-  check: the last line ends `--board squatfather-run-a2 "$@"`.
+  check: the last line ends `--board squatfather-run-a2 "$@"`. That block carries
+  a `# must end: …` comment: **paste it into bash, or run `setopt
+  interactive_comments` first**, as at the top of this entry.
 - **Step 3c, T5.** Only after 3b's check passes:
   ```bash
   hermes kanban boards rm squatfather-run-a
@@ -1528,14 +1554,23 @@ none is run with a stale value. Run all of them from `$P`.
   `$P/.forge/run-a-attempt-1` holds a copy: *the 2026-10-03 entry's "Attempt 1's
   board stays as evidence" (lines 529-530) is amended to that*. Run the
   replacement precondition 8 once more; it must print nothing.
+- **Step 4, the root checkpoint,** runs off the same line, not off line 133. Set
+  it in the shell that runs step 4 (it is the same one if step 2's shell is still
+  open):
+  ```bash
+  P="$HOME/dev/the-squatfather"; B=squatfather-run-a2
+  ```
+  Without it, `metadata-live.sh` and `make metrics` read `squatfather-run-a`,
+  attempt 1's board, and report on the wrong run. Their pass condition (exit 0,
+  `metrics` reads the board) is otherwise as the *Launch* list has it.
 - **Step 5, the later full run** that creates CHUNK-2 to CHUNK-10 and the gates,
   **with the same suffix**:
   ```bash
-  P="$HOME/dev/the-squatfather"; B=squatfather-run-a2
-  cd "$P" && ~/.forge/repo/hermes/board-bootstrap.sh "$B" --branch-suffix a2; echo "bootstrap exit=$?"
-  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/squatfather-run-a2/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
-  sqlite3 "$SNAP" "select count(*) from tasks where branch_name like '%-a2'"
-  sqlite3 "$SNAP" "select id, branch_name from tasks where branch_name is not null and branch_name not like '%-a2'"
+  P="$HOME/dev/the-squatfather"; B=squatfather-run-a2; SUF=a2
+  cd "$P" && ~/.forge/repo/hermes/board-bootstrap.sh "$B" --branch-suffix "$SUF"; echo "bootstrap exit=$?"
+  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$B/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
+  sqlite3 "$SNAP" "select count(*) from tasks where branch_name like '%-$SUF'"
+  sqlite3 "$SNAP" "select id, branch_name from tasks where branch_name is not null and branch_name not like '%-$SUF'"
   ```
   Pass: `bootstrap exit=0`; one `exists   chunk/1-store-owner-history-in-a-migrated-sqlite-a2`
   line for the root, and one `free` line for each of the other eight lane cards
@@ -1570,6 +1605,15 @@ cap only once a pytest-bdd release supports pytest 9.2, rechecking PyPI first.
 **Run A is unaffected:** Squatfather and hello-forge carry committed locks, both
 on pytest 9.1.1, so the lane's and the verifier's runs never resolve the new
 version. What changes here is the baseline `FORGE_SHA` is certified against: it
-is the `make verify` total this PR's head reports, **549 passed / 0 failed / 11
-skipped**, and the earlier 547 in this entry is superseded. Precondition 3 is
-still re-measured on the deployed `main`.
+is the `make verify` total this PR's head reports, **551 passed / 0 failed / 11
+skipped**. Precondition 3 is still re-measured on the deployed `main`.
+
+*Final-review fixes to this PR (2026-10-28).* The block above for *Launch* now sets
+`P` and `B` (and `SUF`) itself before step 2 and step 4, and says it replaces
+lines 133 and 328; step 2's pass check greps the launch record for
+`BOARD=squatfather-run-a2`. The checks that compared a variable with a literal
+(`branch-pinned`, `board-OK`) are gone: the card's and the board's own readback
+decide. The rehearsal's blocks derive `RB` and `BR` from `SUF`. `board-bootstrap.sh`
+now stops with **exit 4** when a board already holds a card under a different
+branch (a suffix that differs from the board's first run); caveat 2 above is no
+longer only advice. Attempt 2's precondition 3 baseline is **551 / 0 / 11**.

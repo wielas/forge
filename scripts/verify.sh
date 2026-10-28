@@ -2748,6 +2748,8 @@ bootstrap/guard-asks-about-every-card-before-creating-any  one spent name among 
 bootstrap/guard-parses-the-ssh-origin  a git@github.com:owner/repo.git origin (the form both real products use) is parsed: a spent name is refused, a suffixed one created
 bootstrap/guard-could-not-ask-exits-2-and-creates-nothing  gh errors, prose from gh, unreachable origin, no origin and an unreadable board all exit 2, not 3 and not 0
 bootstrap/existing-card-passes-the-guard  a card already on the board (OPEN PR, remote branch) is neither asked about nor refused on the full re-run
+bootstrap/card-with-another-branch-exits-4  a root made under suffix a2 and re-run under a3 exits 4 naming both branches, creates nothing more; the same suffix completes
+bootstrap/hello-cleans-its-temp-files-on-a-refusal  --hello refused with exit 3 or 2 leaves no mktemp file in TMPDIR
 commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
 commission/propagates-prerequisite-failure a named nonzero prerequisite makes commissioning fail
 commission/preserves-roadmap-warn       advisory WARN remains WARN in the report
@@ -4582,15 +4584,24 @@ LPLOG
   # those writes can claim the child without its prerequisite. The corrected
   # bootstrap creates in topological order and passes every --parent in the
   # card's create transaction, then reads the parents back.
-  local bootstrap=hermes/board-bootstrap.sh
-  if grep -Fq 'parent_args+=(--parent "$parent_card")' "$bootstrap" \
+  # Epic P32: the last clause below read everything after a `# full mode:` marker,
+  # and that marker became `# full/root-only mode:` when the root-only bootstrap
+  # landed (8). The sed then printed nothing, `! … | grep` passed on nothing, and
+  # "no link pass in full mode" was asserted of an empty string. So the section
+  # is extracted FIRST and an empty extraction is a failure of its own (F65).
+  local bootstrap=hermes/board-bootstrap.sh gp_tail
+  gp_tail="$(awk '/^# full\/root-only mode:/{f=1} f' "$bootstrap")"
+  if [ -z "$gp_tail" ]; then
+    bad "graph-parents-are-atomic" \
+        "no '# full/root-only mode:' marker in $bootstrap, so the no-link-pass clause read nothing — the check went blind, which is not a pass (F65)"
+  elif grep -Fq 'parent_args+=(--parent "$parent_card")' "$bootstrap" \
      && grep -Fq 'if [ "$parent_count" -eq 0 ]' "$bootstrap" \
      && grep -Fq 'created=$((created + parent_count))' "$bootstrap" \
      && grep -Fq '"${@:6}" --json' "$bootstrap" \
      && grep -Fq '.parents[]?' "$bootstrap" \
-     && ! sed -n '/# full mode:/,$p' "$bootstrap" \
+     && ! printf '%s\n' "$gp_tail" \
           | grep -Eq 'hermes kanban( --board "[^"]+")? link '; then
-    ok "graph-parents-are-atomic"
+    ok "graph-parents-are-atomic ($(printf '%s\n' "$gp_tail" | wc -l | tr -d ' ') lines of the full/root-only section hold no link pass)"
   else
     bad "graph-parents-are-atomic" \
         "board-bootstrap must attach graph parents during create and read them back, never create ready children before a later link pass"
@@ -5130,8 +5141,10 @@ case "${1:-}" in
         jq -n --argjson parents "$parents" --argjson events "$events" \
           --arg status "$status" --arg assignee "$assignee" \
           --arg id "$cid" --arg title "$(cat "$state/$cid.title")" \
+          --arg br "$(cat "$state/$cid.branch" 2>/dev/null || true)" \
           '{task:{id:$id,title:$title,status:$status,
-                  assignee:(if $assignee == "" then null else $assignee end)},
+                  assignee:(if $assignee == "" then null else $assignee end),
+                  branch_name:(if $br == "" then null else $br end)},
             events:$events,parents:$parents}'
         exit 0
         ;;
@@ -5768,6 +5781,57 @@ EOF2
     ok "existing-card-passes-the-guard (root has an OPEN PR and a remote branch; the full re-run keeps it, asks only about the two new cards)"
   else
     bad "existing-card-passes-the-guard" "a card already on the board must pass untouched and unasked:$idm_detail"
+  fi
+
+  # -- a card the board already holds, under a different suffix ---------------------
+  # `create` is idempotent on the key: asked for chunk/1-...-a3 while the board
+  # holds the card for chunk/1-...-a2, it hands back the OLD card. The guard asked
+  # GitHub about a name that was never used and waved it through, and the lane
+  # would have been dispatched on the old branch. The run must stop (exit 4),
+  # name both branches and the rule, and create nothing further.
+  local sfm="$TMPROOT/bootstrap-suffix-mismatch" sfm_detail="" sfm_ok
+  _bootstrap_fixture "$sfm" normal
+  out="$(_bootstrap_runx "$sfm" --root-only --branch-suffix a2 2>&1)"; rc=$?
+  [ "$rc" = 0 ] || sfm_detail="$sfm_detail first-run(exit $rc)"
+  out="$(_bootstrap_runx "$sfm" full --branch-suffix a3 2>&1)"; rc=$?
+  if [ "$rc" != 4 ] || [ "$(_bootstrap_cards "$sfm")" != 1 ] \
+     || ! printf '%s' "$out" | grep -Fq 'chunk/1-bootstrap-fixture-a2' \
+     || ! printf '%s' "$out" | grep -Fq 'chunk/1-bootstrap-fixture-a3' \
+     || ! printf '%s' "$out" | grep -Fq 'identical'; then
+    sfm_detail="$sfm_detail different-suffix(exit $rc, cards $(_bootstrap_cards "$sfm"): $(printf '%s' "$out" | tail -3 | tr '\n' ' '))"
+  fi
+  # The control: the same suffix on the same board is the idempotent re-run.
+  out="$(_bootstrap_runx "$sfm" full --branch-suffix a2 2>&1)"; rc=$?
+  sfm_ok=1; [ "$rc" = 0 ] && [ "$(_bootstrap_cards "$sfm")" = 3 ] || sfm_ok=0
+  [ "$sfm_ok" = 1 ] || sfm_detail="$sfm_detail same-suffix-control(exit $rc, cards $(_bootstrap_cards "$sfm"))"
+  if [ -z "$sfm_detail" ]; then
+    ok "card-with-another-branch-exits-4 (a root made under -a2 and re-run under -a3 stops at once, naming both branches; the same suffix completes the graph)"
+  else
+    bad "card-with-another-branch-exits-4" "an idempotent create must not hand back a card on another branch unnoticed:$sfm_detail"
+  fi
+
+  # -- the hello block leaves no temp file behind on a refusal -------------------------
+  # The cleanup trap used to be installed after the hello block, so run_guard's
+  # exit 2/3 left both mktemp files behind. macOS mktemp ignores $TMPDIR, so a
+  # shim on the stub PATH points every bare `mktemp` at a private directory,
+  # which makes a leak countable.
+  local hlk="$TMPROOT/bootstrap-hello-leak" hlk_detail="" hlk_tmp
+  _bootstrap_fixture "$hlk" normal; _bootstrap_product "$hlk"
+  hlk_tmp="$TMPROOT/bootstrap-hello-leak-tmp"; rm -rf "$hlk_tmp"; mkdir -p "$hlk_tmp"
+  printf '#!/bin/sh\nexec /usr/bin/mktemp "$HLK_TMP/tmp.XXXXXXXX"\n' > "$hlk/bin/mktemp"
+  chmod +x "$hlk/bin/mktemp"
+  _bootstrap_spend "$hlk" chunk/hello-1-greet 1:MERGED
+  out="$(cd "$hlk" && HLK_TMP="$hlk_tmp" STUB_STATE="$hlk/state" PATH="$hlk/bin:$PATH" "$bootstrap" stage --hello 2>&1)"; rc=$?
+  [ "$rc" = 3 ] || hlk_detail="$hlk_detail spent(exit $rc)"
+  [ -z "$(ls -A "$hlk_tmp")" ] || hlk_detail="$hlk_detail spent-leaked($(ls -A "$hlk_tmp" | tr '\n' ' '))"
+  : > "$hlk/state/gh-fails"
+  out="$(cd "$hlk" && HLK_TMP="$hlk_tmp" STUB_STATE="$hlk/state" PATH="$hlk/bin:$PATH" "$bootstrap" stage --hello 2>&1)"; rc=$?
+  [ "$rc" = 2 ] || hlk_detail="$hlk_detail could-not-ask(exit $rc)"
+  [ -z "$(ls -A "$hlk_tmp")" ] || hlk_detail="$hlk_detail could-not-ask-leaked($(ls -A "$hlk_tmp" | tr '\n' ' '))"
+  if [ -z "$hlk_detail" ]; then
+    ok "hello-cleans-its-temp-files-on-a-refusal (exit 3 and exit 2 leave no temp file)"
+  else
+    bad "hello-cleans-its-temp-files-on-a-refusal" "the --hello block leaked on a guard refusal:$hlk_detail"
   fi
 
   if [ "$WITH_HERMES" != 1 ]; then

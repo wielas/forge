@@ -178,9 +178,15 @@ make new NAME=hello-forge DEST=$HOME/dev
 cd $HOME/dev/hello-forge && git init -b main . && make setup
 gh repo create hello-forge --public --source=. --remote=origin --push
 make protect
-../forge/hermes/board-bootstrap.sh forge-hello --hello
+../forge/hermes/board-bootstrap.sh forge-hello --hello --branch-suffix a1
 hermes kanban --board forge-hello watch
 ```
+
+`--branch-suffix` is needed whenever the name may have been used before: GitHub
+ties a PR to its head branch name for ever, so the bootstrap asks GitHub and
+`origin` about every branch it would hand out, and refuses (exit 3) one that has
+a PR in any state or exists on the remote. `--hello`'s `chunk/hello-1-greet` is
+spent after its first run. The guard needs a GitHub `origin`; without one it exits 2.
 
 **What this proved that reading could not.** The ladder that got here ran in
 three rungs — a real repo with no agents, then `codex exec` driven by hand with

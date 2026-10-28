@@ -1566,16 +1566,26 @@ Evidence and the corrected procedure: `docs/run-a.md`, Amendments, 2026-10-27.
 - Caveats, all recorded in the amendment: a refusal can leave an empty board
   behind; the suffix must be identical on every bootstrap run of one board;
   interactive cards and gates carry no branch, so the suffix does not reach them.
+- Added in the final review of the PR: the second caveat is now enforced. After a
+  card is created or returned, the full and root-only modes read its
+  `branch_name` back, and a card the board already holds under a different
+  suffix stops the run with **exit 4** naming both branches
+  (`bootstrap/card-with-another-branch-exits-4`). The `--hello` block's cleanup
+  trap is installed before its guard, so exit 2 and 3 leave no temp file behind
+  (`bootstrap/hello-cleans-its-temp-files-on-a-refusal`). The operator guide,
+  the staged-run guide and the README now describe the flag, the guard and exits
+  1, 2, 3 and 4.
 - The rule it enforces: every attempt uses branch names never used before,
-  whatever their PR state. `make verify` on the slice measured 547 passed / 0
-  failed / 11 skipped.
+  whatever their PR state. `make verify` at `bdd1461` measured 547 passed / 0
+  failed / 11 skipped; that is a historical reading, and the slice's head now reads
+  more (P31).
 
 **P31 (run A attempt 2, after rehearsal 1). A template that ships no lock takes
 whatever the index serves the day it is stamped, and pytest-bdd could not read
 pytest 9.2.0.** pytest 9.2.0 reached PyPI on 2026-10-27 at 21:30 UTC and renamed
 the private `FixtureManager._arg2fixturedefs` to `_arg2node2fixturedefs`.
-pytest-bdd, 8.1.0 and 9.0.0 (the latest), reads the old name at
-`pytest_bdd/scenario.py:65`, so every test run in a project stamped after that
+pytest-bdd, 8.1.0 and 9.0.0 (the latest), reads the old name
+(`_arg2fixturedefs`, in `pytest_bdd/scenario.py`), so every test run in a project stamped after that
 hour crashed with `AttributeError`. The python-service template's dev group had
 floors only (`pytest>=8`), shipped no `uv.lock`, and `make setup` runs a plain
 `uv sync`. Six cases failed on a pristine `main`: `template/check-green`,
@@ -1594,10 +1604,27 @@ unaffected: Squatfather and hello-forge both hold pytest 9.1.1.
   asserts that is below 9.2. Mutation-checked: with the cap put back to
   `pytest>=8`, that case and the three `template/` cases above go red; restored,
   green.
-- `make verify` on the slice measured 549 passed / 0 failed / 11 skipped.
+- `make verify` on the slice measured 551 passed / 0 failed / 11 skipped.
 - Not fixed, by design: a lockless template will meet the next private-API
   rename the same way. A lock in the template would answer it, and would
   trade it for stale pins in every product; unscheduled.
+
+**P32 (final review of #90). A check that asserts an absence read a marker that
+had been renamed.** `lane/graph-parents-are-atomic` ends by asserting that the
+bootstrap's full mode has no `hermes kanban … link` pass, and it took "full mode"
+to be whatever follows a `# full mode:` line. That line became `# full/root-only
+mode:` in epic 8, so the `sed` printed nothing, the `! … | grep` passed on
+nothing, and the clause had judged an empty string since then. The first four
+clauses (greps for the atomic create) still ran, which is why nothing turned red.
+Found by a reviewer reading the case against the script.
+
+*Closed 2026-10-28 by `slice/bootstrap-branch-suffix` (#90).*
+- The section is extracted first, from `# full/root-only mode:`, and an empty
+  extraction is a failure of its own (F65), not a pass.
+- Mutation-checked both ways: renaming the marker turns the case red, and
+  appending a `hermes kanban --board "$BOARD" link a b` after it does too.
+- The same shape elsewhere is not swept here: any `! … | grep` over an extracted
+  region has this failure mode if its region can come back empty. Unscheduled.
 
 ## Open questions
 

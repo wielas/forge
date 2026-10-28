@@ -48,6 +48,8 @@ Before it creates a card that carries a branch this script asks GitHub, for each
 such card, whether that branch already has a PR in ANY state or exists on origin.
   exit 3  the branch is spent (a PR or a remote branch exists): pick another suffix
   exit 2  GitHub, origin or the board could not be asked: not the same as "free"
+  exit 4  a card for this chunk is already on the board with a different branch:
+          the suffix differs from the one the board was started with
   exit 1  usage, a bad suffix, a bad graph, or any other FATAL
 A refusal creates no card.
 USAGE
@@ -610,7 +612,12 @@ run_guard() {  # $1=file of "<branch><TAB><card title>" lines
 }
 
 if [ "$MODE" = "--hello" ]; then
+  # Both temp files are cleaned on EVERY exit, including run_guard's exit 2 and 3
+  # and a rejected branch name; the full-mode trap further down is installed too
+  # late to cover this block.
+  hello_queue=""
   tmp=$(mktemp)
+  trap 'rm -f "$tmp" "$hello_queue"' EXIT
   cat > "$tmp" << 'EOF'
 ### CHUNK-HELLO-1: Add greet(name) with a BDD scenario
 - **Goal:** Prove the full lane end-to-end with a trivially small chunk.
@@ -624,13 +631,11 @@ if [ "$MODE" = "--hello" ]; then
 - **Lane:** forge-codex-lane · **Risk:** low
 EOF
   hello_title="CHUNK-HELLO-1: Add greet(name) with a BDD scenario"
-  hello_branch="$(finish_branch CHUNK-HELLO-1 chunk/hello-1-greet)" || { rm -f "$tmp"; exit 1; }
+  hello_branch="$(finish_branch CHUNK-HELLO-1 chunk/hello-1-greet)" || exit 1
   hello_queue="$(mktemp)"
   printf '%s\t%s\n' "$hello_branch" "$hello_title" > "$hello_queue"
   run_guard "$hello_queue"
-  rm -f "$hello_queue"
   create_card "$hello_title" "$tmp" "$LANE_ASSIGNEE" "hello-1" "$hello_branch"
-  rm -f "$tmp"
   echo "hello card created on board '$BOARD'. Watch every step:"
   echo "  hermes kanban --board $BOARD watch"
   echo "  hermes kanban --board $BOARD tail <task-id>   # live worker output"
@@ -776,6 +781,21 @@ while [ "$(wc -l < "$IDMAP" | tr -d ' ')" -lt "$target_total" ]; do
       echo "       actual:   ${actual_parents:-none}" >&2
       exit 1
     }
+
+    # `create` is idempotent on the key and returns the EXISTING card, whatever
+    # branch it carries. A run with a different --branch-suffix from the one that
+    # made the card therefore gets the old card back with the old branch, the guard
+    # having asked GitHub about a name that was never used. Read it back.
+    if [ "$lane" != "claude-interactive" ] && [ -n "$branch" ]; then
+      actual_branch=$(hermes kanban --board "$BOARD" show "$cid" --json \
+        | jq -r '.task.branch_name // empty')
+      [ "$actual_branch" = "$branch" ] || {
+        echo "FATAL (exit 4): card $cid ($id) is already on board '$BOARD' with branch '${actual_branch:-none}', but this run asked for '$branch'." >&2
+        echo "       The suffix must be identical on every bootstrap run of one board (--branch-suffix '${BRANCH_SUFFIX:-none}' now)." >&2
+        echo "       Re-run with the suffix the board was started with, or use a new board and a never-used suffix." >&2
+        exit 4
+      }
+    fi
 
     printf '%s\t%s\n' "$id" "$cid" >> "$IDMAP"
     created=$((created + parent_count))
