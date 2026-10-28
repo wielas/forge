@@ -1900,6 +1900,50 @@ run_config_group() {
     fi
   fi
 
+  # P34: PREFLIGHT JUDGES THE HOOK BLOCK IT READS. The profile branches of preflight.sh (a missing block,
+  # a command that is not the ~/.forge/repo form, a matcher short of a tool, a fail_closed hook) and its
+  # --check line are cut out of the script and run against a stubbed `hermes config get` and a fake
+  # ~/.forge/repo, with pass/fail defined to print. A branch removed from preflight turns a row red; an
+  # extraction that finds nothing is a failure of its own (F65), not a pass.
+  local pf_detail="" pf_r1 pf_r2 pf_home="$TMPROOT/preflight-hook-home" pf_good pf_row pf_want
+  pf_r1="$(awk '/# P34: the two profiles whose programs name a terminal call/{f=1} f{print} f && /^      esac$/{exit}' scripts/preflight.sh)"
+  pf_r2="$(awk '/^_hook="\$HOME\/.forge\/repo\/scripts\/driver-call-hook.sh"$/{f=1} f{print} f && /^fi$/{exit}' scripts/preflight.sh)"
+  if [ -z "$pf_r1" ] || [ -z "$pf_r2" ]; then
+    bad "preflight-reads-the-hook-block" "could not cut the hook branches out of scripts/preflight.sh (r1 ${#pf_r1} bytes, r2 ${#pf_r2} bytes) — the check went blind (F65)"
+  else
+    pf_good="$(printf -- '- matcher: %s\n  command: %s\n  timeout: 20' \
+        'kanban_request_review|kanban_block|kanban_request_changes|kanban_complete' '~/.forge/repo/scripts/driver-call-hook.sh')"
+    _pf_row() {  # profile config-text -> what the profile branch prints
+      ( pass() { echo "PASS $*"; }; fail() { echo "FAIL $*"; }
+        prof="$1"; PF_CFG="$2"; hermes() { printf '%s' "$PF_CFG"; }; eval "$pf_r1" ) 2>/dev/null
+    }
+    pf_row="$(_pf_row forge-codex-lane "$pf_good")";                       case "$pf_row" in "PASS forge-codex-lane: "*) ;; *) pf_detail="$pf_detail a-good-block-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_row forge-verifier "$pf_good")";                         case "$pf_row" in "PASS forge-verifier: "*) ;; *) pf_detail="$pf_detail a-good-verifier-block-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_row forge-codex-lane "")";                               case "$pf_row" in "FAIL forge-codex-lane: no hooks.pre_tool_call"*) ;; *) pf_detail="$pf_detail a-missing-block-did-not-fail($pf_row)";; esac
+    pf_row="$(_pf_row forge-codex-lane "$(printf '%s' "$pf_good" | sed 's|~/.forge/repo/scripts/driver-call-hook.sh|scripts/driver-call-hook.sh|')")"
+    case "$pf_row" in "FAIL forge-codex-lane: hooks.pre_tool_call does not run"*) ;; *) pf_detail="$pf_detail a-bare-path-did-not-fail($pf_row)";; esac
+    pf_row="$(_pf_row forge-verifier "$(printf '%s' "$pf_good" | sed 's/|kanban_complete//')")"
+    case "$pf_row" in "FAIL forge-verifier: the driver-call hook's matcher"*) ;; *) pf_detail="$pf_detail a-matcher-short-of-a-tool-did-not-fail($pf_row)";; esac
+    pf_row="$(_pf_row forge-codex-lane "$pf_good
+  fail_closed: true")"
+    case "$pf_row" in "FAIL forge-codex-lane: the driver-call hook is fail_closed"*) ;; *) pf_detail="$pf_detail a-fail_closed-hook-did-not-fail($pf_row)";; esac
+    pf_row="$(_pf_row forge-digest "$pf_good")"; [ -z "$pf_row" ] || pf_detail="$pf_detail a-profile-with-no-hook-was-judged($pf_row)"
+    # the --check line: a script that passes, one that fails, none installed
+    rm -rf "$pf_home"; mkdir -p "$pf_home/.forge/repo/scripts"
+    _pf_check() { ( pass() { echo "PASS $*"; }; fail() { echo "FAIL $*"; }; HOME="$pf_home"; eval "$pf_r2" ) 2>/dev/null; }
+    printf '#!/bin/sh\nexit 0\n' > "$pf_home/.forge/repo/scripts/driver-call-hook.sh"; chmod +x "$pf_home/.forge/repo/scripts/driver-call-hook.sh"
+    case "$(_pf_check)" in "PASS driver-call-hook.sh --check"*) ;; *) pf_detail="$pf_detail a-hook-that-checks-clean-did-not-pass";; esac
+    printf '#!/bin/sh\necho no-jq >&2\nexit 1\n' > "$pf_home/.forge/repo/scripts/driver-call-hook.sh"
+    case "$(_pf_check)" in "FAIL driver-call-hook.sh --check failed: no-jq"*) ;; *) pf_detail="$pf_detail a-hook-that-fails-its-check-did-not-fail";; esac
+    rm -f "$pf_home/.forge/repo/scripts/driver-call-hook.sh"
+    [ -z "$(_pf_check)" ] || pf_detail="$pf_detail an-absent-hook-script-was-judged-here-(the-resolve-loop-owns-that)"
+    if [ -z "$pf_detail" ]; then
+      ok "preflight-reads-the-hook-block (cut out of scripts/preflight.sh and run on a stubbed config read: a good block passes for the lane and the verifier; a missing block, a bare-path command, a matcher short of a tool and a fail_closed hook each fail; a profile that carries no hook is not judged; the --check line passes, fails with the script's own words, and is silent where the script is absent)"
+    else
+      bad "preflight-reads-the-hook-block" "preflight must fail a profile whose hook is missing, misplaced, short of a tool or fail_closed —$pf_detail"
+    fi
+  fi
+
   # F1: a worktree card with no workspace_path anchors on the board's
   # default_workdir. Unset, the first card auto-blocks on tick 1.
   local boards unanchored
@@ -2684,6 +2728,7 @@ config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/skill-shim-in-sync/<profile>  the live sdlc-review a review claim force-loads is the shim git ships (F6)
 config/the-review-spawn-preloads-the-shim  the REAL profiles-bootstrap.sh into a scratch home: a --skills sdlc-review preload serves forge-verifier only the identity shim (surviving a re-sync); forge-codex-lane, the control, gets the generic reviewer skill (F6)
 config/profiles-carry-the-driver-call-hook  P34: the REAL profiles-bootstrap.sh into a scratch home: forge-codex-lane and forge-verifier read back the four-tool pre_tool_call hook (~/.forge/repo form, timeout, no fail_closed), the other two carry none, and a hook written wrongly FATALs the readback
+config/preflight-reads-the-hook-block  P34: the profile branches and the --check line of preflight.sh, cut out and run on a stubbed config read: a good block passes; a missing block, a bare-path command, a matcher short of a tool and a fail_closed hook each fail
 config/board-default-workdir      every forge board has a worktree anchor
 config/per-profile/<assignee>             a declared assignee with no profile on disk is named, not trusted (F43)
 config/per-profile                        the per-profile sweep could not run at all (no hermes, or no forge-* profiles)
@@ -2937,7 +2982,7 @@ verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the s
 verifier/the-envelope-lands-on-the-real-kernel  P24 (b),(c): a fail lands ready on the recorded implementer, a recommendation blocked/needs_input — each by the tool's own result; sticky without an assign, decision-first; a refused call leaves the card running and its fallback lands
 verifier/the-hook-restores-the-handoff  P34: the rehearsal-4 arguments (no reviewer, no task_id, artifacts:[]) through the real hook dispatch and the real handler land review on forge-verifier; invented declared keys are overwritten; the control without the hook lands on forge-codex-lane
 verifier/the-hook-restores-the-verifiers-calls  P34: the real prejudge-review.sh's request_changes reason, merge-pending: hold (reason and kind) and merge-mode kanban_complete metadata are restored from the record when the driver mangles them; the controls without the hook keep the driver's words
-verifier/the-hook-refuses-a-record-that-is-not-this-runs  P34: a stale record (pinned clock; exactly at the guard still used), one from the future, the other profile's and one for another workspace are not used; a record for another task blocks the hand-off with a message and never the kanban_block
+verifier/the-hook-refuses-a-record-that-is-not-this-runs  P34: a stale record (pinned clock; exactly at the guard still used), one from the future, the other profile's, one for another workspace and one from another session are not used; a record for another task blocks the hand-off with a message and never the kanban_block
 verifier/the-hook-policy-keeps-an-exit-open  P34: no record -> the driver's own hand-off and block land; a wrong tool is refused naming the right one and changes nothing; kanban_block is rewritten to on_error, left alone where none is planned, counted terminate then on_error (a Nothing-changed call not counting); a garbage record, a missing script and a faulting one (exit 2, unbound variable) change nothing while a bare exit-2 hook does refuse
 verifier/the-hook-neutralises-keys-the-driver-invents  P34: an undeclared key is Nothing changed with no partial transition and the retry lands; a declared key the record lacks is nulled; the hook's table of declared keys equals the installed schemas for all four tools
 verifier/the-lane-and-review-claims-share-one-workspace  P34: a --workspace worktree card through the real dispatcher tick hands the lane spawn and the review spawn the same HERMES_KANBAN_WORKSPACE, <repo>/.worktrees/<task id>
@@ -4332,7 +4377,7 @@ LCODEX
     local lp_detail="" lp_rc lp_rec lp_tmpl
     lp_rec() { ( . "$REPO_ROOT/scripts/forge-state.sh"; forge_pending_path vlane forge-codex-lane "$lwt" "$lroot/sessions" ); }
     _lsh_fixture record
-    lp_rc="$(_lsh_run)"; lp_tmpl="$(lp_rec)"
+    lp_rc="$(_lsh_run HERMES_SESSION_ID=)"; lp_tmpl="$(lp_rec)"
     [ "$lp_rc" = 4 ] || lp_detail="$lp_detail the-run-did-not-hand-off(rc=$lp_rc,$(_lsh_env .reason | head -c 80))"
     if [ -s "$lp_tmpl" ] \
        && jq -e --slurpfile e "$lroot/out.json" --arg ws "$lwt" '
@@ -4344,11 +4389,14 @@ LCODEX
     else lp_detail="$lp_detail the-record-is-not-the-envelopes-two-calls($(head -c 160 "$lp_tmpl" 2>/dev/null))"; fi
     [ -z "$(ls "$lroot/sessions" 2>/dev/null | grep -F '.pending.json.')" ] \
       || lp_detail="$lp_detail a-temp-file-was-left-beside-the-record"
-    # the reviewer follows FORGE_LANE_REVIEWER: the record carries the lane's choice, the hook hard-codes none
+    jq -e 'has("session_id") | not' "$lp_tmpl" >/dev/null 2>&1 \
+      || lp_detail="$lp_detail a-session-guard-was-written-with-no-session-to-guard"
+    # the reviewer follows FORGE_LANE_REVIEWER: the record carries the lane's choice, the hook hard-codes none;
+    # the worker's session id is recorded for the hook's session guard
     _lsh_fixture record2
-    lp_rc="$(_lsh_run FORGE_LANE_REVIEWER=forge-other)"
-    jq -e '.terminate.args.reviewer == "forge-other"' "$(lp_rec)" >/dev/null 2>&1 \
-      || lp_detail="$lp_detail the-record-does-not-carry-the-reviewer-the-lane-chose"
+    lp_rc="$(_lsh_run FORGE_LANE_REVIEWER=forge-other HERMES_SESSION_ID=sess-lane-1)"
+    jq -e '.terminate.args.reviewer == "forge-other" and .session_id == "sess-lane-1"' "$(lp_rec)" >/dev/null 2>&1 \
+      || lp_detail="$lp_detail the-record-does-not-carry-the-reviewer-the-lane-chose-and-the-session"
     # a run that dies at once (a usage error, no envelope) leaves NO record of the earlier run
     [ -s "$(lp_rec)" ] || lp_detail="$lp_detail (control: no earlier record to clear)"
     lp_rc="$(_lsh_run FORGE_LANE_TICK=x)"
@@ -4361,7 +4409,7 @@ LCODEX
           and (.terminate.args.reason | startswith("ci-red: "))' "$(lp_rec)" >/dev/null 2>&1; } \
       || lp_detail="$lp_detail a-block-was-not-recorded(rc=$lp_rc)"
     if [ -z "$lp_detail" ]; then
-      ok "the-program-records-its-call (the record is the envelope's terminate and on_error, keyed by board+profile+workspace, written whole, naming the reviewer the lane chose; a run that dies before it names a call clears the earlier one; a block is recorded)"
+      ok "the-program-records-its-call (the record is the envelope's terminate and on_error, keyed by board+profile+workspace, written whole, naming the reviewer the lane chose and the session it ran in; a run that dies before it names a call clears the earlier one; a block is recorded)"
     else
       bad "the-program-records-its-call" "lane.sh must record the call it names where the driver-call hook finds it, and clear the previous one at its start —$lp_detail"
     fi
@@ -10342,7 +10390,7 @@ VLOGH
     # .forge/repo is this checkout, so the literal form is what runs. A control without the hook is
     # in every case: a check that passes with the hook removed measures nothing.
     # =========================================================================
-    local hk_home="$TMPROOT/hook-fakehome" hk_boot="$TMPROOT/hook-boot" hk_ready=1 hk_detail="" hk_x hk_y hk_term hk_err hk_out hk_rc hk_rec hk_max hk_at hk_want hk_got hk_kind hk_ctl hk_t hk_snip
+    local hk_home="$TMPROOT/hook-fakehome" hk_boot="$TMPROOT/hook-boot" hk_ready=1 hk_detail="" hk_x hk_y hk_term hk_err hk_out hk_rc hk_rec hk_max hk_at hk_want hk_got hk_kind hk_ctl hk_t hk_snip hk_sid
     mkdir -p "$hk_home/.forge"; ln -sfn "$REPO_ROOT" "$hk_home/.forge/repo"
     rm -rf "$hk_boot"
     HERMES_HOME="$hk_boot" bash "$REPO_ROOT/hermes/profiles-bootstrap.sh" > "$hk_boot.log" 2>&1 || hk_ready=0
@@ -10353,8 +10401,8 @@ VLOGH
     _hkclaim() { local id; id="$(_v create "CHUNK-9: hook" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
                  _v claim "$id" >/dev/null 2>&1; printf '%s' "$id"; }
     _hkws() { _v show "$1" --json 2>/dev/null | jq -r '.task.workspace_path'; }
-    _hkrec() {   # profile task terminate-json on_error-json: write the record, as a program does
-      ( . "$REPO_ROOT/scripts/forge-state.sh"; FORGE_STATE_ROOT="$vstate"
+    _hkrec() {   # profile task terminate-json on_error-json [session]: write the record, as a program does
+      ( . "$REPO_ROOT/scripts/forge-state.sh"; FORGE_STATE_ROOT="$vstate"; HERMES_SESSION_ID="${5-}"
         forge_pending_write vlab "$1" "$(_hkws "$2")" "$2" "$3" "$4" ); }
     _hkpath() {  # profile task
       ( . "$REPO_ROOT/scripts/forge-state.sh"; FORGE_STATE_ROOT="$vstate"; forge_pending_path vlab "$1" "$(_hkws "$2")" ); }
@@ -10364,11 +10412,11 @@ VLOGH
       env HOME="$hk_home" FORGE_STATE_ROOT="$vstate" "$@" HERMES_HOME="$vhome" "$WCTX_PY" "$WCTX" hooked-call \
           vlab "$t" "$p" "$tool" "$vbin/hk-args.json" 2>"$vbin/hk-err.txt"
     }
-    _hkreview() {   # a review hand-off record for a fresh lane-claimed card -> its id
+    _hkreview() {   # [session]: a review hand-off record for a fresh lane-claimed card -> its id
       local id; id="$(_hkclaim)"
       _hkrec forge-codex-lane "$id" \
         "$(jq -nc --arg t "$id" --argjson m "$vmeta" '{tool:"kanban_request_review", args:{task_id:$t, summary:"implemented CHUNK-9", metadata:$m, reviewer:"forge-verifier"}}')" \
-        "$(jq -nc --arg t "$id" '{tool:"kanban_block", args:{task_id:$t, reason:"other: handoff-integrity — the review hand-off was refused by the kernel"}}')"
+        "$(jq -nc --arg t "$id" '{tool:"kanban_block", args:{task_id:$t, reason:"other: handoff-integrity — the review hand-off was refused by the kernel"}}')" "${1-}"
       printf '%s' "$id"; }
     local hk_rehearsal4; hk_rehearsal4="$(jq -nc --argjson m "$vmeta" '{summary:"implemented CHUNK-9", metadata:$m, artifacts:[]}')"
 
@@ -10416,6 +10464,8 @@ VLOGH
       hk_want="$(jq -r '.terminate.args.reason' "$vbin/out.json")"
       { [ "$vrc" = 4 ] && [ "$(jq -r '.terminate.tool' "$vbin/out.json")" = kanban_request_changes ] && [ -n "$hk_want" ]; } \
         || hk_detail="$hk_detail (control: the bounce was not named, rc=$vrc)"
+      jq -e '.session_id | type == "string" and length > 0' "$(_hkpath forge-verifier "$vP")" >/dev/null 2>&1 \
+        || hk_detail="$hk_detail the-verifiers-record-carries-no-session"
       hk_out="$(_hk "$vP" forge-verifier kanban_request_changes '{"task_id":"t_bogus000","reason":"looks wrong, please fix"}')"
       hk_got="$(_v show "$vP" --json 2>/dev/null | jq -r '[.events[] | select(.kind == "changes_requested")] | last | .payload.reason // ""')"
       { [ "$(_vst "$vP")" = ready/forge-codex-lane ] && [ "$hk_got" = "$hk_want" ]; } \
@@ -10513,6 +10563,18 @@ VLOGH
       jq '.workspace = "/somewhere/else"' "$hk_rec" > "$hk_rec.t" && mv "$hk_rec.t" "$hk_rec"
       hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev")"
       [ "$(_vst "$hk_x")" = review/forge-codex-lane ] || hk_detail="$hk_detail a-record-for-another-workspace-was-used($(_vst "$hk_x"))"
+      # a record from ANOTHER SESSION (a re-claimed card whose driver calls a terminal tool before it has
+      # launched the program, or a session id rotated by compression): the driver's own call passes. The
+      # control is the same record written by THIS session, which is rewritten; a record with no session
+      # at all (every case above) skips the comparison.
+      hk_sid="$(sed -n 's/^SESSION_ID = "\(.*\)"$/\1/p' "$WCTX")"
+      [ -n "$hk_sid" ] || hk_detail="$hk_detail (control: worker-ctx.py names no SESSION_ID)"
+      _vboard; _hkprofiles; hk_x="$(_hkreview "$hk_sid")"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev")"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] || hk_detail="$hk_detail (control: a record from this session did not rewrite, $(_vst "$hk_x"))"
+      _vboard; _hkprofiles; hk_x="$(_hkreview a-session-that-is-not-this-one)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev")"
+      [ "$(_vst "$hk_x")" = review/forge-codex-lane ] || hk_detail="$hk_detail a-record-from-another-session-was-used($(_vst "$hk_x"))"
       # a record for ANOTHER TASK in this workspace: blocked for the three tools, never for kanban_block
       _vboard; _hkprofiles; hk_x="$(_hkreview)"
       hk_rec="$(_hkpath forge-codex-lane "$hk_x")"
@@ -10527,7 +10589,7 @@ VLOGH
         || hk_detail="$hk_detail kanban_block-was-not-left-open-for-a-foreign-record($(_vst "$hk_x"))"
     fi
     [ -z "$hk_detail" ] \
-      && ok "the-hook-refuses-a-record-that-is-not-this-runs (a stale record, one from the future, the other profile's and one for another workspace are not used; exactly at the age guard still is; a record for another task blocks the hand-off with a message and never the kanban_block; the pinned clock makes it reproducible)" \
+      && ok "the-hook-refuses-a-record-that-is-not-this-runs (a stale record, one from the future, the other profile's, one for another workspace and one from another session are not used; exactly at the age guard still is; a record for another task blocks the hand-off with a message and never the kanban_block; the pinned clock makes it reproducible)" \
       || bad "the-hook-refuses-a-record-that-is-not-this-runs" "the hook must rewrite a call only from a record that belongs to this run —$hk_detail"
 
     # ---- the policy where there is no usable record, and for the wrong tool -------------------------
@@ -10647,9 +10709,14 @@ VLOGH
             HERMES_KANBAN_WORKSPACE=/ws/t_aaaaaaaa "$REPO_ROOT/scripts/driver-call-hook.sh" 2>/dev/null \
         | jq -e '.action == "modify" and .args.reviewer == "forge-verifier"' >/dev/null 2>&1 \
         || hk_detail="$hk_detail a-hook-with-another-HOME-did-not-find-the-record-through-HERMES_REAL_HOME"
+      # the same record and environment, but stdin names ANOTHER profile than HERMES_PROFILE: no rewrite
+      hk_out="$(printf '%s' '{"tool_name":"kanban_request_review","profile":"forge-verifier","tool_input":{"summary":"x"}}' \
+        | env -i PATH="$PATH" HOME=/nonexistent HERMES_REAL_HOME="$hkf/real" HERMES_KANBAN_BOARD=bb HERMES_PROFILE=forge-codex-lane \
+            HERMES_KANBAN_WORKSPACE=/ws/t_aaaaaaaa "$REPO_ROOT/scripts/driver-call-hook.sh" 2>/dev/null)"
+      [ -z "$hk_out" ] || hk_detail="$hk_detail a-stdin-profile-that-disagrees-with-HERMES_PROFILE-was-rewritten"
     fi
     [ -z "$hk_detail" ] \
-      && ok "the-hook-policy-keeps-an-exit-open (no record: the driver's own hand-off and block land; the wrong tool is refused naming the right one and changes nothing; kanban_block is rewritten to on_error, left alone where none is planned, and counted through terminate then on_error, a refused call not counting; a broken record, a missing script and a script that faults (exit 2, unbound variable) change nothing, while a hook that is only exit 2 does refuse)" \
+      && ok "the-hook-policy-keeps-an-exit-open (no record: the driver's own hand-off and block land; the wrong tool is refused naming the right one and changes nothing; kanban_block is rewritten to on_error, left alone where none is planned, and counted through terminate then on_error, a refused call not counting; a stdin profile that disagrees with HERMES_PROFILE, a broken record, a missing script and a script that faults (exit 2, unbound variable) change nothing, while a hook that is only exit 2 does refuse)" \
       || bad "the-hook-policy-keeps-an-exit-open" "every failure mode of the hook must leave the driver a way to end the run —$hk_detail"
 
     # ---- a key the driver invents -----------------------------------------------------------------

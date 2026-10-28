@@ -47,6 +47,13 @@ forge_verdict_root()      { printf '%s' "${FORGE_VERDICT_ROOT:-$(forge_state_roo
 # neither may overwrite the other's record. The record carries the task id and the hook checks it
 # whenever the workspace basename has the shape of one.
 #
+# THE SESSION GUARD. The terminal and the hook both see the worker's HERMES_SESSION_ID (it is
+# the hook's stdin `session_id` too), so the program records it when it has one and the hook
+# ignores a record from another session. That closes the window between a re-claim and the
+# program's start: a driver that calls a terminal tool BEFORE it launches the program would
+# otherwise get the previous round's record applied. Context compression rotates the session id
+# mid-run, which makes the record unusable: the result is the driver's own arguments, the
+# behaviour before the hook, never a trap. No id on the program side, no field, no comparison.
 # The record lives beside the host copies of the lane's hand-off (lane-sessions), is written
 # atomically, and is DELETED by the program that owns it at the very start of its next run: a run
 # that dies before it names a call leaves no record, and the driver's own arguments pass
@@ -79,11 +86,13 @@ forge_pending_write() {
   mkdir -p "$(dirname "$path")" 2>/dev/null || return 0
   tmp="$(mktemp "$path.XXXXXX" 2>/dev/null)" || return 0
   if jq -nc --arg board "$board" --arg profile "$profile" --arg ws "$ws" --arg task "$task" \
+        --arg sid "${HERMES_SESSION_ID:-}" \
         --argjson pid "$$" --argjson at "$(date +%s)" \
         --argjson terminate "$terminate" --argjson on_error "${on_error:-null}" '
       { schema: "forge.pending-call.v1", task_id: $task, board: $board, profile: $profile,
         workspace: $ws, pid: $pid, written_at: $at, used: 0,
-        terminate: $terminate, on_error: $on_error }' > "$tmp" 2>/dev/null \
+        terminate: $terminate, on_error: $on_error }
+      + (if $sid == "" then {} else {session_id: $sid} end)' > "$tmp" 2>/dev/null \
      && mv -f "$tmp" "$path" 2>/dev/null; then
     return 0
   fi

@@ -36,7 +36,9 @@
 # parameter of T that R's args do not carry is therefore sent as null (an explicit null reads as
 # absent in Hermes's handlers: measured; `board` is one of them, so a driver cannot aim a call at
 # another board). A key T does not declare is left alone: Hermes rejects
-# it with "Nothing changed", and nothing partial lands.
+# it with "Nothing changed", and nothing partial lands. RESIDUAL: a shallow merge cannot delete a
+# key, so a driver that keeps resending the invented key gets "Nothing changed" on every retry
+# and the card runs to its timeout unless the driver drops the key itself.
 # `used`: a program may name a kanban_block as BOTH terminate and on_error (the recommend-only
 # hold, whose fallback is the handoff-integrity block). The first block of such a record is
 # terminate; the hook bumps R.used, and a later block is on_error.
@@ -50,6 +52,10 @@
 #     unreadable, stdin and HERMES_PROFILE disagree) -> exit 0, nothing printed: every call passes.
 #   * a record that is stale (older than FORGE_PENDING_MAX_AGE_S, or from the future), malformed,
 #     or for another board/profile/workspace -> treated as no record.
+#   * a record written by another SESSION (its session_id differs from stdin session_id) -> treated
+#     as no record. That covers a driver that calls a terminal tool before it has launched the
+#     program of a re-claimed card, and a session id rotated by context compression: the driver's
+#     own arguments pass. A record with no session_id (the program had none) skips the comparison.
 #   * a record for ANOTHER TASK (the workspace basename has the shape of a task id and it is not
 #     R.task_id) -> kanban_block passes unchanged; the other three tools are blocked, with a
 #     message that tells the driver to end the run with kanban_block.
@@ -91,6 +97,7 @@ main() {
   IN="$(cat 2>/dev/null)" || pass
   TOOL="$(printf '%s' "$IN" | jq -r '.tool_name // ""' 2>/dev/null)" || pass
   PROFILE_STDIN="$(printf '%s' "$IN" | jq -r '.profile // ""' 2>/dev/null)" || pass
+  SESSION_STDIN="$(printf '%s' "$IN" | jq -r '.session_id // ""' 2>/dev/null)" || pass
   BOARD="${HERMES_KANBAN_BOARD:-}"
   WS="${HERMES_KANBAN_WORKSPACE:-}"
   PROFILE="${HERMES_PROFILE:-}"
@@ -121,11 +128,12 @@ main() {
     f="$(forge_pending_path "$BOARD" "$PROFILE" "$WS" "$root")"
     [ -f "$f" ] || continue
     # valid: ours, this identity, not stale, not from the future, with a terminate call
-    if jq -e --arg b "$BOARD" --arg p "$PROFILE" --arg w "$WS" --argjson now "$NOW" --argjson max "$FORGE_PENDING_MAX_AGE_S" '
+    if jq -e --arg b "$BOARD" --arg p "$PROFILE" --arg w "$WS" --arg sid "$SESSION_STDIN" --argjson now "$NOW" --argjson max "$FORGE_PENDING_MAX_AGE_S" '
           .schema == "forge.pending-call.v1" and .board == $b and .profile == $p and .workspace == $w
           and (.written_at | type) == "number" and (($now - .written_at) <= $max) and (($now - .written_at) >= -60)
           and (.terminate.tool | type) == "string" and (.terminate.args | type) == "object"
-          and (.task_id | type) == "string"' "$f" >/dev/null 2>&1; then
+          and (.task_id | type) == "string"
+          and (if has("session_id") then .session_id == $sid else true end)' "$f" >/dev/null 2>&1; then
       REC="$f"; break
     fi
   done <<< "$roots"

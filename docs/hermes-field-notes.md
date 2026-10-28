@@ -448,6 +448,11 @@ profile's `config.yaml` can put the arguments back. What was measured, through
   terminal:** `HERMES_KANBAN_BOARD`, `_DB`, `_WORKSPACE`, `_WORKSPACES_ROOT`, `HERMES_PROFILE`,
   `HERMES_SESSION_ID` (equal to stdin `session_id`) and, when the card has one,
   `HERMES_KANBAN_BRANCH`. The hook's cwd is the workspace.
+- A program can also tell the hook which session it ran in: `HERMES_SESSION_ID` is in the
+  terminal's environment and equals the hook's stdin `session_id`, so a record carrying it is
+  ignored by a hook in another session (a re-claimed card's driver that calls a terminal tool
+  before launching the program). Compression rotates the id, which only makes the record
+  unusable.
 - So a hook finds its program's record by board + profile + workspace, never by task. A
   `--workspace worktree` card gets `<repo>/.worktrees/<task id>`, persisted, and the lane's
   spawn and the review spawn get the same path (`dispatch-workspaces`); the profile is part of

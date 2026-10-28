@@ -1752,10 +1752,18 @@ envelope's `on_error`, which is always a `kanban_block`. The driver's raw call i
   script runs its body in a subshell, keeps its output only if it is a JSON object, and
   always exits 0; a case drives copies that exit 2 and that hit an unbound variable, with a
   hook that is only `exit 2` as the control.
-- **Staleness without a run id.** The hook cannot see the run id either, so a record's age
-  and the program's delete-at-start stand in for it. `FORGE_HOOK_NOW` pins the hook's clock
-  for fixtures. A record left by a lane run that finished stays until the lane's next run in
-  that workspace deletes it, or 2100 s pass; the verifier's record is a different file.
+- **Staleness without a run id.** The hook cannot see the run id either, so a record's age,
+  the program's delete-at-start and a **session guard** stand in for it. `FORGE_HOOK_NOW` pins
+  the hook's clock for fixtures. A record left by a lane run that finished stays until the
+  lane's next run in that workspace deletes it, or 2100 s pass; the verifier's record is a
+  different file. The window between a re-claim and the program's start is closed by the
+  session guard (added after the PR's review): the program also records `HERMES_SESSION_ID`,
+  which the terminal and the hook both see (it is the hook's stdin `session_id`), and the hook
+  treats a record from another session as no record, so a driver that calls a terminal tool
+  before it has launched the program of a re-claimed card gets its own call. Context compression
+  rotates the session id, which turns the record unusable and leaves the driver its own
+  arguments: fail-open, not a trap. With no id on the program side the field is not written and
+  the comparison is skipped.
 - **Verified** (all against the real kernel in an isolated `HERMES_HOME`, the hook reached
   through a fake `HOME` whose `.forge/repo` is the checkout, so the literal form is what
   runs): `verifier/the-hook-restores-the-handoff` (the rehearsal-4 arguments land `review`
@@ -1765,8 +1773,10 @@ envelope's `on_error`, which is always a `kanban_block`. The driver's raw call i
   of declared keys compared with the installed schemas),
   `…-lane-and-review-claims-share-one-workspace` (a `--workspace worktree` card through the
   real dispatcher tick: both spawns get `<repo>/.worktrees/<task id>`),
-  `lane/the-program-records-its-call`, `lane/the-hook-is-reached-through-forge-repo` and
-  `config/profiles-carry-the-driver-call-hook`. `make preflight` reads both profiles'
+  `lane/the-program-records-its-call`, `lane/the-hook-is-reached-through-forge-repo`,
+  `config/profiles-carry-the-driver-call-hook` and `config/preflight-reads-the-hook-block` (the
+  profile branches and the `--check` line of `preflight.sh`, cut out and run on a stubbed config
+  read). `make preflight` reads both profiles'
   `hooks.pre_tool_call` and runs the hook's `--check`. Mutants, each applied to a *copy* of the worktree (the worktree itself was never
   mutated) and each reddening the case named: the hook script deleted (the four verifier
   cases that send a call through it, and `…-neutralises…`); the age guard removed
@@ -1790,14 +1800,16 @@ envelope's `on_error`, which is always a `kanban_block`. The driver's raw call i
   Per group in the full run: lane 64, verifier 38 (one skip, the opt-in replays), config 33,
   bootstrap 33.
 - Not settled, by design: the hook cannot be proved against a real worker without a paid
-  run, so rehearsal 5's R4 reads the record's `used` count (the hook ran) and compares the
-  driver's raw call in the session database with what landed. The residual hole is a driver
-  that calls a terminal tool *before* it launches its program, within 2100 s of an earlier
-  round on the same card: the program has not yet cleared the old record, so that call is
-  rewritten from it (a `kanban_block` becomes the old `on_error`). It still ends the run. The
-  reviewer a record names is whatever `FORGE_LANE_REVIEWER` was in the lane's environment, not
-  the hook's. A syntax error in the hook script is the one fault its own subshell cannot
-  absorb, and `make validate` refuses it.
+  run, so rehearsal 5's R4 reads the verifier record's `used` count (the hook ran) and compares
+  the program's named call, the driver's raw call in the session database and what landed.
+  Residuals: a driver that keeps an invented, undeclared key gets `Nothing changed` on every
+  retry, a shallow merge cannot delete the key, and the run ends at the timeout unless the
+  driver drops it itself; a compression that rotates the session id mid-run leaves the driver
+  its own arguments for the rest of that run; with no `HERMES_SESSION_ID` in the program's
+  terminal the session guard is off and the old window (a terminal call before the program
+  starts, within 2100 s of an earlier round) is back. The reviewer a record names is whatever
+  `FORGE_LANE_REVIEWER` was in the lane's environment, not the hook's. A syntax error in the
+  hook script is the one fault its own subshell cannot absorb, and `make validate` refuses it.
 
 **P35 (run A attempt 2, rehearsal 3). `board-bootstrap.sh` initialised the wrong board.**
 `hermes kanban init` ran at line 235 and `boards create` at 236. The new board does not

@@ -2659,7 +2659,10 @@ The program decides and records its call; a hook enforces the record, so the dri
 fidelity stops mattering.
 - `lane.sh` and `prejudge-review.sh` write the call they name (`terminate` and
   `on_error`) to `~/.forge/lane-sessions/<board>-<profile>-<hash>.pending.json`, atomically,
-  and delete their own profile's record for this workspace at the very start of a run.
+  and delete their own profile's record for this workspace at the very start of a run. The
+  record carries the worker's `HERMES_SESSION_ID`, and the hook ignores a record from another
+  session, so a re-claimed card's driver that calls a terminal tool before it has launched the
+  program is not rewritten from the previous round's record.
 - `scripts/driver-call-hook.sh` is a `pre_tool_call` hook in `forge-codex-lane`'s and
   `forge-verifier`'s `config.yaml`, installed by `./hermes/profiles-bootstrap.sh` and read
   back by it. It rewrites `kanban_request_review`, `kanban_block`, `kanban_request_changes`
@@ -2701,24 +2704,39 @@ test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse 
 ! grep -q -- "^hermes kanban init" ~/.forge/repo/hermes/board-bootstrap.sh && echo no-early-init ||
 { echo "STOP: the deploy did not complete, run nothing below"; false; }
 ```
-Then the preflight. Pass: the summary line reads `FAIL 0`.
+Then the preflight and precondition 3, `make verify`, on the deployed `main` (CLAUDE.md: after
+every merge, both). Preflight pass: the summary line reads `FAIL 0`. Verify pass: `failed 0,
+skipped 11`, and `passed` equal to the baseline below for the live boards counted by the block
+there. Both run before R7 of rehearsal 4, so that a deploy that broke something is found
+before any rehearsal state is touched.
 ```bash
 (cd ~/dev/forge-runtime && make preflight 2>&1 | tail -6) ||
 { echo "STOP: preflight did not run"; false; }
 ```
+```bash
+VO="$(mktemp)"
+(cd ~/dev/forge-runtime && make verify > "$VO" 2>&1) && tail -3 "$VO" ||
+{ echo "STOP: make verify failed on the deployed main, read the failures"; tail -30 "$VO"; false; }
+rm -f "$VO"
+```
 
 *Precondition 9, new: the token works where a worker uses it, and no profile disagrees with
 the root.* Run before R2 of every rehearsal and before *Launch*. It never prints the token:
-the first block passes it to `claude -p` through `env -i` and prints only a verdict; the
+the first block passes it to `claude -p` through the environment and prints only a verdict; the
 second compares hashes and prints a word per profile.
 T1, the stripped-environment probe (the root token, in an environment with nothing else).
-Pass: `true`, then `T1OK=1`.
+The token reaches `claude` through the environment only, never through argv, where `ps` would
+show it: a subshell unsets every exported variable except `HOME`, `PATH` and `TERM`, then
+exports the token and runs `claude`. Bash itself puts `PWD`, `SHLVL` and `_` back; nothing else
+survives. Pass: `true`, then `T1OK=1`.
 ```bash
 T1OK=0
 RT="$(grep -m1 "^CLAUDE_CODE_OAUTH_TOKEN=" "$HOME/.hermes/.env" | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
 TP="$(mktemp)"
 [ -n "$RT" ] &&
-env -i HOME="$HOME" PATH="$PATH" TERM=dumb CLAUDE_CODE_OAUTH_TOKEN="$RT" claude -p "reply with exactly: OK" --model haiku --output-format json > "$TP" 2>/dev/null &&
+( for v in $(compgen -e); do case "$v" in HOME|PATH|TERM) ;; *) unset "$v" 2>/dev/null;; esac; done
+  CLAUDE_CODE_OAUTH_TOKEN="$RT"; export CLAUDE_CODE_OAUTH_TOKEN; TERM=dumb; export TERM
+  claude -p "reply with exactly: OK" --model haiku --output-format json > "$TP" 2>/dev/null ) &&
 jq -e '.is_error == false' "$TP" &&
 T1OK=1 ||
 { echo "STOP: the root token did not answer in a stripped environment, renew it before anything else"; false; }
@@ -2962,7 +2980,7 @@ stand. R1 is not repeated and R5 stands. The order is in *Order before `RUN_STAR
   sqlite3 "$VS" "select tool_calls from messages where session_id='$VSID' and role='assistant' and (tool_calls like '%kanban_block%' or tool_calls like '%kanban_request_changes%')" | jq -c '.[] | select(.function.name | IN("kanban_block","kanban_request_changes")) | {name: .function.name, keys: (.function.arguments | fromjson | keys), reason: (.function.arguments | fromjson | .reason | .[0:70])}'
   jq -e '[.events[] | select(.kind == "review_requested")][0].payload.reviewer == "forge-verifier"' "$S" >/dev/null && echo lane-landed-on-reviewer &&
   [ -n "$VREC" ] && jq -e '.used >= 1' "$VREC" >/dev/null && echo verifier-hook-ran &&
-  jq -e --slurpfile e "$VREC" '(if $e[0].terminate.tool == "kanban_request_changes" then "changes_requested" else "blocked" end) as $k | [.events[] | select(.kind == $k)] | last | .payload.reason == $e[0].terminate.args.reason' "$S" >/dev/null && echo verifier-landed-as-recorded &&
+  jq -e --slurpfile e "$VREC" 'if $e[0].terminate.tool == "kanban_complete" then ([.runs[] | select(.metadata != null)] | last | .metadata | del(.worker_session_id)) == ($e[0].terminate.args.metadata | del(.worker_session_id)) else (if $e[0].terminate.tool == "kanban_request_changes" then "changes_requested" else "blocked" end) as $k | ([.events[] | select(.kind == $k)] | last | .payload.reason) == $e[0].terminate.args.reason end' "$S" >/dev/null && echo verifier-landed-as-recorded &&
   R4HOOKOK=1 ||
   { echo "STOP: the hook evidence did not hold, this is a finding: R6"; false; }
   echo "R4HOOKOK=$R4HOOKOK"
@@ -2997,9 +3015,9 @@ stand. R1 is not repeated and R5 stands. The order is in *Order before `RUN_STAR
 
 *Order before `RUN_START`* (supersedes amendment 3's). This PR merged and deployed (the
 deploy block above, which also re-runs the bootstrap so the lane and the verifier carry the
-hook); **R7 of rehearsal 4** (C1 to C6); the token precondition (T1, T2) and the hook
-check (H1); precondition 3 re-measured on the deployed `main`; 4, 5 (the edit waits), 6 and
-the replacement 8; **rehearsal 5** (R0 to R7 as restated); 7 (commission); the disposition of
+hook), then **precondition 3 (`make verify`) and preflight on the deployed `main`**, both
+in the deploy section; **R7 of rehearsal 4** (C1 to C6); the token precondition (T1, T2) and
+the hook check (H1); 4, 5 (the edit waits), 6 and the replacement 8; **rehearsal 5** (R0 to R7 as restated); 7 (commission); the disposition of
 `t_da03d07a` (T1 to T4 of the 2026-10-27 entry); then *Launch*. T1, T2 and H1 run again
 immediately before *Launch*. A failed rehearsal still costs no commission probe.
 
@@ -3011,17 +3029,19 @@ immediately before *Launch*. A failed rehearsal still costs no commission probe.
   step 2, and it must equal `git -C ~/dev/forge rev-parse HEAD`. **The product stays
   `PRODUCT_SHA` `b66be28`.**
 - *Inputs*' **Forge runtime** row reads "this PR's merge commit, or a later `main`". Its
-  baseline is restated as **failed 0, skipped 11, passed = 562 + one per extra live board
-  under `~/.hermes/kanban/boards` (not `_archived`)**. The 562 is amendment 3's 552 and
-  the ten cases this PR adds. It reads 563 again while `hello-rehearsal-a2e` is live
-  (rehearsal 5), because `metrics/live-schema-has-fixture-columns` has one row per live
-  board. The total follows the boards and is not a property of the code. The live-board
-  count, in the same terms as that check:
+  baseline is restated as **failed 0, skipped 11, passed = 563 at 7 live boards (as amendment 3
+  read it), plus one per live board beyond 7**, boards counted under `~/.hermes/kanban/boards`
+  without `_archived`. The 563 is amendment 3's 552 and the eleven cases this PR adds.
+  Rehearsal 5 makes it 564 while `hello-rehearsal-a2e` is live, because
+  `metrics/live-schema-has-fixture-columns` has one row per live board. The total follows the
+  boards and is not a property of the code. The count and the expected `passed`, in the same
+  terms as that check (it prints `live boards: 8, expected passed: 564` with a2d or a2e live
+  and nothing else beyond the seven):
   ```bash
-  find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " "
+  N="$(find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " ")"
+  echo "live boards: $N, expected passed: $(( 563 + (N > 7 ? N - 7 : 0) ))"
   ```
-  Precondition 3 is re-measured on the deployed `main`, and the operator records this count
-  next to the reading in the launch record.
+  The operator records both numbers next to the reading in the launch record.
 
 *Decisions this entry makes that the operator may overrule before rehearsal 5.*
 - The hook is fail-open. The cost is that a hook fault leaves the driver as unprotected as

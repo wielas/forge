@@ -126,7 +126,7 @@ card went `review` still assigned to the lane (P34). Each program now also recor
 under `~/.forge/lane-sessions/<board>-<profile>-<hash>.pending.json`, and a `pre_tool_call`
 hook in both profiles (`~/.forge/repo/scripts/driver-call-hook.sh`, installed by
 `profiles-bootstrap.sh`) rewrites the driver's call to that record. It fails **open**: if the
-hook, the record or its clock is wrong, the driver's own arguments go through, so a card can
+hook, the record, its clock or its session is wrong, the driver's own arguments go through, so a card can
 still end its run. A tool that is not the program's is refused with a message naming the right
 one. `make preflight` checks both profiles carry the hook; after a deploy that changes profile
 files, run `./hermes/profiles-bootstrap.sh` from the runtime.
