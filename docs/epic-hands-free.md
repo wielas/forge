@@ -1774,7 +1774,8 @@ envelope's `on_error`, which is always a `kanban_block`. The driver's raw call i
   the profile left out of the key and out of the record check (the same); declared keys no
   longer nulled, and a declared key missing from the hook's table (`…-neutralises-keys…`);
   `used` never counted, counted for a call Hermes refuses, a wrong tool passed instead of
-  refused, and the body run without its subshell (all `…-policy-keeps-an-exit-open`);
+  refused, the body run without its subshell, and the `HERMES_REAL_HOME` fallback root dropped (all
+  `…-policy-keeps-an-exit-open`);
   `lane.sh` not recording, `lane.sh` not clearing (`lane/the-program-records-its-call`);
   `prejudge-review.sh` not recording, not clearing (`…-restores-the-verifiers-calls`); the
   bootstrap not installing the hook (`config/profiles-carry-the-driver-call-hook` and four
