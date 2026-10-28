@@ -1687,7 +1687,7 @@ PR hello-forge#9) ran the lane to a hand-off. `lane.sh`'s envelope named
 metadata, artifacts: []}`: no `task_id`, no `reviewer`, an `artifacts` it invented.
 Hermes's `request_review` falls back to the card's `_prior_reviewer`, which is `None`
 on a first hand-off, so the card went `review` still assigned to `forge-codex-lane`;
-the dispatcher claimed it from `review` for the lane, and `lane.sh` 260-267 blocked it
+the dispatcher claimed it from `review` for the lane, and `lane.sh` 260-267 (at `cc00a87`) blocked it
 (`other: handoff-integrity — card t_6e076ae7 was claimed from review by its own
 implementer, so its last hand-off named no reviewer`). In rehearsal 3 the same driver
 copied every argument, so the failure is intermittent. No reviewer default exists
@@ -1700,7 +1700,7 @@ envelope's `on_error`, which is always a `kanban_block`. The driver's raw call i
 `docs/run-a.md`, *Results*, rehearsal 4. Evidence and the corrected procedure:
 `docs/run-a.md`, Amendments, 2026-10-28 (amendment 4).
 
-*Closed 2026-10-28 by `slice/driver-call-hook`.*
+*Closed 2026-10-28 by `slice/driver-call-hook` (code commits `c70d605`, `49be7ec` and `3d0c235`; the probe is `a6d1f60`).*
 - **Measured first** (`scripts/fixtures/worker-ctx.py hook-probe`, an isolated
   `HERMES_HOME`, the real `shell_hooks.register_from_config` and
   `model_tools.handle_function_call`; field-notes entry *A `pre_tool_call` shell hook…*).
@@ -1808,7 +1808,7 @@ migrations on a board the rehearsal has nothing to do with. Rehearsal 4 shows th
 `boards create` already initialises the board it creates (`create_board` calls
 `init_db(board=…)`).
 
-*Closed 2026-10-28 by `slice/driver-call-hook`, in its own commit.*
+*Closed 2026-10-28 by `slice/driver-call-hook`, in its own commit (`51802fa`).*
 - The `init` line is gone; a comment says why. `bootstrap/init-does-not-touch-the-current-board`
   asserts that no `init` precedes the first `boards create` in the commands the bootstrap
   issues, and, under the installed Hermes in an isolated home, the two premises it rests on:

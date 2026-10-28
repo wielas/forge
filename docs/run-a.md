@@ -2629,10 +2629,9 @@ Rehearsal 3 failed*.
   `claude -p` met the dead one. The operator renewed the token, removed the dead profile
   lines (backups `.env.bak-dead-token-20261028`) and restarted the gateway.
 - **Why nothing saw it.** `make preflight` without `--probe` passed: its token check
-  reports that a token is present, not that it works. The `--probe` stripped-environment
-  probes were not part of the rehearsal's path. The precondition below puts that probe, and a
-  comparison of the profiles' token lines with the root's, in front of every rehearsal and the
-  launch.
+  reports that a token is present, not that it works. The precondition below puts a
+  stripped-environment probe, and a comparison of the profiles' token lines with the root's,
+  in front of every rehearsal and the launch.
 - It has no P-entry: it is the environment, and the code was correct.
 
 *What rehearsal 4 found.* Board `hello-rehearsal-a2d`, card `t_6e076ae7`, branch
@@ -2649,7 +2648,7 @@ Attempt 2 › Rehearsal 4 failed*.
   `review_requested` event has `reviewer: null`, so the card sat in `review` on the lane
   (`_prior_reviewer` is `None` on a first hand-off).
 - **Run 2 was the lane again**, claimed from `review` by the dispatcher, and `lane.sh`'s
-  own guard (260-267) blocked it in 9 seconds: `other: handoff-integrity — card t_6e076ae7
+  own guard (260-267 at `cc00a87`) blocked it in 9 seconds: `other: handoff-integrity — card t_6e076ae7
   was claimed from review by its own implementer, so its last hand-off named no reviewer`.
   Nothing re-ran Codex. The guard did its job; the driver's call is what failed.
 - **In rehearsal 3 the same driver copied every argument**, so the failure is intermittent.
@@ -2684,24 +2683,29 @@ fidelity stops mattering.
 - `make verify` measured **563 passed / 0 failed / 11 skipped** with `hello-rehearsal-a2d` live,
   up from 552 by ten new cases; `./scripts/verify.sh bootstrap --with-hermes` 33 / 0 / 0. Every
   mutant of the hook, the two programs, the bootstrap and P35 reddened its case (listed in the
-  epic's P34). `make preflight` from the dev checkout, before the deploy, reads PASS 105 / WARN 8 /
+  epic's P34). `make preflight` from the clean dev checkout, before the deploy, reads PASS 106 / WARN 7 /
   FAIL 3: the three FAILs are the deployed runtime lacking the hook (two profiles without
   `hooks.pre_tool_call`, and `~/.forge/repo/scripts/driver-call-hook.sh` not resolving), which the
-  deploy block above closes.
+  deploy block above closes. Five of the seven WARNs are the profile `.env` files that no longer
+  carry a token line after the operator's cleanup (fine while the root token reaches workers by
+  inheritance); the others are `lefthook` and the current board being `forge-ladder`.
 
-*The deploy.* Once the PR has merged. Pass: `Fast-forward` or `Already up to date.`, the
-bootstrap's four `verified:` lines (each lists `hooks.pre_tool_call` for the lane and the
-verifier), `runtime=main`, then `0` (the deployed bootstrap no longer calls `init`), then
-the preflight summary with no FAIL.
+*The deploy.* Once the PR has merged and `git -C ~/dev/forge pull --ff-only` has brought it
+into the dev checkout. Pass: `Fast-forward` or `Already up to date.`, the bootstrap's four
+`verified:` lines (each lists `hooks.pre_tool_call` for the lane and the verifier),
+`runtime=main`, then `no-early-init` (the deployed bootstrap no longer calls `init`).
 ```bash
 git -C ~/dev/forge-runtime pull --ff-only &&
 (cd ~/dev/forge-runtime && ./hermes/profiles-bootstrap.sh) &&
 test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse HEAD)" && echo runtime=main &&
-grep -c -- "^hermes kanban init" ~/.forge/repo/hermes/board-bootstrap.sh;
-(cd ~/dev/forge-runtime && make preflight 2>&1 | tail -5)
+! grep -q -- "^hermes kanban init" ~/.forge/repo/hermes/board-bootstrap.sh && echo no-early-init ||
+{ echo "STOP: the deploy did not complete, run nothing below"; false; }
 ```
-(`grep -c` exits 1 on a count of 0, so the chain ends there on purpose and `make
-preflight` follows after the `;`.)
+Then the preflight. Pass: the summary line reads `FAIL 0`.
+```bash
+(cd ~/dev/forge-runtime && make preflight 2>&1 | tail -6) ||
+{ echo "STOP: preflight did not run"; false; }
+```
 
 *Precondition 9, new: the token works where a worker uses it, and no profile disagrees with
 the root.* Run before R2 of every rehearsal and before *Launch*. It never prints the token:
@@ -2743,7 +2747,7 @@ done
 *Precondition 10, new: the hook is installed where the workers read it.* Run after the
 deploy and before R2. Pass: `forge-codex-lane hook-installed`, `forge-verifier
 hook-installed`, `hook-script-OK`, then `H1OK=1`. `make preflight` prints the same checks
-as PASS lines (section 4 for the profiles, section 8 for the script).
+as PASS lines (section 4b for the profiles, section 8 for the script).
 ```bash
 H1OK=1
 for p in forge-codex-lane forge-verifier; do
@@ -2757,7 +2761,8 @@ for p in forge-codex-lane forge-verifier; do
 done
 ~/.forge/repo/scripts/driver-call-hook.sh --check && echo hook-script-OK ||
 H1OK=0
-echo "H1OK=$H1OK"
+[ "$H1OK" = 1 ] && echo "H1OK=1" ||
+{ echo "STOP: the hook is not installed where the workers read it, redeploy before any rehearsal"; false; }
 ```
 
 *Cleanup of rehearsal 4 (R7, arm A), to run BEFORE rehearsal 5.* It is amendment 3's C1 to
@@ -2930,35 +2935,41 @@ stand. R1 is not repeated and R5 stands. The order is in *Order before `RUN_STAR
   run count of 0 is rehearsal 4's failure again: R6.
 - **R4's wait.** Amendment 3's, unchanged (it sets neither `SUF` nor `BR`), in the same shell as R3.
 - **R4, the hook acted: the driver's raw calls against what landed.** New. After R4's
-  standing blocks, in the same shell (it reads `$S`, `$SID`, `$VS` and `$VSID` that they set).
-  The lane's hook record counts the calls it rewrote in `used`, so `used` of 1 or more is
-  the proof the hook ran for the terminal call, whether or not the driver had slipped. The
-  driver's raw arguments are in the profile's `state.db` (message `tool_calls`), which
-  is read through the snapshots R4 already made. **Pass: `lane-hook-ran`, then `lane-landed-on-reviewer`,
-  then `verifier-hook-ran`, then `verifier-landed-as-recorded`.** The `raw` lines are the
-  comparison to paste: when the driver slipped, the raw keys lack `reviewer` and the landed
-  event does not.
+  standing blocks, in the same shell (it reads `$S`, `$SID`, `$LS`, `$VS` and `$VSID`, which
+  they set). It compares, for each of the two calls, what the program named, what the driver
+  actually sent and what the board holds; the raw arguments are in the profile `state.db`
+  (assistant `tool_calls`), read through the snapshots R4 already made. The lane's hook record
+  is usually gone by now when the verdict was a bounce (the lane runs again within a minute and
+  deletes it at its start), so the lane's proof is the three-way comparison, and its record's
+  `used` is printed only if the file is still there. The verifier's record is the verifier's own
+  and stays. **Pass: `lane-landed-on-reviewer`, `verifier-hook-ran`, `verifier-landed-as-recorded`,
+  then `R4HOOKOK=1`.** The printed lines are the comparison to paste: when the driver slipped,
+  its raw keys lack what the envelope's carry and the landed event does not.
   ```bash
-  LREC="$(ls "$HOME/.forge/lane-sessions/$RB-forge-codex-lane-"*.pending.json | head -1)"
-  VREC="$(ls "$HOME/.forge/lane-sessions/$RB-forge-verifier-"*.pending.json | head -1)"
-  echo "lane record: $LREC"
-  jq -c '{used, tool: .terminate.tool, keys: (.terminate.args | keys), reviewer: .terminate.args.reviewer}' "$LREC"
-  echo "lane raw:"
+  R4HOOKOK=0
+  echo "lane envelope terminate:"
+  sqlite3 "$LS" "select content from messages where session_id='$SID' and role='tool' and tool_name='process_manage' and content like '%forge.lane.v2%' limit 1" | jq -r '.output' | grep '^{"schema":"forge.lane.v2"' | jq -c '{tool: .terminate.tool, keys: (.terminate.args | keys), reviewer: .terminate.args.reviewer}'
+  echo "lane driver raw call:"
   sqlite3 "$LS" "select tool_calls from messages where session_id='$SID' and role='assistant' and tool_calls like '%kanban_request_review%'" | jq -c '.[] | select(.function.name == "kanban_request_review") | {name: .function.name, keys: (.function.arguments | fromjson | keys), reviewer: (.function.arguments | fromjson | .reviewer), task_id: (.function.arguments | fromjson | .task_id)}'
-  echo "landed:"
+  echo "lane landed:"
   jq -c '[.events[] | select(.kind == "review_requested")][0] | {kind, implementer: .payload.implementer, reviewer: .payload.reviewer}' "$S"
-  jq -e '.used >= 1' "$LREC" >/dev/null && echo lane-hook-ran
-  jq -e '[.events[] | select(.kind == "review_requested")][0].payload.reviewer == "forge-verifier"' "$S" >/dev/null && echo lane-landed-on-reviewer
+  LREC="$(ls "$HOME/.forge/lane-sessions/$RB-forge-codex-lane-"*.pending.json 2>/dev/null | head -1)"
+  [ -n "$LREC" ] && jq -c '{lane_record_used: .used}' "$LREC"
+  VREC="$(ls "$HOME/.forge/lane-sessions/$RB-forge-verifier-"*.pending.json 2>/dev/null | head -1)"
   echo "verifier record: $VREC"
-  jq -c '{used, tool: .terminate.tool, kind: .terminate.args.kind, reason: (.terminate.args.reason | .[0:70])}' "$VREC"
-  echo "verifier raw:"
+  [ -n "$VREC" ] && jq -c '{used, tool: .terminate.tool, kind: .terminate.args.kind, reason: (.terminate.args.reason | .[0:70])}' "$VREC"
+  echo "verifier driver raw call:"
   sqlite3 "$VS" "select tool_calls from messages where session_id='$VSID' and role='assistant' and (tool_calls like '%kanban_block%' or tool_calls like '%kanban_request_changes%')" | jq -c '.[] | select(.function.name | IN("kanban_block","kanban_request_changes")) | {name: .function.name, keys: (.function.arguments | fromjson | keys), reason: (.function.arguments | fromjson | .reason | .[0:70])}'
-  jq -e '.used >= 1' "$VREC" >/dev/null && echo verifier-hook-ran
-  jq -e --slurpfile e "$VREC" '([.events[] | select(.kind == "blocked" or .kind == "changes_requested")] | last | .payload.reason) == $e[0].terminate.args.reason' "$S" >/dev/null && echo verifier-landed-as-recorded
+  jq -e '[.events[] | select(.kind == "review_requested")][0].payload.reviewer == "forge-verifier"' "$S" >/dev/null && echo lane-landed-on-reviewer &&
+  [ -n "$VREC" ] && jq -e '.used >= 1' "$VREC" >/dev/null && echo verifier-hook-ran &&
+  jq -e --slurpfile e "$VREC" '(if $e[0].terminate.tool == "kanban_request_changes" then "changes_requested" else "blocked" end) as $k | [.events[] | select(.kind == $k)] | last | .payload.reason == $e[0].terminate.args.reason' "$S" >/dev/null && echo verifier-landed-as-recorded &&
+  R4HOOKOK=1 ||
+  { echo "STOP: the hook evidence did not hold, this is a finding: R6"; false; }
+  echo "R4HOOKOK=$R4HOOKOK"
   ```
-  If the verdict was a bounce the second check is `changes_requested`'s reason, and the
-  lane then runs again (R5's default stops it before this block). If a record file is missing the hook
-  had nothing to act on: that is a finding, not a pass.
+  A missing verifier record means the program never named a call or the record was cleared:
+  that is a finding, not a pass. The `used` count of the verifier's record is 1 or more when the
+  hook rewrote the driver's call, whether or not the driver had slipped.
 - **R6.** Amendment 3's rule stands. The rerun sentence now reads: a rerun after a repair is
   merged and deployed needs a new board and a new, never-used suffix, **`a2f`** with
   `hello-rehearsal-a2f`, then `a2g`. `a2b` to `a2e` are spent. R7 on the failed run still
