@@ -469,7 +469,7 @@ posture: UNGATED (merge gate unavailable on this plan: wielas/Squatfather)
 Halted 2026-10-03 at CHUNK-1's handoff. See *Amendments*, 2026-10-03.
 
 #### Attempt 2
-*(not yet run)*
+*(no launch yet; the rehearsal record is below)*
 
 ##### Rehearsal 1 failed (2026-10-27)
 
@@ -1027,8 +1027,10 @@ did its job: it failed before commission, so no commission probe was spent. It
 failed on a premise the entry got wrong. This entry corrects the premise,
 supersedes the lines that depend on it, and gives the second rehearsal and the
 launch their new commands. Nothing above is edited. Where this entry and the text
-above differ, this entry governs attempt 2. **Line numbers below are those of
-this file at `ad0c03e`** (`git show ad0c03e:docs/run-a.md`), the file as the
+above differ, this entry governs attempt 2. **Paste the code blocks below into
+bash, or run `setopt interactive_comments` first** (zsh without it reads a
+trailing `#` as an argument). The blocks carry no comments; the expected output is
+in the prose beside each. **Line numbers below are those of this file at `ad0c03e`** (`git show ad0c03e:docs/run-a.md`), the file as the
 2026-10-26 entry left it on `main`; this entry's own Results insertion moves
 later lines. Step names are given beside them.
 
@@ -1142,7 +1144,13 @@ first commit of the PR that carries this entry).
   branch by then has an open PR.
 - **Caveat 1.** A refusal can leave an empty board behind: the board, its
   workdir and the assignee check are idempotent and run first, because telling an
-  existing card from a new one needs the board's card list. It holds no card.
+  existing card from a new one needs the board's card list. It holds no card, so
+  the rule after a refusal is: after **exit 2** (could not ask), fix the cause and
+  re-run the same command on the **same board** with the **same suffix**; after
+  **exit 3** (spent), the suffix is spent too, so re-run on the **same, empty
+  board** with a new, never-used suffix. Caveat 2 binds a board that holds a card,
+  and this one holds none. After a lane has run (R6 below) the rule is stricter: a
+  new board and a new suffix.
 - **Caveat 2.** The suffix must be **identical** on every bootstrap run of one
   board. It is part of how an existing card is recognised.
 - **Caveat 3.** Interactive cards and gates carry no branch, so the suffix does
@@ -1156,8 +1164,8 @@ first commit of the PR that carries this entry).
   `profiles-bootstrap.sh` clause does not apply. **Until the deploy, the old
   script silently ignores the flag**: it reads `$1` and `$2` and nothing else, so
   `--hello --branch-suffix a2b` would create the card on the spent name, and the
-  dispatcher can claim it within 60 s. Hence the check at the start of R2 and of
-  Launch step 3. (Do not run the script with `--help` to test: the old one reads
+  dispatcher can claim it within 60 s. Hence the check before R2 and before
+  Launch step 2. (Do not run the script with `--help` to test: the old one reads
   `--help` as a board name.)
 
 *FORGE_SHA and the frozen pins.* Following the 2026-10-26 entry's reading of how
@@ -1178,7 +1186,7 @@ first commit of the PR that carries this entry).
 - **`PRODUCT_SHA` stays `b66be28`** (the 2026-10-26 entry). Nothing in
   `the-squatfather` changes: the suffix is applied at bootstrap.
 
-*Precondition 8 is replaced (lines 113-128, the loop at 122-127).* The old loop
+*Precondition 8 is replaced (lines 113-128, the loop at 122-126).* The old loop
 runs `hermes kanban list` on every other board. `list` calls `recompute_ready`,
 so it **writes** to boards that are not run A's; the rehearsal's own note on
 `list` (R2) applies to it. The replacement snapshots each board with
@@ -1186,9 +1194,11 @@ so it **writes** to boards that are not run A's; the rehearsal's own note on
 `~/.hermes/kanban.db`, as `scripts/digest.sh` 230 has it (`[ "$BOARD" = default ]
 && db="$HERMES_ROOT/kanban.db"`); `~/.hermes/kanban/kanban.db` exists but is
 zero bytes and is not a board. Named boards are
-`~/.hermes/kanban/boards/<slug>/kanban.db`, and `_archived` is skipped.
+`~/.hermes/kanban/boards/<slug>/kanban.db`, and `_archived` is skipped. `SKIP`
+names run A's own board, which is excluded; before the rehearsal's board exists
+set `SKIP=-` first, and nothing is excluded.
 ```bash
-SKIP=squatfather-run-a2      # run A's own board; before the rehearsal's board exists, SKIP=-
+SKIP="${SKIP:-squatfather-run-a2}"
 S8="$(mktemp -d)"; n=0; sk=0; m="$(hermes kanban boards list --json | jq length)"
 for db in "$HOME/.hermes/kanban.db" "$HOME"/.hermes/kanban/boards/*/kanban.db; do
   b="$(basename "$(dirname "$db")")"; [ "$db" = "$HOME/.hermes/kanban.db" ] && b=default
@@ -1216,124 +1226,195 @@ edit waits), 6 and the new 8; **rehearsal 2** (R0 to R7 as amended below); 7
 whose step 3 now ends with T5. Attempt 1's artifacts (lines 609-627) are already
 done. A failed rehearsal still costs no commission probe.
 
-*The deployed script knows the flag.* Run before R2 and before Launch step 3:
+*The deployed script knows the flag.* Run before R2, and before Launch step 2.
+It must print a number greater than 0, then `runtime=main`:
 ```bash
-grep -c -- '--branch-suffix' ~/.forge/repo/hermes/board-bootstrap.sh   # must print a number greater than 0
+grep -c -- '--branch-suffix' ~/.forge/repo/hermes/board-bootstrap.sh
 test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse HEAD)" && echo runtime=main
 ```
 
 **Rehearsal 2.** R0 to R7 stand as the 2026-10-26 entry wrote them, except for
-the following, which supersede by line and step.
+the following, which supersede by line and step. Where a block changes, the whole
+block is given, so that nothing is hand-edited: every block below sets the
+variables it uses.
 
-- **R0 (lines 651, 747 — both variable blocks, R0 and R3).** `RB=hello-rehearsal-a2b`,
-  with a second variable, `BR=chunk/hello-1-greet-a2b`, exported beside it. The
-  evidence directory is `EV="$P/.forge/run-a-attempt-2-rehearsal-2"` (a new one:
-  the first holds rehearsal 1). Line 659-660's "fresh slug" reads `a2b`.
-  Lines 661-663: the replacement precondition 8 above, with `SKIP=-`.
-- **R0, `$H` (lines 664-671).** `$H` is on `main`, clean, and **equal** to
-  `origin/main`, `81d9b23`; "one commit behind" (`582455c` against `7b3532a`) is
-  history. The checks stand, with `ancestor-ok`. On 2026-10-27 an untracked
-  `.build/` appeared after the revert (cause not found; `make check` does not
-  recreate it), and the lane refuses a dirty baseline, so `git status --porcelain`
-  must print nothing at R0 as well as after R1.
-- **R1 (lines 673-708) is not repeated.** The revert PR is done (PR #6, `81d9b23`).
-  Its pass check: `git -C "$H" fetch origin && git -C "$H" diff --stat 582455c
-  origin/main` prints nothing, and `test ! -e "$H/src/hello_forge/greet.py" && echo
-  greet-absent` prints `greet-absent`. The stale-branch paragraph and its commands
-  (lines 698-708, including 702 and 703, the `gh pr list` and the `gh api -X DELETE`
-  of `chunk/hello-1-greet`, and line 708's "no local branch") are **moot**: the
-  new name has no branch, and deleting the old one freed nothing. Instead, before
-  R2: `gh pr list --repo "$R" --head "$BR" --state all --json number` must print
-  `[]`, and `git -C "$H" ls-remote --heads origin "$BR"` must print nothing. The
-  guard asks the same; this is the operator's own reading beside it.
-- **R2 (lines 712-713, 716, 725-728, 739).** Run the deployed-script check
-  above, then:
+- **R0 (supersedes lines 648-671, and the variable blocks at 651 and 747).**
+  `RB=hello-rehearsal-a2b`, and `BR=chunk/hello-1-greet-a2b`. The evidence
+  directory is a new one, `$P/.forge/run-a-attempt-2-rehearsal-2` (the first holds
+  rehearsal 1). Run the replacement precondition 8 above with `SKIP=-` first. Then:
   ```bash
+  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-2"; mkdir -p "$EV"
+  hermes gateway status | sed -n 2,3p
+  hermes kanban boards list --all --json | jq --arg s "$RB" 'any(.[]; .slug == $s)'
+  hermes kanban assignees --json | jq -e 'map(select(.name | IN("forge-codex-lane","forge-verifier")) | select(.on_disk)) | length == 2'
+  git -C "$H" fetch origin
+  git -C "$H" branch --show-current
+  git -C "$H" status --porcelain
+  git -C "$H" merge-base --is-ancestor HEAD origin/main && echo ancestor-ok
+  git -C "$H" diff --stat 582455c origin/main
+  test ! -e "$H/src/hello_forge/greet.py" && echo greet-absent
+  gh pr list --repo "$R" --head "$BR" --state all --json number
+  git -C "$H" ls-remote --heads origin "$BR"
+  ```
+  Expected, in order: the gateway supervised by launchd; `false` (no board of that
+  slug; after a refused bootstrap, below, the empty board exists and this reads
+  `true`, which is then expected); `true`; `main`; nothing; `ancestor-ok`; nothing;
+  `greet-absent`; `[]`; nothing. `$H` is on `main`, clean and **equal** to
+  `origin/main`, `81d9b23`; "one commit behind" (lines 664-665) is history. On
+  2026-10-27 an untracked `.build/` appeared in `$H` after the revert (cause not
+  found; `make check` does not recreate it), and the lane refuses a dirty
+  baseline, so `status --porcelain` must print nothing here and again just before
+  R2.
+- **R1 (lines 673-708) is not repeated.** The revert PR is done (PR #6,
+  `81d9b23`); the block above is its pass check (`diff --stat` empty, `greet-absent`).
+  The stale-branch paragraph and its commands (lines 698-708, including 702 and
+  703, the `gh pr list` and the `gh api -X DELETE` of `chunk/hello-1-greet`, and
+  line 708) are **moot**: the new name has no branch, and deleting the old one
+  freed nothing. The last two lines of the block above are the operator's own
+  reading of the new name beside the guard's.
+- **R2 (supersedes lines 712-713, 716, 725-728, 736-739).** Run the deployed-script
+  check above, then create the board and the card through the certified path:
+  ```bash
+  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-2"
   cd "$H" && ~/.forge/repo/hermes/board-bootstrap.sh "$RB" --hello --branch-suffix a2b; echo "bootstrap exit=$?"
   ```
-  It must print `free     chunk/hello-1-greet-a2b`, create the card, and exit 0.
-  Exit 3 or 2 is a stop: no card exists, and the board is empty (caveat 1); report
-  it to the operator. The raw `create` at lines 725-728 is shown only to say what
-  the script does; its `--branch` (line 727) reads `"$BR"`, and it is **not** a
-  substitute for the script, because it would skip the guard. Line 739's pin
-  becomes `.branch_name == "chunk/hello-1-greet-a2b"`. Lines 712-713 ("not
-  covered by `make verify`") are half true now: the naming and the guard have
+  It must print `free     chunk/hello-1-greet-a2b`, create the card, and print
+  `bootstrap exit=0`. The raw `create` at lines 725-728 shows only what the script
+  does; it is **not** a substitute, because it would skip the guard. Lines 712-713
+  ("not covered by `make verify`") are half true now: the naming and the guard have
   stubbed cases (`bootstrap/hello-branch-takes-the-suffix` and the guard cases),
-  while the live `gh` and `hermes` legs do not, so read the output.
-- **R3, R4, R6 (lines 755, 781, 858, 901, 906).** Each `chunk/hello-1-greet` is
-  `"$BR"`. At line 781, the comment about "the three older PRs on this branch name"
-  no longer applies: the new name has none, and the guard checked it, so an open
-  PR on it is the lane's. At line 858 the expected branch is `chunk/hello-1-greet-a2b`.
-- **R6 (lines 909-913).** The "rerun" sentence is replaced. A rerun after a
-  repair is merged and deployed needs a **new board and a new, never-used suffix**:
+  while the live `gh` and `hermes` legs do not, so read the output. Then read the
+  card back, before the next dispatch tick, as lines 730-739 say:
+  ```bash
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"; echo "$ID"
+  hermes kanban --board "$RB" show "$ID" --json | jq -e --arg b "$BR" '.task | .assignee == "forge-codex-lane" and .workspace_kind == "worktree" and .branch_name == $b and .max_retries == 1 and .skills == ["forge-lane"]'
+  test "$BR" = chunk/hello-1-greet-a2b && echo branch-pinned
+  ```
+  Expected: the card id, `true`, `branch-pinned`. A mismatch is a FAIL of the
+  rehearsal's own setup. **A refused bootstrap** (exit 3 or 2) creates no card but
+  leaves an empty board. After exit 2 (could not ask), fix the cause and re-run
+  the same command on the same board with the same suffix. After exit 3 (spent)
+  the suffix `a2b` is spent: re-run on the same, empty board with a new
+  never-used suffix, and set `BR` to match (`chunk/hello-1-greet-` plus it).
+  Caveat 2 binds a board that holds a card, and this one holds none.
+- **R3 (supersedes lines 747-755).** In the second terminal:
+  ```bash
+  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-2"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  hermes kanban --board "$RB" watch
+  hermes kanban --board "$RB" tail "$ID"
+  hermes kanban --board "$RB" runs "$ID"
+  hermes kanban --board "$RB" log "$ID"
+  gh pr list --repo "$R" --head "$BR" --state all
+  ```
+  `watch` follows live; leave it with Ctrl+C. The lane opens the PR from `$BR`.
+- **R4 (supersedes lines 780-781 and 858).** The wait, and the open PR. The name
+  is new, so an open PR on it is the lane's:
+  ```bash
+  until hermes kanban --board "$RB" show "$ID" --json | jq -e '[.runs[] | select(.profile == "forge-verifier")] | last | .ended_at != null' >/dev/null; do sleep 30; done; sleep 120
+  N="$(gh pr list --repo "$R" --head "$BR" --state open --json number -q '.[0].number')"; echo "PR $N"
+  ```
+  The last check of R4 is, in place of line 858:
+  ```bash
+  gh pr view "$N" --repo "$R" --json state,headRefName -q '.state == "OPEN" and .headRefName == "chunk/hello-1-greet-a2b"'
+  gh pr view "$N" --repo "$R" --json url -q .url
+  ```
+  It prints `true`, then the URL the hold names. Every other R4 block stands
+  and runs in the same shell, so that `$S`, `$SID`, `$N` and the rest are set.
+- **R6 (supersedes lines 898-913).** The evidence copy at line 901 becomes
+  ```bash
+  gh pr list --repo "$R" --head "$BR" --state open --json number,state,headRefName,statusCheckRollup,url > "$EV/pr.json"
+  ```
+  (empty if the lane never opened one). Line 906 reads: the worktree
+  `$H/.worktrees/$ID`, the board, the PR and the branch `$BR` stay as they are. The
+  "rerun" sentence (lines 909-913) is replaced: **a rerun after a repair is merged
+  and deployed needs a new board and a new, never-used suffix**:
   `hello-rehearsal-a2c` with `--branch-suffix a2c`, then `a2d`, and so on. R7 on
   the failed run still comes first. R7's closing the lane's PR and deleting its
   branch do **not** free the name, so a rerun on `a2b` is refused by the guard
-  (exit 3) and was always going to be. R1's revert still does not repeat.
-- **R7 (lines 915-943) is replaced by the following, in two arms.** It
-  records the worktree before the archive, tags the tip, and treats the archive as
-  what reaps the worktree.
+  (exit 3). R1's revert still does not repeat.
+- **R7 (replaces lines 915-943), in two arms.** It records the worktree before
+  the archive, tags the tip, and treats the archive as what reaps the worktree.
+  Step 1, record. `K` is the rehearsal number; the tag is
+  `run-a-attempt-2/rehearsal-$K`:
   ```bash
-  K=2                                    # rehearsal number; the tag is run-a-attempt-2/rehearsal-$K
-  WT="$H/.worktrees/$ID"
-  # 1. Record what the archive could take. Before, never after.
+  export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB=hello-rehearsal-a2b BR=chunk/hello-1-greet-a2b
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-2"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  K=2; WT="$H/.worktrees/$ID"
+  git -C "$H" fetch origin
   if [ -e "$WT" ]; then
     { echo "status:"; git -C "$WT" status --porcelain; echo "HEAD: $(git -C "$WT" rev-parse HEAD)"; } | tee "$EV/worktree-before-archive.txt"
     TIP="$(git -C "$WT" rev-parse HEAD)"
   else
     echo worktree-absent | tee "$EV/worktree-before-archive.txt"
     TIP="$(git -C "$H" ls-remote --heads origin "$BR" | cut -f1)"
-  fi; echo "TIP=$TIP"
+  fi
+  echo "TIP=$TIP"
   ```
   Pass: `status:` is followed by nothing (a dirty tree is the diagnosis's evidence:
-  copy it out as R6 says and stop) and `TIP` is one full SHA. If the worktree is
+  copy it out as R6 says and stop), and `TIP` is one full SHA. If the worktree is
   absent and no `$BR` exists on the remote, the lane never got as far as a branch:
-  there is nothing to tag, so skip step 2.
+  there is nothing to tag, so skip step 2. Step 2, tag the tip and publish the tag
+  with `gh api` (the pre-push hook refuses every push made from `main`):
   ```bash
-  # 2. Tag the tip and publish the tag with gh api (the pre-push hook refuses every push from main).
   git -C "$H" tag "run-a-attempt-2/rehearsal-$K" "$TIP"
   gh api "repos/$R/git/refs" -f ref="refs/tags/run-a-attempt-2/rehearsal-$K" -f sha="$TIP" --jq .ref
-  git -C "$H" ls-remote --tags origin "run-a-attempt-2/rehearsal-$K"    # must list $TIP
+  git -C "$H" ls-remote --tags origin "run-a-attempt-2/rehearsal-$K"
   ```
-  If `gh api` says the object does not exist, the tip was never pushed, and the
-  archive would keep such a worktree. Preserve it first:
-  `git -C "$H" bundle create "$EV/tip.bundle" "$BR"`, then go on.
+  The `fetch` in step 1 is what makes the tip a local object when it came from
+  `ls-remote`. The last line must list `$TIP`. If `gh api` says the object does
+  not exist, the tip was never pushed, and the archive would keep such a
+  worktree; preserve it first with
+  `git -C "$H" bundle create "$EV/tip.bundle" "$BR"`, then go on. Step 3, archive
+  **first**: the merge-watcher sweeps every board every ten minutes, and a blocked
+  card whose PR is then closed unmerged would be reported once as a decision.
   ```bash
-  # 3. Archive FIRST: the merge-watcher sweeps every board every ten minutes, and a blocked
-  #    card whose PR is then closed unmerged would be reported once as a decision.
   hermes kanban --board "$RB" archive "$ID"
-  hermes kanban --board "$RB" show "$ID" --json | jq -e '.task.status == "archived"'   # must print true, BEFORE the board is archived
+  hermes kanban --board "$RB" show "$ID" --json | jq -e '.task.status == "archived"'
   ```
-  Then, **with a PR (arm A)**, from a directory that is not `$H`, so that
-  `--delete-branch` deletes the remote branch only:
+  The second line must print `true`, before the board is archived. Step 4, **with
+  a PR (arm A)**. The close runs in a subshell in `$P`, a directory that is not
+  `$H`, so that `--delete-branch` deletes the remote branch only:
   ```bash
   N="$(gh pr list --repo "$R" --head "$BR" --state open --json number -q '.[0].number')"; echo "PR $N"
-  gh pr close "$N" --repo "$R" --delete-branch --comment "Run A attempt 2 rehearsal $K: verdict recorded, closed unmerged."
+  (cd "$P" && gh pr close "$N" --repo "$R" --delete-branch --comment "Run A attempt 2 rehearsal $K: verdict recorded, closed unmerged.")
   ```
-  **No PR (arm B)**, the lane never opened one, as in rehearsal 1:
+  Step 4, **no PR (arm B)**, the lane never opened one, as in rehearsal 1:
   `gh pr list --repo "$R" --head "$BR" --state all --json number` prints `[]`, and
   the remote branch, if there is one, goes by `gh api`:
   ```bash
   git -C "$H" ls-remote --heads origin "$BR" | grep -q . && gh api -X DELETE "repos/$R/git/refs/heads/$BR"
   ```
-  Both arms, last:
+  Step 5, both arms. The archive normally reaped the worktree; if it did not,
+  `worktree remove` runs without `--force`, and if it refuses, stop and look:
   ```bash
-  [ -e "$WT" ] && git -C "$H" worktree remove ".worktrees/$ID"       # the archive normally reaped it; no --force: if it refuses, stop and look
-  git -C "$H" rev-parse --verify --quiet "refs/heads/$BR" && git -C "$H" branch -D "$BR"   # archive keeps a custom branch
+  [ -e "$WT" ] && git -C "$H" worktree remove ".worktrees/$ID"
+  git -C "$H" rev-parse --verify --quiet "refs/heads/$BR" && git -C "$H" branch -D "$BR"
   git -C "$H" fetch --prune origin
-  hermes kanban boards rm "$RB"          # a soft move under boards/_archived/; never --delete
+  hermes kanban boards rm "$RB"
   ```
-  Then confirm the state the next rehearsal and *Launch* both assume:
+  `boards rm` is a soft move under `boards/_archived/`; never `--delete`. Step 6,
+  confirm the state the next rehearsal and *Launch* both assume:
   ```bash
-  git -C "$H" status -sb                                # ## main...origin/main, nothing else
-  git -C "$H" worktree list                             # $H only
-  git -C "$H" ls-remote --heads origin                  # refs/heads/main only
-  git -C "$H" ls-remote --tags origin 'run-a-attempt-2/*'   # rehearsal-1 at 46fabde…, and rehearsal-$K at $TIP
-  hermes kanban boards list --all --json | jq --arg s "$RB" 'any(.[]; .slug == $s and (.archived | not))'   # false
+  git -C "$H" status -sb
+  git -C "$H" worktree list
+  git -C "$H" ls-remote --heads origin
+  git -C "$H" ls-remote --tags origin 'run-a-attempt-2/*'
+  hermes kanban boards list --all --json | jq --arg s "$RB" 'any(.[]; .slug == $s and (.archived | not))'
   ```
-  Then the replacement precondition 8 again, with `SKIP=squatfather-run-a2`; it
-  must print nothing. Once the board is archived it can no longer see it, so the
-  `archived` check on the card, run before `boards rm`, is what stands in for it.
+  Expected: `## main...origin/main` and nothing else; `$H` only; `refs/heads/main`
+  only; `rehearsal-1` at `46fabde…` and `rehearsal-$K` at `$TIP`; `false`. Then the
+  replacement precondition 8 again, with `SKIP=squatfather-run-a2`; it must print
+  nothing. Once the board is archived it can no longer see it, so the `archived`
+  check on the card in step 3 is what stands in for it.
 - **Decisions of the 2026-10-26 entry (lines 945-957).** "Reset by a revert PR"
   was carried out once (PR #6) and is not repeated. "`board-bootstrap.sh --hello`
   creates the card" stands, now with `--branch-suffix`. The rest stands.
@@ -1342,10 +1423,10 @@ the following, which supersede by line and step.
 never to be unblocked (lines 528-530, 628-629 say so, and stand). But the digest
 keeps reporting it, so lines 603-604's "the digest reads attempt 1's board, which
 is harmless" is superseded: it is not harmless. The scoped wrapper still reads
-`squatfather-run-a`, and its last block reason begins `other:`, so the operator's phone says "Waiting on you"
-about a card nobody can act on. The steps below run after commission and before
-*Launch*, except the last, which waits for the digest wrapper. Their evidence goes
-in `EV1="$P/.forge/run-a-attempt-1"`.
+`squatfather-run-a`, and its last block reason begins `other:`, so the operator's
+phone says "Waiting on you" about a card nobody can act on. The steps below run
+after commission and before *Launch*, except the last, which waits for the digest
+wrapper. Their evidence goes in `$P/.forge/run-a-attempt-1`.
 
 *Why it is split.* `digest.sh` scoped to a board that is not there does not
 degrade quietly. A missing `kanban.db` leaves the snapshot empty (lines 228-234),
@@ -1361,7 +1442,7 @@ the last part of Launch step 3.
 
 1. **T1. The tag exists, locally and on the remote.**
    ```bash
-   P="$HOME/dev/the-squatfather"; EV1="$P/.forge/run-a-attempt-1"
+   P="$HOME/dev/the-squatfather"
    test "$(git -C "$P" rev-parse --verify 'run-a-attempt-1/chunk-1^{commit}')" = ad3fd6399c2760d33c3940b542824b28639f0821 && echo tag-local-OK
    git -C "$P" ls-remote --tags origin 'run-a-attempt-1/chunk-1' | cut -f1 | grep -qx ad3fd6399c2760d33c3940b542824b28639f0821 && echo tag-remote-OK
    ```
@@ -1371,10 +1452,11 @@ the last part of Launch step 3.
    `$P/.worktrees/t_da03d07a`. Archiving removes a clean, fully pushed worktree
    (substrate behaviour 1), so its state is recorded first:
    ```bash
+   P="$HOME/dev/the-squatfather"; EV1="$P/.forge/run-a-attempt-1"
    W="$P/.worktrees/t_da03d07a"
    if [ -e "$W" ]; then { echo present; git -C "$W" status --porcelain; git -C "$W" rev-parse HEAD; }
    else echo worktree-absent; fi | tee "$EV1/t_da03d07a-worktree-before-archive.txt"
-   git -C "$P" worktree list                                  # must list $P only
+   git -C "$P" worktree list
    ```
    Pass: `worktree-absent`, and the list shows `$P` alone. **That is the expected
    reading**: the 2026-10-26 entry's `git worktree remove .worktrees/t_da03d07a`
@@ -1383,6 +1465,7 @@ the last part of Launch step 3.
    and `HEAD` must be `ad3fd63…`; otherwise stop and look.
 3. **T3. Snapshot the board into the evidence directory.**
    ```bash
+   P="$HOME/dev/the-squatfather"; EV1="$P/.forge/run-a-attempt-1"
    SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/squatfather-run-a/kanban.db" "$(mktemp -d "$EV1/board-before-archive.XXXXXX")")"
    sqlite3 "$SNAP" "select id,status,branch_name from tasks"
    ```
@@ -1390,59 +1473,77 @@ the last part of Launch step 3.
    `t_da03d07a|blocked|chunk/1-store-owner-history-in-a-migrated-sqlite`.
 4. **T4. Archive the card.**
    ```bash
-   hermes kanban --board squatfather-run-a archive t_da03d07a                 # Archived t_da03d07a
-   hermes kanban --board squatfather-run-a show t_da03d07a --json | jq -e '.task.status == "archived"'   # true
-   D="$(bash ~/.hermes/scripts/forge-digest.sh --day "$(date '+%Y-%m-%d')")"; echo "digest exit=$?"   # 0
-   printf '%s' "$D" | wc -c                                                                          # 0
+   hermes kanban --board squatfather-run-a archive t_da03d07a
+   hermes kanban --board squatfather-run-a show t_da03d07a --json | jq -e '.task.status == "archived"'
+   D="$(bash ~/.hermes/scripts/forge-digest.sh --day "$(date '+%Y-%m-%d')")"; echo "digest exit=$?"
+   printf '%s' "$D" | wc -c
    ```
-   Pass: `true`, then `digest exit=0` and `0`. The wrapper is still scoped to
-   `squatfather-run-a`, and that board now has nothing to say. (Before T4 the
-   same command prints the card, `Risk: unknown`: see P29.) The card is archived,
-   not unblocked, and stays so.
+   Pass: `Archived t_da03d07a`, `true`, `digest exit=0` and `0`. The wrapper is
+   still scoped to `squatfather-run-a`, and that board now has nothing to say.
+   (Before T4 the same command prints the card, `Risk: unknown`: see P29.) The
+   card is archived, not unblocked, and stays so.
 5. **T5. Move the board, at Launch step 3, after the repoint.** See step 3c below.
 
-*Launch, steps 3 and 5 (supersede lines 151-155 and 164-169; step 1, 2 and 4
-stand).* Run both from `$P`, with `B=squatfather-run-a2`.
-- **Step 3a, before the root exists.** The deployed-script check above. Then:
+*Launch, steps 1 to 5 (supersede lines 132-134, 151-155 and 164-169).* **The
+Launch block's first line, `P=…; B=squatfather-run-a` (line 133), and the one
+under *What is measured* (line 328), read `B=squatfather-run-a2` for attempt 2.**
+The 2026-10-03 entry said so in prose; the 2026-10-26 entry did not repeat it, and
+steps 1, 2 and 4 stand with it. Each block below sets `P` and `B` itself, so that
+none is run with a stale value. Run all of them from `$P`.
+- **Before step 2 (the launch record).** The deployed-script check above, which
+  must print a number greater than 0 and `runtime=main`. It comes before the
+  record because the record fixes `FORGE_SHA`.
+- **Step 3a, the root.**
   ```bash
+  P="$HOME/dev/the-squatfather"; B=squatfather-run-a2
   cd "$P" && ~/.forge/repo/hermes/board-bootstrap.sh "$B" --root-only --branch-suffix a2; echo "bootstrap exit=$?"
-  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$B/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
+  test "$B" = squatfather-run-a2 && echo board-OK
+  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/squatfather-run-a2/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
   sqlite3 "$SNAP" "select title, branch_name from tasks"
   ```
-  Pass: it printed `free     chunk/1-store-owner-history-in-a-migrated-sqlite-a2`,
-  `bootstrap exit=0`, and the query prints one row whose branch is that name. On
-  exit 3 or 2, no card exists: stop, do not pick another suffix to get past it, and
-  read the refusal.
-- **Step 3b, the digest wrapper** — the `sed` repoint exactly where the
-  2026-10-26 entry put it (lines 595-607): after `squatfather-run-a2` exists, and
-  with its pass check, the last line ending `--board squatfather-run-a2 "$@"`.
+  Pass: it printed `free     chunk/1-store-owner-history-in-a-migrated-sqlite-a2`
+  and `bootstrap exit=0`; then `board-OK`; then the query, run on the snapshot of
+  **`squatfather-run-a2`** by its literal path, prints exactly one row whose
+  branch is that name. A card made on the wrong board fails twice: `board-OK` does
+  not print, and that board holds no such row. On **exit 2** (could not ask), fix
+  the cause and re-run the same command: the board is empty and exists, and
+  precondition 6's "absent" check does not apply to the re-run. On **exit 3**, a
+  name with the suffix `a2` is already spent: stop and read which PR or branch the
+  refusal names. If it is real, pick a new never-used suffix, use it for step 3,
+  step 5 and CHUNK-5's branch, and record it in the launch record. The board is
+  empty, so it may be reused (caveat 2 binds a board that holds a card).
+- **Step 3b, the digest wrapper:** the `sed` repoint exactly where the 2026-10-26
+  entry put it (lines 595-607), after `squatfather-run-a2` exists, with its pass
+  check: the last line ends `--board squatfather-run-a2 "$@"`.
 - **Step 3c, T5.** Only after 3b's check passes:
   ```bash
-  hermes kanban boards rm squatfather-run-a                  # a soft move; never --delete
-  hermes kanban boards list --all --json | jq 'any(.[]; .slug == "squatfather-run-a" and (.archived | not))'   # false
-  ls -d ~/.hermes/kanban/boards/_archived/squatfather-run-a-*/kanban.db   # exactly one path
-  D="$(bash ~/.hermes/scripts/forge-digest.sh --day "$(date '+%Y-%m-%d')")"; echo "digest exit=$?"   # 0
-  printf '%s' "$D" | grep -c UNREADABLE                                                              # 0
+  hermes kanban boards rm squatfather-run-a
+  hermes kanban boards list --all --json | jq 'any(.[]; .slug == "squatfather-run-a" and (.archived | not))'
+  ls -d ~/.hermes/kanban/boards/_archived/squatfather-run-a-*/kanban.db
+  D="$(bash ~/.hermes/scripts/forge-digest.sh --day "$(date '+%Y-%m-%d')")"; echo "digest exit=$?"
+  printf '%s' "$D" | grep -c UNREADABLE
   ```
-  Pass: `false`, one path, `digest exit=0` and `0`. The board's data stays under `_archived/`, and
-  `$EV1` holds a copy: *the 2026-10-03 entry's "Attempt 1's board stays as
-  evidence" (lines 529-530) is amended to that*. Run the replacement precondition
-  8 once more; it must print nothing.
+  Pass: `false`, one path, `digest exit=0` and `0`. `boards rm` is a soft move;
+  never `--delete`. The board's data stays under `_archived/`, and
+  `$P/.forge/run-a-attempt-1` holds a copy: *the 2026-10-03 entry's "Attempt 1's
+  board stays as evidence" (lines 529-530) is amended to that*. Run the
+  replacement precondition 8 once more; it must print nothing.
 - **Step 5, the later full run** that creates CHUNK-2 to CHUNK-10 and the gates,
-  **the same suffix**:
+  **with the same suffix**:
   ```bash
+  P="$HOME/dev/the-squatfather"; B=squatfather-run-a2
   cd "$P" && ~/.forge/repo/hermes/board-bootstrap.sh "$B" --branch-suffix a2; echo "bootstrap exit=$?"
-  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$B/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
-  sqlite3 "$SNAP" "select count(*) from tasks where branch_name like '%-a2'"                          # must print 9
-  sqlite3 "$SNAP" "select id, branch_name from tasks where branch_name is not null and branch_name not like '%-a2'"   # must print nothing
+  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/squatfather-run-a2/kanban.db" "$(mktemp -d "$P/.forge/board-launch.XXXXXX")")"
+  sqlite3 "$SNAP" "select count(*) from tasks where branch_name like '%-a2'"
+  sqlite3 "$SNAP" "select id, branch_name from tasks where branch_name is not null and branch_name not like '%-a2'"
   ```
   Pass: `bootstrap exit=0`; one `exists   chunk/1-store-owner-history-in-a-migrated-sqlite-a2`
   line for the root, and one `free` line for each of the other eight lane cards
-  (CHUNK-2, 3, 4, 6, 7, 8, 9, 10); no `REFUSED`; then `9` and nothing. Its guard
+  (CHUNK-2, 3, 4, 6, 7, 8, 9, 10); no `REFUSED`; then `9`, then nothing. Its guard
   covers all three milestones' lane cards, not only M1's. On exit 3 no card is
   created and the root is untouched. A suffix other than `a2` here would give the
   new cards different names from the root's and be recognised only as new cards:
-  the last two queries are what catches it.
+  the last two queries are what catch it.
 - **CHUNK-5's branch is yours to name, and the same rule applies.** The suffix
   does not reach an interactive card (caveat 3), so the operator names the branch
   by hand: `chunk/5-guard-every-model-payload-behind-one-audited-a2`. Before
