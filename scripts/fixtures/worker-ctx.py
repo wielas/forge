@@ -44,6 +44,16 @@ needs, from the INSTALLED Hermes and never by hand:
       {loaded, missing, prompt}. (A review claim force-loads `sdlc-review`; this is how a case sees
       which copy wins.) Refuses the operator's real home.
 
+  hook-probe <board> <task> <profile> <hook-script> <out-file>
+      What a `pre_tool_call` shell hook is handed in a dispatched worker (P34, step 0). Writes the
+      hook into the profile's config.yaml in the isolated home, builds the worker's granted
+      environment, mirrors the session id the way agent init does (`set_current_session_id`),
+      registers the hooks as `--accept-hooks` does (`shell_hooks.register_from_config`), then makes
+      one `kanban_block` call through `model_tools.handle_function_call` (the seam the agent loop
+      uses) with a made-up sandbox task id. The hook's stdin and environment land in <out-file>;
+      the same process's `terminal` tool prints its own HERMES_ environment, for comparison. Prints
+      one JSON object. The card is blocked by it: use a throwaway board.
+
   denied-verbs
       The `hermes kanban` verbs the installed Hermes refuses from a fenced terminal
       (`_DELEGATED_CHILD_DENIED_ACTIONS`), `|`-joined — the set a program run by a worker
@@ -256,15 +266,54 @@ def cmd_denied_verbs(argv):
     return 0
 
 
+def cmd_hook_probe(argv):
+    if len(argv) != 5:
+        die("usage: hook-probe <board> <task> <profile> <hook-script> <out-file>")
+    board, task, profile, script, out_file = argv
+    root = isolated_home()
+    ensure_profiles(root)
+    script = str(Path(script).resolve())
+    (root / "profiles" / profile / "config.yaml").write_text(
+        "hooks:\n  pre_tool_call:\n"
+        "    - matcher: \"kanban_request_review|kanban_block|kanban_request_changes|kanban_complete\"\n"
+        f"      command: \"{script}\"\n      timeout: 10\n")
+    granted = granted_env(board, task, profile)
+    os.environ.clear()
+    os.environ.update(granted)                 # the worker process: granted, unfenced
+    os.environ["PROBE_OUT"] = out_file
+    Path(out_file).unlink(missing_ok=True)
+    kb, t = board_task(board, task)
+    if t.workspace_path:
+        os.chdir(t.workspace_path)
+    import tools.kanban_tools, tools.terminal_tool          # noqa: F401  (register the handlers)
+    from gateway.session_context import set_current_session_id
+    set_current_session_id("hook-probe-session")            # what agent init does
+    from agent import shell_hooks
+    from hermes_cli.config import load_config
+    registered = [s.command for s in shell_hooks.register_from_config(load_config(), accept_hooks=True)]
+    term = _call("terminal", {"command": "env | grep -E '^HERMES_' | sed -E 's/(CLAIM_LOCK=).*/\\1<redacted>/' | sort"})
+    import model_tools
+    res = json.loads(model_tools.handle_function_call(
+        "kanban_block", {"reason": "needs_input: hook-probe", "kind": "needs_input"},
+        "sandbox-task-not-the-kanban-id", session_id="hook-probe-session", tool_call_id="call-1"))
+    try:
+        dump = Path(out_file).read_text()
+    except OSError:
+        dump = ""
+    print(json.dumps({"registered": registered, "terminal_env": (term.get("output") or "").splitlines(),
+                      "hook_dump": dump, "result": res}))
+    return 0
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs", "driver-run", "preload-skill"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs", "driver-run", "preload-skill", "hook-probe"):
         die(__doc__.split("\n\n")[0] + " — see the module docstring")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd not in ("denied-verbs", "preload-skill"):
         isolated_home()
     sys.exit({"fenced-env": cmd_fenced_env, "perform": cmd_perform, "denied-verbs": cmd_denied_verbs,
               "driver-run": cmd_driver_run, "preload-skill": cmd_preload_skill,
-              "claim-review": cmd_claim_review}[cmd](rest) or 0)
+              "claim-review": cmd_claim_review, "hook-probe": cmd_hook_probe}[cmd](rest) or 0)
 
 
 if __name__ == "__main__":
