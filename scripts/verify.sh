@@ -2511,6 +2511,43 @@ run_template_group() {
     bad "python-pinned" ".python-version says $want but the venv is $have"
   fi
 
+  # Epic P31, measured 2026-10-28. pytest 9.2.0 (PyPI, 2026-10-27) renamed the
+  # private `FixtureManager._arg2fixturedefs`, which pytest-bdd (8.1.0 and 9.0.0,
+  # the latest) still reads, so every stamp that resolved fresh crashed its own
+  # tests. The stamp ships no lock, so the only thing holding the line is the
+  # requirement itself. Run it, do not grep it: parse the stamped requirement and
+  # ask whether it admits 9.2.0, then ask the venv `make setup` built which
+  # pytest it actually resolved. That is the same resolver doing the same work a
+  # fresh stamp does, which is the thing that went wrong.
+  local p31_out p31_rc
+  p31_rc=0
+  p31_out="$("$dest/.venv/bin/python" - "$dest/pyproject.toml" 2>&1 <<'PY'
+import sys, tomllib
+from importlib.metadata import version
+from packaging.requirements import Requirement
+from packaging.version import Version
+
+dev = tomllib.load(open(sys.argv[1], "rb"))["dependency-groups"]["dev"]
+reqs = [Requirement(d) for d in dev if isinstance(d, str)]
+pytest_reqs = [r for r in reqs if r.name == "pytest"]
+if len(pytest_reqs) != 1:
+    sys.exit(f"want exactly one pytest requirement in the dev group, found {len(pytest_reqs)}")
+spec = pytest_reqs[0].specifier
+if spec.contains(Version("9.2.0"), prereleases=True):
+    sys.exit(f"requirement 'pytest{spec}' admits 9.2.0")
+resolved = Version(version("pytest"))
+if resolved >= Version("9.2"):
+    sys.exit(f"requirement 'pytest{spec}' resolved pytest {resolved}")
+print(f"pytest{spec} excludes 9.2.0; the venv resolved {resolved}")
+PY
+  )" || p31_rc=$?
+  if [ "$p31_rc" = 0 ]; then
+    ok "pytest-capped ($p31_out)"
+  else
+    bad "pytest-capped" \
+        "the stamp lets pytest 9.2 in, and pytest-bdd reads a private fixture API that 9.2.0 renamed (_arg2fixturedefs), so the stamped tests crash (P31): $(printf '%s' "$p31_out" | tail -1)"
+  fi
+
   # Epic P25, measured on run A's attempt 1. The stamp selects ruff's `I` but
   # named no first-party package, so ruff classed `<pkg>.<module>` as
   # first-party only once that module's file existed. A planned project's frozen
@@ -2626,6 +2663,7 @@ template/branch-name-judges-by-argument  the CI path (branch passed in, detached
 template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
 template/first-party-pinned       the stamp names its package first-party: a probe file lints clean before and after a planned module exists (P25)
+template/pytest-capped            the stamped pytest requirement excludes 9.2.0 and the venv resolved a pytest below 9.2 (P31)
 lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
 lane/scratch-is-board-scoped      run ids are board-local; scratch and audit carry the board, same-board reuse still refuses
 lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_LANE_RUN_KEY instead of recomputing it

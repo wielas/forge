@@ -1180,8 +1180,8 @@ first commit of the PR that carries this entry).
   HEAD`.
 - *Inputs*' **Forge runtime** row (line 41) reads "this PR's merge commit, or a
   later `main`". Its baseline, expected `make verify` 535 / 0 / 11 in the
-  2026-10-26 entry, becomes **547 / 0 / 11** on this PR's head (the code slice's
-  reading; this entry changes no check). Precondition 3 is still re-measured on
+  2026-10-26 entry, becomes **549 / 0 / 11** on this PR's head (the code slice's
+  reading, plus P31's `template/pytest-capped`; this entry changes no check). Precondition 3 is still re-measured on
   the deployed `main`, and its numbers go in the launch record.
 - **`PRODUCT_SHA` stays `b66be28`** (the 2026-10-26 entry). Nothing in
   `the-squatfather` changes: the suffix is applied at bootstrap.
@@ -1559,3 +1559,17 @@ none is run with a stale value. Run all of them from `$P`.
   nothing has used works; the guard, not the letter, is the check.
 - CHUNK-5's hand-named branch carries `-a2`.
 - Evidence for rehearsal 2 under its own directory, beside rehearsal 1's.
+
+*P31: the template caps pytest below 9.2 (added to this PR, 2026-10-28).*
+pytest 9.2.0 (PyPI, 2026-10-27 21:30 UTC) renamed a private API that pytest-bdd
+8.1.0 and 9.0.0, the latest, still read (`_arg2fixturedefs`), and the
+python-service template ships no lock, so a fresh stamp crashed its own tests.
+Six `make verify` cases failed on `main` as a result. The template's dev group
+now reads `pytest>=8,<9.2`, with `template/pytest-capped` as its check; lift the
+cap only once a pytest-bdd release supports pytest 9.2, rechecking PyPI first.
+**Run A is unaffected:** Squatfather and hello-forge carry committed locks, both
+on pytest 9.1.1, so the lane's and the verifier's runs never resolve the new
+version. What changes here is the baseline `FORGE_SHA` is certified against: it
+is the `make verify` total this PR's head reports, **549 passed / 0 failed / 11
+skipped**, and the earlier 547 in this entry is superseded. Precondition 3 is
+still re-measured on the deployed `main`.
