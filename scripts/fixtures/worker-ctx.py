@@ -99,7 +99,8 @@ def isolated_home():
     home = os.environ.get("HERMES_HOME", "")
     if not home:
         die("HERMES_HOME is unset: refusing to touch the default home")
-    real = (Path.home() / ".hermes").resolve()
+    import pwd                                  # not $HOME: a case may fake that to test `~` expansion
+    real = (Path(pwd.getpwuid(os.getuid()).pw_dir) / ".hermes").resolve()
     here = Path(home).resolve()
     if here == real or real in here.parents:
         die(f"HERMES_HOME {here} is the operator's own: refusing")

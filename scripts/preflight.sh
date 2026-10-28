@@ -548,6 +548,28 @@ else
         *)       warn "$prof: skills.external_dirs='$v' — no forge path in it";;
       esac
 
+      # P34: the two profiles whose programs name a terminal call carry the hook that makes the driver
+      # make that call (hermes/profiles-bootstrap.sh writes and reads it back). Read WHOLE: pcfg keeps
+      # only the last line. The command must be the ~/.forge/repo form, the matcher must name all four
+      # tools, and fail_closed must not be on (a hook fault would then refuse every terminal call and
+      # a card would sit `running` until the timeout).
+      case "$prof" in
+        forge-codex-lane|forge-verifier)
+          v="$(hermes -p "$prof" config get hooks.pre_tool_call 2>/dev/null)"
+          if [ -z "$v" ]; then
+            fail "$prof: no hooks.pre_tool_call — a retyped terminal call is not repaired (P34); run ./hermes/profiles-bootstrap.sh"
+          elif ! printf '%s' "$v" | grep -qF 'command: ~/.forge/repo/scripts/driver-call-hook.sh'; then
+            fail "$prof: hooks.pre_tool_call does not run ~/.forge/repo/scripts/driver-call-hook.sh — got: $(printf '%s' "$v" | tr '\n' ' ')"
+          elif ! { printf '%s' "$v" | grep -q 'kanban_request_review' && printf '%s' "$v" | grep -q 'kanban_block' \
+                   && printf '%s' "$v" | grep -q 'kanban_request_changes' && printf '%s' "$v" | grep -q 'kanban_complete'; }; then
+            fail "$prof: the driver-call hook's matcher does not name all four terminal tools"
+          elif printf '%s' "$v" | grep -q 'fail_closed: true'; then
+            fail "$prof: the driver-call hook is fail_closed — a hook fault would refuse every terminal call"
+          else
+            pass "$prof: hooks.pre_tool_call runs ~/.forge/repo/scripts/driver-call-hook.sh on the four terminal tools, fail-open"
+          fi;;
+      esac
+
       v="$(pcfg model.default)"
       [ -n "$v" ] && info "$prof: model.default = $v" \
                   || warn "$prof: model.default unset — inherits whatever is ambient"
@@ -795,7 +817,8 @@ fi
 for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh validate-metadata.py \
                 codex-run.sh quota-window.py codex-progress.py \
                 prejudge-review.sh prejudge.sh verdict.sh merge-check.sh \
-                merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh; do
+                merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
+                driver-call-hook.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
@@ -808,6 +831,18 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
     pass "protocol script '$_lscript' resolves through ~/.forge/repo and is executable"
   fi
 done
+
+# P34: the driver-call hook (scripts/driver-call-hook.sh) runs in the AGENT process, not in the fenced
+# terminal, with whatever PATH the gateway gave the worker. `--check` asks the script itself whether
+# it can run there (jq, a hash tool, forge-state.sh beside it); a hook that cannot is a hook that
+# silently does nothing, which is the pre-P34 state (a driver's dropped `reviewer` lands the card back
+# on the lane).
+_hook="$HOME/.forge/repo/scripts/driver-call-hook.sh"
+if [ -x "$_hook" ]; then
+  _hookerr="$("$_hook" --check 2>&1)" \
+    && pass "driver-call-hook.sh --check: jq, a hash tool and forge-state.sh resolve for the hook" \
+    || fail "driver-call-hook.sh --check failed: $_hookerr — the hook would do nothing and a retyped hand-off would go unrepaired (P34)"
+fi
 
 # ---------------------------------------------------------------------------
 sect "9. Skills: discovery, and the curator risk"

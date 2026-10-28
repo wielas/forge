@@ -111,7 +111,9 @@ check, an audit breach, a failed push. Never retry it and never work around it.
 card is still `running`, the kernel reaps the run as `crashed`, and the work is
 wasted. Make exactly the call the envelope names, with exactly its arguments:
 do not retype, trim or "fix" them (a dropped `reviewer` sends the card back to
-this lane to review itself). The set is closed: `kanban_request_review` is yours
+this lane to review itself). A `pre_tool_call` hook in this profile
+(`~/.forge/repo/scripts/driver-call-hook.sh`) rewrites the call to the arguments the
+program recorded, so a slip is repaired — a backstop, not a licence to retype. The set is closed: `kanban_request_review` is yours
 **only** as the call the envelope names; `kanban_request_changes`,
 `kanban_complete` and `kanban_create` are **forbidden** here — a card in `review`
 is not `done`, which is exactly what holds its dependents until the PR merges.

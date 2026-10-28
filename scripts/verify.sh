@@ -1856,6 +1856,50 @@ run_config_group() {
     fi
   fi
 
+  # P34: THE INSTALLED PROFILES CARRY THE DRIVER-CALL HOOK. The real profiles-bootstrap.sh into a
+  # scratch home, read back through Hermes's own `config get`: forge-codex-lane and forge-verifier
+  # hold the `hooks.pre_tool_call` entry (the four terminal tools, the ~/.forge/repo form of the
+  # command, a timeout, NO fail_closed), the other two hold none, and the bootstrap's readback
+  # catches a block written wrongly. Whether the hook then DOES anything is the verifier/ group's
+  # (it runs this same config through the real dispatch).
+  local hc_home="$TMPROOT/hook-cfg-home" hc_detail="" hc_p hc_got hc_want hc_mut="$TMPROOT/hook-cfg-mut" hc_out hc_rc hc_s
+  if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$WCTX_PY" ]; then
+    skip "profiles-carry-the-driver-call-hook" "hermes (and its venv python) not installed"
+  else
+    rm -rf "$hc_home"; mkdir -p "$hc_home"
+    HERMES_HOME="$hc_home" bash ./hermes/profiles-bootstrap.sh >"$hc_home.log" 2>&1 \
+      || hc_detail="$hc_detail bootstrap-failed($(tail -1 "$hc_home.log"))"
+    hc_want="$(printf -- '- matcher: %s\n  command: %s\n  timeout: 20' \
+        'kanban_request_review|kanban_block|kanban_request_changes|kanban_complete' '~/.forge/repo/scripts/driver-call-hook.sh')"
+    for hc_p in forge-codex-lane forge-verifier forge-orchestrator forge-digest; do
+      hc_got="$(HERMES_HOME="$hc_home" hermes -p "$hc_p" config get hooks.pre_tool_call 2>/dev/null)"
+      case "$hc_p" in
+        forge-codex-lane|forge-verifier)
+          [ "$hc_got" = "$hc_want" ] || hc_detail="$hc_detail $hc_p-hook-not-read-back(got '$(printf '%s' "$hc_got" | tr '\n' ' ')')"
+          grep -Eq '^ *fail_?[cC]losed:' "$hc_home/profiles/$hc_p/config.yaml" && hc_detail="$hc_detail $hc_p-is-fail_closed";;
+        *) [ -z "$hc_got" ] || hc_detail="$hc_detail $hc_p-must-carry-no-hook";;
+      esac
+    done
+    grep -q '^hooks:' "$hc_home/profiles/forge-orchestrator/config.yaml" && hc_detail="$hc_detail orchestrator-has-a-hooks-block"
+    # The bootstrap's readback sees a hook written wrongly: a copy that drops the timeout line must FATAL on it.
+    rm -rf "$hc_mut"; mkdir -p "$hc_mut/hermes" "$hc_mut/scripts" "$hc_mut/skills"
+    cp scripts/model-pins.sh "$hc_mut/scripts/model-pins.sh"
+    for hc_s in $(cd skills && ls -d */ 2>/dev/null | tr -d '/'); do mkdir -p "$hc_mut/skills/$hc_s"; done
+    grep -v 'echo "      timeout: \$HOOK_TIMEOUT"' hermes/profiles-bootstrap.sh > "$hc_mut/hermes/profiles-bootstrap.sh"
+    if cmp -s hermes/profiles-bootstrap.sh "$hc_mut/hermes/profiles-bootstrap.sh"; then
+      hc_detail="$hc_detail the-mutation-changed-nothing(the-timeout-line-moved)"
+    else
+      hc_out="$(HERMES_HOME="$hc_mut/home" bash "$hc_mut/hermes/profiles-bootstrap.sh" 2>&1)"; hc_rc=$?
+      { [ "$hc_rc" != 0 ] && printf '%s' "$hc_out" | grep -Fq 'FAIL hooks.pre_tool_call'; } \
+        || hc_detail="$hc_detail a-hook-written-without-its-timeout-read-back-clean(rc=$hc_rc)"
+    fi
+    if [ -z "$hc_detail" ]; then
+      ok "profiles-carry-the-driver-call-hook (the real profiles-bootstrap.sh into a scratch home: forge-codex-lane and forge-verifier read back the four-tool matcher, the ~/.forge/repo command and a timeout, with no fail_closed; the other profiles carry none; a hook written wrongly FATALs the readback)"
+    else
+      bad "profiles-carry-the-driver-call-hook" "the lane and the verifier must be installed with the driver-call hook, read back, fail-open —$hc_detail"
+    fi
+  fi
+
   # F1: a worktree card with no workspace_path anchors on the board's
   # default_workdir. Unset, the first card auto-blocks on tick 1.
   local boards unanchored
@@ -2639,6 +2683,7 @@ config/model-pin-live/<profile>   live model.default matches the pin that would 
 config/lane-skill-scope           start-chunk/end-chunk not loadable by the lane
 config/skill-shim-in-sync/<profile>  the live sdlc-review a review claim force-loads is the shim git ships (F6)
 config/the-review-spawn-preloads-the-shim  the REAL profiles-bootstrap.sh into a scratch home: a --skills sdlc-review preload serves forge-verifier only the identity shim (surviving a re-sync); forge-codex-lane, the control, gets the generic reviewer skill (F6)
+config/profiles-carry-the-driver-call-hook  P34: the REAL profiles-bootstrap.sh into a scratch home: forge-codex-lane and forge-verifier read back the four-tool pre_tool_call hook (~/.forge/repo form, timeout, no fail_closed), the other two carry none, and a hook written wrongly FATALs the readback
 config/board-default-workdir      every forge board has a worktree anchor
 config/per-profile/<assignee>             a declared assignee with no profile on disk is named, not trusted (F43)
 config/per-profile                        the per-profile sweep could not run at all (no hermes, or no forge-* profiles)
@@ -2717,6 +2762,7 @@ lane/the-program-records-its-call  P34: lane.sh records the call it names (the e
 lane/lane-sh-attempts-no-board-mutation  two full fenced passes on the real kernel with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses
 lane/lane-sh-reads-no-scrubbed-variable  fenced, with wrong values planted for exactly the scrubbed names; it reads its own card and nothing mentions the planted id
 lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers beside itself and names the hand-off as a kanban_request_review call
+lane/the-hook-is-reached-through-forge-repo  P34: the bootstrap installs, preflight checks and the script names ~/.forge/repo/scripts/driver-call-hook.sh; nothing under hermes/ or skills/ names it any other way; it is executable, 100755 in git, and answers --check
 lane/lane-sh-reenters-on-a-bounce  FL3, stubs: same card/branch/PR, red baseline tolerated, the implementer's session resumed with the reasons
 lane/bounce-round-trip-on-real-hermes  FL3 + P24, real kernel in an isolated HERMES_HOME: a fenced lane names the hand-off, the driver's tool call lands it, native gate, request-changes through the tool, re-entry, approval; lane-handoff.sh refuses under the fence
 lane/lane-handoff-is-fail-closed  validates before the transition, reads the end state back, unparks a blocked human-tier card, and puts the sentinel on an unassigned one before the unblock (P21)
@@ -2888,6 +2934,12 @@ prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict
 verifier/chunk-is-the-running-card  D19.1 + P24: --chunk is read back off the board (running, this profile's, one running run), not compared with a scrubbed variable; a refusal names no task; the kernel refuses a call aimed at another card
 verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the scorer is given the card's body; an empty body is stale-spec (F2: a background launch has no pipe)
 verifier/the-envelope-lands-on-the-real-kernel  P24 (b),(c): a fail lands ready on the recorded implementer, a recommendation blocked/needs_input — each by the tool's own result; sticky without an assign, decision-first; a refused call leaves the card running and its fallback lands
+verifier/the-hook-restores-the-handoff  P34: the rehearsal-4 arguments (no reviewer, no task_id, artifacts:[]) through the real hook dispatch and the real handler land review on forge-verifier; invented declared keys are overwritten; the control without the hook lands on forge-codex-lane
+verifier/the-hook-restores-the-verifiers-calls  P34: the real prejudge-review.sh's request_changes reason, merge-pending: hold (reason and kind) and merge-mode kanban_complete metadata are restored from the record when the driver mangles them; the controls without the hook keep the driver's words
+verifier/the-hook-refuses-a-record-that-is-not-this-runs  P34: a stale record (pinned clock; exactly at the guard still used), one from the future, the other profile's and one for another workspace are not used; a record for another task blocks the hand-off with a message and never the kanban_block
+verifier/the-hook-policy-keeps-an-exit-open  P34: no record -> the driver's own hand-off and block land; a wrong tool is refused naming the right one and changes nothing; kanban_block is rewritten to on_error, left alone where none is planned, counted terminate then on_error (a Nothing-changed call not counting); a garbage record, a missing script and a faulting one (exit 2, unbound variable) change nothing while a bare exit-2 hook does refuse
+verifier/the-hook-neutralises-keys-the-driver-invents  P34: an undeclared key is Nothing changed with no partial transition and the retry lands; a declared key the record lacks is nulled; the hook's table of declared keys equals the installed schemas for all four tools
+verifier/the-lane-and-review-claims-share-one-workspace  P34: a --workspace worktree card through the real dispatcher tick hands the lane spawn and the review spawn the same HERMES_KANBAN_WORKSPACE, <repo>/.worktrees/<task id>
 verifier/the-review-attempts-no-board-mutation  P24: run fenced with the hermes argv logged — only reads, no verb the fence refuses, the board as the claim left it, for every outcome
 verifier/the-review-reads-no-scrubbed-variable  P24: fenced, with wrong values planted for exactly the scrubbed names; the review is of its own card and nothing mentions the planted id
 verifier/the-lanes-handoff-arrives-intact  P24: the stored hand-off equals the envelope the lane validated (host copy); redactable free text is not an edit; a missing copy and a different PR url are said
@@ -4350,6 +4402,30 @@ LCODEX
   else
     bad "lane-sh-is-reached-through-forge-repo" \
         "forge-lane and the SOUL must invoke ~/.forge/repo/scripts/lane.sh, and lane.sh must call lane-setup, codex-run, the blast-radius check and the validator from its own directory"
+  fi
+
+  # P34: THE HOOK IS REACHED ONLY THROUGH ~/.forge/repo, like every other script a worker runs. A
+  # bare relative path cannot resolve from a worker's worktree (and a hook that does not resolve
+  # fails OPEN, silently: the driver's own arguments reach the kernel, which is the defect). The
+  # profile config, preflight and the script's own header all name the literal form; nothing under
+  # hermes/ or skills/ names the script any other way; the script is executable and answers --check.
+  local hl_detail="" hl_hook=scripts/driver-call-hook.sh hl_bad
+  [ -x "$hl_hook" ] || hl_detail="$hl_detail the-hook-is-not-executable"
+  [ "$(git ls-files -s -- "$hl_hook" 2>/dev/null | cut -c1-6)" = 100755 ] || hl_detail="$hl_detail the-hook-is-not-100755-in-git"
+  grep -Fq "HOOK_COMMAND='~/.forge/repo/scripts/driver-call-hook.sh'" hermes/profiles-bootstrap.sh \
+    || hl_detail="$hl_detail the-bootstrap-does-not-install-the-forge-repo-form"
+  hl_bad="$(grep -rn 'driver-call-hook\.sh' hermes skills 2>/dev/null | grep -vF '~/.forge/repo/scripts/driver-call-hook.sh' || true)"
+  [ -z "$hl_bad" ] || hl_detail="$hl_detail a-reference-bypasses-forge-repo($(printf '%s' "$hl_bad" | head -1 | cut -c1-120))"
+  grep -Fq "command: ~/.forge/repo/scripts/driver-call-hook.sh" scripts/preflight.sh \
+    || hl_detail="$hl_detail preflight-does-not-check-the-forge-repo-form"
+  grep -Fq '~/.forge/repo/scripts/driver-call-hook.sh' "$hl_hook" || hl_detail="$hl_detail the-hooks-header-does-not-name-its-path"
+  grep -Fq 'driver-call-hook.sh' scripts/preflight.sh && grep -Eq 'forge-state\.sh[[:space:]]*\\?$|driver-call-hook\.sh; do' scripts/preflight.sh \
+    || hl_detail="$hl_detail preflight-does-not-list-the-hook-among-the-protocol-scripts"
+  "$hl_hook" --check >/dev/null 2>&1 || hl_detail="$hl_detail --check-failed"
+  if [ -z "$hl_detail" ]; then
+    ok "the-hook-is-reached-through-forge-repo (the bootstrap installs, preflight checks and the script names ~/.forge/repo/scripts/driver-call-hook.sh; nothing under hermes/ or skills/ names it any other way; it is executable, 100755, and answers --check)"
+  else
+    bad "the-hook-is-reached-through-forge-repo" "the driver-call hook must be reached as ~/.forge/repo/scripts/driver-call-hook.sh —$hl_detail"
   fi
 
   # ---------------------------------------------------------------------------
@@ -9892,7 +9968,10 @@ MCCGH
              a-human-chunk-can-be-bounced \
              merge-watcher-completes-a-merged-hold merged-tree-uses-the-prs-base \
              merge-mode-survives-a-failed-completion merge-watcher-reports-once \
-             mutation-probe-bounces-only-behind-its-switch; do
+             mutation-probe-bounces-only-behind-its-switch \
+             the-hook-restores-the-handoff the-hook-restores-the-verifiers-calls \
+             the-hook-refuses-a-record-that-is-not-this-runs the-hook-policy-keeps-an-exit-open \
+             the-hook-neutralises-keys-the-driver-invents the-lane-and-review-claims-share-one-workspace; do
       skip "$c" "hermes (and its venv python) not installed"
     done
   else
@@ -10214,6 +10293,396 @@ VLOGH
       && ok "the-envelope-lands-on-the-real-kernel (a fail lands ready on the recorded implementer and a recommendation lands blocked/needs_input, each named by the tool's own result; the hold is sticky without an assign and renders decision-first; a refused call leaves the card running and its fallback lands)" \
       || bad "the-envelope-lands-on-the-real-kernel" \
           "the call each envelope names must land its transition on the installed kernel, through Hermes's real tool handler —$vdetail"
+
+    # =========================================================================
+    # P34 — THE DRIVER-CALL HOOK. Rehearsal 4 (2026-10-28): the envelope said
+    # kanban_request_review {task_id, summary, metadata, reviewer:"forge-verifier"}; the driver called
+    # it with {summary, metadata, artifacts:[]}. Hermes defaults a missing reviewer to the card's
+    # _prior_reviewer, None on a first hand-off, so the card went `review` still assigned to the
+    # lane. The programs now record the call they name (the lane-group case
+    # the-program-records-its-call) and a pre_tool_call hook in the profile rewrites the driver's
+    # call to the record. These cases send the driver's call through the real hook dispatch AND the
+    # real tool handler (worker-ctx.py hooked-call: `register_from_config` as --accept-hooks does,
+    # then `model_tools.handle_function_call`, the seam the agent loop uses), on the real kernel in
+    # an isolated HERMES_HOME. The profile configs are the REAL profiles-bootstrap.sh's, and the
+    # hook is reached as ~/.forge/repo/scripts/driver-call-hook.sh through a fake HOME whose
+    # .forge/repo is this checkout, so the literal form is what runs. A control without the hook is
+    # in every case: a check that passes with the hook removed measures nothing.
+    # =========================================================================
+    local hk_home="$TMPROOT/hook-fakehome" hk_boot="$TMPROOT/hook-boot" hk_ready=1 hk_detail="" hk_x hk_y hk_term hk_err hk_out hk_rc hk_rec hk_max hk_at hk_want hk_got hk_kind hk_ctl hk_t hk_snip
+    mkdir -p "$hk_home/.forge"; ln -sfn "$REPO_ROOT" "$hk_home/.forge/repo"
+    rm -rf "$hk_boot"
+    HERMES_HOME="$hk_boot" bash "$REPO_ROOT/hermes/profiles-bootstrap.sh" > "$hk_boot.log" 2>&1 || hk_ready=0
+    [ -s "$hk_boot/profiles/forge-codex-lane/config.yaml" ] && [ -s "$hk_boot/profiles/forge-verifier/config.yaml" ] || hk_ready=0
+    hk_max="$( . "$REPO_ROOT/scripts/forge-state.sh"; printf '%s' "$FORGE_PENDING_MAX_AGE_S" )"
+    _hkprofiles() { local p; for p in forge-codex-lane forge-verifier; do
+        mkdir -p "$vhome/profiles/$p"; cp "$hk_boot/profiles/$p/config.yaml" "$vhome/profiles/$p/config.yaml"; done; }
+    _hkclaim() { local id; id="$(_v create "CHUNK-9: hook" --assignee forge-codex-lane --json 2>/dev/null | jq -r '.id')"
+                 _v claim "$id" >/dev/null 2>&1; printf '%s' "$id"; }
+    _hkws() { _v show "$1" --json 2>/dev/null | jq -r '.task.workspace_path'; }
+    _hkrec() {   # profile task terminate-json on_error-json: write the record, as a program does
+      ( . "$REPO_ROOT/scripts/forge-state.sh"; FORGE_STATE_ROOT="$vstate"
+        forge_pending_write vlab "$1" "$(_hkws "$2")" "$2" "$3" "$4" ); }
+    _hkpath() {  # profile task
+      ( . "$REPO_ROOT/scripts/forge-state.sh"; FORGE_STATE_ROOT="$vstate"; forge_pending_path vlab "$1" "$(_hkws "$2")" ); }
+    _hk() {      # task profile tool args-json [env=value ...] -> the hooked call's JSON line; rc 0 ok, 10 error
+      local t="$1" p="$2" tool="$3" args="$4"; shift 4
+      printf '%s' "$args" > "$vbin/hk-args.json"
+      env HOME="$hk_home" FORGE_STATE_ROOT="$vstate" "$@" HERMES_HOME="$vhome" "$WCTX_PY" "$WCTX" hooked-call \
+          vlab "$t" "$p" "$tool" "$vbin/hk-args.json" 2>"$vbin/hk-err.txt"
+    }
+    _hkreview() {   # a review hand-off record for a fresh lane-claimed card -> its id
+      local id; id="$(_hkclaim)"
+      _hkrec forge-codex-lane "$id" \
+        "$(jq -nc --arg t "$id" --argjson m "$vmeta" '{tool:"kanban_request_review", args:{task_id:$t, summary:"implemented CHUNK-9", metadata:$m, reviewer:"forge-verifier"}}')" \
+        "$(jq -nc --arg t "$id" '{tool:"kanban_block", args:{task_id:$t, reason:"other: handoff-integrity — the review hand-off was refused by the kernel"}}')"
+      printf '%s' "$id"; }
+    local hk_rehearsal4; hk_rehearsal4="$(jq -nc --argjson m "$vmeta" '{summary:"implemented CHUNK-9", metadata:$m, artifacts:[]}')"
+
+    # ---- the rehearsal-4 call lands on the reviewer ----------------------------------------------
+    hk_detail=""
+    if [ "$hk_ready" != 1 ]; then
+      hk_detail=" the-real-profiles-bootstrap-failed($(tail -1 "$hk_boot.log"))"
+    else
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$hk_rehearsal4")"; hk_rc=$?
+      { [ "$hk_rc" = 0 ] && [ "$(_vst "$hk_x")" = review/forge-verifier ] \
+        && printf '%s' "$hk_out" | jq -e '.result.ok == true and .result.status == "review"' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail the-rehearsal-4-call-did-not-land-on-the-reviewer(rc=$hk_rc,$(_vst "$hk_x"),$(printf '%s' "$hk_out" | head -c 160),$(head -c 200 "$vbin/hk-err.txt"))"
+      # the metadata the kernel stored is the record's, not the driver's
+      _v show "$hk_x" --json 2>/dev/null | jq -e --argjson m "$vmeta" '[.events[] | select(.kind == "review_requested")] | last | .payload.metadata | del(.worker_session_id) == $m' >/dev/null 2>&1 \
+        || _v show "$hk_x" --json 2>/dev/null | jq -e --argjson m "$vmeta" '[.runs[] | select(.outcome == "review_requested" or .status == "review")] | last | .metadata | del(.worker_session_id) == $m' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail the-stored-metadata-is-not-the-records"
+      # THE CONTROL: no hook in the profile (the hook removed), the same call
+      _vboard; hk_x="$(_hkreview)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$hk_rehearsal4")"
+      [ "$(_vst "$hk_x")" = review/forge-codex-lane ] \
+        || hk_detail="$hk_detail the-control-without-the-hook-did-not-reproduce-rehearsal-4($(_vst "$hk_x"))"
+      # the driver invents a task id, a reviewer and an artifact list: every declared key is the record's
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$(jq -nc --argjson m "$vmeta" '{task_id:"t_bogus000", summary:"x", reviewer:"forge-codex-lane", metadata:{}, artifacts:["/etc/passwd"]}')")"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] \
+        || hk_detail="$hk_detail invented-declared-keys-survived($(_vst "$hk_x"),$(printf '%s' "$hk_out" | head -c 160))"
+    fi
+    [ -z "$hk_detail" ] \
+      && ok "the-hook-restores-the-handoff (the rehearsal-4 arguments, sent through the real hook dispatch and the real handler, land review on forge-verifier with the recorded metadata; invented task_id, reviewer and artifacts are overwritten; the control with no hook lands review on forge-codex-lane)" \
+      || bad "the-hook-restores-the-handoff" "a hand-off the driver retyped without its reviewer must still land on the reviewer the program named —$hk_detail"
+
+
+    # ---- the verifier's calls: a mangled reason is restored from the record ----------------------
+    # The REAL prejudge-review.sh names the call (VPERFORM=0: the program runs, nobody makes the
+    # call), then the driver makes a damaged one — a wrong task id, the reason cut down, a key it
+    # invented — and the board must end up with the program's words.
+    hk_detail=""
+    if [ "$hk_ready" != 1 ]; then
+      hk_detail=" the-real-profiles-bootstrap-failed"
+    else
+      # a changes_requested: the reason on the card is the program's, and the card goes back to the lane
+      _vboard; _hkprofiles
+      vrc="$(VPERFORM=0 VF_VERDICT=bounce _vrun)"
+      hk_want="$(jq -r '.terminate.args.reason' "$vbin/out.json")"
+      { [ "$vrc" = 4 ] && [ "$(jq -r '.terminate.tool' "$vbin/out.json")" = kanban_request_changes ] && [ -n "$hk_want" ]; } \
+        || hk_detail="$hk_detail (control: the bounce was not named, rc=$vrc)"
+      hk_out="$(_hk "$vP" forge-verifier kanban_request_changes '{"task_id":"t_bogus000","reason":"looks wrong, please fix"}')"
+      hk_got="$(_v show "$vP" --json 2>/dev/null | jq -r '[.events[] | select(.kind == "changes_requested")] | last | .payload.reason // ""')"
+      { [ "$(_vst "$vP")" = ready/forge-codex-lane ] && [ "$hk_got" = "$hk_want" ]; } \
+        || hk_detail="$hk_detail a-mangled-changes_requested-was-not-restored($(_vst "$vP"),got=$(printf '%s' "$hk_got" | head -c 60))"
+      # control: no hook, the driver's words stand
+      _vboard
+      vrc="$(VPERFORM=0 VF_VERDICT=bounce _vrun)"
+      hk_out="$(_hk "$vP" forge-verifier kanban_request_changes '{"reason":"looks wrong, please fix"}')"
+      hk_got="$(_v show "$vP" --json 2>/dev/null | jq -r '[.events[] | select(.kind == "changes_requested")] | last | .payload.reason // ""')"
+      [ "$hk_got" = "looks wrong, please fix" ] || hk_detail="$hk_detail (control: without the hook the driver's reason did not stand: $(printf '%s' "$hk_got" | head -c 60))"
+
+      # the merge-pending hold: the reason AND the kind are the program's
+      _vboard; _hkprofiles
+      vrc="$(VPERFORM=0 _vrun)"
+      hk_want="$(jq -r '.terminate.args.reason' "$vbin/out.json")"; hk_kind="$(jq -r '.terminate.args.kind // "none"' "$vbin/out.json")"
+      case "$hk_want" in merge-pending:*) ;; *) hk_detail="$hk_detail (control: the hold is not a merge-pending: reason: $(printf '%s' "$hk_want" | head -c 60))";; esac
+      hk_out="$(_hk "$vP" forge-verifier kanban_block '{"reason":"merge-pending: ok","kind":"capability"}')"
+      hk_got="$(_v show "$vP" --json 2>/dev/null | jq -r '[.events[] | select(.kind == "blocked")] | last | .payload.reason // ""')"
+      { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$hk_got" = "$hk_want" ] \
+        && printf '%s' "$hk_out" | jq -e --arg k "$hk_kind" '.result.block_kind == $k' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail a-mangled-merge-pending-hold-was-not-restored($(_vst "$vP"),kind=$(printf '%s' "$hk_out" | jq -r '.result.block_kind // "?"' 2>/dev/null) want $hk_kind,got=$(printf '%s' "$hk_got" | head -c 60))"
+      # control
+      _vboard
+      vrc="$(VPERFORM=0 _vrun)"
+      hk_out="$(_hk "$vP" forge-verifier kanban_block '{"reason":"merge-pending: ok","kind":"capability"}')"
+      printf '%s' "$hk_out" | jq -e '.result.block_kind == "capability"' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail (control: without the hook the driver's kind did not stand)"
+
+      # merge mode: kanban_complete, with the recorded metadata
+      _vboard; _hkprofiles
+      vrc="$(VPERFORM=0 _vrun FORGE_VERIFIER_MERGE=1)"
+      { [ "$vrc" = 4 ] && [ "$(jq -r '.terminate.tool' "$vbin/out.json")" = kanban_complete ]; } \
+        || hk_detail="$hk_detail (control: merge mode did not name kanban_complete, rc=$vrc)"
+      hk_out="$(_hk "$vP" forge-verifier kanban_complete '{"summary":"merged","metadata":{"pr":"nope"}}')"
+      { [ "$(_vst "$vP" | cut -d/ -f1)" = done ] \
+        && _v show "$vP" --json 2>/dev/null | jq -e --slurpfile e "$vbin/out.json" '
+             ([.runs[] | select(.metadata != null)] | last | .metadata | del(.worker_session_id)) == ($e[0].terminate.args.metadata | del(.worker_session_id))' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail a-mangled-kanban_complete-did-not-carry-the-recorded-metadata($(_vst "$vP"),$(printf '%s' "$hk_out" | head -c 120))"
+    fi
+    # the verifier clears ITS earlier record the moment it starts, so a run that dies at once leaves none
+    if [ "$hk_ready" = 1 ]; then
+      _vboard
+      vrc="$(VPERFORM=0 VF_VERDICT=bounce _vrun)"; hk_rec="$(_hkpath forge-verifier "$vP")"
+      [ -s "$hk_rec" ] || hk_detail="$hk_detail (control: the verifier left no record to clear)"
+      hk_snip="$(_wsnip "$vhome" vlab "$vP" forge-verifier)"
+      hk_out="$( . "$hk_snip"; env FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$review" https://example.invalid/wielas/proj/pull/9 \
+                  --chunk "$vP" --board vlab --contract-from-card --dry-run 2>&1 )"; hk_rc=$?
+      rm -f "$hk_snip" "$hk_snip.err"
+      { [ "$hk_rc" = 2 ] && [ ! -e "$hk_rec" ]; } \
+        || hk_detail="$hk_detail an-earlier-verifier-record-survived-a-run-that-died(rc=$hk_rc)"
+    fi
+    [ -z "$hk_detail" ] \
+      && ok "the-hook-restores-the-verifiers-calls (the real prejudge-review.sh's request_changes reason, merge-pending: hold reason and kind, and merge-mode kanban_complete metadata are restored from the record when the driver mangles them; each control without the hook keeps the driver's words)" \
+      || bad "the-hook-restores-the-verifiers-calls" "a verifier call the driver mangled must land with the words the program chose —$hk_detail"
+
+    # ---- a record that is not this run's is not used ----------------------------------------------
+    # Hermes scrubs the task id from a hook's environment, so the record is found by board +
+    # profile + workspace, and these are the ways it can be the wrong one: another task's, an
+    # old one, one from the future, the other profile's, one whose workspace field is not this
+    # workspace. Each is refused (the driver's own arguments pass, or a foreign task's call is
+    # blocked), and the CONTROL is the same call with the record fresh and right, which is rewritten.
+    hk_detail=""
+    if [ "$hk_ready" != 1 ]; then
+      hk_detail=" the-real-profiles-bootstrap-failed"
+    else
+      # the driver's call here has no reviewer. Rewritten, it lands on forge-verifier; refused, on the lane.
+      _hknorev='{"summary":"implemented CHUNK-9"}'
+      # (control) a right, fresh record rewrites it
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev")"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] || hk_detail="$hk_detail (control: a right record did not rewrite, $(_vst "$hk_x"))"
+      # stale: older than the guard by one second, with the clock pinned. Exactly at the guard it is still used.
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_rec="$(_hkpath forge-codex-lane "$hk_x")"; hk_at="$(jq -r '.written_at' "$hk_rec")"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev" FORGE_HOOK_NOW="$((hk_at + hk_max + 1))")"
+      [ "$(_vst "$hk_x")" = review/forge-codex-lane ] || hk_detail="$hk_detail a-stale-record-rewrote-a-later-call($(_vst "$hk_x"))"
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_rec="$(_hkpath forge-codex-lane "$hk_x")"; hk_at="$(jq -r '.written_at' "$hk_rec")"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev" FORGE_HOOK_NOW="$((hk_at + hk_max))")"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] || hk_detail="$hk_detail a-record-exactly-at-the-guard-was-refused($(_vst "$hk_x"))"
+      # from the future (a clock that ran backwards, or a hand-made file)
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_rec="$(_hkpath forge-codex-lane "$hk_x")"; hk_at="$(jq -r '.written_at' "$hk_rec")"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev" FORGE_HOOK_NOW="$((hk_at - 3600))")"
+      [ "$(_vst "$hk_x")" = review/forge-codex-lane ] || hk_detail="$hk_detail a-record-from-the-future-was-used($(_vst "$hk_x"))"
+      # the OTHER profile's record: the verifier's record for this workspace does not serve the lane
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      _hkrec forge-verifier "$hk_x" \
+        "$(jq -nc --arg t "$hk_x" --argjson m "$vmeta" '{tool:"kanban_request_review", args:{task_id:$t, summary:"S", metadata:$m, reviewer:"forge-verifier"}}')" null
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev")"
+      [ "$(_vst "$hk_x")" = review/forge-codex-lane ] || hk_detail="$hk_detail another-profiles-record-was-used($(_vst "$hk_x"))"
+      # a record whose workspace field is not this workspace (a hash collision or a hand edit)
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_rec="$(_hkpath forge-codex-lane "$hk_x")"
+      jq '.workspace = "/somewhere/else"' "$hk_rec" > "$hk_rec.t" && mv "$hk_rec.t" "$hk_rec"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev")"
+      [ "$(_vst "$hk_x")" = review/forge-codex-lane ] || hk_detail="$hk_detail a-record-for-another-workspace-was-used($(_vst "$hk_x"))"
+      # a record for ANOTHER TASK in this workspace: blocked for the three tools, never for kanban_block
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_rec="$(_hkpath forge-codex-lane "$hk_x")"
+      jq '.task_id = "t_0ther000"' "$hk_rec" > "$hk_rec.t" && mv "$hk_rec.t" "$hk_rec"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review "$_hknorev")"; hk_rc=$?
+      { [ "$hk_rc" = 10 ] && [ "$(_vst "$hk_x")" = running/forge-codex-lane ] \
+        && printf '%s' "$hk_out" | jq -e '.result.error | test("another task") and test("Nothing changed") and test("kanban_block")' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail a-foreign-tasks-hand-off-was-not-refused-with-a-message($(_vst "$hk_x"),rc=$hk_rc,$(printf '%s' "$hk_out" | head -c 160))"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"other: handoff-integrity — mine"}')"
+      { [ "$(_vst "$hk_x" | cut -d/ -f1)" = blocked ] \
+        && _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason == "other: handoff-integrity — mine"' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail kanban_block-was-not-left-open-for-a-foreign-record($(_vst "$hk_x"))"
+    fi
+    [ -z "$hk_detail" ] \
+      && ok "the-hook-refuses-a-record-that-is-not-this-runs (a stale record, one from the future, the other profile's and one for another workspace are not used; exactly at the age guard still is; a record for another task blocks the hand-off with a message and never the kanban_block; the pinned clock makes it reproducible)" \
+      || bad "the-hook-refuses-a-record-that-is-not-this-runs" "the hook must rewrite a call only from a record that belongs to this run —$hk_detail"
+
+    # ---- the policy where there is no usable record, and for the wrong tool -------------------------
+    hk_detail=""
+    if [ "$hk_ready" != 1 ]; then
+      hk_detail=" the-real-profiles-bootstrap-failed"
+    else
+      # NO RECORD (the program died before naming a call): every call is the driver's own, so the run can still end
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review '{"summary":"S","reviewer":"forge-verifier"}')"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] || hk_detail="$hk_detail with-no-record-the-drivers-own-hand-off-did-not-land($(_vst "$hk_x"))"
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"other: lane-usage — mine","kind":"needs_input"}')"
+      { [ "$(_vst "$hk_x" | cut -d/ -f1)" = blocked ] \
+        && _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason == "other: lane-usage — mine"' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail with-no-record-the-drivers-own-block-did-not-land($(_vst "$hk_x"))"
+      # A RECORD, THE WRONG TOOL: refused with a message naming the right one; nothing changed; the exit stays open
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_complete '{"summary":"done"}')"; hk_rc=$?
+      { [ "$hk_rc" = 10 ] && [ "$(_vst "$hk_x")" = running/forge-codex-lane ] \
+        && printf '%s' "$hk_out" | jq -e '.result.error | test("kanban_request_review") and test("Nothing changed")' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail the-wrong-tool-was-not-refused-with-the-right-ones-name($(_vst "$hk_x"),rc=$hk_rc,$(printf '%s' "$hk_out" | head -c 160))"
+      # ...and a kanban_block on that record is rewritten to ON_ERROR (the hand-off's fallback)
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"x"}')"
+      { [ "$(_vst "$hk_x" | cut -d/ -f1)" = blocked ] \
+        && _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason | startswith("other: handoff-integrity — the review hand-off was refused")' >/dev/null 2>&1; } \
+        || hk_detail="$hk_detail a-block-on-a-handoff-record-was-not-rewritten-to-on_error($(_vst "$hk_x"))"
+      # A RECORD THAT PLANS NO BLOCK (no on_error): kanban_block is never refused, and passes as the driver sent it
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      _hkrec forge-codex-lane "$hk_x" \
+        "$(jq -nc --arg t "$hk_x" '{tool:"kanban_request_review", args:{task_id:$t, summary:"S", reviewer:"forge-verifier"}}')" null
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"other: lane-usage — the driver cannot hand off"}')"
+      _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason == "other: lane-usage — the driver cannot hand off"' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail a-block-was-refused-where-no-block-was-planned($(_vst "$hk_x"))"
+      # A BLOCK RECORD WITH A BLOCK FALLBACK (the recommend-only hold): the first block is `terminate`,
+      # the next is `on_error` — the record counts how many it has rewritten
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      _hkrec forge-codex-lane "$hk_x" \
+        "$(jq -nc --arg t "$hk_x" '{tool:"kanban_block", args:{task_id:$t, reason:"merge-pending: FIRST", kind:"needs_input"}}')" \
+        "$(jq -nc --arg t "$hk_x" '{tool:"kanban_block", args:{task_id:$t, reason:"other: handoff-integrity — SECOND"}}')"
+      hk_rec="$(_hkpath forge-codex-lane "$hk_x")"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"whatever"}')"
+      _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason == "merge-pending: FIRST"' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail the-first-block-was-not-terminate"
+      [ "$(jq -r '.used' "$hk_rec")" = 1 ] || hk_detail="$hk_detail the-record-did-not-count-the-rewrite($(jq -r '.used' "$hk_rec"))"
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      _hkrec forge-codex-lane "$hk_x" \
+        "$(jq -nc --arg t "$hk_x" '{tool:"kanban_block", args:{task_id:$t, reason:"merge-pending: FIRST", kind:"needs_input"}}')" \
+        "$(jq -nc --arg t "$hk_x" '{tool:"kanban_block", args:{task_id:$t, reason:"other: handoff-integrity — SECOND"}}')"
+      hk_rec="$(_hkpath forge-codex-lane "$hk_x")"; jq '.used = 1' "$hk_rec" > "$hk_rec.t" && mv "$hk_rec.t" "$hk_rec"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"whatever"}')"
+      _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason == "other: handoff-integrity — SECOND"' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail the-second-block-was-not-on_error"
+      # a broken record file is no record: garbage JSON, and a record with no terminate
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      printf 'not json{' > "$(_hkpath forge-codex-lane "$hk_x")"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review '{"summary":"S","reviewer":"forge-verifier"}')"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] || hk_detail="$hk_detail a-garbage-record-stopped-the-drivers-own-hand-off($(_vst "$hk_x"))"
+      # A HOOK THAT IS MISSING OR CRASHES leaves the driver its own arguments (Hermes fails open: no fail_closed)
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      sed -i.bak 's|^\(  *command: \).*|\1"/nonexistent/driver-call-hook.sh"|' "$vhome/profiles/forge-codex-lane/config.yaml"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review '{"summary":"S","reviewer":"forge-verifier"}')"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] || hk_detail="$hk_detail a-missing-hook-script-stopped-the-driver($(_vst "$hk_x"))"
+
+      # A call Hermes refuses ("Nothing changed": an undeclared key) made nothing, so the record must not
+      # count it: the retry of a recommend-only hold is still the hold, not the handoff-integrity fallback.
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      _hkrec forge-codex-lane "$hk_x" \
+        "$(jq -nc --arg t "$hk_x" '{tool:"kanban_block", args:{task_id:$t, reason:"merge-pending: FIRST", kind:"needs_input"}}')" \
+        "$(jq -nc --arg t "$hk_x" '{tool:"kanban_block", args:{task_id:$t, reason:"other: handoff-integrity — SECOND"}}')"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"x","bogus_key":1}')"; hk_rc=$?
+      { [ "$hk_rc" = 10 ] && [ "$(_vst "$hk_x")" = running/forge-codex-lane ]; } \
+        || hk_detail="$hk_detail the-refused-call-did-not-leave-the-card-running(rc=$hk_rc,$(_vst "$hk_x"))"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"x"}')"
+      _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason == "merge-pending: FIRST"' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail a-refused-call-used-up-the-terminate-slot(the-retry-landed-the-fallback)"
+
+      # A HOOK THAT FAULTS. Exit code 2 is a BLOCK in Hermes whatever fail_closed says, kanban_block included,
+      # and bash ends a failed run on 2 or 1: so the real script runs its body in a subshell and always exits 0.
+      # Two faulty copies of the real script (an `exit 2` and an unbound variable, planted at the top of its
+      # body) must leave every call the driver's own; a hook that is only `exit 2` is the CONTROL that Hermes
+      # does refuse on that code, which is what makes the other two mean something.
+      local hkf="$TMPROOT/hook-faulty" hkk
+      rm -rf "$hkf"; mkdir -p "$hkf/exit2" "$hkf/unbound" "$hkf/control"
+      for hkk in exit2 unbound; do
+        cp "$REPO_ROOT/scripts/forge-state.sh" "$hkf/$hkk/forge-state.sh"
+        awk -v kind="$hkk" '{print} /^main\(\) \{$/ { print (kind == "exit2" ? "  exit 2" : "  echo \"$A_VARIABLE_NOBODY_SET\" > /dev/null") }' \
+          "$REPO_ROOT/scripts/driver-call-hook.sh" > "$hkf/$hkk/driver-call-hook.sh"
+        chmod +x "$hkf/$hkk/driver-call-hook.sh"
+        cmp -s "$REPO_ROOT/scripts/driver-call-hook.sh" "$hkf/$hkk/driver-call-hook.sh" \
+          && hk_detail="$hk_detail the-$hkk-fault-was-not-planted(main-moved)"
+        printf 'garbage{' | "$hkf/$hkk/driver-call-hook.sh" >"$hkf/out" 2>/dev/null; hk_rc=$?
+        { [ "$hk_rc" = 0 ] && [ ! -s "$hkf/out" ]; } || hk_detail="$hk_detail the-$hkk-hook-exited-$hk_rc-or-printed"
+        _vboard; _hkprofiles; hk_x="$(_hkreview)"
+        sed -i.bak "s|^\( *command: \).*|\1\"$hkf/$hkk/driver-call-hook.sh\"|" "$vhome/profiles/forge-codex-lane/config.yaml"
+        hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"other: lane-usage — the driver ends the run"}')"
+        { [ "$(_vst "$hk_x" | cut -d/ -f1)" = blocked ] \
+          && _v show "$hk_x" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | last | .payload.reason == "other: lane-usage — the driver ends the run"' >/dev/null 2>&1; } \
+          || hk_detail="$hk_detail a-$hkk-fault-in-the-hook-refused-the-drivers-block($(_vst "$hk_x"))"
+      done
+      printf '#!/bin/sh\nexit 2\n' > "$hkf/control/driver-call-hook.sh"; chmod +x "$hkf/control/driver-call-hook.sh"
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      sed -i.bak "s|^\( *command: \).*|\1\"$hkf/control/driver-call-hook.sh\"|" "$vhome/profiles/forge-codex-lane/config.yaml"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"other: lane-usage — the driver ends the run"}')"; hk_rc=$?
+      { [ "$hk_rc" = 10 ] && [ "$(_vst "$hk_x")" = running/forge-codex-lane ]; } \
+        || hk_detail="$hk_detail (control: a hook that exits 2 did not refuse the block, so the cases above prove nothing; rc=$hk_rc,$(_vst "$hk_x"))"
+      # the real script with no environment at all and a stdin that is not JSON
+      printf 'not json' | env -i PATH="$PATH" "$REPO_ROOT/scripts/driver-call-hook.sh" >"$hkf/out" 2>/dev/null; hk_rc=$?
+      { [ "$hk_rc" = 0 ] && [ ! -s "$hkf/out" ]; } || hk_detail="$hk_detail the-real-hook-exited-$hk_rc-on-garbage"
+    fi
+    [ -z "$hk_detail" ] \
+      && ok "the-hook-policy-keeps-an-exit-open (no record: the driver's own hand-off and block land; the wrong tool is refused naming the right one and changes nothing; kanban_block is rewritten to on_error, left alone where none is planned, and counted through terminate then on_error, a refused call not counting; a broken record, a missing script and a script that faults (exit 2, unbound variable) change nothing, while a hook that is only exit 2 does refuse)" \
+      || bad "the-hook-policy-keeps-an-exit-open" "every failure mode of the hook must leave the driver a way to end the run —$hk_detail"
+
+    # ---- a key the driver invents -----------------------------------------------------------------
+    hk_detail=""
+    if [ "$hk_ready" != 1 ]; then
+      hk_detail=" the-real-profiles-bootstrap-failed"
+    else
+      # an UNDECLARED key survives a shallow merge, and Hermes rejects the whole call: "Nothing changed", no partial transition
+      _vboard; _hkprofiles; hk_x="$(_hkreview)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review '{"summary":"S","bogus_key":1}')"; hk_rc=$?
+      { [ "$hk_rc" = 10 ] && printf '%s' "$hk_out" | jq -e '.result.error | test("unknown parameter") and test("Nothing changed")' >/dev/null 2>&1 \
+        && [ "$(_vst "$hk_x")" = running/forge-codex-lane ]; } \
+        || hk_detail="$hk_detail an-undeclared-key-was-not-nothing-changed(rc=$hk_rc,$(_vst "$hk_x"),$(printf '%s' "$hk_out" | head -c 160))"
+      # the driver then repeats the call without it and it lands
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_request_review '{"summary":"S"}')"
+      [ "$(_vst "$hk_x")" = review/forge-verifier ] || hk_detail="$hk_detail the-retry-did-not-land($(_vst "$hk_x"))"
+      # a DECLARED key the record does not carry is neutralised: the block's `kind` is the record's (none)
+      _vboard; _hkprofiles; hk_x="$(_hkclaim)"
+      _hkrec forge-codex-lane "$hk_x" "$(jq -nc --arg t "$hk_x" '{tool:"kanban_block", args:{task_id:$t, reason:"other: lane-usage — recorded"}}')" null
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"driver words","kind":"dependency"}')"
+      hk_got="$(printf '%s' "$hk_out" | jq -r '.result.block_kind // "?"' 2>/dev/null)"
+      _vboard; hk_x="$(_hkclaim)"
+      hk_out="$(_hk "$hk_x" forge-codex-lane kanban_block '{"reason":"driver words","kind":"dependency"}')"
+      hk_ctl="$(printf '%s' "$hk_out" | jq -r '.result.block_kind // "?"' 2>/dev/null)"
+      { [ "$hk_got" != "$hk_ctl" ] && [ "$hk_got" != dependency ]; } \
+        || hk_detail="$hk_detail an-invented-kind-survived(with=$hk_got,without=$hk_ctl)"
+      # the table of declared keys the hook neutralises is the installed schemas' (a new optional parameter would slip past it)
+      for hk_t in kanban_request_review kanban_block kanban_request_changes kanban_complete; do
+        hk_want="$(HERMES_HOME="$vhome" "$WCTX_PY" -I -c "
+import sys; sys.path.insert(0, '$vsrc')
+import json, tools.kanban_tools
+from tools.registry import registry
+print(json.dumps(sorted(registry.get_schema('$hk_t')['parameters']['properties'])))" 2>/dev/null | jq -c 'sort')"
+        hk_got="$( eval "$(awk '/^declared\(\) \{/,/^\}/' "$REPO_ROOT/scripts/driver-call-hook.sh")"; declared "$hk_t" | jq -c 'sort' )"
+        [ -n "$hk_want" ] && [ "$hk_want" = "$hk_got" ] || hk_detail="$hk_detail the-hooks-key-table-for-$hk_t-is-not-the-schemas($hk_got vs $hk_want)"
+      done
+    fi
+    [ -z "$hk_detail" ] \
+      && ok "the-hook-neutralises-keys-the-driver-invents (an undeclared key is Nothing changed with no partial transition and the retry lands; a declared key the record lacks is nulled; the hook's table of declared keys equals the installed schemas for all four tools)" \
+      || bad "the-hook-neutralises-keys-the-driver-invents" "a key the driver invented must not survive the rewrite, nor change the board partially —$hk_detail"
+
+    # ---- the lane's claim and the review claim of one card see ONE workspace ---------------------
+    # The record is found by HERMES_KANBAN_WORKSPACE, which the dispatcher sets per spawn, so a
+    # `--workspace worktree` card (what board-bootstrap.sh makes) must hand the lane's spawn and the
+    # review spawn the same path — they key different records (the profile is in the key), but the
+    # task-id check in the hook reads the path's basename. The real dispatcher tick, claim and
+    # workspace resolution run (worker-ctx.py dispatch-workspaces); only the process spawn is replaced.
+    hk_detail=""
+    local hkw_home="$TMPROOT/hook-ws-home" hkw_repo="$TMPROOT/hook-ws-repo" hkw_id hkw_run hkw_out hkw_p
+    rm -rf "$hkw_home" "$hkw_repo"; mkdir -p "$hkw_home" "$hkw_repo"
+    git -C "$hkw_repo" init -q -b main 2>/dev/null && git -C "$hkw_repo" -c user.email=v@v -c user.name=v commit -q --allow-empty -m init
+    for hkw_p in forge-codex-lane forge-verifier; do mkdir -p "$hkw_home/profiles/$hkw_p"; echo "# $hkw_p" > "$hkw_home/profiles/$hkw_p/SOUL.md"; done
+    HERMES_HOME="$hkw_home" hermes kanban boards create vws >/dev/null 2>&1
+    HERMES_HOME="$hkw_home" hermes kanban boards set-default-workdir vws "$hkw_repo" >/dev/null 2>&1
+    hkw_id="$(HERMES_HOME="$hkw_home" hermes kanban --board vws create "CHUNK-9: hook workspace" --assignee forge-codex-lane \
+                --workspace worktree --branch chunk/9-hook-workspace --json 2>/dev/null | jq -r '.id')"
+    hkw_out="$(HERMES_HOME="$hkw_home" "$WCTX_PY" "$WCTX" dispatch-workspaces vws 2>&1)"
+    hkw_run="$(HERMES_HOME="$hkw_home" hermes kanban --board vws show "$hkw_id" --json 2>/dev/null | jq -r '.runs | max_by(.id).id')"
+    HERMES_KANBAN_TASK="$hkw_id" HERMES_KANBAN_RUN_ID="$hkw_run" HERMES_HOME="$hkw_home" hermes kanban --board vws request-review "$hkw_id" \
+      --reviewer forge-verifier --summary "hand-off" --metadata '{}' >/dev/null 2>&1
+    hkw_out="$hkw_out
+$(HERMES_HOME="$hkw_home" "$WCTX_PY" "$WCTX" dispatch-workspaces vws 2>&1)"
+    if [ "$(printf '%s\n' "$hkw_out" | jq -s 'length' 2>/dev/null)" != 2 ]; then
+      hk_detail="$hk_detail the-two-claims-were-not-both-dispatched($(printf '%s' "$hkw_out" | head -c 200))"
+    else
+      printf '%s\n' "$hkw_out" | jq -s -e --arg id "$hkw_id" --arg repo "$(cd "$hkw_repo" && pwd -P)" '
+          (.[0].assignee == "forge-codex-lane") and (.[1].assignee == "forge-verifier")
+          and (.[0].task == $id) and (.[1].task == $id)
+          and (.[0].workspace == .[1].workspace)
+          and ((.[0].workspace | split("/") | last) == $id)
+          and ((.[0].workspace | sub("^/private"; "")) == ($repo | sub("^/private"; "")) + "/.worktrees/" + $id)' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail the-lane-and-review-claims-see-different-workspaces($(printf '%s' "$hkw_out" | jq -sc 'map(.workspace)' 2>/dev/null))"
+    fi
+    [ -z "$hk_detail" ] \
+      && ok "the-lane-and-review-claims-share-one-workspace (a --workspace worktree card, through the real dispatcher tick: the lane spawn and the review spawn are handed the same HERMES_KANBAN_WORKSPACE, <repo>/.worktrees/<task id>, so the hook's key and its task-id check hold for both)" \
+      || bad "the-lane-and-review-claims-share-one-workspace" "the hook keys on the workspace the dispatcher hands a worker; one card must give the lane and the reviewer the same one —$hk_detail"
 
     # ---- the program attempts NO board mutation -------------------------------
     # The outcome of a swallowed failure is invisible to an outcome check: run A's lane

@@ -413,6 +413,49 @@ metadata made a pretty-printed envelope 2379 characters and the wait lost its
 anything the program prints. `process_manage` is a deferred tool (reach it through
 `tool_search` / `tool_call`); `execute_code` is refused in an unattended session.
 
+**A `pre_tool_call` shell hook can rewrite a worker's tool call, but it runs fenced and does
+not know the task id (measured 2026-10-28, epic P34).** A driver model retypes the
+envelope's call and sometimes drops an argument (rehearsal 4: `kanban_request_review`
+without `reviewer`, so the card went `review` still assigned to the lane). A hook in the
+profile's `config.yaml` can put the arguments back. What was measured, through
+`agent.shell_hooks.register_from_config(accept_hooks=True)` and
+`model_tools.handle_function_call` in an isolated `HERMES_HOME`
+(`scripts/fixtures/worker-ctx.py hook-probe`, `hooked-call`):
+- *Loading.* The dispatcher spawns `hermes -p <profile> --cli --accept-hooks … chat -q`.
+  `chat -q` is non-interactive, so `main.py` runs `_prepare_agent_startup`, which reads
+  `load_config()` under the profile's `HERMES_HOME` and calls
+  `register_from_config(cfg, accept_hooks=True)`; the flag records first-use consent in the
+  profile's own allowlist. `HERMES_SAFE_MODE=1` skips registration. Both agent-loop paths
+  (`agent_runtime_helpers._pre_tool_block_message`, `tool_executor._pre_tool_block`) apply a
+  hook's modified arguments.
+- *Stdin.* One JSON object: `{hook_event_name, tool_name, tool_input, session_id, cwd, profile,
+  extra}`. The call's arguments are under `tool_input`. `extra.task_id` is not the kanban id: a
+  `chat -q` agent has none, so it is a fresh uuid (`turn_context.py`).
+- *Output.* `{"action":"modify","args":{…}}` (Hermes dialect; `{"decision":"modify",
+  "tool_input":{…}}` is the Claude Code one) shallow-merges into the arguments, so a key the
+  driver invented survives unless the hook overwrites it; an undeclared key is rejected by the
+  handler with `Nothing changed`, and an explicit `null` for a declared one reads as absent.
+  `{"action":"block","message":…}` becomes the tool result. A crash, a timeout or a missing
+  script fails open unless the entry says `fail_closed: true` — **but exit code 2 is a block
+  whatever `fail_closed` says** (`BLOCK_EXIT_CODE`, "even without JSON"), and bash itself ends
+  a failed script on 1 or 2, so a hook that must never refuse wraps its body in a subshell and
+  always exits 0.
+- *Environment: fenced like the terminal, so no task id.* The hook's env is built by
+  `build_subprocess_env`, which ends in `delegated_child_subprocess_env`; because the worker's
+  `os.environ` holds `HERMES_KANBAN_TASK`, `scrub_kanban_env` removes `HERMES_KANBAN_TASK`,
+  `_RUN_ID` and `_CLAIM_LOCK` and sets `HERMES_DELEGATED_CHILD_CONTEXT`. The hook script runs
+  fenced although the callback is in the agent process. **Survives, identically to the
+  terminal:** `HERMES_KANBAN_BOARD`, `_DB`, `_WORKSPACE`, `_WORKSPACES_ROOT`, `HERMES_PROFILE`,
+  `HERMES_SESSION_ID` (equal to stdin `session_id`) and, when the card has one,
+  `HERMES_KANBAN_BRANCH`. The hook's cwd is the workspace.
+- So a hook finds its program's record by board + profile + workspace, never by task. A
+  `--workspace worktree` card gets `<repo>/.worktrees/<task id>`, persisted, and the lane's
+  spawn and the review spawn get the same path (`dispatch-workspaces`); the profile is part of
+  the key because they share it. `HERMES_SESSION_ID` is not a safe key: context compression
+  rotates the session id (`conversation_compression.py`).
+- The hook inherits the worker's PATH, which a launchd gateway may leave without Homebrew, so
+  the script extends it itself.
+
 **Hermes force-loads `sdlc-review` on every review claim, and a profile-local copy
 shadows it (measured, epic S6d, review F6).** `kanban_db_dispatch.py` adds
 `sdlc-review` to the skills of any card claimed from `review`. The bundled skill

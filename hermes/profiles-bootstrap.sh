@@ -126,7 +126,7 @@ VERIFIED_KEYS=(model.default toolsets skills.external_dirs skills.disabled skill
 # THE DRIVER-CALL HOOK (P34). The two profiles whose programs name a terminal call
 # (lane.sh, prejudge-review.sh) get a `pre_tool_call` shell hook that rewrites the driver's
 # retyped kanban_request_review / _block / _request_changes / _complete to the call the program
-# recorded (scripts/driver-call-hook.sh, whose header holds the policy). The command is the
+# recorded (~/.forge/repo/scripts/driver-call-hook.sh, whose header holds the policy). The command is the
 # literal ~/.forge/repo form: a bare relative path cannot resolve from a worker's worktree, and
 # Hermes expands the `~` itself. Deliberately NO fail_closed: a hook fault must leave the driver
 # its own arguments, never a card stuck `running`. Dispatched workers pass --accept-hooks, which
