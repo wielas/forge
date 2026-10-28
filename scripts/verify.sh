@@ -2707,6 +2707,7 @@ bootstrap/guard-refuses-pr-open        the same for an OPEN PR
 bootstrap/guard-names-every-pr-on-a-branch  two PRs on one name are both named (gh pr list --state all, not gh pr view)
 bootstrap/guard-refuses-a-remote-branch-with-no-pr  a branch on origin with no PR is refused (git ls-remote)
 bootstrap/guard-asks-about-every-card-before-creating-any  one spent name among three cards leaves the board with no card
+bootstrap/guard-parses-the-ssh-origin  a git@github.com:owner/repo.git origin (the form both real products use) is parsed: a spent name is refused, a suffixed one created
 bootstrap/guard-could-not-ask-exits-2-and-creates-nothing  gh errors, prose from gh, unreachable origin, no origin and an unreadable board all exit 2, not 3 and not 0
 bootstrap/existing-card-passes-the-guard  a card already on the board (OPEN PR, remote branch) is neither asked about nor refused on the full re-run
 commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
@@ -5551,7 +5552,8 @@ EOF2
   # -- an invalid suffix never reaches the board --------------------------------
   local inv="$TMPROOT/bootstrap-badsuffix" inv_detail="" inv_args inv_n=0
   for inv_args in 'full|A2' 'full|-a2' 'full|a/b' 'full|a2-' 'full|a--2' 'full|a.b' 'full|' \
-                  'full|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' '--root-only|A2' '--hello|-a2' '--hello|a/b'; do
+                  'full|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' '--root-only|A2' '--hello|-a2' '--hello|a/b' \
+                  $'full|a2\nx' $'full|\na2' $'full|a2\n' $'--hello|a2\nx'; do
     _bootstrap_fixture "$inv" normal
     out="$(_bootstrap_runx "$inv" "${inv_args%%|*}" --branch-suffix "${inv_args#*|}" 2>&1)"; rc=$?
     inv_n=$((inv_n + 1))
@@ -5564,7 +5566,7 @@ EOF2
   out="$(_bootstrap_runx "$inv" full --branch-suffix 2>&1)"; rc=$?
   { [ "$rc" = 1 ] && [ ! -e "$inv/state/commands.log" ]; } || inv_detail="$inv_detail [no value: exit $rc]"
   if [ -z "$inv_detail" ]; then
-    ok "invalid-suffix-is-refused-before-any-write ($inv_n spellings: capitals, leading dash, slash, trailing dash, doubled dash, dot, empty, 33 chars, no value)"
+    ok "invalid-suffix-is-refused-before-any-write ($inv_n spellings: capitals, leading dash, slash, trailing dash, doubled dash, dot, empty, 33 chars, a newline before, inside or after a valid slug, no value)"
   else
     bad "invalid-suffix-is-refused-before-any-write" "each must exit 1 naming --branch-suffix with no hermes command and no gh call:$inv_detail"
   fi
@@ -5642,6 +5644,34 @@ EOF2
     ok "guard-asks-about-every-card-before-creating-any (CHUNK-3 spent -> CHUNK-1 and 2 not created)"
   else
     bad "guard-asks-about-every-card-before-creating-any" "exit $gd_rc, cards $(_bootstrap_cards "$gd"): $(printf '%s' "$gd_out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  # -- the origin the real products use is ssh, not https ------------------------
+  # Both real origins are git@github.com:wielas/<repo>.git. The fixture's https
+  # origin never exercises that arm of origin_slug, so swap the ssh form in. It
+  # still parses to stub-owner/stub-repo, the stub gh answers for that slug and no
+  # other, and a slug that was not parsed is exit 2, so exit 3 and then exit 0
+  # are both statements about the parse.
+  local ss="$TMPROOT/bootstrap-ssh-origin" ss_out ss_rc ss_detail=""
+  _bootstrap_fixture "$ss" normal
+  git -C "$ss" remote set-url origin "git@github.com:stub-owner/stub-repo.git"
+  git -C "$ss" config --unset-all "url.$ss/remote.git.insteadOf"
+  git -C "$ss" config "url.$ss/remote.git.insteadOf" "git@github.com:stub-owner/stub-repo.git"
+  _bootstrap_spend "$ss" chunk/1-bootstrap-fixture 4:CLOSED
+  ss_out="$(_bootstrap_runx "$ss" --root-only 2>&1)"; ss_rc=$?
+  if [ "$ss_rc" != 3 ] || [ "$(_bootstrap_cards "$ss")" != 0 ] \
+     || ! printf '%s' "$ss_out" | grep -Fq 'PR #4 (CLOSED)'; then
+    ss_detail="spent name not refused through the ssh origin: exit $ss_rc, cards $(_bootstrap_cards "$ss"): $(printf '%s' "$ss_out" | tail -2 | tr '\n' ' ')"
+  fi
+  ss_out="$(_bootstrap_runx "$ss" --root-only --branch-suffix a2 2>&1)"; ss_rc=$?
+  if [ "$ss_rc" != 0 ] || [ "$(_bootstrap_cards "$ss")" != 1 ] \
+     || ! grep -q -- 'pr list --repo stub-owner/stub-repo --head chunk/1-bootstrap-fixture-a2 --state all' "$ss/state/gh.log" 2>/dev/null; then
+    ss_detail="$ss_detail; the suffixed name was not created through the ssh origin: exit $ss_rc, cards $(_bootstrap_cards "$ss"): $(printf '%s' "$ss_out" | tail -2 | tr '\n' ' ')"
+  fi
+  if [ -z "$ss_detail" ]; then
+    ok "guard-parses-the-ssh-origin (git@github.com:owner/repo.git: spent name refused, exit 3; suffixed name created)"
+  else
+    bad "guard-parses-the-ssh-origin" "$ss_detail"
   fi
 
   # -- could not ask is not "nothing there" -----------------------------------------

@@ -99,8 +99,13 @@ done
 # downstream one: neither branch-name.sh nor prejudge.sh limits a branch's
 # length, and branch_for caps its own slug at 48; 32 more keeps every name far
 # under the 255 bytes a git ref component may be.
+#
+# The alphabet is tested with bash's own `[[ =~ ]]`, which sees the WHOLE string.
+# `printf | grep -E` tests line by line, so `a2<newline>X` and `<newline>a2` each
+# passed, carrying a newline into a branch name.
 if [ "$BRANCH_SUFFIX_SET" = 1 ]; then
-  if ! printf '%s' "$BRANCH_SUFFIX" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' \
+  suffix_re='^[a-z0-9]+(-[a-z0-9]+)*$'
+  if ! [[ $BRANCH_SUFFIX =~ $suffix_re ]] \
      || [ "${#BRANCH_SUFFIX}" -gt 32 ]; then
     echo "board-bootstrap: --branch-suffix '$BRANCH_SUFFIX' is not a lowercase slug of at most 32 characters" >&2
     echo "                 (^[a-z0-9]+(-[a-z0-9]+)*\$: no capitals, no slash, no leading or doubled hyphen). No card was created." >&2
