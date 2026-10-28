@@ -469,7 +469,7 @@ posture: UNGATED (merge gate unavailable on this plan: wielas/Squatfather)
 Halted 2026-10-03 at CHUNK-1's handoff. See *Amendments*, 2026-10-03.
 
 #### Attempt 2
-*(no launch yet; the rehearsal record is below)*
+*(no launch yet; the rehearsal records are below)*
 
 ##### Rehearsal 1 failed (2026-10-27)
 
@@ -532,6 +532,110 @@ Events (6):
 Runs (1):
   #1   blocked      @forge-codex-lane  73s  2026-10-27 18:07
         → other: chunk/hello-1-greet already has a MERGED PR (https://github.com/wielas/hello-forge/pull/5) — a lane never reopens one
+```
+
+##### Rehearsal 2 failed (2026-10-28)
+
+Not part of the launch record: nothing measured reads from it. R6 asks for the
+failing check and the card as they stood. Pasted from
+`~/dev/the-squatfather/.forge/run-a-attempt-2-rehearsal-2/`; the first three files
+are unedited, and `show.json` is read through the one `jq` program shown. See
+*Amendments*, 2026-10-28 (amendment 3).
+
+`rehearsal-failed.md`:
+
+```
+# Rehearsal 2 failed (2026-10-28), board hello-rehearsal-a2b, card t_318f003c
+Failing step: R3/R4 (lane never handed off). Card blocked at 08:28, run 1, 98 s.
+Block reason: other: the completion envelope failed its contract — branch: id does not match chunk_id
+Lane: Codex ran (~85 s), branch chunk/hello-1-greet-a2b pushed (tip 093c30c), PR #7 OPEN
+  https://github.com/wielas/hello-forge/pull/7; lane.sh exit 3 at the envelope validation; driver called kanban_block via tool:
+  {"ok": true, "task_id": "t_318f003c", "run_id": 1, "status": "blocked", "block_kind": null}; fence strings = 0; kanban_request_review calls = 0.
+Probable cause (read from source, not fixed): scripts/validate-metadata.py semantic_errors compares branch with
+  f"chunk/{CHUNK_ID.group(1)}-" case-sensitively. chunk_id from title = CHUNK-HELLO-1 -> expects prefix "chunk/HELLO-1-";
+  branch is chunk/hello-1-greet-a2b (lower-case, as board-bootstrap.sh --hello builds it). Independent of the suffix.
+  Rehearsal 1 and the three earlier ones never reached this check (rehearsal 1 blocked earlier at the merged-PR arm; earlier ones predate the check).
+State left in place per R6: worktree $H/.worktrees/t_318f003c (clean, HEAD 093c30c), board, PR #7, branch. No R7 run.
+```
+
+`show.json`, through `jq -r` (task line, one line per event with the payload cut
+at 260 characters, one line per run; the file itself is in the directory):
+
+```
+task: t_318f003c	blocked	forge-codex-lane	/Users/goonlab/dev/hello-forge/.worktrees/t_318f003c	chunk/hello-1-greet-a2b
+event: 1793172424 created {"assignee":"forge-codex-lane","status":"ready","parents":[],"creator_task_id":null,"tenant":null,"workspace_kind":"worktree","workspace_path":"/Users/goonlab/dev/hello-forge","branch_name":"chunk/hello-1-greet-a2b","project_id":null,"skills":["forge-lane"],"g
+event: 1793172426 claimed {"lock":"Goons-Mac-mini.local:1394","expires":1793173326,"run_id":1}
+event: 1793172427 spawned {"pid":2677,"started_at":"|179317242702"}
+event: 1793172428 heartbeat null
+event: 1793172496 heartbeat null
+event: 1793172524 blocked {"reason":"other: the completion envelope failed its contract — branch: id does not match chunk_id","kind":null,"recurrences":1,"source_status":"ready"}
+run: #1 forge-codex-lane blocked 1793172426 1793172524 other: the completion envelope failed its contract — branch: id does not match chunk_id
+```
+
+`pr.json`:
+
+```
+[{"headRefName":"chunk/hello-1-greet-a2b","number":7,"state":"OPEN","statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-10-28T07:28:57Z","conclusion":"SUCCESS","detailsUrl":"https://github.com/wielas/hello-forge/actions/runs/40650330866/job/122688662966","name":"check","startedAt":"2026-10-28T07:28:47Z","status":"COMPLETED","workflowName":"ci"}],"url":"https://github.com/wielas/hello-forge/pull/7"}]
+```
+
+`worker.log`:
+
+```
+Query: work kanban task t_318f003c
+Initializing agent...
+────────────────────────────────────────
+
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+Let me start by orienting: kanban_show for the task, then run the lane program per
+ the forge-lane skill.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📋 preparing kanban_show…
+  ┊ ⚡ kanban_sh   0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+Task confirmed mine, running, worktree. Now launch lane.sh in background with pty.
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╭─ ☤ Hermes ───────────────────────────────────────────────────────────────────╮
+  ┊ 💻 preparing terminal…
+Task confirmed mine and running. Launching the lane program.
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ┊ 💻 $         ~/.forge/repo/scripts/lane.sh --task t_318f003c  0.1s
+  ┊ ⚡ preparing a tool search…
+  ┊ 🔎 Searching tools · process manage wait poll background terminal  0.0s
+  ┊ ⚡ preparing tool details…
+  ┊ 📖 Reading tool details · 1 tool  0.0s
+  ┊ ⚡ preparing a tool call…
+  ┊ ⚙️  proc      wait proc_164412c  85.4s
+  (tip) That tool ran for a while. Use /verbose to cycle tool-progress display modes (all -> new -> off -> verbose). This tip only shows once.
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+Exit 3, envelope says: block with kanban_block reason "other: the completion envelope failed
+ its contract — branch: id does not match chunk_id". Per protocol: call kanban_block verbatim with
+ the terminate args.
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╭─ ☤ Hermes ───────────────────────────────────────────────────────────────────╮
+  ┊ ⏸ preparing kanban_block…
+Exit 3 — the program refused to hand off. Making the named call verbatim.
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ┊ ⚡ kanban_bl   0.0s
+
+╭─ ☤ Hermes ───────────────────────────────────────────────────────────────────╮
+Done. The lane program ran and terminated with exit 3: it refused to hand off because the completion envelope failed its contract — the branch chunk/hello-1-greet-a2b doesn't match the chunk id (CHUNK-HELLO-1). Per the envelope, I called kanban_block verbatim with reason other: the completion envelope failed its contract — branch: id does not match chunk_id, so the card is now blocked on the board for a human to resolve the branch-naming mismatch.
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[kanban-worker-exit] rc=0
+
+Resume this session with:
+  hermes --resume 20261028_082707_2bfc06 -p forge-codex-lane
+  hermes -c "CHUNK-HELLO-1: Add greet(name) with a BDD scenario #2" -p forge-codex-lane
+
+Session:        20261028_082707_2bfc06
+Title:          CHUNK-HELLO-1: Add greet(name) with a BDD scenario #2
+Duration:       1m 39s
+Messages:       14 (1 user, 12 tool calls)
 ```
 
 ### Root checkpoint
@@ -1617,3 +1721,406 @@ decide. The rehearsal's blocks derive `RB` and `BR` from `SUF`. `board-bootstrap
 now stops with **exit 4** when a board already holds a card under a different
 branch (a suffix that differs from the board's first run); caveat 2 above is no
 longer only advice. Attempt 2's precondition 3 baseline is **551 / 0 / 11**.
+
+**2026-10-28 (amendment 3) — attempt 2, rehearsal 2 failed at R3/R4: `--hello` named a branch the envelope check refuses; what the cleanup and rehearsal 3 are.**
+
+*Why.* The 2026-10-27 entry gave rehearsal 2 a branch name nothing had used, and that
+part worked: the guard printed `free` for it, the lane ran, and the dispatcher, the
+lane and Codex all did their jobs. The rehearsal then failed on a second defect that
+the first had been hiding, one step later. This entry records the failure, closes
+P33 (the code, in the PR that carries this entry), gives the cleanup of rehearsal 2
+as a block set to run before rehearsal 3, and gives rehearsal 3 its commands. Nothing
+above is edited. Where this entry and the text above differ, this entry governs
+attempt 2. **Paste the code blocks below into bash, or run `setopt
+interactive_comments` first**, as at the top of the 2026-10-27 entry. The blocks
+carry no comments; the expected output is in the prose beside each. **Line numbers
+below are those of `scripts/` at `841b81b`**, the code this entry's PR starts from
+(`git show 841b81b:scripts/lane.sh`); the PR changes none of the files they name.
+
+*What rehearsal 2 found.* Board `hello-rehearsal-a2b`, card `t_318f003c`, branch
+`chunk/hello-1-greet-a2b`, title `CHUNK-HELLO-1: Add greet(name) with a BDD
+scenario`. Pasted in full under *Results › Launch record › Attempt 2 › Rehearsal 2
+failed*.
+- **It blocked at the hand-off**, run 1, 98 s, with `other: the completion envelope
+  failed its contract — branch: id does not match chunk_id` (`lane.sh` 585).
+- **What worked.** R0 and R2 held; the P30 suffix and guard worked (`free
+  chunk/hello-1-greet-a2b`). The dispatcher spawned the lane, Codex ran (about 85 s),
+  `make check` passed, the lane pushed `093c30c71ff25795ad15882ace7af723911e246f`,
+  and PR `wielas/hello-forge#7` is OPEN with its `check` run green. The block went
+  through S6d's driver tool: `kanban_block` returned `{"ok": true, "task_id":
+  "t_318f003c", "run_id": 1, "status": "blocked", "block_kind": null}`, and the fence
+  strings count is 0.
+- **What it did not reach.** `kanban_request_review`, the claim by `forge-verifier`,
+  and the verdict through the tool. R4's first check is still unmet, and the
+  verifier has still never been dispatcher-spawned on this attempt. Rehearsal 3
+  must pass.
+
+*The cause, and why nothing saw it sooner.*
+- `scripts/validate-metadata.py` 365-368 requires `branch.startswith("chunk/" + id +
+  "-")`, **case-sensitively**, where `id` is what `CHUNK_ID` captures from the
+  envelope's `chunk_id`. The lane derives `chunk_id` from the card title (`lane.sh`
+  272: the `CHUNK-…` token), so `CHUNK-HELLO-1` wants the prefix `chunk/HELLO-1-`.
+- `board-bootstrap.sh --hello` built the branch from a lower-case literal,
+  `chunk/hello-1-greet` (since `2947ceb`, 2026-07-27), with P30's suffix appended
+  after it by `finish_branch`. Independent of the suffix, the branch could never
+  satisfy the title it was handed with. `branch_for`, which names every branch in
+  `full` and `root-only` mode, keeps the id's case (`chunk/C10-…`); run A's ids are
+  all numeric and unaffected. Only `--hello`'s literal disagreed.
+- **The check was digits-only until `9b984bf` (PR #51, 2026-09-01), so hello was
+  silently exempt before.** The lane program and its call to the validator arrived
+  with epic S2 (`68724a4`, 2026-09-26: `git log -S 'the completion envelope failed
+  its contract' -- scripts/lane.sh`), the same commit as the merged-PR arm that
+  stopped rehearsal 1. Hello's three older PRs (#1, #3, #5; 2026-07-28 and 2026-09-02)
+  predate it, and rehearsal 1 blocked at the earlier arm. Rehearsal 2 was the first
+  time this branch met this check.
+- **No verify case paired the two.** The fixtures use a lower-case `CHUNK-hello-1`
+  title (the gate's branch-shape table), and the envelope id-shape rows covered only
+  C10, C9.1 and 7. Every other consumer already accepts an upper-case id: the
+  validator's `CHUNK_BRANCH`, `prejudge.sh` 333, the schema, the template's
+  `branch-name.sh`, `lane-setup.sh` 130 and `merge-check.sh`.
+- **The gate reads the new shape identically.** `prejudge.sh` 196-198 extracts
+  `CHUNK-HELLO` from `chunk/HELLO-1-…` (the hyphen in the id cannot be recovered from
+  the branch), and `hello-forge` has no `docs/chunks/`, so the checks that need a
+  chunk document skip the same way for either case.
+
+*P33, the code* (epic P33, commit `909da2b`, the first commit of the PR that
+carries this entry). `board-bootstrap.sh --hello` builds `chunk/HELLO-1-greet`
+(the id keeps the title's case) and then appends the suffix as before, so `--hello
+--branch-suffix a2c` names `chunk/HELLO-1-greet-a2c`. The slug stays `greet`;
+`branch_for`'s title slug is not used. The commit touches `hermes/board-bootstrap.sh`
+and `scripts/verify.sh` only: `lane.sh`, `validate-metadata.py`, `prejudge.sh`, the
+verifier, the profiles and the skills are byte-identical, so the runtime a lane
+executes does not change and precondition 2's `profiles-bootstrap.sh` clause does
+not apply.
+- `bootstrap/hello-branch-satisfies-the-envelope-contract` is the producer/consumer
+  case. It runs `--hello` under the stubs, takes the title and the branch the
+  script actually emitted, derives `chunk_id` with the lane's own `sed` (asserted
+  against `lane.sh` so the copy cannot drift), puts both into a completion envelope
+  and requires `validate-metadata.py` to accept it. Put the lower-case literal back
+  and it fails with the production message, `branch: id does not match chunk_id`.
+- `metadata/chunk-id-is-not-digits` gains two rows: `CHUNK-HELLO-1` on
+  `chunk/HELLO-1-greet-a2c` passes and on `chunk/hello-1-greet-a2c` fails.
+  `prejudge/branch-name-reads-real-chunk-ids` gains the `CHUNK-HELLO` row and
+  `template/branch-name-judges-by-argument` the `HELLO-1` name.
+  `bootstrap/hello-branch-takes-the-suffix` and the spent-name seed in
+  `hello-cleans-its-temp-files-on-a-refusal` move to the new case.
+- **Deploy.** Rehearsal 3's R2 runs the deployed script. **Until the deploy the old
+  one builds the lower-case name** and the card would block again after a paid run,
+  with a suffix nobody had used. Hence the check before R2 below.
+- `make verify` at the code commit measured **553 passed / 0 failed / 11 skipped** with
+  `hello-rehearsal-a2b` still live (see *FORGE_SHA and the baseline* below), and
+  `./scripts/verify.sh bootstrap --with-hermes` (an isolated real Hermes) 32 / 0 / 0.
+  The mutation check: with `--hello` put back on the lower-case literal, three bootstrap
+  cases go red (the new one, `hello-branch-takes-the-suffix` and the spent-name seed);
+  restored, they are green.
+
+*Cleanup of rehearsal 2 (R7, arm A), to run BEFORE rehearsal 3.* It is the
+2026-10-27 entry's R7 with this rehearsal's values: `SUF=a2b`, `RB=hello-rehearsal-a2b`,
+`K=2`, the card `t_318f003c`, the tip `093c30c71ff25795ad15882ace7af723911e246f`,
+and PR #7. The branch is read back from the card, so it is the lower-case name the
+card carried. It does not need the P33 deploy and can run now. The failure was
+diagnosed, so R6's "leave everything" is over; its evidence is in `$EV` and pasted
+under *Results*. Run C1 to C6 in one shell; each depends on the
+variables C1 sets. **Each of C1 to C5 is one chained command that prints `STOP:` and
+fails when any step fails, and C1 to C5 set a flag (`C1OK` to `C4OK`) that the later
+blocks require, so a pasted block does not run past a failed precondition. Do not paste
+the next block after a `STOP:`: read what failed.** A block run in a fresh shell finds
+its flag unset and stops. The worktree `$H/.worktrees/t_318f003c` must be clean at the
+tip before anything is archived, because the archive reaps a clean, fully pushed
+worktree (substrate behaviour 1 above).
+
+C1, record and check. Pass: the card id and the branch; `status:` followed by
+nothing; `HEAD:` and `TIP=` both `093c30c71ff25795ad15882ace7af723911e246f`;
+`tip-as-recorded`; `tip-is-remote-head`; `worktree-clean`; `true`; then `C1OK=1`. A
+dirty worktree, a tip that is not the recorded one, or `C1OK=0`: stop, copy the
+worktree's state out, and look.
+```bash
+H="$HOME/dev/hello-forge"; R=wielas/hello-forge; P="$HOME/dev/the-squatfather"; RB=hello-rehearsal-a2b; K=2
+C1OK=0; C2OK=0; C3OK=0; C4OK=0
+EV="$P/.forge/run-a-attempt-2-rehearsal-2"
+ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+BR="$(hermes kanban --board "$RB" show "$ID" --json | jq -r .task.branch_name)"
+WT="$H/.worktrees/$ID"
+echo "$ID $BR"
+git -C "$H" fetch origin
+{ echo "status:"; git -C "$WT" status --porcelain; echo "HEAD: $(git -C "$WT" rev-parse HEAD)"; } | tee "$EV/worktree-before-archive-cleanup.txt"
+TIP="$(git -C "$WT" rev-parse HEAD)"; echo "TIP=$TIP"
+[ -n "$ID" ] && [ -n "$BR" ] &&
+[ "$TIP" = 093c30c71ff25795ad15882ace7af723911e246f ] && echo tip-as-recorded &&
+git -C "$H" ls-remote --heads origin "$BR" | cut -f1 | grep -qx "$TIP" && echo tip-is-remote-head &&
+[ -z "$(git -C "$WT" status --porcelain)" ] && echo worktree-clean &&
+gh pr view 7 --repo "$R" --json state,headRefName,headRefOid | jq -e --arg b "$BR" --arg t "$TIP" '.state == "OPEN" and .headRefName == $b and .headRefOid == $t' &&
+C1OK=1 ||
+{ echo "STOP: C1 did not pass, nothing below may run"; false; }
+echo "C1OK=$C1OK"
+```
+C2, tag the tip and publish the tag through `gh api` (the pre-push hook refuses every
+push made from `main`). Same shell. Pass: `refs/tags/run-a-attempt-2/rehearsal-2`,
+then `tag-at-tip`.
+```bash
+[ "$C1OK" = 1 ] && [ "$TIP" = 093c30c71ff25795ad15882ace7af723911e246f ] &&
+git -C "$H" tag "run-a-attempt-2/rehearsal-$K" "$TIP" &&
+gh api "repos/$R/git/refs" -f ref="refs/tags/run-a-attempt-2/rehearsal-$K" -f sha="$TIP" --jq .ref &&
+git -C "$H" ls-remote --tags origin "run-a-attempt-2/rehearsal-$K" | cut -f1 | grep -qx "$TIP" && echo tag-at-tip &&
+C2OK=1 ||
+{ echo "STOP: C2 did not complete, do not archive or close anything"; false; }
+```
+C3, archive the card first (the merge-watcher sweeps every board every ten minutes,
+and a blocked card whose PR is then closed unmerged would be reported once as a
+decision). Same shell. Needs C1 and C2. Pass: `Archived t_318f003c`, `true`, then
+`worktree-reaped`; if `worktree-still-there` prints instead, C5 removes the worktree.
+```bash
+[ "$C1OK" = 1 ] && [ "$C2OK" = 1 ] &&
+hermes kanban --board "$RB" archive "$ID" &&
+hermes kanban --board "$RB" show "$ID" --json | jq -e '.task.status == "archived"' &&
+C3OK=1 &&
+{ test ! -e "$WT" && echo worktree-reaped || echo worktree-still-there; } ||
+{ echo "STOP: C3 did not complete, do not close the PR"; false; }
+```
+C4, close PR #7 (arm A). The close runs in a subshell in `$P`, a directory that is
+not `$H`, so that `--delete-branch` deletes the remote branch only. Same shell. Needs
+C3. The guard refuses any PR number but 7. Pass: `PR 7`, gh's two confirmation lines,
+`true`, then `remote-branch-gone`.
+```bash
+N="$(gh pr list --repo "$R" --head "$BR" --state open --json number -q '.[0].number')"; echo "PR $N"
+[ "$C3OK" = 1 ] && [ "$N" = 7 ] &&
+(cd "$P" && gh pr close "$N" --repo "$R" --delete-branch --comment "Run A attempt 2 rehearsal $K: verdict recorded, closed unmerged.") &&
+gh pr view "$N" --repo "$R" --json state | jq -e '.state == "CLOSED"' &&
+[ -z "$(git -C "$H" ls-remote --heads origin "$BR")" ] && echo remote-branch-gone &&
+C4OK=1 ||
+{ echo "STOP: C4 did not complete, do not remove the worktree, branch or board"; false; }
+```
+C5, the worktree if C3 left it, the local branch, the prune, and the board. Same
+shell. Needs C2 and C4. `worktree remove` runs without `--force`; if it refuses, the
+block stops there and the board stays. `boards rm` runs only after the worktree and the
+local branch are gone and the prune has succeeded, and it is a soft move under
+`boards/_archived/`; never `--delete`. Pass: the branch's SHA and `Deleted branch
+chunk/hello-1-greet-a2b (was 093c30c).` (nothing for the worktree when it was reaped),
+then the board move.
+```bash
+[ "$C2OK" = 1 ] && [ "$C4OK" = 1 ] &&
+{ [ ! -e "$WT" ] || git -C "$H" worktree remove ".worktrees/$ID"; } &&
+{ ! git -C "$H" rev-parse --verify --quiet "refs/heads/$BR" || git -C "$H" branch -D "$BR"; } &&
+git -C "$H" fetch --prune origin &&
+hermes kanban boards rm "$RB" ||
+{ echo "STOP: C5 did not complete, the board was not moved"; false; }
+```
+C6, confirm the state rehearsal 3 assumes. Same shell. Pass, in order: `##
+main...origin/main` and nothing else; `$H` alone; `refs/heads/main` alone; the tags
+`run-a-attempt-2/rehearsal-1` at `46fabde…` and `run-a-attempt-2/rehearsal-2` at
+`093c30c…`; nothing from the branch list; `false`.
+```bash
+git -C "$H" status -sb
+git -C "$H" worktree list
+git -C "$H" ls-remote --heads origin
+git -C "$H" ls-remote --tags origin 'run-a-attempt-2/*'
+git -C "$H" branch --list 'chunk/*'
+hermes kanban boards list --all --json | jq --arg s "$RB" 'any(.[]; .slug == $s and (.archived | not))'
+```
+If `status -sb` shows `?? .worktrees/`, something is still in that directory: `ls -A
+"$H/.worktrees"`, and stop. Then the replacement precondition 8 of the 2026-10-27
+entry, unchanged; it must print nothing.
+
+*Why rehearsal 3 takes a new suffix, though the code is fixed.* On a case-insensitive
+APFS volume `chunk/hello-1-greet-a2b` and `chunk/HELLO-1-greet-a2b` are the same
+file under `.git/refs/heads`, so a local branch of one name collides with the
+other, while GitHub treats them as two names and the guard would call the second
+`free`. `a2b` is spent twice over: by PR #7 and by this collision. C5 deletes the
+local branch anyway; rehearsal 3 uses **`a2c`**, with the branch `chunk/HELLO-1-greet-a2c`.
+
+*Rehearsal 3.* The 2026-10-27 entry's R0 to R7 apply with these values, except
+where this entry restates a block. The variables become `SUF=a2c`,
+`RB=hello-rehearsal-a2c`, `BR=chunk/HELLO-1-greet-$SUF` (upper-case) and the evidence
+directory `$P/.forge/run-a-attempt-2-rehearsal-3`. **Every block of the 2026-10-27
+entry whose first line sets `BR="chunk/hello-1-greet-$SUF"` (R0, R2, R3 and R7 step
+1) is restated below; none of them may be pasted as written.** The blocks that depend
+on those (R4's, R6's, R7 steps 2 to 6) read `$BR` and stand. R1 is not repeated and
+R5 stands. Rehearsal 2's cleanup (C1 to C6) and the P33 deploy come first.
+
+*The deployed script knows the hello branch.* Run before R2. Pass: `1`, then a number
+greater than 0, then `runtime=main`. After the PR merges, precondition 2 is re-run
+(`git -C ~/dev/forge-runtime pull --ff-only`, then this).
+```bash
+grep -c -- 'finish_branch CHUNK-HELLO-1 chunk/HELLO-1-greet' ~/.forge/repo/hermes/board-bootstrap.sh
+grep -c -- '--branch-suffix' ~/.forge/repo/hermes/board-bootstrap.sh
+test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse HEAD)" && echo runtime=main
+```
+
+- **R0 (supersedes the 2026-10-27 R0 block).** Run the replacement precondition 8
+  with `SKIP=-` first. Then:
+  ```bash
+  SUF=a2c; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-3"; mkdir -p "$EV"
+  hermes gateway status | sed -n 2,3p
+  hermes kanban boards list --all --json | jq --arg s "$RB" 'any(.[]; .slug == $s)'
+  hermes kanban assignees --json | jq -e 'map(select(.name | IN("forge-codex-lane","forge-verifier")) | select(.on_disk)) | length == 2'
+  git -C "$H" fetch origin
+  git -C "$H" branch --show-current
+  git -C "$H" status --porcelain
+  git -C "$H" merge-base --is-ancestor HEAD origin/main && echo ancestor-ok
+  git -C "$H" diff --stat 582455c origin/main
+  test ! -e "$H/src/hello_forge/greet.py" && echo greet-absent
+  gh pr list --repo "$R" --head "$BR" --state all --json number
+  git -C "$H" ls-remote --heads origin "$BR"
+  git -C "$H" ls-remote --heads origin
+  git -C "$H" branch --list 'chunk/*'
+  git -C "$H" worktree list
+  ```
+  Expected, in order: launchd; `false` (after a refused bootstrap the empty board
+  exists and this reads `true`, which is then expected); `true`; `main`; nothing;
+  `ancestor-ok`; nothing; `greet-absent`; `[]`; nothing; `refs/heads/main` alone;
+  nothing; `$H` alone. The last three are new: they are C6's reading, taken again
+  at the start so that a leftover `chunk/hello-1-greet-a2b` ref cannot collide with
+  the new name. `$H` is on `main`, clean, equal to `origin/main` (`81d9b23`), and
+  `status --porcelain` must print nothing again just before R2.
+- **R2 (supersedes the 2026-10-27 R2 blocks).** After the deployed-script check:
+  ```bash
+  SUF=a2c; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-3"
+  cd "$H" && ~/.forge/repo/hermes/board-bootstrap.sh "$RB" --hello --branch-suffix "$SUF"; echo "bootstrap exit=$?"
+  ```
+  It must print `free     chunk/HELLO-1-greet-a2c`, create the card, and print
+  `bootstrap exit=0`. Then, in the same shell, read the card back before the next
+  dispatch tick. The first check pins the card's branch to the upper-case `$BR`; the
+  second is the check that would have caught rehearsal 2 before the paid run: the
+  card's branch must begin `chunk/` plus the id the lane will derive from the card's
+  title, and a hyphen, which is the validator's own rule.
+  ```bash
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"; echo "$ID"
+  hermes kanban --board "$RB" show "$ID" --json | jq -e --arg b "$BR" '.task | .assignee == "forge-codex-lane" and .workspace_kind == "worktree" and .branch_name == $b and .max_retries == 1 and .skills == ["forge-lane"]'
+  hermes kanban --board "$RB" show "$ID" --json | jq -e '.task | (.title | capture("^CHUNK-(?<id>[A-Za-z0-9][A-Za-z0-9._-]*)").id) as $i | .branch_name | startswith("chunk/" + $i + "-")'
+  ```
+  Expected: the card id, then `true`, then `true`. A refused bootstrap (exit 3 or 2)
+  is handled as the 2026-10-27 entry says, with `SUF` set in the first line of every
+  block that has one.
+- **R3 (supersedes the 2026-10-27 R3 block, and its `watch` and `tail`).** Rehearsal
+  2 found that `hermes kanban watch` and `tail -f` never exit, so no pass check may
+  hang on them. The wait is a poll with a ceiling: every 150 s for at most 36 polls,
+  which is 90 minutes. It stops early when a verifier run has ended (`DONE=1`), when
+  the card is `blocked` (`DONE=2`), or when the card is `done` or `archived`
+  without a finished verifier run (`DONE=3`; Hermes has no `failed` status, so a card
+  that ended without the verifier would otherwise spin to the ceiling). In the second
+  terminal:
+  ```bash
+  SUF=a2c; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-3"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  T0=$(date +%s); DONE=0
+  for i in $(seq 1 36); do
+    J="$(hermes kanban --board "$RB" show "$ID" --json)"
+    printf '%s min  ' "$(( ($(date +%s) - T0) / 60 ))"
+    printf '%s\n' "$J" | jq -r '[.task.status, (.events | last | .kind), "verifier runs: \([.runs[] | select(.profile == "forge-verifier")] | length)"] | @tsv'
+    printf '%s\n' "$J" | jq -e '[.runs[] | select(.profile == "forge-verifier")] | last | .ended_at != null' >/dev/null && { DONE=1; break; }
+    printf '%s\n' "$J" | jq -e '.task.status == "blocked"' >/dev/null && { DONE=2; break; }
+    printf '%s\n' "$J" | jq -e '.task.status | IN("done","archived")' >/dev/null && { DONE=3; break; }
+    sleep 150
+  done
+  echo "DONE=$DONE"
+  hermes kanban --board "$RB" runs "$ID"
+  hermes kanban --board "$RB" log "$ID" | tail -40
+  gh pr list --repo "$R" --head "$BR" --state all
+  [ "$DONE" = 1 ] && echo "R3 poll: a verifier run ended, R4 decides" || { echo "STOP: R3 poll ended with DONE=$DONE, read the prose before R4"; false; }
+  ```
+  **Pass: `DONE=1`, then the last line `R3 poll: a verifier run ended, R4 decides`, and
+  the block's exit status is 0** (the final check, not the `gh pr list` before it,
+  sets it). **`DONE=1` means a verifier run ended, not that the verdict was good:**
+  R4's checks decide. Each poll prints the elapsed minutes, the card's status, its last
+  event and the verifier's run count. `DONE=2` is a card blocked: it is R6's case (read
+  the block reason in `show`; an `other:` reason is a stop). `DONE=3` is a card
+  `done` or `archived` that no verifier run finished: R4's first check is unmet, and it
+  is R6's case too. `DONE=0` is the ceiling, 90 minutes with none of these: R6's case
+  as well, unless the log's tail shows a Codex usage-limit park (a park keeps the card
+  `running` and resumes itself, as *Stop rules* says), in which case re-run this block,
+  which polls again from the start. The ceiling is 90 minutes and not the 60 of the
+  2026-10-26 entry's R3: a hold takes the verifier's CI wait of up to ten minutes after
+  a lane run of two to four, and 90 gives a park room to be seen. `runs`, `log` and
+  `gh pr list` end on their own. The lane opens the PR from `$BR`.
+- **R4's wait (supersedes the `until` loop in the 2026-10-27 R4 block).** That loop
+  had no ceiling. R3's poll has waited for the verifier's run to end, so the wait
+  here is only the two minutes for its session to be flushed. Run R4 in the same
+  shell as R3:
+  ```bash
+  sleep 120
+  N="$(gh pr list --repo "$R" --head "$BR" --state open --json number -q '.[0].number')"; echo "PR $N"
+  ```
+  Every other R4 block, the 2026-10-27 `gh pr view` pair included, stands. It is the
+  first time the hand-off leg, the verifier's claim and its verdict through the tool
+  path are asserted on this attempt.
+- **R6.** The evidence copy and the rule stand. The rerun sentence now reads: a rerun
+  after a repair is merged and deployed needs a new board and a new, never-used
+  suffix, **`a2d`** with `hello-rehearsal-a2d`, then `a2e`. `a2b` and `a2c` are
+  spent. R7 on the failed run still comes first.
+- **R7 step 1 (supersedes the 2026-10-27 block).** `K` is 3 and the evidence
+  directory is rehearsal 3's:
+  ```bash
+  SUF=a2c; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-3"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  K=3; WT="$H/.worktrees/$ID"
+  git -C "$H" fetch origin
+  if [ -e "$WT" ]; then
+    { echo "status:"; git -C "$WT" status --porcelain; echo "HEAD: $(git -C "$WT" rev-parse HEAD)"; } | tee "$EV/worktree-before-archive.txt"
+    TIP="$(git -C "$WT" rev-parse HEAD)"
+  else
+    echo worktree-absent | tee "$EV/worktree-before-archive.txt"
+    TIP="$(git -C "$H" ls-remote --heads origin "$BR" | cut -f1)"
+  fi
+  echo "TIP=$TIP"
+  ```
+  Steps 2 to 6 stand, in the same shell. Step 6's expected reading gains a tag: the
+  tags are `run-a-attempt-2/rehearsal-1` at `46fabde…`, `rehearsal-2` at `093c30c…`,
+  and `rehearsal-$K` at `$TIP`.
+- **No block of rehearsal 3 hard-codes the lower-case form.** Each sets `BR` from
+  `SUF` with the upper-case id, R2 pins the card's branch to it, and R2's second
+  check relates it to the title.
+
+*Order before `RUN_START` (supersedes the 2026-10-27 order).* Cleanup C1 to C6; this
+PR merged and deployed, with the check above; precondition 3 re-measured on the
+deployed `main`; 4, 5 (the edit waits), 6 and the replacement 8; **rehearsal 3**
+(R0 to R7 as restated); 7 (commission); the disposition of `t_da03d07a` (T1 to T4);
+then *Launch*. A failed rehearsal still costs no commission probe. Run A's own
+branches come from `branch_for` and keep the case of numeric ids; this entry does
+not change them.
+
+*P29, a further instance.* The digest renders rehearsal 2's block as "Risk: unknown":
+the reason begins `other:`, `class_decision other` answers "unknown — the card holds
+until someone looks", and the card's cause is known and specific. It is P29's
+symptom again: rehearsal 1's `t_412a7d2c` and the dead attempt-1 card `t_da03d07a`
+are already listed, and this card is a further instance. P29's entry in the epic
+records it. P29 stays parked until after run A.
+
+*FORGE_SHA and the baseline.* Following the 2026-10-27 entry:
+- **`FORGE_SHA` is the merge commit of the PR that carries this entry** (squash, so
+  not `909da2b`), or a later `main` if more PRs land first. It is not `841b81b`,
+  the 2026-10-27 entry's merge commit, whose `board-bootstrap.sh` names the lower-case
+  hello branch. The launch record's `FORGE_SHA` is whatever `git -C ~/.forge/repo
+  rev-parse HEAD` prints at *Launch* step 2, and it must equal `git -C ~/dev/forge
+  rev-parse HEAD`.
+- *Inputs*' **Forge runtime** row reads "this PR's merge commit, or a later `main`".
+  Its baseline, **551 / 0 / 11** in the 2026-10-27 entry, is restated here as
+  **failed 0, skipped 11, passed = 552 + one per extra live board under
+  `~/.hermes/kanban/boards` (not `_archived`)**. The 552 is the reading after C1 to C6,
+  which move `hello-rehearsal-a2b` out: the 551, plus the new case. It reads 553 again
+  while `hello-rehearsal-a2c` is live (rehearsal 3), because
+  `metrics/live-schema-has-fixture-columns` has one row per live board. The total
+  follows the boards and is not a property of the code; this entry changes no check.
+  The live-board count, in the same terms as that check:
+  ```bash
+  find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " "
+  ```
+  Precondition 3 is still re-measured on the deployed `main`, and the operator records
+  this count next to the reading in the launch record. On the dev machine on
+  2026-10-28 it printed 8 with `a2b` live, so 7 after C5 is the 552 case.
+- `PRODUCT_SHA` stays `b66be28`.
+
+*Decisions this entry makes that the operator may overrule before rehearsal 3.*
+- The branch keeps the title's case (`chunk/HELLO-1-greet`). The alternative, a
+  lower-case title id, would have changed the card and made `--hello` disagree with
+  `branch_for`; the validator, not the bootstrap, owns the rule.
+- R3's ceiling is 90 minutes, not 60, and R4's `until` loop is replaced by R3's.
+- Rehearsal 2's evidence stays in `run-a-attempt-2-rehearsal-2`; rehearsal 3 has its
+  own directory.

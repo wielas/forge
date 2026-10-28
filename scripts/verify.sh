@@ -2467,6 +2467,7 @@ run_template_group() {
   local bn="$dest/scripts/branch-name.sh" bn_ok=1 got
   for probe in "main:0" "chunk/7-render-report:0" "chunk/12-a-b-c:0" "HEAD:0" \
                "chunk/C6-breadth-sources:0" "chunk/hello-1-greet:0" \
+               "chunk/HELLO-1-greet-a2c:0" \
                "chunk/C7.1-mirror-and-migration-hardening:0" \
                "chunk/8:1" "chunk/6:1" "slice/foo:1" "chunk/7-Render:1" \
                "chunk/7--foo:1"; do
@@ -2477,7 +2478,7 @@ run_template_group() {
       bn_ok=0; break
     fi
   done
-  [ "$bn_ok" = 1 ] && ok "branch-name-judges-by-argument (12 names, the CI path)"
+  [ "$bn_ok" = 1 ] && ok "branch-name-judges-by-argument (13 names, the CI path)"
 
   # `make check` is the verdict forge-lane §5 trusts in place of Codex's word,
   # so it must not be able to answer from a cache. Measured 2026-07-28: a lane
@@ -2737,7 +2738,8 @@ bootstrap/reconciliation-is-mode-scoped root-only checks its created set while f
 bootstrap/generated-branch-names-pass-the-branch-name-rule  the branch board-bootstrap.sh generates is accepted by branch-name.sh itself
 bootstrap/suffix-lands-after-the-slug-cap  --branch-suffix goes on after the slug cap (literal CHUNK-1 name, a 48-letter capped slug, a 32-character suffix); no suffix leaves names unchanged
 bootstrap/suffixed-names-pass-the-branch-name-rule  every suffixed name is accepted by the product's own branch-name.sh
-bootstrap/hello-branch-takes-the-suffix  --hello with --branch-suffix a2b names chunk/hello-1-greet-a2b; without it, chunk/hello-1-greet
+bootstrap/hello-branch-takes-the-suffix  --hello with --branch-suffix a2b names chunk/HELLO-1-greet-a2b; without it, chunk/HELLO-1-greet
+bootstrap/hello-branch-satisfies-the-envelope-contract  the title and branch --hello emits, put into a completion envelope the way the lane builds one, pass validate-metadata.py
 bootstrap/invalid-suffix-is-refused-before-any-write  capitals, a leading dash, a slash, ... exit 1 before any Hermes command or gh call
 bootstrap/guard-refuses-pr-closed      a card whose branch has a CLOSED PR is refused (exit 3, no card); a never-used suffix is created
 bootstrap/guard-refuses-pr-merged      the same for a MERGED PR
@@ -5583,21 +5585,62 @@ EOF2
   local hel="$TMPROOT/bootstrap-hello" hel_detail=""
   _bootstrap_fixture "$hel" normal; _bootstrap_product "$hel"
   out="$(_bootstrap_runx "$hel" --hello --branch-suffix a2b 2>&1)"; rc=$?
-  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/hello-1-greet-a2b' ] \
+  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/HELLO-1-greet-a2b' ] \
     || hel_detail="$hel_detail suffixed(exit $rc, got '$(cat "$hel/state/branches.txt" 2>/dev/null)')"
   _bootstrap_fixture "$hel" normal; _bootstrap_product "$hel"
   out="$(_bootstrap_runx "$hel" --hello 2>&1)"; rc=$?
-  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/hello-1-greet' ] \
+  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/HELLO-1-greet' ] \
     || hel_detail="$hel_detail unsuffixed(exit $rc, got '$(cat "$hel/state/branches.txt" 2>/dev/null)')"
   # --branch-suffix is a flag, not a mode: it may come first.
   _bootstrap_fixture "$hel" normal
   out="$(_bootstrap_runx "$hel" --branch-suffix a2b --hello 2>&1)"; rc=$?
-  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/hello-1-greet-a2b' ] \
+  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/HELLO-1-greet-a2b' ] \
     || hel_detail="$hel_detail flag-first(exit $rc)"
   if [ -z "$hel_detail" ]; then
-    ok "hello-branch-takes-the-suffix (chunk/hello-1-greet-a2b; no suffix unchanged)"
+    ok "hello-branch-takes-the-suffix (chunk/HELLO-1-greet-a2b; no suffix unchanged)"
   else
     bad "hello-branch-takes-the-suffix" "the --hello branch is a literal:$hel_detail"
+  fi
+
+  # -- the hello card's title and branch satisfy the envelope contract ------------
+  # The producer/consumer pair that was never checked together. board-bootstrap
+  # --hello makes the card title and the branch; scripts/lane.sh derives
+  # `chunk_id` from that title (the sed below is lane.sh's own, asserted against
+  # it so this copy cannot drift) and records the branch the worktree is on;
+  # validate-metadata.py then requires the branch to start `chunk/<chunk_id>-`,
+  # CASE-SENSITIVELY. `--hello` named `chunk/hello-1-greet-…` under the title
+  # `CHUNK-HELLO-1:` from 2026-07-27, and the check was digits-only until
+  # 2026-09-01, so it surfaced on hello-forge as a block at the hand-off, after
+  # a paid Codex run and an open PR. The expected values are NOT written here:
+  # both come out of the stubbed run.
+  local hec="$TMPROOT/bootstrap-hello-contract" hec_detail="" hec_title hec_branch hec_id hec_sed
+  hec_sed="s/^\(CHUNK-[A-Za-z0-9][A-Za-z0-9._-]*\).*/\1/p"
+  if ! command -v uv >/dev/null 2>&1; then
+    skip "hello-branch-satisfies-the-envelope-contract" "uv not on PATH; cannot run the pinned jsonschema validator"
+  else
+    grep -Fq "sed -n '$hec_sed'" "$REPO_ROOT/scripts/lane.sh" \
+      || hec_detail="$hec_detail lane.sh-no-longer-derives-chunk_id-with-this-sed"
+    grep -Fq 'CHUNK_ID="${CHUNK_ID%.}"' "$REPO_ROOT/scripts/lane.sh" \
+      || hec_detail="$hec_detail lane.sh-no-longer-strips-a-trailing-dot-from-chunk_id"
+    _bootstrap_fixture "$hec" normal; _bootstrap_product "$hec"
+    out="$(_bootstrap_runx "$hec" --hello --branch-suffix a2c 2>&1)"; rc=$?
+    hec_title="$(cut -f4 "$hec/state/creates.tsv" 2>/dev/null | head -1)"
+    hec_branch="$(cat "$hec/state/branches.txt" 2>/dev/null | head -1)"
+    hec_id="$(printf '%s' "$hec_title" | sed -n "$hec_sed")"; hec_id="${hec_id%.}"
+    [ "$rc" = 0 ] && [ -n "$hec_title" ] && [ -n "$hec_branch" ] && [ -n "$hec_id" ] \
+      || hec_detail="$hec_detail stub-run(exit $rc, title '$hec_title', branch '$hec_branch', id '$hec_id')"
+    if [ -z "$hec_detail" ]; then
+      jq --arg c "$hec_id" --arg b "$hec_branch" '.chunk_id=$c | .branch=$b' \
+         "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json" > "$hec/envelope.json"
+      uv run --quiet --locked --script "$REPO_ROOT/scripts/validate-metadata.py" \
+         --profile forge-codex-lane "$hec/envelope.json" > "$hec/validate.out" 2>&1 \
+        || hec_detail="$hec_detail refused($hec_id on $hec_branch: $(grep -vE '^[[:space:]]*$' "$hec/validate.out" | tail -1))"
+    fi
+    if [ -z "$hec_detail" ]; then
+      ok "hello-branch-satisfies-the-envelope-contract ($hec_id on $hec_branch passes validate-metadata.py)"
+    else
+      bad "hello-branch-satisfies-the-envelope-contract" "the title and branch --hello emits do not pass the lane's own envelope check:$hec_detail"
+    fi
   fi
 
   # -- an invalid suffix never reaches the board --------------------------------
@@ -5820,7 +5863,7 @@ EOF2
   hlk_tmp="$TMPROOT/bootstrap-hello-leak-tmp"; rm -rf "$hlk_tmp"; mkdir -p "$hlk_tmp"
   printf '#!/bin/sh\nexec /usr/bin/mktemp "$HLK_TMP/tmp.XXXXXXXX"\n' > "$hlk/bin/mktemp"
   chmod +x "$hlk/bin/mktemp"
-  _bootstrap_spend "$hlk" chunk/hello-1-greet 1:MERGED
+  _bootstrap_spend "$hlk" chunk/HELLO-1-greet 1:MERGED
   out="$(cd "$hlk" && HLK_TMP="$hlk_tmp" STUB_STATE="$hlk/state" PATH="$hlk/bin:$PATH" "$bootstrap" stage --hello 2>&1)"; rc=$?
   [ "$rc" = 3 ] || hlk_detail="$hlk_detail spent(exit $rc)"
   [ -z "$(ls -A "$hlk_tmp")" ] || hlk_detail="$hlk_detail spent-leaked($(ls -A "$hlk_tmp" | tr '\n' ' '))"
@@ -7523,6 +7566,8 @@ run_metadata_group() {
     "chunk:CHUNK-C10:chunk/C10-instance-paths:0" \
     "chunk:CHUNK-C9.1:chunk/C9.1-pipeline-observability:0" \
     "chunk:CHUNK-7:chunk/7-sync-engine:0" \
+    "chunk:CHUNK-HELLO-1:chunk/HELLO-1-greet-a2c:0" \
+    "chunk:CHUNK-HELLO-1:chunk/hello-1-greet-a2c:1" \
     "chunk:CHUNK-C10:chunk/C9.1-pipeline-observability:1" \
     "chunk:CHUNK-7:chunk/8-sync-engine:1" \
     "gate:CHUNK-C10:chunk/C10-instance-paths:0" \
@@ -7546,7 +7591,7 @@ run_metadata_group() {
     fi
   done
   [ "$ids_ok" = 1 ] \
-    && ok "chunk-id-is-not-digits (7 envelopes: C10, C9.1 and 7 accepted, mismatched ids still refused)"
+    && ok "chunk-id-is-not-digits (9 envelopes: C10, C9.1, 7 and HELLO-1 accepted, mismatched ids and a lower-cased HELLO-1 still refused)"
 
   if metadata_validate --profile forge-codex-lane "$fixtures/chunk-additive.json"; then
     ok "allows-additive-hermes-keys (changed_files/tests_run stay siblings)"
@@ -8082,6 +8127,9 @@ run_prejudge_group() {
   # branch separator IS a hyphen — so `chunk/hello-1-greet` yields `CHUNK-hello`
   # and its contract checks skip naming that id. The branch is still correctly
   # named; the grammar simply reads `hello` as the id and `1-greet` as the slug.
+  # `--hello` now emits `chunk/HELLO-1-greet-<s>` under the title `CHUNK-HELLO-1:`
+  # (the branch keeps the id's case, which is the rule the envelope validator
+  # enforces), and the gate derives `CHUNK-HELLO` from it for the same reason.
   #
   # Columns: branch | PR title | status | substring the action must carry | .chunk
   local bfx="$TMPROOT/branch-shapes" b t want_status want_act want_chunk
@@ -8115,6 +8163,7 @@ run_prejudge_group() {
 chunk/C10-instance-paths|CHUNK-C10: instance paths and second instance|pass||CHUNK-C10
 chunk/C9.1-pipeline-observability|CHUNK-C9.1: pipeline observability|pass||CHUNK-C9.1
 chunk/hello-1-greet|CHUNK-hello-1: greet the world|pass||CHUNK-hello
+chunk/HELLO-1-greet-a2c|CHUNK-HELLO-1: Add greet(name) with a BDD scenario|pass||CHUNK-HELLO
 chunk/7-render-report|CHUNK-7: render the report|pass||CHUNK-7
 chunk/C10|CHUNK-C10: instance paths and second instance|block|chunk/C10-instance|CHUNK-C10
 chunk/C7.1-Mirror|CHUNK-C7.1: mirror and migration hardening|block|chunk/C7.1-mirror|CHUNK-C7.1
@@ -8123,7 +8172,7 @@ slice/foo|CHUNK-C10: instance paths and second instance|block|chunk/C10-instance
 planning/lifecycle|planning: the chunk lifecycle|skip||null
 SHAPES
   [ "$shapes_ok" = 1 ] \
-    && ok "branch-name-reads-real-chunk-ids (9 shapes: verdict, repair action and derived id)"
+    && ok "branch-name-reads-real-chunk-ids (10 shapes: verdict, repair action and derived id)"
 
   # The head contract is still the source for the ordinary `touches` check.
   # Comparing it with the recorded base contract adds a second, independent

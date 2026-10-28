@@ -424,8 +424,12 @@ was created, so pick a suffix nothing has used; **2** it could not ask (`gh`,
 for that chunk is already on the board with a different branch, because the suffix
 differs from the one the board was started with; **1** usage, a bad suffix or any
 other FATAL. Pass the same suffix on every run of one board. `--hello` is a
-product too: `chunk/hello-1-greet` is spent after its first run, so it needs a
-suffix every time.
+product too: its branch is `chunk/HELLO-1-greet`, spelled with the title's
+`HELLO-1` because the lane's envelope check compares the branch to the card title's
+id case-sensitively (a lower-case `hello-1` is refused at the hand-off, after the
+paid run), and the name is spent after its first run, so it needs a suffix every
+time (`--branch-suffix a2c` gives `chunk/HELLO-1-greet-a2c`). Two spellings of one
+name that differ only by case collide as local refs on a case-insensitive volume.
 
 Full mode reuses the existing root mapping and creates each remaining card with
 all of its parent ids in the same Hermes transaction. Its final reconciliation

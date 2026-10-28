@@ -32,7 +32,7 @@ usage() {
 usage: board-bootstrap.sh <board> [full|--root-only|--hello] [--branch-suffix <s>]
 
   --branch-suffix <s>  append -<s> to the branch of every lane card this run
-                       creates (chunk/<id>-<slug>-<s>; --hello: chunk/hello-1-greet-<s>).
+                       creates (chunk/<id>-<slug>-<s>; --hello: chunk/HELLO-1-greet-<s>).
                        <s> is a lowercase slug, ^[a-z0-9]+(-[a-z0-9]+)*$, at most 32
                        characters. GitHub keeps a PR tied to its head branch name
                        for ever, and the lane BLOCKS on a CLOSED or MERGED PR only
@@ -502,7 +502,8 @@ create_interactive_card() {  # $1=title $2=bodyfile $3=idempotency-key [--parent
 # a CLOSED or MERGED one — after the paid Codex run, the green `make check` and
 # the push. A card handed a spent name therefore costs a whole run and halts.
 # Run A attempt 1 left CLOSED PR #2 on `chunk/1-store-owner-history-in-a-migrated-
-# sqlite`, and `--hello`'s fixed `chunk/hello-1-greet` already had three MERGED
+# sqlite`, and `--hello`'s fixed `chunk/hello-1-greet` (now `chunk/HELLO-1-greet`:
+# the id keeps the title's case) already had three MERGED
 # ones; the last rehearsal died on exactly that. So before any card is created
 # this asks GitHub about every branch it is about to hand out.
 #
@@ -631,7 +632,7 @@ if [ "$MODE" = "--hello" ]; then
 - **Lane:** forge-codex-lane · **Risk:** low
 EOF
   hello_title="CHUNK-HELLO-1: Add greet(name) with a BDD scenario"
-  hello_branch="$(finish_branch CHUNK-HELLO-1 chunk/hello-1-greet)" || exit 1
+  hello_branch="$(finish_branch CHUNK-HELLO-1 chunk/HELLO-1-greet)" || exit 1
   hello_queue="$(mktemp)"
   printf '%s\t%s\n' "$hello_branch" "$hello_title" > "$hello_queue"
   run_guard "$hello_queue"
