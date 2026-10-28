@@ -22,8 +22,11 @@ BOARD=product-slug
 
 make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
 make commission PROJECT="$PROJECT" BOARD="$BOARD"   # paid; must be green
-(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only --branch-suffix "$SUF")
 ```
+
+`SUF` is a lowercase slug no run has used on this product before; see *Branch
+names are spent* below.
 
 After the root PR merges, run the post-`RUN_START` metadata and metrics checks
 described below. Stop on invalid or unjudged metadata. Only a green checkpoint
@@ -390,7 +393,8 @@ commissioning is green, create only its root card:
 ```bash
 PROJECT=$HOME/dev/my-project
 BOARD=my-project
-(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only)
+SUF=a1
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only --branch-suffix "$SUF")
 ```
 
 `--root-only` checks the complete graph before its first Hermes command: ids and
@@ -405,8 +409,23 @@ roadmap. Stop on red or unjudged evidence. Only after it is green, extend the
 same board with the rest of the graph:
 
 ```bash
-(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD")
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --branch-suffix "$SUF")
 ```
+
+**Branch names are spent.** GitHub keeps a PR tied to its head branch name for
+ever, and the lane blocks on a CLOSED or MERGED PR only after the paid run.
+`--branch-suffix <s>` appends `-<s>` to every lane card's branch (a lowercase slug,
+at most 32 characters; interactive cards and gates carry no branch). Before it
+creates any card the bootstrap asks GitHub (`gh pr list --state all --head`) and
+`origin` about each branch, so the project needs a GitHub `origin`. Exit codes:
+**3** a branch is spent (a PR in any state, or a branch on the remote) and no card
+was created, so pick a suffix nothing has used; **2** it could not ask (`gh`,
+`origin` or the board unreadable), which is not the same as "free"; **4** a card
+for that chunk is already on the board with a different branch, because the suffix
+differs from the one the board was started with; **1** usage, a bad suffix or any
+other FATAL. Pass the same suffix on every run of one board. `--hello` is a
+product too: `chunk/hello-1-greet` is spent after its first run, so it needs a
+suffix every time.
 
 Full mode reuses the existing root mapping and creates each remaining card with
 all of its parent ids in the same Hermes transaction. Its final reconciliation

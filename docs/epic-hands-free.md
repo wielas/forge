@@ -740,7 +740,7 @@ closes.
 | S6b | P13 *(promoted at S6's close)*. *Done when (**proposed at S6b's opening — neither the row nor P13 had one**): the digest's waiting list skips a `blocked` card whose last block reason is the bootstrap's interactive hold while any parent is not `done` or `archived`, and lists it as before once all are; that reason is one string both scripts source, and what the bootstrap really writes is checked against it; `digest/fixture-message-exact`'s expected text is unchanged; and every new case has been seen red against its defect. **Closed 2026-10-01: met.** Measured first on Hermes 0.21.5 in an isolated `HERMES_HOME`: the hold survives `link`, and `main`'s digest listed the chunk while its only parent was `ready`. Three cases, all red before the fix: `digest/an-interactive-chunk-speaks-only-when-its-parents-are-done` (CHUNK-5's two parents, with four controls), `bootstrap/interactive-hold-is-the-reason-the-digest-skips`, and the opt-in `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. Eight mutants each reddened their case. `make verify` went from 486 / 0 / 10 to 488 / 0 / 11; the extra skip is the opt-in case. One discovery, P16.* | M1's human chunk, CHUNK-5, has parents, so without it the digest lists it as waiting on the operator from run A's first day | done | #82 |
 | S6c | P16, P21 *(promoted at S7's opening)*. *Done when (**proposed at S7's opening**): a human-tier chunk handed off through `lane-handoff.sh` can be bounced. The kernel records an implementer, so `request-changes` lands the card `ready` on the non-spawnable `forge-operator-handoff`. `bounce.sh` accepts that sentinel as a human chunk's implementer. A bounced human chunk is listed under "waiting on you". Its interactive hold renders decision-first rather than as `other`. Every new case is seen red against its defect, and the human-handoff bounce runs on the installed kernel. **Closed 2026-10-02: met.** `lane-handoff.sh` gives an unassigned card `forge-operator-handoff` before it unblocks it, so the kernel records an implementer. `bounce.sh` accepts the sentinel as a human chunk's implementer and reports "back with the operator". The digest lists a returned human chunk under "waiting on you" (`returned:`), not in flight. `INTERACTIVE_HOLD_REASON` is a decision-first `interactive:` message. Three new cases, and `lane/lane-handoff-is-fail-closed` widened: `verifier/a-human-chunk-can-be-bounced` runs the whole loop on the installed kernel in an isolated `HERMES_HOME`, with the real scripts and the card the bootstrap makes; `digest/an-interactive-hold-is-decision-first`; `digest/a-returned-human-chunk-waits-on-you`. Six mutants, one per fix, each reddened exactly the cases it targets. With the sentinel left off, the real-kernel case fails with P21's own `handoff-integrity` refusal. The opt-in `bootstrap --with-hermes` is 16 / 0 / 0 with the new hold. `make verify` went from 506 / 0 / 11 (`main` @ `5989f1c`) to 509 / 0 / 11. Folded in at the opening: two `docs/run-a.md` defects found by #85's review. One discovery, P23, folded in at the close as a one-line `docs/run-a.md` fix.* | Run A's seeded defect goes through CHUNK-5, the human chunk. Today any verifier bounce of a human chunk strands it as `other: handoff-integrity`, and its hold reads "risk unknown" | done | #86 |
 | S6d | P24 *(promoted at run A attempt 1's halt, 2026-10-03)*. *Done when (**proposed at S6d's opening**; clause 1 corrected at the design review: `bounce.sh` is the operator's tool, not the verifier's): (1) under the fence a real worker's terminal carries — built with Hermes's own `delegated_child_subprocess_env`, never by hand — neither the lane's program (`lane.sh`, `lane-handoff.sh`) nor the verifier's (`prejudge-review.sh`) attempts a board mutation, and each exits with a code distinct from "nothing to do" and an envelope naming exactly one lifecycle tool and its arguments; (2) the lane's program takes its inputs only from what the fenced terminal keeps plus explicit arguments whose source the skill names, and so does the verifier's invocation in its SOUL; (3) on the installed kernel, in an isolated `HERMES_HOME`, performing each envelope's call through Hermes's real worker tool handler, in a dispatcher-granted context, lands the lane's hand-off in `review` on `forge-verifier` with the implementer recorded, a verifier fail `ready` on the recorded implementer, a recommend-only pass `blocked` with the decision-first hold, and a human chunk handed off by the operator still bounceable to `forge-operator-handoff`; (4) `metadata-live.sh`, `make metrics` and the merge-watcher still read what run A measures; (5) the `forge-lane` skill's and the verifier SOUL's exit tables match the programs, and `verify` asserts it; (6) every new case is seen red against its defect, including a restored CLI mutation in worker mode and a read of a scrubbed variable. Baseline at the opening (`main` @ `6ab619f`): 515 / 0 / 12. **Closed 2026-10-04: met.** `lane.sh --task` and `prejudge-review.sh --contract-from-card` never write the board. Each prints one compact `forge.lane.v2` / `forge.review.v2` envelope line naming one lifecycle call (`terminate`, with `on_error`), and the driver makes it verbatim (exit 4 routed, 3 substrate, 2 usage; a real run never exits 0). Both run in the background and are read with `process_manage log`, because a foreground call dies at 420 s and a wait keeps 2000 characters. The run id is read off the card. H1: the lane refuses a review claim. H2: the verifier checks the hand-off against the lane's host copy, redaction-consistently, and checks the PR URL. The verdict is a host file under one state root (`scripts/forge-state.sh`), which the merge-watcher reads first. PARK is a `parked N×` line in the hand-off summary. `forge-verifier` ships an identity-only `sdlc-review` shim (P28). ADR-0010 D10.3 and ADR-0019 carry dated amendments. 18 new cases, each running a real program in the fence that Hermes's own `delegated_child_subprocess_env` builds, then making the envelope's call through the real tool registry in an isolated `HERMES_HOME`. Among them, the SOUL's block and the skill's launch line are executed through the installed `terminal`/`process_manage`. 37 mutants in two rounds, all caught. The two that restore a CLI call are seen only by the argv-log cases, and one survivor (R9) was closed with a case. An independent review asked for changes (F1–F6, S1–S9), and all were made. Folded in at the close: P27 (the terminator pin, which now imports the installed toolset and runs by default) and P28. `make verify` went from 515 / 0 / 12 to 531 / 3 / 11 before deploy. The three reds are the live-profile sync checks (`config/soul-in-sync/forge-codex-lane`, `…/forge-verifier`, `config/skill-shim-in-sync/forge-verifier`), which go green when `profiles-bootstrap.sh` runs. The skip that went is `lane/terminators-match-the-substrate`.* | Run A cannot pass a single handoff until the lane and the verifier end their runs through the worker's own tools | done | #87 |
-| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)*; FL5's precision and its switch *(deferred from S3b; decided below)*. *Opened 2026-10-02. The protocol is `docs/run-a.md`. This row's first PR registers it before launch, and a second PR adds the results at the end of M1. That departs from "one session, one PR" by **the operator's decision at the opening**: the run spans days, and S6c must see its row on `main`. The protocol is frozen at `RUN_START`, as the launch record's `FORGE_SHA`, so S6c and S3b may still edit it. Preconditions: S6c and S3b (#84, rebased) merge and deploy before `RUN_START`. Decided at the opening, before launch:*<br>*– The seeded defect is S-1, which the operator plants in CHUNK-5. Only the scorer's verdict decides whether it was caught. A gate or merged-tree bounce unrelated to the seed voids the attempt.*<br>*– A reporting mutation probe's "would bounce" is not a bounce. S3b defers two things to this row: the probe's precision, measured from the holds, and the operator's decision on its switch at M1's checkpoint. Both read `docs/run-a.md`'s list of each recommended PR's probe verdict beside the operator's judgement of it.*<br>*– FL4's clause is met by drill D-1 on CHUNK-2, declared in advance and excluded from the flip count.*<br>*– Claude Code and Codex are not frozen; they stay current. Run A records the versions it ran on, and a version that moves mid-run is recorded rather than a stop. That amends* Hold still during the epic*. Hermes alone stays held.*<br>*– `GATE-M1` is not completed in run A.*<br>*Done when (**proposed at S7's opening — the row had none**): `docs/run-a.md` is executed to its end state. CHUNK-1 to CHUNK-5 are merged, each on a green PR, and their cards are done. `GATE-M1` has been probed and is still held. S-1 and D-1 are recorded, and seven digests judged. Its* Results *hold only pasted output, and the flip verdict is recorded clause by clause. Baseline at the opening (`main` @ `affc967`): 505 / 0 / 11.*<br>*Attempt 1 launched 2026-10-03T07:43:39Z and halted the same day at CHUNK-1's handoff: the kernel's descendant fence refused the lane's CLI handoff (P24), and the chunk had re-sorted three frozen probes (P25). Attempt 2 runs after S6d, on board `squatfather-run-a2`, under `docs/run-a.md`'s amendment of 2026-10-03.*<br>*S6d merged on 2026-10-04 and is deployed (runtime = `main` = `bd255a4`, read 2026-10-26). Attempt 2's launch waits on three things: the P25 PR (the template's first-party pin), a docs-only pre-launch amendment, and the hello-forge rehearsal it specifies. That amendment (`docs/run-a.md`, 2026-10-26) is a further S7 PR, besides the registration PR and the results PR at the end, on branch `slice/s7-attempt2-prelaunch-amendment`. It departs from one session, one PR as the registration PR did, because the rehearsal needs a procedure on `main` before anyone can run it. It changes no code and no frozen input: it records the inputs as read on 2026-10-26 (Squatfather `main` `b66be28`; tool versions), the rehearsal's exact procedure and pass check, and the order of attempt 1's cleanup.* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | in progress — attempt 1 halted (P24); S6d deployed; attempt 2 awaits the P25 PR, the pre-launch amendment and a passing rehearsal | #85 (registration); pre-launch amendment: #89 (branch `slice/s7-attempt2-prelaunch-amendment`) |
+| S7 | **Run A = milestone 1**; FL4's last clause *(deferred from S3: the disagree path under a dispatcher that could really claim the card, which no isolated `HERMES_HOME` can supply)*; GW2's done-when *(deferred from S4: a week of digests read from a phone, which only a live run can supply)*; FL5's precision and its switch *(deferred from S3b; decided below)*. *Opened 2026-10-02. The protocol is `docs/run-a.md`. This row's first PR registers it before launch, and a second PR adds the results at the end of M1. That departs from "one session, one PR" by **the operator's decision at the opening**: the run spans days, and S6c must see its row on `main`. The protocol is frozen at `RUN_START`, as the launch record's `FORGE_SHA`, so S6c and S3b may still edit it. Preconditions: S6c and S3b (#84, rebased) merge and deploy before `RUN_START`. Decided at the opening, before launch:*<br>*– The seeded defect is S-1, which the operator plants in CHUNK-5. Only the scorer's verdict decides whether it was caught. A gate or merged-tree bounce unrelated to the seed voids the attempt.*<br>*– A reporting mutation probe's "would bounce" is not a bounce. S3b defers two things to this row: the probe's precision, measured from the holds, and the operator's decision on its switch at M1's checkpoint. Both read `docs/run-a.md`'s list of each recommended PR's probe verdict beside the operator's judgement of it.*<br>*– FL4's clause is met by drill D-1 on CHUNK-2, declared in advance and excluded from the flip count.*<br>*– Claude Code and Codex are not frozen; they stay current. Run A records the versions it ran on, and a version that moves mid-run is recorded rather than a stop. That amends* Hold still during the epic*. Hermes alone stays held.*<br>*– `GATE-M1` is not completed in run A.*<br>*Done when (**proposed at S7's opening — the row had none**): `docs/run-a.md` is executed to its end state. CHUNK-1 to CHUNK-5 are merged, each on a green PR, and their cards are done. `GATE-M1` has been probed and is still held. S-1 and D-1 are recorded, and seven digests judged. Its* Results *hold only pasted output, and the flip verdict is recorded clause by clause. Baseline at the opening (`main` @ `affc967`): 505 / 0 / 11.*<br>*Attempt 1 launched 2026-10-03T07:43:39Z and halted the same day at CHUNK-1's handoff: the kernel's descendant fence refused the lane's CLI handoff (P24), and the chunk had re-sorted three frozen probes (P25). Attempt 2 runs after S6d, on board `squatfather-run-a2`, under `docs/run-a.md`'s amendment of 2026-10-03.*<br>*S6d merged on 2026-10-04 and is deployed (runtime = `main` = `bd255a4`, read 2026-10-26). Attempt 2's launch waits on three things: the P25 PR (the template's first-party pin), a docs-only pre-launch amendment, and the hello-forge rehearsal it specifies. That amendment (`docs/run-a.md`, 2026-10-26) is a further S7 PR, besides the registration PR and the results PR at the end, on branch `slice/s7-attempt2-prelaunch-amendment`. It departs from one session, one PR as the registration PR did, because the rehearsal needs a procedure on `main` before anyone can run it. It changes no code and no frozen input: it records the inputs as read on 2026-10-26 (Squatfather `main` `b66be28`; tool versions), the rehearsal's exact procedure and pass check, and the order of attempt 1's cleanup.*<br>*The P25 PR (#88) merged on 2026-10-26 and that amendment (#89) on 2026-10-27, and the rehearsal ran the same day. **Rehearsal 1 failed at R3/R4** on board `hello-rehearsal-a2`: the lane ran Codex, passed `make check`, pushed `46fabde`, and then blocked because `chunk/hello-1-greet` already had MERGED PRs (`lane.sh` 485-507, after the paid run). The amendment's premise, that deleting the stale branch freed the name, was wrong. What it did prove is that S6d's driver tool path works for a block: `kanban_block` returned `ok` / `blocked`, with no fence strings. Run A's CHUNK-1 would have met the same wall, on CLOSED PR #2. One further PR, #90, follows on branch `slice/bootstrap-branch-suffix`: P30 (`board-bootstrap.sh --branch-suffix` and a guard that refuses a branch any PR has used), P31 (the template caps pytest below 9.2, which broke six verify cases on 2026-10-27) and a second docs-only amendment (`docs/run-a.md`, 2026-10-27) that corrects the premise, gives rehearsal 2 its commands on board `hello-rehearsal-a2b` with suffix `a2b`, replaces precondition 8 (the old loop wrote to other boards), and disposes of the dead attempt-1 card. P29 (the digest's "Risk: unknown") is parked until after run A. Launch moves to this PR's merge commit as `FORGE_SHA`; the product stays `b66be28`.* | Variable: the flow. Codex, recommend-only, the operator merges, one seeded defect | in progress — attempt 1 halted (P24); S6d deployed; rehearsal 1 failed on a spent branch name (P30); attempt 2 awaits the P30 PR, a passing rehearsal 2 and the commission | #85 (registration); pre-launch amendment: #89; P25: #88; P30, P31 and amendment 2: #90 (branch `slice/bootstrap-branch-suffix`) |
 | S8 | MS3, MS4, MS5, GW3, WL1; MS2's "failures become chunk cards" *(moved from S5b at its opening)* | Overseer and two-way gateway; checkpoint rehearsed on M1 | planned | |
 | S9 | **Run B = milestone 2** | Variable: merge authority | planned | |
 | S10 | EN5, EN1, EN2 | Engine groundwork | planned | |
@@ -1514,6 +1514,117 @@ in an isolated `HERMES_HOME` with Hermes's own `sync_skills` and
 *So `forge-verifier` now ships an identity-only shim that `profiles-bootstrap.sh`
 installs. `hermes skills reset` restores the generic copy (a simulated `hermes update` re-sync left the shim alone);
 `config/skill-shim-in-sync/forge-verifier` turns red when that happens.*
+
+**P29 (run A attempt 2, rehearsal 1). The digest renders every block it has no
+class for as "Risk: unknown".** `scripts/digest.sh` takes the class from the text
+before the first `:` of a card's last block reason (line 196). A prefix that
+`class_decision` does not know falls to `other` (lines 201-204), and `other`'s
+risk line is "unknown — the card holds until someone looks"
+(`scripts/decision-message.sh` 107-110). Verified by running `class_decision`:
+`handoff-integrity` and `some-new-thing` are unknown, `other` and `env` are known.
+
+Where it bites:
+- The lane and the verifier write their substrate faults as `other: handoff-integrity — …`
+  (`lane.sh` 267 and 630; `prejudge-review.sh` 348, 754, 765, 1312, 1351). Those
+  take the `other` class by their literal prefix, not through the fall-through,
+  and so do rehearsal 1's block, `other: chunk/hello-1-greet already has a MERGED
+  PR …` (`lane.sh` 485-507), and the dead attempt-1 card `t_da03d07a`, whose
+  reason begins `other: handoff of … did not land`. A bare `handoff-integrity: …`,
+  or any prefix a later program invents, takes the fall-through instead.
+- Either way the operator reads "Risk: unknown" about a card whose cause is
+  known and specific: a branch whose name GitHub has spent, or a hand-off the
+  kernel refused. Run on a copy of attempt 1's board on 2026-10-27, the digest
+  printed exactly that for `t_da03d07a`.
+- The stop rules treat `other: handoff-integrity` as a stop, but nothing in the
+  digest's text says so.
+
+**Parked, with the fix after run A.** No code changes during the run (*No deploy
+to `~/dev/forge-runtime`*). Shape of the fix: a class for each `other:` reason a
+program emits on purpose, so the table answers for it, and a check that compares
+the table with the reasons the programs write, in both directions, as
+`decision_classes` already does for the contract's registry. Unscheduled.
+
+**P30 (run A attempt 2, rehearsal 1). A lane is handed a branch name that GitHub
+has already spent, and only finds out after the paid run.** Rehearsal 1 ran
+Codex, passed `make check`, pushed `46fabde`, and then blocked: `lane.sh`
+485-507 adopts an OPEN PR, creates one when there is none, and blocks on a CLOSED
+or MERGED one. `chunk/hello-1-greet` carries MERGED PRs #1, #3 and #5, and
+deleting the branch frees nothing, which the 2026-10-26 pre-launch amendment had
+assumed. The arm dates from S2 (`68724a4`, 2026-09-26), after all three PRs, so
+the earlier rehearsals that reused the name never met it. Run A's own CHUNK-1 was
+next: its computed branch has PR #2, CLOSED on 2026-10-27 by attempt 1's cleanup.
+Evidence and the corrected procedure: `docs/run-a.md`, Amendments, 2026-10-27.
+
+*Closed 2026-10-27 by `slice/bootstrap-branch-suffix` (#90; code commit `bdd1461`, reviewed in `87d772b`).*
+- `board-bootstrap.sh … --branch-suffix <s>` appends `-<s>` after the slug cap,
+  in every mode.
+- Before it creates any card it asks GitHub (`gh pr list --state all --head
+  <branch>`) and `origin` about each branch it is about to hand out, and refuses
+  with **exit 3** when a name has a PR in any state or exists on the remote. It
+  exits **2** when it could not ask, and **1** for a bad suffix. A card already on
+  the board passes, so a later full run does not re-ask about the root.
+- Caveats, all recorded in the amendment: a refusal can leave an empty board
+  behind; the suffix must be identical on every bootstrap run of one board;
+  interactive cards and gates carry no branch, so the suffix does not reach them.
+- Added in the final review of the PR: the second caveat is now enforced. After a
+  card is created or returned, the full and root-only modes read its
+  `branch_name` back, and a card the board already holds under a different
+  suffix stops the run with **exit 4** naming both branches
+  (`bootstrap/card-with-another-branch-exits-4`). The `--hello` block's cleanup
+  trap is installed before its guard, so exit 2 and 3 leave no temp file behind
+  (`bootstrap/hello-cleans-its-temp-files-on-a-refusal`). The operator guide,
+  the staged-run guide and the README now describe the flag, the guard and exits
+  1, 2, 3 and 4.
+- The rule it enforces: every attempt uses branch names never used before,
+  whatever their PR state. `make verify` at `bdd1461` measured 547 passed / 0
+  failed / 11 skipped; that is a historical reading, and the slice's head now reads
+  more (P31).
+
+**P31 (run A attempt 2, after rehearsal 1). A template that ships no lock takes
+whatever the index serves the day it is stamped, and pytest-bdd could not read
+pytest 9.2.0.** pytest 9.2.0 reached PyPI on 2026-10-27 at 21:30 UTC and renamed
+the private `FixtureManager._arg2fixturedefs` to `_arg2node2fixturedefs`.
+pytest-bdd, 8.1.0 and 9.0.0 (the latest), reads the old name
+(`_arg2fixturedefs`, in `pytest_bdd/scenario.py`), so every test run in a project stamped after that
+hour crashed with `AttributeError`. The python-service template's dev group had
+floors only (`pytest>=8`), shipped no `uv.lock`, and `make setup` runs a plain
+`uv sync`. Six cases failed on a pristine `main`: `template/check-green`,
+`template/bootstrap-push-allowed`, `template/chunk-branch-push-allowed`,
+`verifier/merged-tree-prepares-a-real-project`,
+`verifier/mutation-probe-finds-unobserved-lines` and
+`verifier/mutation-probe-mutation-is-caught`. A product with a committed lock is
+unaffected: Squatfather and hello-forge both hold pytest 9.1.1.
+
+*Closed 2026-10-28 by `slice/bootstrap-branch-suffix` (#90).*
+- The template's dev group pins `"pytest>=8,<9.2"`, with a comment that names the
+  reason and the condition for lifting it: a pytest-bdd release that supports
+  pytest 9.2, and a recheck of PyPI first.
+- `template/pytest-capped` parses the stamped requirement and asserts it excludes
+  9.2.0, then asks the venv `make setup` built which pytest it resolved and
+  asserts that is below 9.2. Mutation-checked: with the cap put back to
+  `pytest>=8`, that case and the three `template/` cases above go red; restored,
+  green.
+- `make verify` on the slice measured 551 passed / 0 failed / 11 skipped.
+- Not fixed, by design: a lockless template will meet the next private-API
+  rename the same way. A lock in the template would answer it, and would
+  trade it for stale pins in every product; unscheduled.
+
+**P32 (final review of #90). A check that asserts an absence read a marker that
+had been renamed.** `lane/graph-parents-are-atomic` ends by asserting that the
+bootstrap's full mode has no `hermes kanban … link` pass, and it took "full mode"
+to be whatever follows a `# full mode:` line. That line became `# full/root-only
+mode:` in epic 8, so the `sed` printed nothing, the `! … | grep` passed on
+nothing, and the clause had judged an empty string since then. The first four
+clauses (greps for the atomic create) still ran, which is why nothing turned red.
+Found by a reviewer reading the case against the script.
+
+*Closed 2026-10-28 by `slice/bootstrap-branch-suffix` (#90).*
+- The section is extracted first, from `# full/root-only mode:`, and an empty
+  extraction is a failure of its own (F65), not a pass.
+- Mutation-checked both ways: renaming the marker turns the case red, and
+  appending a `hermes kanban --board "$BOARD" link a b` after it does too.
+- The same shape elsewhere is not swept here: any `! … | grep` over an extracted
+  region has this failure mode if its region can come back empty. Unscheduled.
 
 ## Open questions
 

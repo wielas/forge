@@ -2511,6 +2511,43 @@ run_template_group() {
     bad "python-pinned" ".python-version says $want but the venv is $have"
   fi
 
+  # Epic P31, measured 2026-10-28. pytest 9.2.0 (PyPI, 2026-10-27) renamed the
+  # private `FixtureManager._arg2fixturedefs`, which pytest-bdd (8.1.0 and 9.0.0,
+  # the latest) still reads, so every stamp that resolved fresh crashed its own
+  # tests. The stamp ships no lock, so the only thing holding the line is the
+  # requirement itself. Run it, do not grep it: parse the stamped requirement and
+  # ask whether it admits 9.2.0, then ask the venv `make setup` built which
+  # pytest it actually resolved. That is the same resolver doing the same work a
+  # fresh stamp does, which is the thing that went wrong.
+  local p31_out p31_rc
+  p31_rc=0
+  p31_out="$("$dest/.venv/bin/python" - "$dest/pyproject.toml" 2>&1 <<'PY'
+import sys, tomllib
+from importlib.metadata import version
+from packaging.requirements import Requirement
+from packaging.version import Version
+
+dev = tomllib.load(open(sys.argv[1], "rb"))["dependency-groups"]["dev"]
+reqs = [Requirement(d) for d in dev if isinstance(d, str)]
+pytest_reqs = [r for r in reqs if r.name == "pytest"]
+if len(pytest_reqs) != 1:
+    sys.exit(f"want exactly one pytest requirement in the dev group, found {len(pytest_reqs)}")
+spec = pytest_reqs[0].specifier
+if spec.contains(Version("9.2.0"), prereleases=True):
+    sys.exit(f"requirement 'pytest{spec}' admits 9.2.0")
+resolved = Version(version("pytest"))
+if resolved >= Version("9.2"):
+    sys.exit(f"requirement 'pytest{spec}' resolved pytest {resolved}")
+print(f"pytest{spec} excludes 9.2.0; the venv resolved {resolved}")
+PY
+  )" || p31_rc=$?
+  if [ "$p31_rc" = 0 ]; then
+    ok "pytest-capped ($p31_out)"
+  else
+    bad "pytest-capped" \
+        "the stamp lets pytest 9.2 in, and pytest-bdd reads a private fixture API that 9.2.0 renamed (_arg2fixturedefs), so the stamped tests crash (P31): $(printf '%s' "$p31_out" | tail -1)"
+  fi
+
   # Epic P25, measured on run A's attempt 1. The stamp selects ruff's `I` but
   # named no first-party package, so ruff classed `<pkg>.<module>` as
   # first-party only once that module's file existed. A planned project's frozen
@@ -2626,6 +2663,7 @@ template/branch-name-judges-by-argument  the CI path (branch passed in, detached
 template/check-reads-no-cache     make lint cannot answer from a warm ruff cache
 template/python-pinned            .python-version is stamped and the venv actually uses it
 template/first-party-pinned       the stamp names its package first-party: a probe file lints clean before and after a planned module exists (P25)
+template/pytest-capped            the stamped pytest requirement excludes 9.2.0 and the venv resolved a pytest below 9.2 (P31)
 lane/env-prepared-before-codex    linked task checkout, fetch, setup, baseline and immutable capture; exits 0/2/3/4/5/6
 lane/scratch-is-board-scoped      run ids are board-local; scratch and audit carry the board, same-board reuse still refuses
 lane/codex-probe-audits-the-emitted-key  the --with-codex probe consumes FORGE_LANE_RUN_KEY instead of recomputing it
@@ -2697,6 +2735,21 @@ bootstrap/parented-interactive-chunk-is-blocked-then-linked an interactive chunk
 bootstrap/interactive-hold-is-the-reason-the-digest-skips  the reason the bootstrap blocks an interactive chunk with is byte-identical to the one the digest skips (P13)
 bootstrap/reconciliation-is-mode-scoped root-only checks its created set while full mode still rejects missing declared edges
 bootstrap/generated-branch-names-pass-the-branch-name-rule  the branch board-bootstrap.sh generates is accepted by branch-name.sh itself
+bootstrap/suffix-lands-after-the-slug-cap  --branch-suffix goes on after the slug cap (literal CHUNK-1 name, a 48-letter capped slug, a 32-character suffix); no suffix leaves names unchanged
+bootstrap/suffixed-names-pass-the-branch-name-rule  every suffixed name is accepted by the product's own branch-name.sh
+bootstrap/hello-branch-takes-the-suffix  --hello with --branch-suffix a2b names chunk/hello-1-greet-a2b; without it, chunk/hello-1-greet
+bootstrap/invalid-suffix-is-refused-before-any-write  capitals, a leading dash, a slash, ... exit 1 before any Hermes command or gh call
+bootstrap/guard-refuses-pr-closed      a card whose branch has a CLOSED PR is refused (exit 3, no card); a never-used suffix is created
+bootstrap/guard-refuses-pr-merged      the same for a MERGED PR
+bootstrap/guard-refuses-pr-open        the same for an OPEN PR
+bootstrap/guard-names-every-pr-on-a-branch  two PRs on one name are both named (gh pr list --state all, not gh pr view)
+bootstrap/guard-refuses-a-remote-branch-with-no-pr  a branch on origin with no PR is refused (git ls-remote)
+bootstrap/guard-asks-about-every-card-before-creating-any  one spent name among three cards leaves the board with no card
+bootstrap/guard-parses-the-ssh-origin  a git@github.com:owner/repo.git origin (the form both real products use) is parsed: a spent name is refused, a suffixed one created
+bootstrap/guard-could-not-ask-exits-2-and-creates-nothing  gh errors, prose from gh, unreachable origin, no origin and an unreadable board all exit 2, not 3 and not 0
+bootstrap/existing-card-passes-the-guard  a card already on the board (OPEN PR, remote branch) is neither asked about nor refused on the full re-run
+bootstrap/card-with-another-branch-exits-4  a root made under suffix a2 and re-run under a3 exits 4 naming both branches, creates nothing more; the same suffix completes
+bootstrap/hello-cleans-its-temp-files-on-a-refusal  --hello refused with exit 3 or 2 leaves no mktemp file in TMPDIR
 commission/records-all-prerequisites    the paid probe and every existing gate land in one evidence report
 commission/propagates-prerequisite-failure a named nonzero prerequisite makes commissioning fail
 commission/preserves-roadmap-warn       advisory WARN remains WARN in the report
@@ -4531,15 +4584,24 @@ LPLOG
   # those writes can claim the child without its prerequisite. The corrected
   # bootstrap creates in topological order and passes every --parent in the
   # card's create transaction, then reads the parents back.
-  local bootstrap=hermes/board-bootstrap.sh
-  if grep -Fq 'parent_args+=(--parent "$parent_card")' "$bootstrap" \
+  # Epic P32: the last clause below read everything after a `# full mode:` marker,
+  # and that marker became `# full/root-only mode:` when the root-only bootstrap
+  # landed (8). The sed then printed nothing, `! … | grep` passed on nothing, and
+  # "no link pass in full mode" was asserted of an empty string. So the section
+  # is extracted FIRST and an empty extraction is a failure of its own (F65).
+  local bootstrap=hermes/board-bootstrap.sh gp_tail
+  gp_tail="$(awk '/^# full\/root-only mode:/{f=1} f' "$bootstrap")"
+  if [ -z "$gp_tail" ]; then
+    bad "graph-parents-are-atomic" \
+        "no '# full/root-only mode:' marker in $bootstrap, so the no-link-pass clause read nothing — the check went blind, which is not a pass (F65)"
+  elif grep -Fq 'parent_args+=(--parent "$parent_card")' "$bootstrap" \
      && grep -Fq 'if [ "$parent_count" -eq 0 ]' "$bootstrap" \
      && grep -Fq 'created=$((created + parent_count))' "$bootstrap" \
      && grep -Fq '"${@:6}" --json' "$bootstrap" \
      && grep -Fq '.parents[]?' "$bootstrap" \
-     && ! sed -n '/# full mode:/,$p' "$bootstrap" \
+     && ! printf '%s\n' "$gp_tail" \
           | grep -Eq 'hermes kanban( --board "[^"]+")? link '; then
-    ok "graph-parents-are-atomic"
+    ok "graph-parents-are-atomic ($(printf '%s\n' "$gp_tail" | wc -l | tr -d ' ') lines of the full/root-only section hold no link pass)"
   else
     bad "graph-parents-are-atomic" \
         "board-bootstrap must attach graph parents during create and read them back, never create ready children before a later link pass"
@@ -5034,10 +5096,31 @@ case "${1:-}" in
           printf '%s' "$assignee" > "$state/$cid.assignee"
           printf '%s' "$title" > "$state/$cid.title"
           printf '%s\n' "$branch" >> "$state/branches.txt"
+          printf '%s' "$branch" > "$state/$cid.branch"
           printf '%s\t%s\t%s\t%s\n' "$key" "$cid" \
             "$(printf '%s' "$parents" | paste -sd, -)" "$title" >> "$state/creates.tsv"
         fi
         jq -n --arg id "$cid" --arg board "$board" '{id:$id,board:$board}'
+        exit 0
+        ;;
+      list)
+        # `kanban list --json`: an array of cards, each with .title and
+        # .branch_name — and NO idempotency key, which is why the bootstrap
+        # recognises a card it already made by the (title, branch) pair.
+        # STUB_LIST_FAILS=1 is a board that cannot be read.
+        [ "${STUB_LIST_FAILS:-0}" != 1 ] || { printf 'kanban: database is locked\n' >&2; exit 1; }
+        touch "$state/keys.tsv"
+        tasks='[]'
+        while IFS=$'\t' read -r lkey lcid _; do
+          [ -n "$lkey" ] || continue
+          tasks="$(printf '%s' "$tasks" | jq -c \
+            --arg id "$lcid" --arg title "$(cat "$state/$lcid.title")" \
+            --arg status "$(cat "$state/$lcid.status")" \
+            --arg br "$(cat "$state/$lcid.branch" 2>/dev/null || true)" \
+            '. + [{id:$id,title:$title,status:$status,
+                   branch_name:(if $br == "" then null else $br end)}]')"
+        done < "$state/keys.tsv"
+        printf '%s\n' "$tasks"
         exit 0
         ;;
       show)
@@ -5058,8 +5141,10 @@ case "${1:-}" in
         jq -n --argjson parents "$parents" --argjson events "$events" \
           --arg status "$status" --arg assignee "$assignee" \
           --arg id "$cid" --arg title "$(cat "$state/$cid.title")" \
+          --arg br "$(cat "$state/$cid.branch" 2>/dev/null || true)" \
           '{task:{id:$id,title:$title,status:$status,
-                  assignee:(if $assignee == "" then null else $assignee end)},
+                  assignee:(if $assignee == "" then null else $assignee end),
+                  branch_name:(if $br == "" then null else $br end)},
             events:$events,parents:$parents}'
         exit 0
         ;;
@@ -5119,6 +5204,71 @@ printf 'unexpected hermes invocation: %s\n' "$*" >&2
 exit 64
 HERMES_STUB
     chmod +x "$root/bin/hermes"
+    _bootstrap_remote_stub "$root" "$root/bin" "$root/remote.git"
+  }
+
+  # The branch guard asks GitHub (`gh pr list`) and origin (`git ls-remote`),
+  # and no case here may touch the network. So the fixture gets (a) an origin
+  # whose URL parses as stub-owner/stub-repo but which git rewrites, through
+  # url.<bare>.insteadOf, to a LOCAL bare repo — real `git ls-remote`, no network —
+  # and (b) a `gh` that answers only `pr list --repo stub-owner/stub-repo` from
+  # $STUB_STATE/gh-prs.tsv (branch<TAB>number<TAB>STATE), in the real shape
+  # [{number,state}], honouring --head and --state, and refuses any other
+  # question (exit 64) so a guard that asks `gh pr view` goes red instead of
+  # silently getting one PR. gh-fails / gh-garbage turn it into a gh that errors
+  # or answers in prose.
+  _bootstrap_remote_stub() { # $1=git root $2=bin dir for gh $3=bare repo dir
+    local root="$1" bindir="$2" bare="$3"
+    mkdir -p "$bindir"
+    git init -q --bare "$bare"
+    git -C "$root" remote add origin "https://github.com/stub-owner/stub-repo.git"
+    git -C "$root" config "url.$bare.insteadOf" "https://github.com/stub-owner/stub-repo.git"
+    cat > "$bindir/gh" <<'BOOTSTRAP_GH_STUB'
+#!/usr/bin/env bash
+set -eu
+state="${STUB_STATE:?}"
+printf '%s\n' "$*" >> "$state/gh.log"
+if [ "${1:-}" != pr ] || [ "${2:-}" != list ]; then
+  echo "gh stub: only 'pr list' is answered, got: $*" >&2
+  exit 64
+fi
+shift 2
+repo=""; head=""; st="open"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) repo="$2"; shift 2;;
+    --head) head="$2"; shift 2;;
+    --state) st="$2"; shift 2;;
+    --json|--limit) shift 2;;
+    *) shift;;
+  esac
+done
+[ "$repo" = stub-owner/stub-repo ] || { echo "gh stub: no repository '$repo'" >&2; exit 1; }
+[ ! -e "$state/gh-fails" ] || { echo "gh: HTTP 502: Bad Gateway" >&2; exit 1; }
+[ ! -e "$state/gh-garbage" ] || { echo "Showing no pull requests"; exit 0; }
+touch "$state/gh-prs.tsv"
+jq -R -s --arg head "$head" --arg st "$st" '
+  split("\n") | map(select(length > 0) | split("\t"))
+  | map(select(.[0] == $head and ($st == "all" or ($st | ascii_upcase) == .[2])))
+  | map({number: (.[1] | tonumber), state: .[2]})' "$state/gh-prs.tsv"
+BOOTSTRAP_GH_STUB
+    chmod +x "$bindir/gh"
+  }
+
+  _bootstrap_spend() { # $1=root $2=branch $3..=<number>:<STATE> ...  PRs on a name
+    local root="$1" branch="$2"; shift 2
+    local pr
+    for pr in "$@"; do
+      printf '%s\t%s\t%s\n' "$branch" "${pr%%:*}" "${pr#*:}" >> "$root/state/gh-prs.tsv"
+    done
+  }
+
+  _bootstrap_push() { # $1=root $2=branch: a branch on the remote with no PR
+    local root="$1" tree commit
+    tree="$(git -C "$root/remote.git" hash-object -t tree -w --stdin </dev/null)"
+    commit="$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+              git -C "$root/remote.git" commit-tree "$tree" -m stub)"
+    git -C "$root/remote.git" update-ref "refs/heads/$2" "$commit"
   }
 
   _bootstrap_run() { # $1=fixture $2=mode [drop-parent-readback]
@@ -5345,6 +5495,345 @@ EOF
         "board-bootstrap.sh must emit chunk/<id>-<slug> that branch-name.sh accepts; exit $names_rc, rejected: ${rejected:-none}, got: $(printf '%s' "$branches" | tr '\n' ' ')"
   fi
 
+  # ---------------------------------------------------------------------------
+  # Epic P30: --branch-suffix and the branch guard. GitHub ties a PR to its head
+  # branch name for ever and the lane blocks on a CLOSED/MERGED one only AFTER the
+  # paid run, so a card handed a spent name costs a whole run (Run A attempt 1
+  # left CLOSED PR #2 on chunk/1-store-owner-history-in-a-migrated-sqlite; the
+  # last rehearsal died on chunk/hello-1-greet's three MERGED PRs). Every case
+  # below runs against the stubs above: no gh call, no ls-remote, leaves the
+  # machine. Expected names are LITERALS, never recomputed from the code under
+  # test; the stubbed `gh` refuses anything but `pr list`, so a guard built on
+  # `gh pr view` is red, not silently waved through.
+  # ---------------------------------------------------------------------------
+  _bootstrap_runx() { # $1=fixture, rest=arguments after the board name
+    local root="$1"; shift
+    (cd "$root" && STUB_STATE="$root/state" PATH="$root/bin:$PATH" "$bootstrap" stage "$@")
+  }
+  _bootstrap_product() { # $1=fixture: the product's own copy of the branch rule, so branch_for asks it
+    mkdir -p "$1/scripts"
+    cp "$REPO_ROOT/templates/python-service/template/scripts/branch-name.sh" "$1/scripts/branch-name.sh"
+    chmod +x "$1/scripts/branch-name.sh"
+  }
+  _bootstrap_cards() { # $1=fixture -> number of cards created
+    if [ -f "$1/state/keys.tsv" ]; then wc -l < "$1/state/keys.tsv" | tr -d ' '; else printf 0; fi
+  }
+
+  # -- the literal names ------------------------------------------------------
+  local sfx="$TMPROOT/bootstrap-suffix" sfx_detail="" sfx_got
+  local sfx_title='### CHUNK-1: Store owner history in a migrated SQLite file'
+  _bootstrap_fixture "$sfx" normal; _bootstrap_product "$sfx"
+  printf '%s\n' "$sfx_title" > "$sfx/docs/chunks/CHUNK-1.md"
+  out="$(_bootstrap_runx "$sfx" --root-only --branch-suffix a2 2>&1)"; rc=$?
+  sfx_got="$(cat "$sfx/state/branches.txt" 2>/dev/null)"
+  [ "$rc" = 0 ] && [ "$sfx_got" = 'chunk/1-store-owner-history-in-a-migrated-sqlite-a2' ] \
+    || sfx_detail="$sfx_detail suffixed(exit $rc, got '$sfx_got')"
+  _bootstrap_fixture "$sfx" normal; _bootstrap_product "$sfx"
+  printf '%s\n' "$sfx_title" > "$sfx/docs/chunks/CHUNK-1.md"
+  out="$(_bootstrap_runx "$sfx" --root-only 2>&1)"; rc=$?
+  sfx_got="$(cat "$sfx/state/branches.txt" 2>/dev/null)"
+  [ "$rc" = 0 ] && [ "$sfx_got" = 'chunk/1-store-owner-history-in-a-migrated-sqlite' ] \
+    || sfx_detail="$sfx_detail unsuffixed(exit $rc, got '$sfx_got')"
+  # The cap: a 60-letter word is cut to the 48-letter slug budget BEFORE the
+  # suffix goes on, so the suffix is never the part that is cut.
+  _bootstrap_fixture "$sfx" normal; _bootstrap_product "$sfx"
+  printf '### CHUNK-1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' > "$sfx/docs/chunks/CHUNK-1.md"
+  out="$(_bootstrap_runx "$sfx" --root-only --branch-suffix a2 2>&1)"; rc=$?
+  sfx_got="$(cat "$sfx/state/branches.txt" 2>/dev/null)"
+  [ "$rc" = 0 ] && [ "$sfx_got" = 'chunk/1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-a2' ] \
+    || sfx_detail="$sfx_detail capped(exit $rc, got '$sfx_got')"
+  # The longest suffix there is still lands whole: 32 characters.
+  _bootstrap_fixture "$sfx" normal; _bootstrap_product "$sfx"
+  printf '### CHUNK-1: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' > "$sfx/docs/chunks/CHUNK-1.md"
+  out="$(_bootstrap_runx "$sfx" --root-only --branch-suffix attempt-2-after-the-closed-pr-12 2>&1)"; rc=$?
+  sfx_got="$(cat "$sfx/state/branches.txt" 2>/dev/null)"
+  [ "$rc" = 0 ] && [ "$sfx_got" = 'chunk/1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-attempt-2-after-the-closed-pr-12' ] \
+    || sfx_detail="$sfx_detail longest(exit $rc, got '$sfx_got')"
+  if [ -z "$sfx_detail" ]; then
+    ok "suffix-lands-after-the-slug-cap (CHUNK-1 -> chunk/1-store-owner-history-in-a-migrated-sqlite-a2; no suffix unchanged)"
+  else
+    bad "suffix-lands-after-the-slug-cap" "branch names are literals:$sfx_detail"
+  fi
+
+  # Every other generated name takes the suffix and the product's own branch-name.sh
+  # accepts the result (the fixture's scripts/branch-name.sh is asked by branch_for).
+  local sfn="$TMPROOT/bootstrap-suffix-names" sfn_got sfn_want sfn_bad=""
+  _bootstrap_fixture "$sfn" branch-names
+  out="$(_bootstrap_runx "$sfn" full --branch-suffix a2 2>&1)"; rc=$?
+  sfn_got="$(sed '/^$/d' "$sfn/state/branches.txt" 2>/dev/null | sort)"
+  sfn_want="$(printf '%s\n' \
+    'chunk/7-render-report-a2' \
+    'chunk/C10-resolve-every-instance-path-from-its-own-a2' \
+    'chunk/C11-untitled-a2' \
+    'chunk/C9.1-pipeline-observability-the-run-its-cost-and-a2')"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    bash "$sfn/scripts/branch-name.sh" "$line" >/dev/null 2>&1 || sfn_bad="$sfn_bad $line"
+  done <<EOF2
+$sfn_got
+EOF2
+  if [ "$rc" = 0 ] && [ "$sfn_got" = "$sfn_want" ] && [ -z "$sfn_bad" ]; then
+    ok "suffixed-names-pass-the-branch-name-rule (C10, C9.1, 7, empty slug, full mode)"
+  else
+    bad "suffixed-names-pass-the-branch-name-rule" \
+        "exit $rc, rejected:${sfn_bad:- none}, got: $(printf '%s' "$sfn_got" | tr '\n' ' ')"
+  fi
+
+  # -- the hello card ---------------------------------------------------------
+  local hel="$TMPROOT/bootstrap-hello" hel_detail=""
+  _bootstrap_fixture "$hel" normal; _bootstrap_product "$hel"
+  out="$(_bootstrap_runx "$hel" --hello --branch-suffix a2b 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/hello-1-greet-a2b' ] \
+    || hel_detail="$hel_detail suffixed(exit $rc, got '$(cat "$hel/state/branches.txt" 2>/dev/null)')"
+  _bootstrap_fixture "$hel" normal; _bootstrap_product "$hel"
+  out="$(_bootstrap_runx "$hel" --hello 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/hello-1-greet' ] \
+    || hel_detail="$hel_detail unsuffixed(exit $rc, got '$(cat "$hel/state/branches.txt" 2>/dev/null)')"
+  # --branch-suffix is a flag, not a mode: it may come first.
+  _bootstrap_fixture "$hel" normal
+  out="$(_bootstrap_runx "$hel" --branch-suffix a2b --hello 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ "$(cat "$hel/state/branches.txt" 2>/dev/null)" = 'chunk/hello-1-greet-a2b' ] \
+    || hel_detail="$hel_detail flag-first(exit $rc)"
+  if [ -z "$hel_detail" ]; then
+    ok "hello-branch-takes-the-suffix (chunk/hello-1-greet-a2b; no suffix unchanged)"
+  else
+    bad "hello-branch-takes-the-suffix" "the --hello branch is a literal:$hel_detail"
+  fi
+
+  # -- an invalid suffix never reaches the board --------------------------------
+  local inv="$TMPROOT/bootstrap-badsuffix" inv_detail="" inv_args inv_n=0
+  for inv_args in 'full|A2' 'full|-a2' 'full|a/b' 'full|a2-' 'full|a--2' 'full|a.b' 'full|' \
+                  'full|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' '--root-only|A2' '--hello|-a2' '--hello|a/b' \
+                  $'full|a2\nx' $'full|\na2' $'full|a2\n' $'--hello|a2\nx'; do
+    _bootstrap_fixture "$inv" normal
+    out="$(_bootstrap_runx "$inv" "${inv_args%%|*}" --branch-suffix "${inv_args#*|}" 2>&1)"; rc=$?
+    inv_n=$((inv_n + 1))
+    if [ "$rc" != 1 ] || [ -e "$inv/state/commands.log" ] || [ -e "$inv/state/gh.log" ] \
+       || ! printf '%s' "$out" | grep -Fq -- '--branch-suffix'; then
+      inv_detail="$inv_detail [$inv_args exit $rc, $(printf '%s' "$out" | tail -1)]"
+    fi
+  done
+  _bootstrap_fixture "$inv" normal
+  out="$(_bootstrap_runx "$inv" full --branch-suffix 2>&1)"; rc=$?
+  { [ "$rc" = 1 ] && [ ! -e "$inv/state/commands.log" ]; } || inv_detail="$inv_detail [no value: exit $rc]"
+  if [ -z "$inv_detail" ]; then
+    ok "invalid-suffix-is-refused-before-any-write ($inv_n spellings: capitals, leading dash, slash, trailing dash, doubled dash, dot, empty, 33 chars, a newline before, inside or after a valid slug, no value)"
+  else
+    bad "invalid-suffix-is-refused-before-any-write" "each must exit 1 naming --branch-suffix with no hermes command and no gh call:$inv_detail"
+  fi
+
+  # -- the guard: a spent name is refused, a fresh one is not ---------------------
+  # Same fixture, same PR list: refused without a suffix, created with one. The
+  # positive control is what makes each refusal a statement about the NAME.
+  local gd="$TMPROOT/bootstrap-guard" gd_detail="" gd_case gd_state gd_num gd_br gd_rc gd_out
+  for gd_case in closed:2:CLOSED merged:7:MERGED open:3:OPEN; do
+    gd_state="${gd_case%%:*}"; gd_num="${gd_case#*:}"; gd_num="${gd_num%%:*}"
+    _bootstrap_fixture "$gd" normal; _bootstrap_product "$gd"
+    printf '%s\n' "$sfx_title" > "$gd/docs/chunks/CHUNK-1.md"
+    gd_br='chunk/1-store-owner-history-in-a-migrated-sqlite'
+    _bootstrap_spend "$gd" "$gd_br" "$gd_num:$(printf '%s' "${gd_case##*:}")"
+    gd_out="$(_bootstrap_runx "$gd" --root-only 2>&1)"; gd_rc=$?
+    gd_detail=""
+    if [ "$gd_rc" != 3 ] || [ "$(_bootstrap_cards "$gd")" != 0 ] \
+       || grep -q -- '--board stage create ' "$gd/state/commands.log" 2>/dev/null \
+       || ! printf '%s' "$gd_out" | grep -Fq "PR #$gd_num (${gd_case##*:})" \
+       || ! printf '%s' "$gd_out" | grep -Fq "$gd_br" \
+       || ! printf '%s' "$gd_out" | grep -Fq -- '--branch-suffix'; then
+      gd_detail="refused wrongly: exit $gd_rc, cards $(_bootstrap_cards "$gd"): $(printf '%s' "$gd_out" | tail -3 | tr '\n' ' ')"
+    fi
+    gd_out="$(_bootstrap_runx "$gd" --root-only --branch-suffix a2 2>&1)"; gd_rc=$?
+    if [ "$gd_rc" != 0 ] || [ "$(cat "$gd/state/branches.txt" 2>/dev/null)" != "$gd_br-a2" ]; then
+      gd_detail="$gd_detail; a never-used suffix was not accepted: exit $gd_rc"
+    fi
+    if ! grep -q 'pr list --repo stub-owner/stub-repo --head chunk/1-store-owner-history-in-a-migrated-sqlite --state all --json number,state --limit 100' "$gd/state/gh.log" 2>/dev/null; then
+      gd_detail="$gd_detail; gh was not asked 'pr list --state all' against stub-owner/stub-repo (log: $(tr '\n' '|' < "$gd/state/gh.log" 2>/dev/null))"
+    fi
+    if [ -z "$gd_detail" ]; then
+      ok "guard-refuses-pr-$gd_state (exit 3, no card; the same name with --branch-suffix a2 is created)"
+    else
+      bad "guard-refuses-pr-$gd_state" "$gd_detail"
+    fi
+  done
+
+  # A name with TWO PRs: gh pr view returns one, and the guard must name both.
+  _bootstrap_fixture "$gd" normal
+  _bootstrap_spend "$gd" chunk/1-bootstrap-fixture 2:CLOSED 5:MERGED
+  _bootstrap_spend "$gd" chunk/2-bootstrap-fixture 8:OPEN
+  gd_out="$(_bootstrap_runx "$gd" --root-only 2>&1)"; gd_rc=$?
+  if [ "$gd_rc" = 3 ] && printf '%s' "$gd_out" | grep -Fq 'PR #2 (CLOSED), PR #5 (MERGED)' \
+     && ! printf '%s' "$gd_out" | grep -Fq '#8'; then
+    ok "guard-names-every-pr-on-a-branch (two PRs on one name, a third on another chunk's)"
+  else
+    bad "guard-names-every-pr-on-a-branch" "exit $gd_rc: $(printf '%s' "$gd_out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  # A pushed branch with no PR yet is just as spent: the lane would adopt the
+  # remote branch's history, and `gh pr create` would open a PR on it.
+  _bootstrap_fixture "$gd" normal
+  _bootstrap_push "$gd" chunk/1-bootstrap-fixture-a2
+  gd_out="$(_bootstrap_runx "$gd" --root-only --branch-suffix a2 2>&1)"; gd_rc=$?
+  if [ "$gd_rc" = 3 ] && [ "$(_bootstrap_cards "$gd")" = 0 ] \
+     && printf '%s' "$gd_out" | grep -Fq 'already exists on origin'; then
+    gd_out="$(_bootstrap_runx "$gd" --root-only --branch-suffix a3 2>&1)"; gd_rc=$?
+    if [ "$gd_rc" = 0 ] && [ "$(_bootstrap_cards "$gd")" = 1 ]; then
+      ok "guard-refuses-a-remote-branch-with-no-pr (exit 3, no card; another suffix is created)"
+    else
+      bad "guard-refuses-a-remote-branch-with-no-pr" "the control suffix was not accepted: exit $gd_rc"
+    fi
+  else
+    bad "guard-refuses-a-remote-branch-with-no-pr" "a branch on origin with no PR must be refused, exit 3, no card; exit $gd_rc, cards $(_bootstrap_cards "$gd"): $(printf '%s' "$gd_out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  # All before any: ONE spent name among three cards, the LAST in topological
+  # order, still leaves the board with no card at all.
+  _bootstrap_fixture "$gd" normal
+  _bootstrap_spend "$gd" chunk/3-bootstrap-fixture-a2 9:MERGED
+  gd_out="$(_bootstrap_runx "$gd" full --branch-suffix a2 2>&1)"; gd_rc=$?
+  if [ "$gd_rc" = 3 ] && [ "$(_bootstrap_cards "$gd")" = 0 ] \
+     && ! grep -q -- '--board stage create ' "$gd/state/commands.log" 2>/dev/null \
+     && printf '%s' "$gd_out" | grep -Fq 'PR #9 (MERGED)'; then
+    ok "guard-asks-about-every-card-before-creating-any (CHUNK-3 spent -> CHUNK-1 and 2 not created)"
+  else
+    bad "guard-asks-about-every-card-before-creating-any" "exit $gd_rc, cards $(_bootstrap_cards "$gd"): $(printf '%s' "$gd_out" | tail -3 | tr '\n' ' ')"
+  fi
+
+  # -- the origin the real products use is ssh, not https ------------------------
+  # Both real origins are git@github.com:wielas/<repo>.git. The fixture's https
+  # origin never exercises that arm of origin_slug, so swap the ssh form in. It
+  # still parses to stub-owner/stub-repo, the stub gh answers for that slug and no
+  # other, and a slug that was not parsed is exit 2, so exit 3 and then exit 0
+  # are both statements about the parse.
+  local ss="$TMPROOT/bootstrap-ssh-origin" ss_out ss_rc ss_detail=""
+  _bootstrap_fixture "$ss" normal
+  git -C "$ss" remote set-url origin "git@github.com:stub-owner/stub-repo.git"
+  git -C "$ss" config --unset-all "url.$ss/remote.git.insteadOf"
+  git -C "$ss" config "url.$ss/remote.git.insteadOf" "git@github.com:stub-owner/stub-repo.git"
+  _bootstrap_spend "$ss" chunk/1-bootstrap-fixture 4:CLOSED
+  ss_out="$(_bootstrap_runx "$ss" --root-only 2>&1)"; ss_rc=$?
+  if [ "$ss_rc" != 3 ] || [ "$(_bootstrap_cards "$ss")" != 0 ] \
+     || ! printf '%s' "$ss_out" | grep -Fq 'PR #4 (CLOSED)'; then
+    ss_detail="spent name not refused through the ssh origin: exit $ss_rc, cards $(_bootstrap_cards "$ss"): $(printf '%s' "$ss_out" | tail -2 | tr '\n' ' ')"
+  fi
+  ss_out="$(_bootstrap_runx "$ss" --root-only --branch-suffix a2 2>&1)"; ss_rc=$?
+  if [ "$ss_rc" != 0 ] || [ "$(_bootstrap_cards "$ss")" != 1 ] \
+     || ! grep -q -- 'pr list --repo stub-owner/stub-repo --head chunk/1-bootstrap-fixture-a2 --state all' "$ss/state/gh.log" 2>/dev/null; then
+    ss_detail="$ss_detail; the suffixed name was not created through the ssh origin: exit $ss_rc, cards $(_bootstrap_cards "$ss"): $(printf '%s' "$ss_out" | tail -2 | tr '\n' ' ')"
+  fi
+  if [ -z "$ss_detail" ]; then
+    ok "guard-parses-the-ssh-origin (git@github.com:owner/repo.git: spent name refused, exit 3; suffixed name created)"
+  else
+    bad "guard-parses-the-ssh-origin" "$ss_detail"
+  fi
+
+  # -- could not ask is not "nothing there" -----------------------------------------
+  local ca="$TMPROOT/bootstrap-couldnotask" ca_detail="" ca_kind
+  for ca_kind in gh-fails gh-garbage origin-unreachable no-origin list-fails; do
+    _bootstrap_fixture "$ca" normal
+    case "$ca_kind" in
+      gh-fails)           : > "$ca/state/gh-fails";;
+      gh-garbage)         : > "$ca/state/gh-garbage";;
+      origin-unreachable) git -C "$ca" config "url.$ca/no-such-remote.git.insteadOf" "https://github.com/stub-owner/stub-repo.git"
+                          git -C "$ca" config --unset-all "url.$ca/remote.git.insteadOf";;
+      no-origin)          git -C "$ca" remote remove origin;;
+    esac
+    if [ "$ca_kind" = list-fails ]; then
+      out="$(cd "$ca" && STUB_LIST_FAILS=1 STUB_STATE="$ca/state" PATH="$ca/bin:$PATH" "$bootstrap" stage --root-only 2>&1)"; rc=$?
+    else
+      out="$(_bootstrap_runx "$ca" --root-only 2>&1)"; rc=$?
+    fi
+    if [ "$rc" != 2 ] || [ "$(_bootstrap_cards "$ca")" != 0 ] \
+       || ! printf '%s' "$out" | grep -Fq 'could not ask' \
+       || printf '%s' "$out" | grep -Fq 'branch spent'; then
+      ca_detail="$ca_detail [$ca_kind: exit $rc, cards $(_bootstrap_cards "$ca"): $(printf '%s' "$out" | tail -2 | tr '\n' ' ')]"
+    fi
+  done
+  if [ -z "$ca_detail" ]; then
+    ok "guard-could-not-ask-exits-2-and-creates-nothing (gh errors, gh answers in prose, origin unreachable, no origin, board unreadable)"
+  else
+    bad "guard-could-not-ask-exits-2-and-creates-nothing" "an unanswerable question must exit 2 (not 3, not 0) with no card:$ca_detail"
+  fi
+
+  # -- the idempotent re-run ------------------------------------------------------
+  # Root-only creates the root; the lane then opens its PR; the later full run
+  # visits the root again and must pass it UNTOUCHED, without even asking about
+  # it, while still asking about the two cards it will create.
+  local idm="$TMPROOT/bootstrap-rerun" idm_detail="" idm_root
+  _bootstrap_fixture "$idm" normal
+  out="$(_bootstrap_runx "$idm" --root-only --branch-suffix a2 2>&1)"; rc=$?
+  idm_root="$(awk -F '\t' '$1=="stage-CHUNK-1"{print $2}' "$idm/state/keys.tsv" 2>/dev/null)"
+  [ "$rc" = 0 ] && [ -n "$idm_root" ] || idm_detail="$idm_detail first-run(exit $rc)"
+  _bootstrap_spend "$idm" chunk/1-bootstrap-fixture-a2 4:OPEN
+  _bootstrap_push "$idm" chunk/1-bootstrap-fixture-a2
+  : > "$idm/state/gh.log"
+  out="$(_bootstrap_runx "$idm" full --branch-suffix a2 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && [ "$(_bootstrap_cards "$idm")" = 3 ] \
+    || idm_detail="$idm_detail rerun(exit $rc, cards $(_bootstrap_cards "$idm"): $(printf '%s' "$out" | tail -2 | tr '\n' ' '))"
+  [ "$(awk -F '\t' '$1=="stage-CHUNK-1"{print $2}' "$idm/state/keys.tsv")" = "$idm_root" ] \
+    || idm_detail="$idm_detail root-card-replaced"
+  ! grep -q -- '--head chunk/1-bootstrap-fixture-a2 ' "$idm/state/gh.log" \
+    || idm_detail="$idm_detail existing-card-was-asked-about"
+  grep -q -- '--head chunk/2-bootstrap-fixture-a2 ' "$idm/state/gh.log" \
+    && grep -q -- '--head chunk/3-bootstrap-fixture-a2 ' "$idm/state/gh.log" \
+    || idm_detail="$idm_detail new-cards-were-not-asked-about"
+  # The control: the same OPEN PR and remote branch, but no card on the board,
+  # is a refusal (guard-refuses-pr-open above), so this pass is the board's doing.
+  if [ -z "$idm_detail" ]; then
+    ok "existing-card-passes-the-guard (root has an OPEN PR and a remote branch; the full re-run keeps it, asks only about the two new cards)"
+  else
+    bad "existing-card-passes-the-guard" "a card already on the board must pass untouched and unasked:$idm_detail"
+  fi
+
+  # -- a card the board already holds, under a different suffix ---------------------
+  # `create` is idempotent on the key: asked for chunk/1-...-a3 while the board
+  # holds the card for chunk/1-...-a2, it hands back the OLD card. The guard asked
+  # GitHub about a name that was never used and waved it through, and the lane
+  # would have been dispatched on the old branch. The run must stop (exit 4),
+  # name both branches and the rule, and create nothing further.
+  local sfm="$TMPROOT/bootstrap-suffix-mismatch" sfm_detail="" sfm_ok
+  _bootstrap_fixture "$sfm" normal
+  out="$(_bootstrap_runx "$sfm" --root-only --branch-suffix a2 2>&1)"; rc=$?
+  [ "$rc" = 0 ] || sfm_detail="$sfm_detail first-run(exit $rc)"
+  out="$(_bootstrap_runx "$sfm" full --branch-suffix a3 2>&1)"; rc=$?
+  if [ "$rc" != 4 ] || [ "$(_bootstrap_cards "$sfm")" != 1 ] \
+     || ! printf '%s' "$out" | grep -Fq 'chunk/1-bootstrap-fixture-a2' \
+     || ! printf '%s' "$out" | grep -Fq 'chunk/1-bootstrap-fixture-a3' \
+     || ! printf '%s' "$out" | grep -Fq 'identical'; then
+    sfm_detail="$sfm_detail different-suffix(exit $rc, cards $(_bootstrap_cards "$sfm"): $(printf '%s' "$out" | tail -3 | tr '\n' ' '))"
+  fi
+  # The control: the same suffix on the same board is the idempotent re-run.
+  out="$(_bootstrap_runx "$sfm" full --branch-suffix a2 2>&1)"; rc=$?
+  sfm_ok=1; [ "$rc" = 0 ] && [ "$(_bootstrap_cards "$sfm")" = 3 ] || sfm_ok=0
+  [ "$sfm_ok" = 1 ] || sfm_detail="$sfm_detail same-suffix-control(exit $rc, cards $(_bootstrap_cards "$sfm"))"
+  if [ -z "$sfm_detail" ]; then
+    ok "card-with-another-branch-exits-4 (a root made under -a2 and re-run under -a3 stops at once, naming both branches; the same suffix completes the graph)"
+  else
+    bad "card-with-another-branch-exits-4" "an idempotent create must not hand back a card on another branch unnoticed:$sfm_detail"
+  fi
+
+  # -- the hello block leaves no temp file behind on a refusal -------------------------
+  # The cleanup trap used to be installed after the hello block, so run_guard's
+  # exit 2/3 left both mktemp files behind. macOS mktemp ignores $TMPDIR, so a
+  # shim on the stub PATH points every bare `mktemp` at a private directory,
+  # which makes a leak countable.
+  local hlk="$TMPROOT/bootstrap-hello-leak" hlk_detail="" hlk_tmp
+  _bootstrap_fixture "$hlk" normal; _bootstrap_product "$hlk"
+  hlk_tmp="$TMPROOT/bootstrap-hello-leak-tmp"; rm -rf "$hlk_tmp"; mkdir -p "$hlk_tmp"
+  printf '#!/bin/sh\nexec /usr/bin/mktemp "$HLK_TMP/tmp.XXXXXXXX"\n' > "$hlk/bin/mktemp"
+  chmod +x "$hlk/bin/mktemp"
+  _bootstrap_spend "$hlk" chunk/hello-1-greet 1:MERGED
+  out="$(cd "$hlk" && HLK_TMP="$hlk_tmp" STUB_STATE="$hlk/state" PATH="$hlk/bin:$PATH" "$bootstrap" stage --hello 2>&1)"; rc=$?
+  [ "$rc" = 3 ] || hlk_detail="$hlk_detail spent(exit $rc)"
+  [ -z "$(ls -A "$hlk_tmp")" ] || hlk_detail="$hlk_detail spent-leaked($(ls -A "$hlk_tmp" | tr '\n' ' '))"
+  : > "$hlk/state/gh-fails"
+  out="$(cd "$hlk" && HLK_TMP="$hlk_tmp" STUB_STATE="$hlk/state" PATH="$hlk/bin:$PATH" "$bootstrap" stage --hello 2>&1)"; rc=$?
+  [ "$rc" = 2 ] || hlk_detail="$hlk_detail could-not-ask(exit $rc)"
+  [ -z "$(ls -A "$hlk_tmp")" ] || hlk_detail="$hlk_detail could-not-ask-leaked($(ls -A "$hlk_tmp" | tr '\n' ' '))"
+  if [ -z "$hlk_detail" ]; then
+    ok "hello-cleans-its-temp-files-on-a-refusal (exit 3 and exit 2 leave no temp file)"
+  else
+    bad "hello-cleans-its-temp-files-on-a-refusal" "the --hello block leaked on a guard refusal:$hlk_detail"
+  fi
+
   if [ "$WITH_HERMES" != 1 ]; then
     skip "real-hermes-root-and-extension" "needs --with-hermes (isolated host integration)"
   elif ! command -v hermes >/dev/null 2>&1; then
@@ -5352,8 +5841,9 @@ EOF
   else
     local real="$TMPROOT/bootstrap-real" real_project="$TMPROOT/bootstrap-real/project"
     local real_home="$TMPROOT/bootstrap-real/hermes-home" real_db real_root_id
-    mkdir -p "$real_project/docs/chunks" "$real_home"
+    mkdir -p "$real_project/docs/chunks" "$real_home" "$real/state"
     git -C "$real_project" init -q
+    _bootstrap_remote_stub "$real_project" "$real/bin" "$real/remote.git"
     cat > "$real_project/docs/chunks/graph.json" <<'REAL_BOOTSTRAP_GRAPH'
 [
   {"id":"CHUNK-1","lane":"default","depends_on":[]},
@@ -5363,13 +5853,19 @@ REAL_BOOTSTRAP_GRAPH
     printf '### CHUNK-1: real root\n' > "$real_project/docs/chunks/CHUNK-1.md"
     printf '### CHUNK-2: real child\n' > "$real_project/docs/chunks/CHUNK-2.md"
     out="$(cd "$real_project" && HERMES_HOME="$real_home" \
-      FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real --root-only 2>&1)"; rc=$?
+      PATH="$real/bin:$PATH" STUB_STATE="$real/state" FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real --root-only 2>&1)"; rc=$?
     real_db="$real_home/kanban/boards/stage-real/kanban.db"
     staged_count="$(sqlite3 "$real_db" 'SELECT COUNT(*) FROM tasks;' 2>/dev/null || true)"
     real_root_id="$(sqlite3 "$real_db" \
       "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-1';" 2>/dev/null)"
     out="$(cd "$real_project" && HERMES_HOME="$real_home" \
-      FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real 2>&1)"; full_rc=$?
+      PATH="$real/bin:$PATH" STUB_STATE="$real/state" FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real 2>&1)"; full_rc=$?
+    # The re-run must have recognised the root from the REAL `kanban list --json`
+    # (title + branch_name) and so never asked GitHub about its branch again.
+    : > "$real/state/gh.log"
+    out="$(cd "$real_project" && HERMES_HOME="$real_home" \
+      PATH="$real/bin:$PATH" STUB_STATE="$real/state" FORGE_LANE_ASSIGNEE=default "$bootstrap" stage-real 2>&1)"
+    real_reasked="$(grep -c -- '--head chunk/1-real-root ' "$real/state/gh.log" 2>/dev/null || true)"
     final_count="$(sqlite3 "$real_db" 'SELECT COUNT(*) FROM tasks;' 2>/dev/null || true)"
     root_id="$(sqlite3 "$real_db" \
       "SELECT id FROM tasks WHERE idempotency_key='stage-real-CHUNK-1';" 2>/dev/null)"
@@ -5378,6 +5874,7 @@ REAL_BOOTSTRAP_GRAPH
     if [ "$rc" = 0 ] && [ "$full_rc" = 0 ] \
        && [ "$staged_count" = 1 ] && [ "$final_count" = 2 ] \
        && [ -n "$real_root_id" ] && [ "$root_id" = "$real_root_id" ] \
+       && [ "${real_reasked:-1}" = 0 ] \
        && [ "$(sqlite3 "$real_db" \
               "SELECT COUNT(*) FROM task_links WHERE parent_id='$root_id' AND child_id='$child2_id';" 2>/dev/null)" = 1 ]; then
       ok "real-hermes-root-and-extension (isolated board: 1 root -> 2 cards, 1 edge)"
@@ -5399,8 +5896,9 @@ REAL_BOOTSTRAP_GRAPH
   else
     local rg="$TMPROOT/bootstrap-real-gate" rg_project rg_home rg_db rg_c1 rg_gate rg_c2 rg_detail="" rg_q
     rg_project="$rg/project"; rg_home="$rg/hermes-home"
-    mkdir -p "$rg_project/docs/chunks" "$rg_home"
+    mkdir -p "$rg_project/docs/chunks" "$rg_home" "$rg/state"
     git -C "$rg_project" init -q
+    _bootstrap_remote_stub "$rg_project" "$rg/bin" "$rg/remote.git"
     cat > "$rg_project/docs/chunks/graph.json" <<'REAL_GATE_GRAPH'
 [
   {"id":"CHUNK-1","lane":"default","depends_on":[]},
@@ -5412,7 +5910,7 @@ REAL_GATE_GRAPH
     printf '### GATE-M1: real gate\n' > "$rg_project/docs/chunks/GATE-M1.md"
     printf '### CHUNK-2: real next milestone\n' > "$rg_project/docs/chunks/CHUNK-2.md"
     out="$(cd "$rg_project" && HERMES_HOME="$rg_home" \
-      FORGE_LANE_ASSIGNEE=default "$bootstrap" gate-real 2>&1)"; rc=$?
+      PATH="$rg/bin:$PATH" STUB_STATE="$rg/state" FORGE_LANE_ASSIGNEE=default "$bootstrap" gate-real 2>&1)"; rc=$?
     rg_db="$rg_home/kanban/boards/gate-real/kanban.db"
     rg_q() { sqlite3 "$rg_db" "$1" 2>/dev/null; }
     rg_c1="$(rg_q "SELECT id FROM tasks WHERE idempotency_key='gate-real-CHUNK-1';")"
@@ -5449,8 +5947,9 @@ REAL_GATE_GRAPH
   else
     local ri="$TMPROOT/bootstrap-real-interactive" ri_project ri_home ri_db ri_c1 ri_c2 ri_detail="" ri_open ri_done
     ri_project="$ri/project"; ri_home="$ri/hermes-home"
-    mkdir -p "$ri_project/docs/chunks" "$ri_home"
+    mkdir -p "$ri_project/docs/chunks" "$ri_home" "$ri/state"
     git -C "$ri_project" init -q
+    _bootstrap_remote_stub "$ri_project" "$ri/bin" "$ri/remote.git"
     cat > "$ri_project/docs/chunks/graph.json" <<'REAL_HUMAN_GRAPH'
 [
   {"id":"CHUNK-1","lane":"default","depends_on":[]},
@@ -5460,7 +5959,7 @@ REAL_HUMAN_GRAPH
     printf '### CHUNK-1: real parent\n' > "$ri_project/docs/chunks/CHUNK-1.md"
     printf '### CHUNK-2: real human chunk\n' > "$ri_project/docs/chunks/CHUNK-2.md"
     out="$(cd "$ri_project" && HERMES_HOME="$ri_home" \
-      FORGE_LANE_ASSIGNEE=default "$bootstrap" human-real 2>&1)"; rc=$?
+      PATH="$ri/bin:$PATH" STUB_STATE="$ri/state" FORGE_LANE_ASSIGNEE=default "$bootstrap" human-real 2>&1)"; rc=$?
     ri_db="$ri_home/kanban/boards/human-real/kanban.db"
     ri_c1="$(sqlite3 "$ri_db" "SELECT id FROM tasks WHERE idempotency_key='human-real-CHUNK-1';" 2>/dev/null)"
     ri_c2="$(sqlite3 "$ri_db" "SELECT id FROM tasks WHERE idempotency_key='human-real-CHUNK-2';" 2>/dev/null)"

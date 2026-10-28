@@ -168,9 +168,17 @@ command on the version that passed commissioning:
 
 ```bash
 cd "$PROJECT"
-"$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only
+"$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --root-only --branch-suffix "$SUF"
 hermes kanban --board "$BOARD" watch
 ```
+
+`SUF` is a lowercase slug (at most 32 characters) that no earlier run of this
+product has used, and the same one on every later bootstrap of the board. The
+bootstrap asks GitHub and `origin` about each branch before creating a card, so
+the product needs a GitHub `origin`: exit 3 means a branch is spent (a PR in any
+state, or a remote branch) and nothing was created, exit 2 means it could not ask,
+exit 4 means the board already holds the card under a different suffix, exit 1 is
+usage or a bad suffix. A `--hello` run is spent too.
 
 The bootstrap validates the complete graph before it creates anything, requires
 one root, pins the board and product workdir, and uses idempotency keys. Do not
@@ -219,7 +227,7 @@ remaining cards with dependency parents attached atomically.
 
 ```bash
 cd "$PROJECT"
-"$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD"
+"$HOME/.forge/repo/hermes/board-bootstrap.sh" "$BOARD" --branch-suffix "$SUF"
 hermes kanban --board "$BOARD" watch
 ```
 

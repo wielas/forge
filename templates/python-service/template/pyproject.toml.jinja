@@ -11,7 +11,12 @@ dev = [
     # `make setup` cannot install the git hooks and ADR-0003's entire local
     # enforcement tier is prose (see docs/audit-2026-07-27.md F8).
     "lefthook>=2",
-    "pytest>=8",
+    # Capped below 9.2: pytest-bdd (8.1.0 and 9.0.0, the latest) reads private
+    # pytest API that pytest 9.2.0 renamed (`_arg2fixturedefs`), so every test
+    # run crashes on it. This stamp ships no lock, so a fresh `uv sync` takes
+    # the newest pytest. Lift the cap once a pytest-bdd release supports pytest
+    # 9.2, and recheck PyPI before doing so (epic P31).
+    "pytest>=8,<9.2",
     "pytest-bdd>=7",
     "pytest-cov>=5",
     "ruff>=0.6",
