@@ -179,6 +179,10 @@ while [ $# -gt 0 ]; do
        PR_URL="$1"; shift;;
   esac
 done
+# P34: whatever an EARLIER run of this profile in this workspace left as "the call to make" is not
+# this run's. Cleared before anything else, so a run that dies before it names a call leaves none
+# and the driver's own arguments pass through the hook untouched.
+forge_pending_clear "$BOARD" "${HERMES_PROFILE:-}" "${HERMES_KANBAN_WORKSPACE:-}"
 [ -n "$PR_URL" ] || { usagetext; exit 2; }
 [ "$CONTRACT_FROM_CARD" != 1 ] || [ "$DRY_RUN" != 1 ] || { echo "usage: --contract-from-card reads the card, and a --dry-run has none" >&2; exit 2; }
 command -v jq >/dev/null || {
@@ -200,6 +204,10 @@ trap 'rm -rf "$TMP"' EXIT
 envelope() {   # action, summary, metadata-file|'null', reason, exit-code, [terminate-json], [on_error-json]
   local action="$1" summary="$2" metafile="$3" reason="$4" code="$5" terminate="${6:-null}" on_error="${7:-null}" meta='null'
   [ "$metafile" != "null" ] && [ -s "$metafile" ] && meta="$(cat "$metafile")"
+  # P34: the call the driver must make is also recorded on the host, and a pre_tool_call hook in
+  # this profile (scripts/driver-call-hook.sh) rewrites the driver's retyped call to the record's
+  # arguments. Written BEFORE the envelope is printed. A dry-run names no call and writes none.
+  forge_pending_write "$BOARD" "${HERMES_PROFILE:-}" "${HERMES_KANBAN_WORKSPACE:-}" "$CHUNK" "$terminate" "$on_error"
   jq -nc --arg action "$action" --arg summary "$summary" --arg reason "$reason" --argjson rc "$code" \
         --argjson metadata "$meta" --argjson terminate "$terminate" --argjson on_error "$on_error" \
         --argjson created "$(printf '%s\n' ${CREATED[@]+"${CREATED[@]}"} \

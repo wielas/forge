@@ -1118,7 +1118,8 @@ awk -v want="$key" '
                             if (want == top "." k) print v
                             nest=""; next }
   /^  [a-z_]+:$/          { nest=$0; sub(/^  /,"",nest); sub(/:$/,"",nest); next }
-  /^    - /               { if (want == top "." nest) { sub(/^    /,""); print } next }
+  /^    - /               { if (want == top "." nest) { gsub(/"/,""); sub(/^    /,""); print } next }
+  /^      [a-z_]+: /      { if (want == top "." nest) { gsub(/"/,""); sub(/^    /,""); print } next }
 ' "$cfg"
 PBHERMES
     chmod +x "$1/hermes"
@@ -2712,6 +2713,7 @@ lane/lane-sh-blocks-before-the-push  a red check and an audit breach block with 
 lane/lane-sh-refuses-a-task-that-is-not-its-card  --task is checked against the board (running, this profile's, one running run, this workspace — an empty workspace_path is not a match, S8); a missing card blocks naming no task; a card claimed from review blocks as handoff-integrity (H1)
 lane/lane-sh-ignores-the-scrubbed-variables  stub variant, no Hermes needed: planted HERMES_KANBAN_TASK/_RUN_ID/_CLAIM_LOCK reach neither the card read, the run key nor the hand-off (S7)
 lane/programs-answer-without-jq  lane.sh and prejudge-review.sh with no jq: exit 3, a one-line kanban_block carrying rc, naming no task, embedding nothing typed (S9)
+lane/the-program-records-its-call  P34: lane.sh records the call it names (the envelope's terminate and on_error) keyed by board+profile+workspace, clears the earlier record at its start, and records a block too
 lane/lane-sh-attempts-no-board-mutation  two full fenced passes on the real kernel with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses
 lane/lane-sh-reads-no-scrubbed-variable  fenced, with wrong values planted for exactly the scrubbed names; it reads its own card and nothing mentions the planted id
 lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers beside itself and names the hand-off as a kanban_request_review call
@@ -4266,6 +4268,49 @@ LCODEX
       ok "programs-answer-without-jq (lane.sh and prejudge-review.sh with no jq: exit 3, a one-line kanban_block carrying rc, naming no task and embedding nothing the caller typed)"
     else
       bad "programs-answer-without-jq" "with no jq a program must still hand the driver one valid block and embed nothing it was given —$lj_detail"
+    fi
+
+    # P34: THE PROGRAM RECORDS THE CALL IT NAMES. A driver model retypes the envelope's
+    # `terminate`, and in rehearsal 4 it dropped `reviewer`; `scripts/driver-call-hook.sh` rewrites
+    # its call to what the program recorded. So the record is exactly the envelope's two calls,
+    # keyed by board + profile + workspace (the three things a hook can see: Hermes scrubs the task
+    # id from its environment), written whole, and DELETED when the same profile starts again in
+    # that workspace — a run that dies before it names a call must leave no record behind.
+    local lp_detail="" lp_rc lp_rec lp_tmpl
+    lp_rec() { ( . "$REPO_ROOT/scripts/forge-state.sh"; forge_pending_path vlane forge-codex-lane "$lwt" "$lroot/sessions" ); }
+    _lsh_fixture record
+    lp_rc="$(_lsh_run)"; lp_tmpl="$(lp_rec)"
+    [ "$lp_rc" = 4 ] || lp_detail="$lp_detail the-run-did-not-hand-off(rc=$lp_rc,$(_lsh_env .reason | head -c 80))"
+    if [ -s "$lp_tmpl" ] \
+       && jq -e --slurpfile e "$lroot/out.json" --arg ws "$lwt" '
+            .schema == "forge.pending-call.v1" and .board == "vlane" and .profile == "forge-codex-lane"
+            and .workspace == $ws and .task_id == "t_lane" and (.written_at | type) == "number"
+            and (.pid | type) == "number" and .used == 0
+            and .terminate == $e[0].terminate and .on_error == $e[0].on_error
+            and .terminate.args.reviewer == "forge-verifier"' "$lp_tmpl" >/dev/null 2>&1; then :
+    else lp_detail="$lp_detail the-record-is-not-the-envelopes-two-calls($(head -c 160 "$lp_tmpl" 2>/dev/null))"; fi
+    [ -z "$(ls "$lroot/sessions" 2>/dev/null | grep -F '.pending.json.')" ] \
+      || lp_detail="$lp_detail a-temp-file-was-left-beside-the-record"
+    # the reviewer follows FORGE_LANE_REVIEWER: the record carries the lane's choice, the hook hard-codes none
+    _lsh_fixture record2
+    lp_rc="$(_lsh_run FORGE_LANE_REVIEWER=forge-other)"
+    jq -e '.terminate.args.reviewer == "forge-other"' "$(lp_rec)" >/dev/null 2>&1 \
+      || lp_detail="$lp_detail the-record-does-not-carry-the-reviewer-the-lane-chose"
+    # a run that dies at once (a usage error, no envelope) leaves NO record of the earlier run
+    [ -s "$(lp_rec)" ] || lp_detail="$lp_detail (control: no earlier record to clear)"
+    lp_rc="$(_lsh_run FORGE_LANE_TICK=x)"
+    { [ "$lp_rc" = 2 ] && [ ! -e "$(lp_rec)" ]; } \
+      || lp_detail="$lp_detail an-earlier-runs-record-survived-a-run-that-died(rc=$lp_rc)"
+    # a block is recorded too: terminate is the block, there is no on_error
+    _lsh_fixture record3
+    lp_rc="$(_lsh_run STUB_TURN_RED=1)"
+    { [ "$lp_rc" = 3 ] && jq -e '.terminate.tool == "kanban_block" and .on_error == null
+          and (.terminate.args.reason | startswith("ci-red: "))' "$(lp_rec)" >/dev/null 2>&1; } \
+      || lp_detail="$lp_detail a-block-was-not-recorded(rc=$lp_rc)"
+    if [ -z "$lp_detail" ]; then
+      ok "the-program-records-its-call (the record is the envelope's terminate and on_error, keyed by board+profile+workspace, written whole, naming the reviewer the lane chose; a run that dies before it names a call clears the earlier one; a block is recorded)"
+    else
+      bad "the-program-records-its-call" "lane.sh must record the call it names where the driver-call hook finds it, and clear the previous one at its start —$lp_detail"
     fi
 
     # ADR-0008's rule, as ADR-0019 D19.5 keeps it: native gating should make

@@ -139,6 +139,10 @@ case "$TASK" in *[!A-Za-z0-9_-]*) echo "usage: --task '$TASK' is not a task id" 
 for knob in "HERMES_KANBAN_WORKSPACE=$WS" "HERMES_KANBAN_BOARD=$BOARD" "HERMES_PROFILE=$PROFILE"; do
   [ -n "${knob#*=}" ] || { echo "usage: ${knob%%=*} is unset — lane.sh runs in a dispatcher-spawned worker's terminal, which keeps it" >&2; exit 2; }
 done
+# P34: whatever an EARLIER run of this profile in this workspace left as "the call to make" is not
+# this run's. Cleared before anything else, so a run that dies before it names a call leaves none
+# and the driver's own arguments pass through the hook untouched.
+forge_pending_clear "$BOARD" "$PROFILE" "$WS"
 case "$TICK" in ""|*[!0-9]*|0) echo "usage: FORGE_LANE_TICK must be a positive whole number of seconds, got '$TICK'" >&2; exit 2;; esac
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-lane-sh.XXXXXX")"
@@ -173,6 +177,10 @@ envelope() {   # action, summary, reason, terminate-json, on_error-json|null, ex
       summary: (if $summary == "" then null else $summary end),
       reason: (if $reason == "" then null else $reason end),
       rc: $rc, terminate: $terminate, on_error: $on_error, created_cards: [] }')"
+  # P34: the call the driver must make is also recorded on the host, and a pre_tool_call hook in
+  # this profile (scripts/driver-call-hook.sh) rewrites the driver's retyped call to the record's
+  # arguments. Written BEFORE the envelope is printed, so a driver that sees one finds the other.
+  forge_pending_write "$BOARD" "$PROFILE" "$WS" "${TRUSTED_TASK:-$TASK}" "$4" "$5"
   printf '%s\n' "$out"
   [ -z "$ENVELOPE_COPY" ] || printf '%s\n' "$out" > "$ENVELOPE_COPY" 2>/dev/null
   exit "$6"
