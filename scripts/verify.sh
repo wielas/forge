@@ -10637,6 +10637,16 @@ VLOGH
       # the real script with no environment at all and a stdin that is not JSON
       printf 'not json' | env -i PATH="$PATH" "$REPO_ROOT/scripts/driver-call-hook.sh" >"$hkf/out" 2>/dev/null; hk_rc=$?
       { [ "$hk_rc" = 0 ] && [ ! -s "$hkf/out" ]; } || hk_detail="$hk_detail the-real-hook-exited-$hk_rc-on-garbage"
+      # a hook whose HOME is not the programs' (a profile home) still finds the record through HERMES_REAL_HOME
+      mkdir -p "$hkf/real/.forge"
+      ( . "$REPO_ROOT/scripts/forge-state.sh"; FORGE_STATE_ROOT="$hkf/real/.forge"
+        forge_pending_write bb forge-codex-lane /ws/t_aaaaaaaa t_aaaaaaaa \
+          '{"tool":"kanban_request_review","args":{"summary":"S","reviewer":"forge-verifier"}}' null )
+      printf '%s' '{"tool_name":"kanban_request_review","profile":"forge-codex-lane","tool_input":{"summary":"x"}}' \
+        | env -i PATH="$PATH" HOME=/nonexistent HERMES_REAL_HOME="$hkf/real" HERMES_KANBAN_BOARD=bb HERMES_PROFILE=forge-codex-lane \
+            HERMES_KANBAN_WORKSPACE=/ws/t_aaaaaaaa "$REPO_ROOT/scripts/driver-call-hook.sh" 2>/dev/null \
+        | jq -e '.action == "modify" and .args.reviewer == "forge-verifier"' >/dev/null 2>&1 \
+        || hk_detail="$hk_detail a-hook-with-another-HOME-did-not-find-the-record-through-HERMES_REAL_HOME"
     fi
     [ -z "$hk_detail" ] \
       && ok "the-hook-policy-keeps-an-exit-open (no record: the driver's own hand-off and block land; the wrong tool is refused naming the right one and changes nothing; kanban_block is rewritten to on_error, left alone where none is planned, and counted through terminate then on_error, a refused call not counting; a broken record, a missing script and a script that faults (exit 2, unbound variable) change nothing, while a hook that is only exit 2 does refuse)" \
@@ -10673,7 +10683,7 @@ import sys; sys.path.insert(0, '$vsrc')
 import json, tools.kanban_tools
 from tools.registry import registry
 print(json.dumps(sorted(registry.get_schema('$hk_t')['parameters']['properties'])))" 2>/dev/null | jq -c 'sort')"
-        hk_got="$( eval "$(awk '/^declared\(\) \{/,/^\}/' "$REPO_ROOT/scripts/driver-call-hook.sh")"; declared "$hk_t" | jq -c 'sort' )"
+        hk_got="$( eval "$(awk '/^  declared\(\) \{/{f=1} f{print} f && /^  \}/{exit}' "$REPO_ROOT/scripts/driver-call-hook.sh")"; declared "$hk_t" | jq -c 'sort' )"
         [ -n "$hk_want" ] && [ "$hk_want" = "$hk_got" ] || hk_detail="$hk_detail the-hooks-key-table-for-$hk_t-is-not-the-schemas($hk_got vs $hk_want)"
       done
     fi

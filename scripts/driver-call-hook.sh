@@ -99,7 +99,7 @@ main() {
   [ "$PROFILE_STDIN" = "$PROFILE" ] || pass
 
   # The parameters each tool declares (tools/kanban_tools_schemas.py; the case
-  # `lane/the-hook-declares-the-schemas-keys` compares this table with the installed ones).
+  # `verifier/the-hook-neutralises-keys-the-driver-invents` compares this table with the installed ones).
   declared() {
     case "$1" in
       kanban_request_review)  echo '["board","task_id","summary","reviewer","metadata","artifacts"]';;
@@ -115,8 +115,7 @@ main() {
   # the real home Hermes keeps in HERMES_REAL_HOME is tried too.
   roots="$(forge_lane_session_root)"
   [ -n "${FORGE_LANE_SESSION_ROOT:-}${FORGE_STATE_ROOT:-}" ] || [ -z "${HERMES_REAL_HOME:-}" ] \
-    || roots="$roots
-  ${HERMES_REAL_HOME}/.forge/lane-sessions"
+    || roots="$roots"$'\n'"${HERMES_REAL_HOME}/.forge/lane-sessions"
   while IFS= read -r root; do
     [ -n "$root" ] || continue
     f="$(forge_pending_path "$BOARD" "$PROFILE" "$WS" "$root")"
