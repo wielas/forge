@@ -185,8 +185,8 @@ hermes kanban --board forge-hello watch
 `--branch-suffix` is needed whenever the name may have been used before: GitHub
 ties a PR to its head branch name for ever, so the bootstrap asks GitHub and
 `origin` about every branch it would hand out, and refuses (exit 3) one that has
-a PR in any state or exists on the remote. `--hello`'s `chunk/hello-1-greet` is
-spent after its first run. The guard needs a GitHub `origin`; without one it exits 2.
+a PR in any state or exists on the remote. `--hello`'s `chunk/HELLO-1-greet` (the
+id keeps the card title's case) is spent after its first run. The guard needs a GitHub `origin`; without one it exits 2.
 
 **What this proved that reading could not.** The ladder that got here ran in
 three rungs — a real repo with no agents, then `codex exec` driven by hand with
