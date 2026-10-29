@@ -118,6 +118,19 @@ the recovery; it is the operator's tool, from your own shell:
 That file is the envelope the lane validated, kept on the host; the script validates it
 again, unblocks the card, and hands it to `forge-verifier` with the reviewer named.
 
+**The driver's terminal call is repaired, so a retyped hand-off should no longer end
+`handoff-integrity`.** The lane and the verifier name their one terminal call
+(`kanban_request_review`, `kanban_request_changes`, `kanban_block`, `kanban_complete`) in an
+envelope; a cheap driver model retypes it, and in rehearsal 4 it dropped `reviewer`, so the
+card went `review` still assigned to the lane (P34). Each program now also records the call
+under `~/.forge/lane-sessions/<board>-<profile>-<hash>.pending.json`, and a `pre_tool_call`
+hook in both profiles (`~/.forge/repo/scripts/driver-call-hook.sh`, installed by
+`profiles-bootstrap.sh`) rewrites the driver's call to that record. It fails **open**: if the
+hook, the record, its clock or its session is wrong, the driver's own arguments go through, so a card can
+still end its run. A tool that is not the program's is refused with a message naming the right
+one. `make preflight` checks both profiles carry the hook; after a deploy that changes profile
+files, run `./hermes/profiles-bootstrap.sh` from the runtime.
+
 **Things that look like bugs but aren't:** a card that reverted to `ready` was
 *reclaimed* (no heartbeat in an hour) — benign, it re-runs. A card that refuses to
 re-spawn hit the **respawn guard**: quota/auth error, a recent success, or a

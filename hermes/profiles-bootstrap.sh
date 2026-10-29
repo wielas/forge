@@ -121,7 +121,23 @@ PROFILES=(
 # Keys this script owns end to end. Every one is written by write_config and
 # then verified by verify_config — if you add a key to the template, add it
 # here or it is not actually guaranteed.
-VERIFIED_KEYS=(model.default toolsets skills.external_dirs skills.disabled skills.write_approval terminal.timeout)
+VERIFIED_KEYS=(model.default toolsets skills.external_dirs skills.disabled skills.write_approval terminal.timeout hooks.pre_tool_call)
+
+# THE DRIVER-CALL HOOK (P34). The two profiles whose programs name a terminal call
+# (lane.sh, prejudge-review.sh) get a `pre_tool_call` shell hook that rewrites the driver's
+# retyped kanban_request_review / _block / _request_changes / _complete to the call the program
+# recorded (~/.forge/repo/scripts/driver-call-hook.sh, whose header holds the policy). The command is the
+# literal ~/.forge/repo form: a bare relative path cannot resolve from a worker's worktree, and
+# Hermes expands the `~` itself. Deliberately NO fail_closed: a hook fault must leave the driver
+# its own arguments, never a card stuck `running`. Dispatched workers pass --accept-hooks, which
+# records the first-use consent. The reviewer the lane names is in the record, not here, so
+# FORGE_LANE_REVIEWER needs no counterpart in this file.
+HOOK_MATCHER='kanban_request_review|kanban_block|kanban_request_changes|kanban_complete'
+HOOK_COMMAND='~/.forge/repo/scripts/driver-call-hook.sh'
+HOOK_TIMEOUT=20
+hook_profile() {  # $1=profile -> succeeds when it carries the hook
+  case "$1" in forge-codex-lane|forge-verifier) return 0;; *) return 1;; esac
+}
 
 # `hermes config set` provably cannot write a YAML list — it stores it as a
 # quoted string and the value is then silently ignored (see
@@ -151,6 +167,14 @@ write_config() {  # $1=name $2=model $3=comma-separated toolsets $4=dest
     printf '    - %s\n' $(disabled_skills_for "$name")
     echo "terminal:"
     echo "  timeout: $TERMINAL_TIMEOUT"
+    if hook_profile "$name"; then
+      echo "# P34: make the driver's terminal call the one its program recorded. No fail_closed."
+      echo "hooks:"
+      echo "  pre_tool_call:"
+      echo "    - matcher: \"$HOOK_MATCHER\""
+      echo "      command: \"$HOOK_COMMAND\""
+      echo "      timeout: $HOOK_TIMEOUT"
+    fi
   } > "$dest"
 }
 
@@ -215,6 +239,16 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets
 
   got=$(cfg_get "$name" terminal.timeout)
   [ "$got" = "$TERMINAL_TIMEOUT" ] || { echo "  FAIL terminal.timeout: got '$got' want '$TERMINAL_TIMEOUT'" >&2; rc=1; }
+
+  # The hook block is read back whole, so a changed matcher, command or timeout is as visible as a
+  # missing one — and a profile that must NOT carry it is checked too.
+  got=$(cfg_get "$name" hooks.pre_tool_call)
+  if hook_profile "$name"; then
+    want=$(printf -- '- matcher: %s\n  command: %s\n  timeout: %s' "$HOOK_MATCHER" "$HOOK_COMMAND" "$HOOK_TIMEOUT")
+    [ "$got" = "$want" ] || { echo "  FAIL hooks.pre_tool_call: got '$got' want '$want'" >&2; rc=1; }
+  else
+    [ -z "$got" ] || { echo "  FAIL hooks.pre_tool_call: '$name' must carry no hook, got '$got'" >&2; rc=1; }
+  fi
 
   return $rc
 }

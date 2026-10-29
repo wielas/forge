@@ -125,7 +125,8 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/prejudge-review.sh scripts/merge-check.sh \
 	  scripts/merge-watcher.sh scripts/bounce.sh \
 	  scripts/decision-message.sh scripts/digest.sh scripts/plan-check.sh \
-	  scripts/probe-run.sh scripts/forge-state.sh
+	  scripts/probe-run.sh scripts/forge-state.sh scripts/driver-call-hook.sh \
+  scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which
 	@# diffs it against `git ls-files '*.sh'` outside templates/. That template

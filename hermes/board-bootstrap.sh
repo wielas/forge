@@ -232,7 +232,11 @@ fi
 # duration of the call), so the two can never disagree.
 export HERMES_KANBAN_BOARD="$BOARD"
 
-hermes kanban init 2>/dev/null || true      # idempotent
+# NO `hermes kanban init` HERE (P35). It ran before the board existed, and Hermes honours
+# HERMES_KANBAN_BOARD only for a board that exists (`get_current_board`), so it fell through to
+# ~/.hermes/kanban/current and re-ran the schema and migrations on THAT board (rehearsals 3 and 4
+# printed `Kanban DB initialized at …/boards/forge-ladder/kanban.db`). `boards create` already
+# initialises the board it creates (`create_board` -> `init_db(board=…)`).
 hermes kanban boards create "$BOARD" 2>/dev/null || true   # `boards` ignores --board
 
 # A `--workspace worktree` card with no explicit workspace_path anchors on the

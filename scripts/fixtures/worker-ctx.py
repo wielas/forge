@@ -44,6 +44,32 @@ needs, from the INSTALLED Hermes and never by hand:
       {loaded, missing, prompt}. (A review claim force-loads `sdlc-review`; this is how a case sees
       which copy wins.) Refuses the operator's real home.
 
+  hooked-call <board> <task> <profile> <tool> <args.json>
+      The driver making ONE tool call exactly as the agent loop does, hooks included (P34): in a
+      dispatcher-GRANTED process, the profile's `hooks:` block is registered the way `--accept-hooks`
+      does (`shell_hooks.register_from_config`, the profile's own config.yaml), and the call goes
+      through `model_tools.handle_function_call`, whose pre_tool_call directive may block it or
+      rewrite its arguments before the registry handler sees them. Prints ONE JSON line
+      {tool, result}. Exit 0 = the handler reported ok; 10 = it returned an error; 2 = usage.
+      A profile with no `hooks:` block is the same call with no hook: the mutant.
+
+  dispatch-workspaces <board>
+      One real dispatcher tick (`kanban_db_dispatch.dispatch_once`: the claim, the workspace
+      resolution and `set_workspace_path`) with the spawn replaced by a recorder, so a case sees the
+      `workspace` the dispatcher would put in a worker's HERMES_KANBAN_WORKSPACE without starting
+      one. Prints one JSON line per card it claimed: {task, assignee, workspace, branch}. A card in
+      `review` is claimed by `claim_review_task`, as a review spawn is. Throwaway boards only.
+
+  hook-probe <board> <task> <profile> <hook-script> <out-file>
+      What a `pre_tool_call` shell hook is handed in a dispatched worker (P34, step 0). Writes the
+      hook into the profile's config.yaml in the isolated home, builds the worker's granted
+      environment, mirrors the session id the way agent init does (`set_current_session_id`),
+      registers the hooks as `--accept-hooks` does (`shell_hooks.register_from_config`), then makes
+      one `kanban_block` call through `model_tools.handle_function_call` (the seam the agent loop
+      uses) with a made-up sandbox task id. The hook's stdin and environment land in <out-file>;
+      the same process's `terminal` tool prints its own HERMES_ environment, for comparison. Prints
+      one JSON object. The card is blocked by it: use a throwaway board.
+
   denied-verbs
       The `hermes kanban` verbs the installed Hermes refuses from a fenced terminal
       (`_DELEGATED_CHILD_DENIED_ACTIONS`), `|`-joined — the set a program run by a worker
@@ -73,7 +99,8 @@ def isolated_home():
     home = os.environ.get("HERMES_HOME", "")
     if not home:
         die("HERMES_HOME is unset: refusing to touch the default home")
-    real = (Path.home() / ".hermes").resolve()
+    import pwd                                  # not $HOME: a case may fake that to test `~` expansion
+    real = (Path(pwd.getpwuid(os.getuid()).pw_dir) / ".hermes").resolve()
     here = Path(home).resolve()
     if here == real or real in here.parents:
         die(f"HERMES_HOME {here} is the operator's own: refusing")
@@ -256,15 +283,106 @@ def cmd_denied_verbs(argv):
     return 0
 
 
+def cmd_hooked_call(argv):
+    if len(argv) != 5:
+        die("usage: hooked-call <board> <task> <profile> <tool> <args.json>")
+    board, task, profile, tool, path = argv
+    try:
+        args = json.load(open(path))
+    except (OSError, ValueError) as e:
+        die(f"cannot read the arguments {path}: {e}")
+    granted = granted_env(board, task, profile)
+    os.environ.clear()
+    os.environ.update(granted)                 # the driver's process: granted, unfenced
+    kb, t = board_task(board, task)
+    if t.workspace_path and os.path.isdir(t.workspace_path):
+        os.chdir(t.workspace_path)
+    import tools.kanban_tools                  # noqa: F401  (registers the handlers)
+    from gateway.session_context import set_current_session_id
+    set_current_session_id(SESSION_ID)
+    from agent import shell_hooks
+    from hermes_cli.config import load_config
+    shell_hooks.register_from_config(load_config(), accept_hooks=True)
+    import model_tools
+    raw = model_tools.handle_function_call(tool, args, "sandbox-task-not-the-kanban-id",
+                                           session_id=SESSION_ID, tool_call_id="call-1")
+    try:
+        res = json.loads(raw)
+    except ValueError:
+        res = {"error": raw}
+    print(json.dumps({"tool": tool, "result": res}))
+    return 10 if "error" in res else 0
+
+
+def cmd_dispatch_workspaces(argv):
+    if len(argv) != 1:
+        die("usage: dispatch-workspaces <board>")
+    board = argv[0]
+    os.environ["HERMES_KANBAN_BOARD"] = board
+    from hermes_cli import kanban_db as kb, kanban_db_connect as kbc
+    from hermes_cli.kanban_db_dispatch import dispatch_once
+    seen = []
+
+    def recorder(task, workspace, board=None):          # the signature _default_spawn has
+        seen.append({"task": task.id, "assignee": task.assignee, "workspace": workspace,
+                     "branch": task.branch_name})
+        return None
+
+    with kbc.connect_closing() as conn:
+        dispatch_once(conn, spawn_fn=recorder, board=board, reconcile_orphans=False)
+    for row in seen:
+        print(json.dumps(row))
+    return 0
+
+
+def cmd_hook_probe(argv):
+    if len(argv) != 5:
+        die("usage: hook-probe <board> <task> <profile> <hook-script> <out-file>")
+    board, task, profile, script, out_file = argv
+    root = isolated_home()
+    ensure_profiles(root)
+    script = str(Path(script).resolve())
+    (root / "profiles" / profile / "config.yaml").write_text(
+        "hooks:\n  pre_tool_call:\n"
+        "    - matcher: \"kanban_request_review|kanban_block|kanban_request_changes|kanban_complete\"\n"
+        f"      command: \"{script}\"\n      timeout: 10\n")
+    granted = granted_env(board, task, profile)
+    os.environ.clear()
+    os.environ.update(granted)                 # the worker process: granted, unfenced
+    os.environ["PROBE_OUT"] = out_file
+    Path(out_file).unlink(missing_ok=True)
+    kb, t = board_task(board, task)
+    if t.workspace_path:
+        os.chdir(t.workspace_path)
+    import tools.kanban_tools, tools.terminal_tool          # noqa: F401  (register the handlers)
+    from gateway.session_context import set_current_session_id
+    set_current_session_id("hook-probe-session")            # what agent init does
+    from agent import shell_hooks
+    from hermes_cli.config import load_config
+    registered = [s.command for s in shell_hooks.register_from_config(load_config(), accept_hooks=True)]
+    term = _call("terminal", {"command": "env | grep -E '^HERMES_' | sed -E 's/(CLAIM_LOCK=).*/\\1<redacted>/' | sort"})
+    import model_tools
+    res = json.loads(model_tools.handle_function_call(
+        "kanban_block", {"reason": "needs_input: hook-probe", "kind": "needs_input"},
+        "sandbox-task-not-the-kanban-id", session_id="hook-probe-session", tool_call_id="call-1"))
+    try:
+        dump = Path(out_file).read_text()
+    except OSError:
+        dump = ""
+    print(json.dumps({"registered": registered, "terminal_env": (term.get("output") or "").splitlines(),
+                      "hook_dump": dump, "result": res}))
+    return 0
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs", "driver-run", "preload-skill"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("fenced-env", "perform", "claim-review", "denied-verbs", "driver-run", "preload-skill", "hook-probe", "hooked-call", "dispatch-workspaces"):
         die(__doc__.split("\n\n")[0] + " — see the module docstring")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd not in ("denied-verbs", "preload-skill"):
         isolated_home()
     sys.exit({"fenced-env": cmd_fenced_env, "perform": cmd_perform, "denied-verbs": cmd_denied_verbs,
               "driver-run": cmd_driver_run, "preload-skill": cmd_preload_skill,
-              "claim-review": cmd_claim_review}[cmd](rest) or 0)
+              "claim-review": cmd_claim_review, "hook-probe": cmd_hook_probe, "hooked-call": cmd_hooked_call, "dispatch-workspaces": cmd_dispatch_workspaces}[cmd](rest) or 0)
 
 
 if __name__ == "__main__":
