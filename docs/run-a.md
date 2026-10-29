@@ -3064,8 +3064,8 @@ immediately before *Launch*. A failed rehearsal still costs no commission probe.
 
 **2026-10-29 (amendment 5) — attempt 2, rehearsal 5 failed at R4: the verifier's judge call had no OAuth token; what the repair, the new precondition and rehearsal 6 are.**
 
-*Why.* Rehearsal 5 is the first rehearsal in which the P34 hook did its job, and it failed one
-step later, on the environment again. This entry records it, closes P36 (the code, in the PR
+*Why.* Rehearsal 5 validated the P34 hook (R4's hook block passed) and failed one step later, on
+the environment again. This entry records it, closes P36 (the code, in the PR
 that carries this entry), corrects the claim in amendment 4 that let it through, adds the
 precondition that would have caught it, and gives rehearsal 6 its values. Nothing above is
 edited; where this entry and the text above differ, this entry governs attempt 2. The cleanup
@@ -3073,14 +3073,12 @@ of rehearsal 5 was done before this entry was written, so only its result is rec
 
 *What rehearsal 5 found.* Board `hello-rehearsal-a2e`, card `t_45b0240f`, branch
 `chunk/HELLO-1-greet-a2e`, PR `wielas/hello-forge#10`.
-- **The P34 hook is validated.** R4's hook block printed `R4HOOKOK=1`: the driver's call was
-  restored from the program's record and landed as recorded. The lane handed off to
-  `forge-verifier` and the verifier ran `prejudge-review.sh`.
+- **The P34 hook is validated.** R4's hook block printed `R4HOOKOK=1`. The verifier ran
+  `prejudge-review.sh` on the lane's hand-off.
 - **The judge call failed.** `claude -p` in `prejudge-review.sh` returned `is_error: true`,
-  "Failed to authenticate: OAuth session expired and could not be refreshed", and the verifier
-  blocked with the substrate reason the program names for an API failure. The token in
-  `~/.hermes/.env` was not the problem: the CLI never received it, and fell back to an expired
-  login in the macOS keychain.
+  "Failed to authenticate: OAuth session expired and could not be refreshed". The token in
+  `~/.hermes/.env` was not the cause: the CLI did not receive it from its environment, and fell
+  back to an expired login in the macOS keychain.
 - **Cleanup (R7) was done.** The evidence is tagged `run-a-attempt-2/rehearsal-5` at `4b74940`,
   PR hello-forge#10 is closed, the board `hello-rehearsal-a2e` is archived and the card
   `t_45b0240f` is archived. **`a2e` is spent.** The next suffix is `a2f`.
@@ -3135,6 +3133,7 @@ environment with Hermes' own functions (`strip_launch_profile_env` included), ru
 the functions the probe uses, section 12 FAILs with `COULD NOT RUN`; that is the check reporting
 its own blindness, not a pass.
 ```bash
+P11OK=0
 P11="$(cd ~/dev/forge-runtime && make preflight 2>&1)"
 printf "%s\n" "$P11" | grep -E "receives the root token|^PASS [0-9]+ "
 printf "%s\n" "$P11" | grep -q "receives the root token through claude-token.sh" &&
@@ -3145,14 +3144,98 @@ echo "P11OK=$P11OK"
 T1 and T2 of amendment 4 still run, for what they prove: T1 that the root token is alive, T2
 that no profile `.env` carries a different one.
 
-*Rehearsal 6.* The 2026-10-27 entry's R0 to R7, as amendments 3 and 4 restated them, apply with
-**`a2e` replaced by `a2f`** everywhere it appears, `rehearsal-5` by `rehearsal-6` in the evidence
-directory (`$P/.forge/run-a-attempt-2-rehearsal-6`), and `K=5` by `K=6` in R7 step 1. The
-variables become `SUF=a2f`, `RB=hello-rehearsal-a2f` and `BR=chunk/HELLO-1-greet-$SUF`. Those
-are the only changes: amendment 4's R0, R2, R3 and R7 step 1 are not re-pasted here, and
-the operator pastes them with that substitution. The tags `run-a-attempt-2/rehearsal-1` to
-`-5` are kept as evidence, and R7 step 6's expected reading gains `rehearsal-5` at `4b74940…`
-and `rehearsal-6` at `$TIP`. The next unused suffixes after `a2f` are `a2g`, then `a2h`.
+*Rehearsal 6.* The 2026-10-27 entry's R0 to R7, as amendments 3 and 4 restated them, apply
+with the values below: the variables become `SUF=a2f`, `RB=hello-rehearsal-a2f` and
+`BR=chunk/HELLO-1-greet-$SUF`, and the evidence directory is
+`$P/.forge/run-a-attempt-2-rehearsal-6`. **Every block that sets `SUF` or `BR` (R0, R2, R3 and
+R7 step 1) is restated here with the new values; none of amendment 4's may be pasted as
+written.** The blocks that depend on those (R4's, R6's, R7 steps 2 to 6) read `$BR` and stand;
+R1 is not repeated and R5 stands. The next unused suffixes after `a2f` are `a2g`, then `a2h`;
+`a2b` to `a2e` are spent.
+
+- **R0.** Run the replacement precondition 8 with `SKIP=-` first. Then:
+  ```bash
+  SUF=a2f; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-6"; mkdir -p "$EV"
+  hermes gateway status | sed -n 2,3p
+  hermes kanban boards list --all --json | jq --arg s "$RB" 'any(.[]; .slug == $s)'
+  hermes kanban assignees --json | jq -e 'map(select(.name | IN("forge-codex-lane","forge-verifier")) | select(.on_disk)) | length == 2'
+  git -C "$H" fetch origin
+  git -C "$H" branch --show-current
+  git -C "$H" status --porcelain
+  git -C "$H" merge-base --is-ancestor HEAD origin/main && echo ancestor-ok
+  git -C "$H" diff --stat 582455c origin/main
+  test ! -e "$H/src/hello_forge/greet.py" && echo greet-absent
+  gh pr list --repo "$R" --head "$BR" --state all --json number
+  git -C "$H" ls-remote --heads origin "$BR"
+  git -C "$H" ls-remote --heads origin
+  git -C "$H" branch --list "chunk/*"
+  git -C "$H" worktree list
+  ```
+  Expected, in order: launchd; `false`; `true`; `main`; nothing; `ancestor-ok`; nothing;
+  `greet-absent`; `[]`; nothing; `refs/heads/main` alone; nothing; `$H` alone. `$H` is on
+  `main`, clean, equal to `origin/main` (`81d9b23`).
+- **R2.** After the token and hook preconditions (T1, T2 and H1 above all passed):
+  ```bash
+  SUF=a2f; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-6"
+  cd "$H" && ~/.forge/repo/hermes/board-bootstrap.sh "$RB" --hello --branch-suffix "$SUF"; echo "bootstrap exit=$?"
+  ```
+  It must print `free     chunk/HELLO-1-greet-a2f`, create the card, and print `bootstrap
+  exit=0`. **It no longer prints `Kanban DB initialized at …/forge-ladder/…` or the profile
+  discovery list that followed it** (P35). Then, in the same shell:
+  ```bash
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"; echo "$ID"
+  hermes kanban --board "$RB" show "$ID" --json | jq -e --arg b "$BR" '.task | .assignee == "forge-codex-lane" and .workspace_kind == "worktree" and .branch_name == $b and .max_retries == 1 and .skills == ["forge-lane"]'
+  hermes kanban --board "$RB" show "$ID" --json | jq -e '.task | (.title | capture("^CHUNK-(?<id>[A-Za-z0-9][A-Za-z0-9._-]*)").id) as $i | .branch_name | startswith("chunk/" + $i + "-")'
+  ```
+  Expected: the card id, then `true`, then `true`.
+- **R3.** The bounded poll of amendment 3, with the new values:
+  ```bash
+  SUF=a2f; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-6"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  T0=$(date +%s); DONE=0
+  for i in $(seq 1 36); do
+    J="$(hermes kanban --board "$RB" show "$ID" --json)"
+    printf '%s min  ' "$(( ($(date +%s) - T0) / 60 ))"
+    printf '%s\n' "$J" | jq -r '[.task.status, (.events | last | .kind), "verifier runs: \([.runs[] | select(.profile == "forge-verifier")] | length)"] | @tsv'
+    printf '%s\n' "$J" | jq -e '[.runs[] | select(.profile == "forge-verifier")] | last | .ended_at != null' >/dev/null && { DONE=1; break; }
+    printf '%s\n' "$J" | jq -e '.task.status == "blocked"' >/dev/null && { DONE=2; break; }
+    printf '%s\n' "$J" | jq -e '.task.status | IN("done","archived")' >/dev/null && { DONE=3; break; }
+    sleep 150
+  done
+  echo "DONE=$DONE"
+  hermes kanban --board "$RB" runs "$ID"
+  hermes kanban --board "$RB" log "$ID" | tail -40
+  gh pr list --repo "$R" --head "$BR" --state all
+  [ "$DONE" = 1 ] && echo "R3 poll: a verifier run ended, R4 decides" || { echo "STOP: R3 poll ended with DONE=$DONE, read the prose before R4"; false; }
+  ```
+  Pass and the meanings of `DONE=0` to `DONE=3` are amendment 3's. `DONE=2` with a verifier
+  run count of 0 is rehearsal 4's failure again: R6.
+- **R7 step 1.** `K` is 6 and the evidence directory is rehearsal 6's:
+  ```bash
+  SUF=a2f; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-6"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  K=6; WT="$H/.worktrees/$ID"
+  git -C "$H" fetch origin
+  if [ -e "$WT" ]; then
+    { echo "status:"; git -C "$WT" status --porcelain; echo "HEAD: $(git -C "$WT" rev-parse HEAD)"; } | tee "$EV/worktree-before-archive.txt"
+    TIP="$(git -C "$WT" rev-parse HEAD)"
+  else
+    echo worktree-absent | tee "$EV/worktree-before-archive.txt"
+    TIP="$(git -C "$H" ls-remote --heads origin "$BR" | cut -f1)"
+  fi
+  echo "TIP=$TIP"
+  ```
+  Steps 2 to 6 stand, in the same shell. Step 6's expected reading gains the tags
+  `rehearsal-1` at `46fabde…`, `rehearsal-2` at `093c30c…`, `rehearsal-3` at `0c2f5ea…`,
+  `rehearsal-4` at `9342c0f…`, `rehearsal-5` at `4b74940…` and `rehearsal-$K` at `$TIP`.
 
 *Order before `RUN_START`* (supersedes amendment 4's). This PR merged and deployed (the deploy
 block above), then **precondition 3 (`make verify`) and preflight on the deployed `main`**;

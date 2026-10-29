@@ -2979,7 +2979,7 @@ prejudge/review-refuses-without-a-board  no board, or no hermes, is substrate be
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
 verifier/claude-token-reaches-the-claude-child  P36: with CLAUDE_CODE_OAUTH_TOKEN unset the helper hands the claude child the root .env token (profile HERMES_HOME resolves to the root; bare/export/quoted/CRLF parse, the last wins; a set token wins, an empty one does not; no file is no token, no crash; nothing leaks to the caller or an xtrace)
 verifier/claude-token-reaches-every-claude-call-site  P36: every script that calls claude -p sources claude-token.sh before it; no SOUL/skill/adapter calls it directly; the scan finds prejudge-review.sh, so it cannot go blind
-verifier/claude-token-mutation-is-caught  P36: no fallback, a clobbered token, the profile .env read, first-line-wins, an unsourced call site and a missing helper each turn the two checks above red
+verifier/claude-token-mutation-is-caught  P36: no fallback, a clobbered token, the profile .env read, first-line-wins, a token left in the caller, xtrace left on, an unsourced call site and a missing helper each turn the two checks above red
 verifier/claude-token-reaches-the-judge-call  P36: the real prejudge-review.sh, fenced with the token unset, hands its judge call the root .env token; a set token wins; no .env is no token and still a verdict; the unsourced control gets none
 verifier/chunk-is-the-running-card  D19.1 + P24: --chunk is read back off the board (running, this profile's, one running run), not compared with a scrubbed variable; a refusal names no task; the kernel refuses a call aimed at another card
 verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the scorer is given the card's body; an empty body is stale-spec (F2: a background launch has no pipe)
@@ -10095,7 +10095,7 @@ CTSTUB
     # nothing leaks: not into the caller's environment, not into the output under xtrace
     printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$ctfix" > "$rootenv"
     got="$( unset CLAUDE_CODE_OAUTH_TOKEN; HERMES_HOME="$pe" HOME="$ctdir/home" CT_EXPECT="$ctfix" PATH="$ctbin:$PATH" \
-            bash -c '. "$1"; printf x | claude -p hello >/dev/null; echo "[${CLAUDE_CODE_OAUTH_TOKEN:-unset}]"' _ "$h" 2>&1 )"
+            bash -c '. "$1"; claude -p hello </dev/null >/dev/null; echo "[${CLAUDE_CODE_OAUTH_TOKEN:-unset}]"' _ "$h" 2>&1 )"
     [ "$got" = "[unset]" ] || d="$d the-caller-environment-was-changed($got)"
     got="$(_ct_run "$h" "$pe" unset "$ctfix" -x)"
     case "$got" in *"$ctfix"*) d="$d the-token-reached-an-xtrace-or-an-output";; esac
@@ -10148,8 +10148,15 @@ CTSTUB
   _ct_mutant clobbers-a-set-token 's/^    if \[ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" \]; then$/    if true; then/'
   _ct_mutant reads-the-profile-env 's|^    \*/profiles) h="\${parent%/profiles}";;$|    *) :;;|'
   _ct_mutant keeps-the-first-line 's/^      last="\$val"$/      [ -n "$last" ] || last="$val"/'
-  _ct_mutant leaks-to-the-caller 's/^    exec claude "\$@"$/    exec claude "$@"; export CLAUDE_CODE_OAUTH_TOKEN/'
-  for ct_m in never-falls-back clobbers-a-set-token reads-the-profile-env keeps-the-first-line; do
+  # the function body run in the caller's shell instead of a subshell: the export persists there
+  _ct_mutant leaks-to-the-caller '/^claude() {$/,/^}$/{
+    s/^  ($/  {/
+    s/^  )$/  }/
+    s/exec claude/command claude/
+  }'
+  # xtrace left on: the assignment that carries the token is then traced
+  _ct_mutant traces-the-token '/^ *set +x$/d'
+  for ct_m in never-falls-back clobbers-a-set-token reads-the-profile-env keeps-the-first-line leaks-to-the-caller traces-the-token; do
     [ -f "$ctm/$ct_m/claude-token.sh" ] || continue
     [ -n "$(_ct_matrix "$ctm/$ct_m/claude-token.sh")" ] || ct_mut="$ct_mut $ct_m-stayed-green"
   done
@@ -10165,7 +10172,7 @@ CTSTUB
     bad "claude-token-mutation-is-caught" \
         "the mutation changed nothing in${ct_notmoved} — the text it aimed at moved, so this proves nothing (F65)"
   elif [ -z "$ct_mut" ]; then
-    ok "claude-token-mutation-is-caught (no fallback, a set token clobbered, the profile .env read instead of the root's, the first line winning, a call site that stopped sourcing the helper and a missing helper each turn the checks red)"
+    ok "claude-token-mutation-is-caught (no fallback, a set token clobbered, the profile .env read instead of the root's, the first line winning, the token left in the caller's environment, xtrace left on, a call site that stopped sourcing the helper and a missing helper each turn the checks red)"
   else
     bad "claude-token-mutation-is-caught" \
         "the checks above must go red when a rule is removed —$ct_mut"
