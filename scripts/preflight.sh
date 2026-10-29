@@ -256,9 +256,11 @@ llm_probe_codex() { # $1=label  $2..=command-prefix (env wrapper etc)
 # CLAUDE_CODE_OAUTH_TOKEN is a subscription credential (`claude setup-token`,
 # one-year lifetime), NOT metered API access — it is the sanctioned way to
 # authenticate a headless run and does not violate the money invariant in §2.
-# The token that matters is the one HERMES injects into the children it spawns,
-# which it reads from ~/.hermes/.env — not the one this SSH shell happens to
-# have. So: look in the env, then fall back to ~/.hermes/.env, and probe with
+# The token that matters is the one a worker's `claude` ends up with. Hermes does
+# NOT inject the root ~/.hermes/.env into a routed worker (the dispatcher strips it),
+# so scripts/claude-token.sh reads that file itself; section 12 proves the whole
+# path. This section only finds a token to probe with — not the one this SSH shell
+# happens to have. So: look in the env, then fall back to ~/.hermes/.env, and probe with
 # whatever we find. Otherwise an SSH run reports a false failure while the real
 # lane works fine (exactly what happened on 2026-07-27).
 TOKEN_SRC=""
@@ -646,26 +648,35 @@ if [ -n "$GWPID" ]; then
   # DO NOT ask ps whether the gateway has CLAUDE_CODE_OAUTH_TOKEN. On macOS
   # `ps eww` reports the env a process was EXEC'd with; hermes loads
   # ~/.hermes/.env at import via load_hermes_dotenv(), i.e. after exec, so the
-  # token is in the live os.environ (which the dispatcher copies with
-  # `env = dict(os.environ)` when it spawns a worker) but is invisible to ps.
+  # token is in the live os.environ but is invisible to ps.
   # Measured 2026-07-27: a Python process that sets os.environ[X] post-exec
   # shows zero matches in `ps eww`. The old check WARNed on a healthy gateway.
-  # What actually matters, in order:
-  #   1. the token is readable from the home the gateway was started with, and
-  #   2. each profile carries its own copy, so a hand-run worker also has it.
+  # Being in the gateway's os.environ does NOT put it in a ROUTED worker's: the
+  # dispatcher strips it (strip_launch_profile_env; rehearsal 5, 2026-10-29), and
+  # the comment that stood here said the dispatcher copies the environment whole
+  # and that each profile should carry its own copy. Neither was true of a routed
+  # worker. What actually matters, in order:
+  #   1. the token is readable from the root .env, which scripts/claude-token.sh
+  #      reads for any `claude` a script runs, and
+  #   2. section 12 proves that, with Hermes' own spawn code, for each profile.
   if [ -n "$TOKEN_SRC" ]; then
     pass "token resolvable for gateway children (from $TOKEN_SRC)"
   else
     warn "no CLAUDE_CODE_OAUTH_TOKEN anywhere — a dispatched 'claude -p' falls back"
     say  "      to the login keychain, which a non-GUI gateway session may not unlock"
   fi
+  # A profile .env WITHOUT a token line is the correct state, and this loop used to WARN that it
+  # was "fine while it inherits the gateway's env". That was false for a ROUTED worker: the
+  # dispatcher strips every name the root .env defines before the worker starts, so nothing is
+  # inherited (rehearsal 5, docs/hermes-field-notes.md). What gives the worker its token is
+  # scripts/claude-token.sh reading the root .env, and section 12 below proves it with Hermes'
+  # own spawn code. A copy in a profile .env is the OTHER trap: it goes stale and wins over the root.
   for pdir in "$HOME"/.hermes/profiles/forge-*/; do
     [ -d "$pdir" ] || continue
     grep -q '^CLAUDE_CODE_OAUTH_TOKEN=.\+' "$pdir/.env" 2>/dev/null \
-      || warn "$(basename "$pdir")/.env has no CLAUDE_CODE_OAUTH_TOKEN — fine while it"
-    grep -q '^CLAUDE_CODE_OAUTH_TOKEN=.\+' "$pdir/.env" 2>/dev/null \
-      || say  "      inherits the gateway's env, but a hand-run 'hermes -p <name>' will not"
+      && info "$(basename "$pdir")/.env carries its own CLAUDE_CODE_OAUTH_TOKEN — it wins over the root's once the worker reloads it; keep it identical or remove it"
   done
+  info "profile .env files carry no token line by design: a routed worker is handed the root's through scripts/claude-token.sh (section 12 proves it)"
   [ -n "$GWENV" ] && { info "gateway env of interest:"; printf '%s\n' "$GWENV" | sed 's/^/      /' | while read -r l; do say "$l"; done; }
   if [ -n "$GWPATH" ]; then
     for b in claude codex gh git make; do
@@ -818,7 +829,7 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
                 codex-run.sh quota-window.py codex-progress.py \
                 prejudge-review.sh prejudge.sh verdict.sh merge-check.sh \
                 merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
-                driver-call-hook.sh; do
+                driver-call-hook.sh claude-token.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
@@ -1271,6 +1282,67 @@ else
       say  "      patch was already lost once with nothing red to show for it."
       say  "      interpreter: $PF_PY"
       while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_OUT"
+      ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------------
+sect "12. claude-token.sh delivers the root token in a routed worker's spawn environment — Hermes' own spawn code"
+# Rehearsal 5 of run A failed at the verifier's judge call with an expired-OAuth error: the
+# dispatcher's strip_launch_profile_env removes CLAUDE_CODE_OAUTH_TOKEN from a routed worker's
+# environment, and every earlier check had either built its own environment by hand (T1) or
+# accepted a profile .env with no token line as "inherits the root" (T2). scripts/worker-env-probe.py
+# builds the worker environment with Hermes' OWN functions for each forge profile, runs a stub
+# `claude` bare (the control) and through scripts/claude-token.sh, and compares sha256 digests
+# inside the probe — no token, and no digest, is ever printed. It spends no tokens and writes
+# nothing under ~/.hermes. It runs under `env -i` so the launch environment is the one the probe
+# builds from ~/.hermes/.env, as the gateway does, and not this shell's.
+#
+# The doctrine is section 11's, and for the same reason: if Hermes renames strip_launch_profile_env
+# the probe cannot run, and "I could not build the worker's environment" is this check reporting
+# its own blindness. That is a FAIL, never a note.
+#
+# SCOPE. This models the dispatcher's spawn (_spawn_worker). The `claude` a worker runs is started by
+# the agent's terminal tool, which builds the child's environment a second time; the probe does not
+# model that step, so a PASS here does not prove the terminal's `claude` has the token. A rehearsal does. A missing root token is a WARN (nothing to
+# deliver; section 3 says the same), because it is the machine, not the code.
+PF_WPROBE="$PF_SELF_REPO/scripts/worker-env-probe.py"
+PF_WHELPER="$PF_SELF_REPO/scripts/claude-token.sh"
+if [ "$PIPED" = 1 ]; then
+  warn "cannot locate scripts/worker-env-probe.py because this script was piped in on stdin —"
+  say  "      there is no file path to resolve it from. Re-run from a checkout to look at it."
+elif [ ! -f "$PF_WPROBE" ] || [ ! -f "$PF_WHELPER" ]; then
+  fail "scripts/worker-env-probe.py or scripts/claude-token.sh is missing — nothing proves a routed"
+  say  "      worker's claude gets its token. That is how rehearsal 5 failed; this is not a pass."
+elif [ -z "$PF_PY" ]; then
+  fail "cannot resolve the Hermes venv python3 from the 'hermes' shim — the worker's token is"
+  say  "      UNCHECKED, not fine. shim: ${PF_SHIM:-<not on PATH>}"
+else
+  PF_WOUT="$(env -i HOME="$HOME" PATH="$PATH" TERM=dumb "$PF_PY" -I "$PF_WPROBE" "$PF_WHELPER" 2>&1)"; PF_WRC=$?
+  case $PF_WRC in
+    0)
+      if printf '%s\n' "$PF_WOUT" | grep -q '^RESULT: ALL GREEN'; then
+        pass "claude-token.sh delivers the root token in the environment the dispatcher builds for a routed worker ($(printf '%s\n' "$PF_WOUT" | sed -n 's/^RESULT: ALL GREEN (\([0-9]*\) profiles.*/\1/p') profiles; the agent terminal's own env build is proved by a rehearsal)"
+        printf '%s\n' "$PF_WOUT" | grep -q 'bare_claude=absent' \
+          || info "a bare claude already receives the token in some profile — Hermes may no longer strip it; the helper is still required to deliver"
+      else
+        fail "worker-env-probe exited 0 without its verdict line — it did not reach its comparisons, so"
+        say  "      NOTHING was verified."
+        while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_WOUT"
+      fi
+      ;;
+    1)
+      fail "claude-token.sh does NOT deliver the root token in a routed worker's spawn environment"
+      say  "      (the judge call would authenticate from a keychain login instead: rehearsal 5)."
+      while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_WOUT"
+      ;;
+    3)
+      warn "no CLAUDE_CODE_OAUTH_TOKEN in ~/.hermes/.env — there is nothing for a worker's claude to be handed"
+      ;;
+    *)
+      fail "worker-env-probe COULD NOT RUN (exit $PF_WRC) — nothing was verified. Hermes may have moved"
+      say  "      strip_launch_profile_env or _worker_profile_scope; read the output, then fix the probe."
+      while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_WOUT"
       ;;
   esac
 fi

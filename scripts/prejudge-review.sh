@@ -162,6 +162,11 @@ WAIT_SECS=600; FIXTURE="${PREJUDGE_FIXTURE:-}"; DRY_RUN=0; CONTRACT_FROM_CARD=0
 CREATED=()
 # shellcheck source=forge-state.sh
 . "$HERE/forge-state.sh" || { echo "usage: forge-state.sh is missing beside prejudge-review.sh" >&2; exit 2; }
+# The judge call below is `claude -p`, and a ROUTED worker's environment has no CLAUDE_CODE_OAUTH_TOKEN
+# (the dispatcher strips every name the root ~/.hermes/.env defines; docs/hermes-field-notes.md,
+# rehearsal 5). Sourcing this defines a `claude` function that supplies it to that one child, so the
+# pinned scorer lines further down stay byte-identical. Without the file the review cannot authenticate.
+. "$HERE/claude-token.sh" || { echo "usage: claude-token.sh is missing beside prejudge-review.sh" >&2; exit 2; }
 usagetext() { awk '/^# Usage:/{u=1} u && /^# ={10,}/{exit} u' "$0"; }
 
 while [ $# -gt 0 ]; do
