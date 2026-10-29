@@ -3263,12 +3263,13 @@ failed rehearsal still costs no commission probe.
   The operator records both numbers next to the reading in the launch record.
 - `make preflight` has a new section 12 and loses the four per-profile WARNs that said a profile
   `.env` with no token line "inherits the gateway's env" (they were false). Measured on the PR's
-  worktree, before it was committed: **PASS 110 / WARN 3 / FAIL 1**, the FAIL being
+  worktree with the tree committed and clean: **PASS 111 / WARN 2 / FAIL 1**. The FAIL is
   `~/.forge/repo/scripts/claude-token.sh does not resolve`, which is correct until the deploy
-  (CLAUDE.md: a new script FAILs preflight in a worktree until it merges). On the deployed `main`
-  the pass condition is `FAIL 0`, and the expected reading is **PASS 111 and two or three WARNs**
-  (`lefthook`, the current board being `forge-ladder`, and a dirty checkout if there is one);
-  the operator records what it prints. Before this PR, `main` read PASS 110 / WARN 7 / FAIL 0.
+  (CLAUDE.md: a new script FAILs preflight in a worktree until it merges); once it resolves that
+  FAIL becomes a PASS, so the expected reading on the deployed `main` is **PASS 112 / WARN 2 /
+  FAIL 0**, the two WARNs being `lefthook` and the current board being `forge-ladder`. The pass
+  condition is `FAIL 0`; the operator records what it prints. Before this PR, `main` read
+  PASS 110 / WARN 7 / FAIL 0.
 - `make verify` measured from the PR's worktree **563 passed, 4 failed (those four), 11 skipped**; the four `config/external-dirs` cases
   fail there by design (the profiles point at `forge-runtime`, not at a worktree), so the deployed
   `main` reads **567 passed / 0 failed / 11 skipped** at seven live boards (563 + the four cases).
