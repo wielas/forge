@@ -2977,6 +2977,10 @@ prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_m
 prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
 prejudge/review-refuses-without-a-board  no board, or no hermes, is substrate before the gate — never a routed outcome with rc 0 that transitioned nothing
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
+verifier/claude-token-reaches-the-claude-child  P36: with CLAUDE_CODE_OAUTH_TOKEN unset the helper hands the claude child the root .env token (profile HERMES_HOME resolves to the root; bare/export/quoted/CRLF parse, the last wins; a set token wins, an empty one does not; no file is no token, no crash; nothing leaks to the caller or an xtrace)
+verifier/claude-token-reaches-every-claude-call-site  P36: every script that calls claude -p sources claude-token.sh before it; no SOUL/skill/adapter calls it directly; the scan finds prejudge-review.sh, so it cannot go blind
+verifier/claude-token-mutation-is-caught  P36: no fallback, a clobbered token, the profile .env read, first-line-wins, an unsourced call site and a missing helper each turn the two checks above red
+verifier/claude-token-reaches-the-judge-call  P36: the real prejudge-review.sh, fenced with the token unset, hands its judge call the root .env token; a set token wins; no .env is no token and still a verdict; the unsourced control gets none
 verifier/chunk-is-the-running-card  D19.1 + P24: --chunk is read back off the board (running, this profile's, one running run), not compared with a scrubbed variable; a refusal names no task; the kernel refuses a call aimed at another card
 verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the scorer is given the card's body; an empty body is stale-spec (F2: a background launch has no pipe)
 verifier/the-envelope-lands-on-the-real-kernel  P24 (b),(c): a fail lands ready on the recorded implementer, a recommendation blocked/needs_input — each by the tool's own result; sticky without an assign, decision-first; a refused call leaves the card running and its fallback lands
@@ -10028,6 +10032,146 @@ MCCGH
   fi
 
   # -------------------------------------------------------------------------
+  # 2b. `claude` CARRIES ITS OWN CREDENTIAL (scripts/claude-token.sh).
+  #
+  # Rehearsal 5 of run A failed at the judge call: `claude -p` fell back to an expired
+  # keychain login because CLAUDE_CODE_OAUTH_TOKEN was not in a ROUTED worker's environment
+  # (Hermes' dispatcher strips every name the root ~/.hermes/.env defines — docs/hermes-field-notes.md).
+  # Nothing here asserted that the token arrives, because every earlier check either built its
+  # own environment (T1) or accepted a profile `.env` with no token as "inherits the root" (T2).
+  # These cases run the real helper, with the token UNSET in the environment, against a stub
+  # `claude` that records only whether a token was present and whether it equalled the FIXTURE
+  # value the case planted — a verdict, never a value. The fixture token is made up.
+  #
+  #   claude-token-reaches-the-claude-child   the helper, over every layout and form
+  #   claude-token-reaches-every-claude-call-site   every `claude` call a worker can reach sources it first
+  #   claude-token-mutation-is-caught         neutering any one rule turns the first two red
+  #   claude-token-reaches-the-judge-call     the real prejudge-review.sh, on the real kernel (below)
+  # -------------------------------------------------------------------------
+  local ctdir="$TMPROOT/claude-token" ctbin="$TMPROOT/claude-token/bin"
+  local ctfix="fixture-oat-0123456789abcdef" ctother="fixture-oat-OTHER-fedcba9876543210"
+  rm -rf "$ctdir"; mkdir -p "$ctbin" "$ctdir/home/.hermes" "$ctdir/root/profiles/forge-verifier" "$ctdir/bare"
+  cat > "$ctbin/claude" <<'CTSTUB'
+#!/usr/bin/env bash
+[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && p=present || p=absent
+[ -n "${CT_EXPECT:-}" ] && [ "${CLAUDE_CODE_OAUTH_TOKEN:-}" = "$CT_EXPECT" ] && e=equal || e=other
+cat > /dev/null
+printf '%s %s |%s\n' "$p" "$e" "$*"
+CTSTUB
+  chmod +x "$ctbin/claude"
+  : > "$ctdir/root/profiles/forge-verifier/.env"        # the file a routed worker reloads: no token line, on purpose
+  # _ct_run <helper> <HERMES_HOME | -> <preset | unset | empty> <expected value> [bash flags]
+  _ct_run() {
+    ( unset CLAUDE_CODE_OAUTH_TOKEN
+      case "$3" in unset) ;; empty) export CLAUDE_CODE_OAUTH_TOKEN=;; *) export CLAUDE_CODE_OAUTH_TOKEN="$3";; esac
+      if [ "$2" = - ]; then unset HERMES_HOME; else export HERMES_HOME="$2"; fi
+      HOME="$ctdir/home" CT_EXPECT="$4" PATH="$ctbin:$PATH" \
+        bash ${5:+"$5"} -c 'set -u; . "$1"; printf "prompt" | claude -p hello' _ "$1" 2>&1 )
+  }
+  # _ct_matrix <helper> -> the cases that did not read as expected, empty when all did
+  _ct_matrix() {
+    local h="$1" d="" got form n=0 rootenv="$ctdir/root/.env" pe="$ctdir/root/profiles/forge-verifier"
+    _ct_want() { got="$(_ct_run "$h" "$2" "$3" "$4")"; [ "$got" = "$5 |-p hello" ] || d="$d $1(got:${got%% |*})"; }
+    printf 'export CLAUDE_CODE_OAUTH_TOKEN="%s"\n' "$ctfix" > "$rootenv"
+    _ct_want profile-home-reads-the-root-env "$pe" unset "$ctfix" "present equal"
+    _ct_want a-trailing-slash-on-the-profile-home "$pe/" unset "$ctfix" "present equal"
+    _ct_want a-root-hermes-home "$ctdir/root" unset "$ctfix" "present equal"
+    mkdir -p "$ctdir/home/.hermes"; cp "$rootenv" "$ctdir/home/.hermes/.env"
+    _ct_want no-hermes-home-means-home-dot-hermes - unset "$ctfix" "present equal"
+    _ct_want an-empty-token-is-not-a-token "$pe" empty "$ctfix" "present equal"
+    _ct_want a-set-token-wins-over-the-file "$pe" "$ctother" "$ctother" "present equal"
+    for form in "CLAUDE_CODE_OAUTH_TOKEN=$ctfix" "export CLAUDE_CODE_OAUTH_TOKEN=\"$ctfix\"" \
+                "  export   CLAUDE_CODE_OAUTH_TOKEN = '$ctfix'   # a comment" "CLAUDE_CODE_OAUTH_TOKEN=$ctfix  # a comment" \
+                "$(printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\r' "$ctfix")"; do
+      n=$((n+1)); printf '# a comment line\nOTHER=1\n%s\nCLAUDE_CODE_OAUTH_TOKEN_OLD=nope\n' "$form" > "$rootenv"
+      _ct_want "form-$n" "$pe" unset "$ctfix" "present equal"
+    done
+    printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\nCLAUDE_CODE_OAUTH_TOKEN=%s\n' "$ctother" "$ctfix" > "$rootenv"
+    _ct_want the-last-line-wins "$pe" unset "$ctfix" "present equal"
+    printf '# CLAUDE_CODE_OAUTH_TOKEN=%s\nCLAUDE_CODE_OAUTH_TOKEN_OLD=%s\nCLAUDE_CODE_OAUTH_TOKEN=\nOTHER=1' "$ctfix" "$ctfix" > "$rootenv"
+    _ct_want a-comment-a-longer-name-and-an-empty-value-are-no-token "$pe" unset "$ctfix" "absent other"
+    _ct_want no-file-is-no-token-and-no-crash "$ctdir/nowhere/profiles/p" unset "$ctfix" "absent other"
+    _ct_want a-root-with-no-env-file-is-no-token-and-no-crash "$ctdir/bare" unset "$ctfix" "absent other"
+    # nothing leaks: not into the caller's environment, not into the output under xtrace
+    printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$ctfix" > "$rootenv"
+    got="$( unset CLAUDE_CODE_OAUTH_TOKEN; HERMES_HOME="$pe" HOME="$ctdir/home" CT_EXPECT="$ctfix" PATH="$ctbin:$PATH" \
+            bash -c '. "$1"; printf x | claude -p hello >/dev/null; echo "[${CLAUDE_CODE_OAUTH_TOKEN:-unset}]"' _ "$h" 2>&1 )"
+    [ "$got" = "[unset]" ] || d="$d the-caller-environment-was-changed($got)"
+    got="$(_ct_run "$h" "$pe" unset "$ctfix" -x)"
+    case "$got" in *"$ctfix"*) d="$d the-token-reached-an-xtrace-or-an-output";; esac
+    printf '%s' "$d"
+  }
+  # _ct_wiring <scripts dir> -> what is wrong with how `claude` call sites reach the helper, empty when nothing is
+  _ct_wiring() {
+    local sd="$1" f hit first src d="" total=0 lines
+    for f in "$sd"/*.sh "$sd"/*.py; do
+      [ -f "$f" ] || continue
+      case "$(basename "$f")" in
+        verify.sh|preflight.sh|worker-env-probe.py) continue;;   # the harness; the preflight, which reads the token itself to probe it; and the probe, which runs a STUB claude through the helper on purpose
+      esac
+      first="$(grep -vE '^[[:space:]]*#' "$f" | grep -nE "(^|[^-[:alnum:]_./])claude[[:space:]]+(-p|--print)([[:space:]]|\$)|[\"']claude[\"']" | head -1 | cut -d: -f1)"
+      [ -n "$first" ] || continue
+      total=$((total+1))
+      # first is counted among non-comment lines; count the source line the same way
+      src="$(grep -vE '^[[:space:]]*#' "$f" | grep -nE '^[[:space:]]*(\.|source)[[:space:]]+"\$HERE/claude-token\.sh"' | head -1 | cut -d: -f1)"
+      if [ -z "$src" ]; then d="$d $(basename "$f")-calls-claude-without-sourcing-claude-token.sh"
+      elif [ "$src" -ge "$first" ]; then d="$d $(basename "$f")-sources-it-after-its-first-claude-call"; fi
+    done
+    [ -f "$sd/claude-token.sh" ] || d="$d claude-token.sh-is-missing"
+    [ "$total" -ge 1 ] || d="$d the-scan-found-no-claude-call-at-all(went-blind:prejudge-review.sh-has-one)"
+    # a prompt-file protocol cannot source anything: a `claude` call in a SOUL or a skill is unreachable by the helper
+    lines="$(grep -rnE '(^|[^-[:alnum:]_./])claude[[:space:]]+(-p|--print)([[:space:]]|$)' hermes skills adapters 2>/dev/null | head -3)"
+    [ -z "$lines" ] || d="$d a-profile-or-skill-calls-claude-directly($(printf '%s' "$lines" | cut -d: -f1,2 | tr '\n' ' '))"
+    printf '%s' "$d"
+  }
+  local ct_d
+  ct_d="$(_ct_matrix "$REPO_ROOT/scripts/claude-token.sh")"
+  [ -z "$ct_d" ] \
+    && ok "claude-token-reaches-the-claude-child (a routed worker's profile HERMES_HOME resolves to the root .env; bare, export, quoted and CRLF lines parse and the last wins; a set token beats the file and an empty one does not; no file, no line or a root with no .env is no token and no crash; nothing reaches the caller's environment or an xtrace)" \
+    || bad "claude-token-reaches-the-claude-child" \
+        "with CLAUDE_CODE_OAUTH_TOKEN unset the claude child must still get the root ~/.hermes/.env token (rehearsal 5: a routed worker's environment has none) —$ct_d"
+  ct_d="$(_ct_wiring "$REPO_ROOT/scripts")"
+  [ -z "$ct_d" ] \
+    && ok "claude-token-reaches-every-claude-call-site (every script that calls claude -p sources claude-token.sh from beside itself before the first call; no SOUL, skill or adapter calls it directly; prejudge-review.sh is found, so the scan is not blind)" \
+    || bad "claude-token-reaches-every-claude-call-site" \
+        "a claude call a routed worker can reach must source scripts/claude-token.sh first, or it authenticates from an expired keychain —$ct_d"
+  # MUTATION. Each mutant is a copy of the real files with ONE rule removed; a check that stays
+  # green on any of them is not a check. A mutation that changes nothing means the text it aimed
+  # at moved, so that is red too (F65).
+  local ctm="$TMPROOT/claude-token-mutants" ct_m ct_mut="" ct_notmoved=""
+  rm -rf "$ctm"; mkdir -p "$ctm"
+  _ct_mutant() {   # name sed-expression -> $ctm/<name>/claude-token.sh
+    mkdir -p "$ctm/$1"; sed -e "$2" "$REPO_ROOT/scripts/claude-token.sh" > "$ctm/$1/claude-token.sh"
+    cmp -s "$REPO_ROOT/scripts/claude-token.sh" "$ctm/$1/claude-token.sh" && ct_notmoved="$ct_notmoved $1"
+  }
+  _ct_mutant never-falls-back 's/^    if \[ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" \]; then$/    if false; then/'
+  _ct_mutant clobbers-a-set-token 's/^    if \[ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" \]; then$/    if true; then/'
+  _ct_mutant reads-the-profile-env 's|^    \*/profiles) h="\${parent%/profiles}";;$|    *) :;;|'
+  _ct_mutant keeps-the-first-line 's/^      last="\$val"$/      [ -n "$last" ] || last="$val"/'
+  _ct_mutant leaks-to-the-caller 's/^    exec claude "\$@"$/    exec claude "$@"; export CLAUDE_CODE_OAUTH_TOKEN/'
+  for ct_m in never-falls-back clobbers-a-set-token reads-the-profile-env keeps-the-first-line; do
+    [ -f "$ctm/$ct_m/claude-token.sh" ] || continue
+    [ -n "$(_ct_matrix "$ctm/$ct_m/claude-token.sh")" ] || ct_mut="$ct_mut $ct_m-stayed-green"
+  done
+  # a call site that stops sourcing the helper, and a helper that disappears
+  mkdir -p "$ctm/unwired" "$ctm/gone"
+  cp -R "$REPO_ROOT/scripts/." "$ctm/unwired/" 2>/dev/null; cp -R "$REPO_ROOT/scripts/." "$ctm/gone/" 2>/dev/null
+  grep -v 'claude-token\.sh' "$REPO_ROOT/$review" > "$ctm/unwired/prejudge-review.sh"
+  cmp -s "$REPO_ROOT/$review" "$ctm/unwired/prejudge-review.sh" && ct_notmoved="$ct_notmoved unwired"
+  rm -f "$ctm/gone/claude-token.sh"
+  [ -n "$(_ct_wiring "$ctm/unwired")" ] || ct_mut="$ct_mut a-call-site-that-stopped-sourcing-it-stayed-green"
+  [ -n "$(_ct_wiring "$ctm/gone")" ] || ct_mut="$ct_mut a-missing-helper-stayed-green"
+  if [ -n "$ct_notmoved" ]; then
+    bad "claude-token-mutation-is-caught" \
+        "the mutation changed nothing in${ct_notmoved} — the text it aimed at moved, so this proves nothing (F65)"
+  elif [ -z "$ct_mut" ]; then
+    ok "claude-token-mutation-is-caught (no fallback, a set token clobbered, the profile .env read instead of the root's, the first line winning, a call site that stopped sourcing the helper and a missing helper each turn the checks red)"
+  else
+    bad "claude-token-mutation-is-caught" \
+        "the checks above must go red when a rule is removed —$ct_mut"
+  fi
+
+  # -------------------------------------------------------------------------
   # 3. The routing, on the REAL kernel, in an isolated HERMES_HOME.
   #
   # `gh`, `claude` and the merged-tree check are stubs that log every call; the
@@ -10052,7 +10196,8 @@ MCCGH
              mutation-probe-bounces-only-behind-its-switch \
              the-hook-restores-the-handoff the-hook-restores-the-verifiers-calls \
              the-hook-refuses-a-record-that-is-not-this-runs the-hook-policy-keeps-an-exit-open \
-             the-hook-neutralises-keys-the-driver-invents the-lane-and-review-claims-share-one-workspace; do
+             the-hook-neutralises-keys-the-driver-invents the-lane-and-review-claims-share-one-workspace \
+             claude-token-reaches-the-judge-call; do
       skip "$c" "hermes (and its venv python) not installed"
     done
   else
@@ -10108,6 +10253,11 @@ VGH
     cat > "$vbin/claude" <<'VCLAUDE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$VSTUB/claude.log"
+# What the judge call's environment carried, recorded as a verdict and never as a value: whether
+# CLAUDE_CODE_OAUTH_TOKEN was set, and whether it equals the FIXTURE value the case planted.
+{ [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && vt_p=present || vt_p=absent
+  [ -n "${VF_TOKEN_EXPECT:-}" ] && [ "${CLAUDE_CODE_OAUTH_TOKEN:-}" = "$VF_TOKEN_EXPECT" ] && vt_e=equal || vt_e=other
+  printf '%s %s\n' "$vt_p" "$vt_e" >> "$VSTUB/claude.auth"; }
 cat > "$VSTUB/prompt.last"    # the prompt is consumed and never echoed — only kept, for the cases that ask what the scorer was given
 if [ "${VF_VERDICT:-approve}" = bounce ]; then
   scores='{"spec_fidelity":1,"scenario_integrity":1,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
@@ -10204,14 +10354,14 @@ with kbc.connect_closing() as c:
       # as a background terminal call has no pipe; otherwise it arrives on stdin, as the offline cases do.
       if [ "${VCONTRACT:-}" = card ]; then
         ( . "$snip"
-          env PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
+          env -u CLAUDE_CODE_OAUTH_TOKEN PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
             FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
             "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
             --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" --contract-from-card < /dev/null ) \
           > "$vbin/out.json" 2> "$vbin/err.txt"
       else
       printf '%s' "$contract" | ( . "$snip"
-        env PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
+        env -u CLAUDE_CODE_OAUTH_TOKEN PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
           FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
           "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
           --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" ) \
@@ -10226,7 +10376,7 @@ with kbc.connect_closing() as c:
       echo "$rc"
     }
     _vboard() {   # a fresh board with P and its child C
-      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
+      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/claude.auth" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
              "$vbin/base" "$vbin/state-down"
       mkdir -p "$vhome"
       # The live head starts equal to the one the recorded PR carries, because in
@@ -10325,6 +10475,34 @@ VLOGH
       && ok "the-contract-comes-from-the-card (--contract-from-card: no stdin, the scorer is given the card's own body; an empty body is stale-spec before any stage runs)" \
       || bad "the-contract-comes-from-the-card" \
           "a background launch has no pipe: the review must read its contract from the card —$vdetail"
+
+    # ---- the judge call gets the token when its environment has none (rehearsal 5) ------
+    # The real program, fenced, with CLAUDE_CODE_OAUTH_TOKEN removed from the environment it is
+    # started in — as a routed worker's is — and the token only in the ROOT .env of the isolated
+    # HERMES_HOME. The stub claude records whether it received one and whether it equals the
+    # fixture (a verdict, not the value). The controls: a set token wins; with no .env there is
+    # none; and the same program with the helper's `source` line deleted gets none even though
+    # the .env is there, which is the defect this case exists for.
+    vdetail=""; _vboard; printf 'export CLAUDE_CODE_OAUTH_TOKEN="%s"\n' "$ctfix" > "$vhome/.env"
+    vrc="$(_vrun VF_TOKEN_EXPECT="$ctfix")"
+    { [ "$vrc" = 4 ] && [ "$(sort -u "$vbin/claude.auth" 2>/dev/null)" = "present equal" ]; } \
+      || vdetail="$vdetail the-judge-call-got-no-token-from-the-root-env(rc=$vrc,$(sort -u "$vbin/claude.auth" 2>/dev/null | tr '\n' ';'))"
+    _vboard; printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$ctfix" > "$vhome/.env"
+    vrc="$(_vrun CLAUDE_CODE_OAUTH_TOKEN="$ctother" VF_TOKEN_EXPECT="$ctother")"
+    { [ "$vrc" = 4 ] && [ "$(sort -u "$vbin/claude.auth" 2>/dev/null)" = "present equal" ]; } \
+      || vdetail="$vdetail a-set-token-did-not-win(rc=$vrc,$(sort -u "$vbin/claude.auth" 2>/dev/null | tr '\n' ';'))"
+    _vboard
+    vrc="$(_vrun VF_TOKEN_EXPECT="$ctfix")"
+    { [ "$vrc" = 4 ] && [ "$(sort -u "$vbin/claude.auth" 2>/dev/null)" = "absent other" ]; } \
+      || vdetail="$vdetail no-env-file-was-not-just-no-token(rc=$vrc,$(sort -u "$vbin/claude.auth" 2>/dev/null | tr '\n' ';'))"
+    _vboard; printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$ctfix" > "$vhome/.env"
+    vrc="$(VREVIEW="$ctm/unwired/prejudge-review.sh" _vrun VF_TOKEN_EXPECT="$ctfix")"
+    { [ "$vrc" = 4 ] && [ "$(sort -u "$vbin/claude.auth" 2>/dev/null)" = "absent other" ]; } \
+      || vdetail="$vdetail the-unwired-control-still-got-a-token(rc=$vrc,$(sort -u "$vbin/claude.auth" 2>/dev/null | tr '\n' ';'))"
+    [ -z "$vdetail" ] \
+      && ok "claude-token-reaches-the-judge-call (the real prejudge-review.sh, fenced, token unset: the judge call receives the root .env token; a set token wins; no .env is no token and still a verdict; the same program with the helper unsourced gets none)" \
+      || bad "claude-token-reaches-the-judge-call" \
+          "the verifier's judge call must authenticate from the root ~/.hermes/.env when its environment has no token — a routed worker's has none (rehearsal 5) —$vdetail"
 
     # ---- each envelope's call lands on the real kernel, through the real tool ---
     # Done-when (b) and (c) of P24 (the lane's (a) is lane/bounce-round-trip-on-real-hermes, the

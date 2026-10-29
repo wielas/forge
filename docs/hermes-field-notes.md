@@ -31,6 +31,31 @@ $ python -c "import toolsets; print(toolsets.resolve_toolset('forge'))"
 `toolsets:` must list real names, one per line, from
 `toolsets.get_toolset_names()`. `messaging` is not one of them.
 
+**A routed worker loses every name the root `.env` defines.** Measured 2026-10-29, after rehearsal 5
+of run A failed at the verifier's judge call: `claude -p` returned `is_error: true`, "Failed to
+authenticate: OAuth session expired and could not be refreshed" — it had fallen back to an expired
+keychain login because `CLAUDE_CODE_OAUTH_TOKEN` was not in its environment. The dispatcher's
+`_spawn_worker` (`hermes_cli/kanban_db_dispatch.py` 2791-2828) builds the worker's environment and
+then calls `strip_launch_profile_env(env, profile_home)` (`tools/environments/local.py` 425-450),
+which deletes every name defined in the *launch* `~/.hermes/.env` unless it is on the global lists
+in `agent/secret_scope.py` (155-187). The token is not on them. The worker reloads only its own
+profile `.env`, and a profile `.env` has no token line (a copy there is the dead-copy trap of
+2026-10-26: it goes stale and wins). Run with Hermes' own functions for `forge-verifier`,
+`forge-prejudge` and `forge-codex-lane`, the token is present before the strip and absent after it.
+So the old reading, "a profile `.env` with no token line inherits the root's", is false for a routed
+profile, and so is "dispatched workers are covered by inheritance". T2 of run A's amendment 4
+accepted exactly that, and T1 built its own environment by hand, so both passed.
+
+The repair is Forge's, not a patch to Hermes: `scripts/claude-token.sh` is sourced by every script
+that calls `claude`, defines a `claude` function and, when the environment has no token, reads the
+one `CLAUDE_CODE_OAUTH_TOKEN` line of the **root** `.env` and gives it to that child only. The root
+is found from `HERMES_HOME`: a worker's is `<root>/profiles/<name>`, whose `.env` is the file with no
+token, so a path directly under a `profiles` directory resolves to its parent. `make preflight`
+section 12 proves it on every run, with `scripts/worker-env-probe.py` building the worker environment
+with Hermes' own code and comparing digests (no token is printed); it FAILs, rather than skips, if a
+Hermes function it uses has moved. Anything else a script needs from the root `.env` is lost the same
+way and needs the same treatment.
+
 **`hermes config set` cannot write lists.** `hermes config set
 skills.external_dirs '["/path"]'` stores the *string* `'["/path"]'`;
 `get_external_skills_dirs()` then treats it as a single path, fails to stat it,
@@ -618,13 +643,16 @@ an approval nobody is there to give; `off` checks nothing on a `local` backend
 with a reachable bot. `smart` is the only mode that is both safe and viable
 unattended.
 
-**How the token reaches a worker.** Not by env injection: `hermes` loads
-`~/.hermes/.env` at import, so the **gateway's live `os.environ`** holds the
-credentials, and the dispatcher spawns children with `env = dict(os.environ)`.
-The child's `HERMES_HOME` is set to the *profile* directory, so its own dotenv
-load reads `~/.hermes/profiles/<name>/.env` — not the root one. Dispatched
-workers are covered by inheritance; a hand-run `hermes -p <name>` is not, unless
-the profile's own `.env` carries the token.
+**How the token reaches a worker.** *Corrected 2026-10-29; the paragraph that stood here was
+true of a worker that is not routed and false of every forge worker. See the trap
+"A routed worker loses every name the root `.env` defines" at the top of this file.* `hermes`
+loads `~/.hermes/.env` at import, so the **gateway's live `os.environ`** holds the credentials,
+and the dispatcher builds a worker's environment from it — and then, for a routed profile,
+strips every name the root `.env` defines (`kanban_db_dispatch.py` 2828). The child's
+`HERMES_HOME` is the *profile* directory, so its own dotenv load reads
+`~/.hermes/profiles/<name>/.env`, not the root one. Nothing is "covered by inheritance": the
+token reaches a forge worker's `claude` because `scripts/claude-token.sh` reads the root `.env`
+itself. A hand-run `hermes -p <name>` is not routed, so it keeps the gateway's environment.
 
 **Something writes credentials into profile `.env` files.** All four forge
 profiles gained a `CLAUDE_CODE_OAUTH_TOKEN=` line, within the same minute, at a
@@ -701,7 +729,9 @@ One more reason the merge gate is `make protect`, not the hook.
 
 **`claude -p` authenticates headlessly with `CLAUDE_CODE_OAUTH_TOKEN`** — proven
 in a stripped `env -i` shell that mimics a dispatcher-spawned child (preflight
-§3). Credentials otherwise live in the macOS Keychain, which a non-GUI session
+§3) — *with the token passed to it by hand, which is the part a real routed worker does not get:
+see the trap "A routed worker loses every name the root `.env` defines", and preflight §12 for the
+check that builds the real environment.* Credentials otherwise live in the macOS Keychain, which a non-GUI session
 may be unable to unlock; that is what makes an SSH run fail while a local
 Terminal works. `claude setup-token` mints a one-year token that needs no
 keychain. It does not auto-refresh: **cron the renewal date**, because silent

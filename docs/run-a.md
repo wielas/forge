@@ -2762,6 +2762,14 @@ done
 ```
 (`make preflight --probe` reaches the same answer by a longer road; this is the short one.)
 
+*Correction, 2026-10-29 (amendment 5; added, nothing above is rewritten).* T2's rule that a
+profile with no line is `absent` and fine because it "inherits the root's" is false for a
+routed profile: the dispatcher strips every name the root `.env` defines before the worker
+starts, so nothing is inherited. `absent` is still the correct state, but what makes it fine is
+`scripts/claude-token.sh`, which reads the root `.env`, and the proof is `make preflight`
+section 12, not T2. T1 shows only that the root token is alive. T2 shows only that no profile
+disagrees with it. Neither shows that a worker has it; amendment 5's precondition 11 does.
+
 *Precondition 10, new: the hook is installed where the workers read it.* Run after the
 deploy and before R2. Pass: `forge-codex-lane hook-installed`, `forge-verifier
 hook-installed`, `hook-script-OK`, then `H1OK=1`. `make preflight` prints the same checks
@@ -3053,3 +3061,142 @@ immediately before *Launch*. A failed rehearsal still costs no commission probe.
   subscription, once per run of it.
 - Rehearsal 3's cleanup was run before this entry was written, so only rehearsal 4's is
   given here. The tags `run-a-attempt-2/rehearsal-1` to `-4` are kept as evidence.
+
+**2026-10-29 (amendment 5) — attempt 2, rehearsal 5 failed at R4: the verifier's judge call had no OAuth token; what the repair, the new precondition and rehearsal 6 are.**
+
+*Why.* Rehearsal 5 is the first rehearsal in which the P34 hook did its job, and it failed one
+step later, on the environment again. This entry records it, closes P36 (the code, in the PR
+that carries this entry), corrects the claim in amendment 4 that let it through, adds the
+precondition that would have caught it, and gives rehearsal 6 its values. Nothing above is
+edited; where this entry and the text above differ, this entry governs attempt 2. The cleanup
+of rehearsal 5 was done before this entry was written, so only its result is recorded.
+
+*What rehearsal 5 found.* Board `hello-rehearsal-a2e`, card `t_45b0240f`, branch
+`chunk/HELLO-1-greet-a2e`, PR `wielas/hello-forge#10`.
+- **The P34 hook is validated.** R4's hook block printed `R4HOOKOK=1`: the driver's call was
+  restored from the program's record and landed as recorded. The lane handed off to
+  `forge-verifier` and the verifier ran `prejudge-review.sh`.
+- **The judge call failed.** `claude -p` in `prejudge-review.sh` returned `is_error: true`,
+  "Failed to authenticate: OAuth session expired and could not be refreshed", and the verifier
+  blocked with the substrate reason the program names for an API failure. The token in
+  `~/.hermes/.env` was not the problem: the CLI never received it, and fell back to an expired
+  login in the macOS keychain.
+- **Cleanup (R7) was done.** The evidence is tagged `run-a-attempt-2/rehearsal-5` at `4b74940`,
+  PR hello-forge#10 is closed, the board `hello-rehearsal-a2e` is archived and the card
+  `t_45b0240f` is archived. **`a2e` is spent.** The next suffix is `a2f`.
+
+*Root cause (P36).* The Hermes dispatcher, when it spawns a routed worker
+(`hermes_cli/kanban_db_dispatch.py` 2791-2828), calls `strip_launch_profile_env(env,
+profile_home)` (`tools/environments/local.py` 425-450). That deletes every name defined in the
+launch `~/.hermes/.env` unless it is on the global lists in `agent/secret_scope.py` (155-187),
+and `CLAUDE_CODE_OAUTH_TOKEN` is not. The worker then reloads only its own profile `.env`,
+which has no token line (it must not: a copy there goes stale, as on 2026-10-28). Run with
+Hermes' own functions for `forge-verifier`, `forge-prejudge` and `forge-codex-lane`, the token is
+present before the strip and absent after it. Rehearsal 3 had reached the same call and failed on
+a *dead* token; this failure is different, a token that never arrived, and the fix for the first
+(renew it, remove the dead profile lines) could not have helped.
+
+*Why nothing saw it.* Amendment 4 added T1 and T2 for exactly this call. T1 builds its own
+stripped environment by hand and passes the token into it, so it proves the token is alive and
+not that a worker has it. T2 accepted a profile `.env` with no token line as `absent`, "it
+inherits the root's"; that is false for a routed profile (see the correction added under T2).
+`make preflight` reported the token as present, and its comment and WARN text said dispatched
+workers were covered by inheritance. All three are corrected by P36.
+
+*P36, the code* (epic P36; the PR that carries this entry, branch
+`slice/claude-p-token-fallback`). The repair is Forge's, by the operator's choice: Hermes is not
+patched, and no token line goes back into a profile `.env`.
+- `scripts/claude-token.sh` is sourced by `prejudge-review.sh` from beside itself and defines a
+  `claude` function. With the token unset or empty it reads the one `CLAUDE_CODE_OAUTH_TOKEN` line
+  of the root `.env` (a worker's `HERMES_HOME` is `<root>/profiles/<name>`, so a path directly
+  under `profiles/` resolves to its parent), never sources the file, hands the token to the
+  `claude` child only, and cannot print it. A token already in the environment wins. The pinned
+  scorer lines are unchanged.
+- Four `verifier/` cases and `make preflight` section 12 (`scripts/worker-env-probe.py`, Hermes'
+  own spawn code, no tokens spent) cover it; the field notes carry the trap.
+
+*The deploy.* Once the PR has merged and `git -C ~/dev/forge pull --ff-only` has brought it
+to the main checkout:
+```bash
+git -C ~/dev/forge-runtime pull --ff-only &&
+test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse HEAD)" && echo runtime=main &&
+test -x ~/.forge/repo/scripts/claude-token.sh && echo helper-deployed ||
+{ echo "STOP: the deploy did not complete, run nothing below"; false; }
+```
+Then amendment 4's two blocks, unchanged: `make preflight` (pass: `FAIL 0`) and `make verify`
+(pass: `failed 0`, `skipped 11`, `passed` equal to the baseline below).
+
+*Precondition 11, new: a routed worker's claude receives the root token.* Run after the deploy
+and before R2 of every rehearsal and before *Launch*. It never prints a token. It reads the
+deployed `main`'s `make preflight`, whose section 12 builds each forge profile's worker
+environment with Hermes' own functions (`strip_launch_profile_env` included), runs a stub
+`claude` bare and through the helper, and compares digests inside the probe. Pass: the line
+`receives the root token through claude-token.sh`, then `P11OK=1`. If Hermes has renamed one of
+the functions the probe uses, section 12 FAILs with `COULD NOT RUN`; that is the check reporting
+its own blindness, not a pass.
+```bash
+P11="$(cd ~/dev/forge-runtime && make preflight 2>&1)"
+printf "%s\n" "$P11" | grep -E "receives the root token|^PASS [0-9]+ "
+printf "%s\n" "$P11" | grep -q "receives the root token through claude-token.sh" &&
+printf "%s\n" "$P11" | grep -qE "FAIL 0$" && P11OK=1 ||
+{ echo "STOP: a routed worker does not get the token, do not run rehearsal 6"; false; }
+echo "P11OK=$P11OK"
+```
+T1 and T2 of amendment 4 still run, for what they prove: T1 that the root token is alive, T2
+that no profile `.env` carries a different one.
+
+*Rehearsal 6.* The 2026-10-27 entry's R0 to R7, as amendments 3 and 4 restated them, apply with
+**`a2e` replaced by `a2f`** everywhere it appears, `rehearsal-5` by `rehearsal-6` in the evidence
+directory (`$P/.forge/run-a-attempt-2-rehearsal-6`), and `K=5` by `K=6` in R7 step 1. The
+variables become `SUF=a2f`, `RB=hello-rehearsal-a2f` and `BR=chunk/HELLO-1-greet-$SUF`. Those
+are the only changes: amendment 4's R0, R2, R3 and R7 step 1 are not re-pasted here, and
+the operator pastes them with that substitution. The tags `run-a-attempt-2/rehearsal-1` to
+`-5` are kept as evidence, and R7 step 6's expected reading gains `rehearsal-5` at `4b74940…`
+and `rehearsal-6` at `$TIP`. The next unused suffixes after `a2f` are `a2g`, then `a2h`.
+
+*Order before `RUN_START`* (supersedes amendment 4's). This PR merged and deployed (the deploy
+block above), then **precondition 3 (`make verify`) and preflight on the deployed `main`**;
+**precondition 11**; the token precondition (T1, T2) and the hook check (H1); **rehearsal 6** (R0
+to R7 with `a2f`); 7 (commission); the disposition of `t_da03d07a` (T1 to T4 of the 2026-10-27
+entry); then *Launch*. Precondition 11, T1, T2 and H1 run again immediately before *Launch*. A
+failed rehearsal still costs no commission probe.
+
+*FORGE_SHA and the baseline.* Following amendments 2 to 4:
+- **`FORGE_SHA` is the merge commit of the PR that carries this entry** (squash), or a later
+  `main` if more PRs land first. It is not `7f360f4`, amendment 4's merge commit, whose
+  `prejudge-review.sh` gives its judge call no token in a routed worker. The product stays
+  `PRODUCT_SHA` `b66be28`.
+- *Inputs*' **Forge runtime** row reads "this PR's merge commit, or a later `main`". Its
+  baseline is restated as **failed 0, skipped 11, passed = 567 at 7 live boards, plus one per
+  live board beyond 7**, boards counted under `~/.hermes/kanban/boards` without `_archived`.
+  The 567 is amendment 4's 563 and the four cases this PR adds. `hello-rehearsal-a2e` is
+  archived, so the seven are the baseline's seven and the total is 567 until rehearsal 6's board
+  exists, when it is 568. The count and the expected `passed`, in the same terms as
+  `metrics/live-schema-has-fixture-columns` (replacing amendment 4's block):
+  ```bash
+  N="$(find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " ")"
+  echo "live boards: $N, expected passed: $(( 567 + (N > 7 ? N - 7 : 0) ))"
+  ```
+  The operator records both numbers next to the reading in the launch record.
+- `make preflight` has a new section 12 and loses the four per-profile WARNs that said a profile
+  `.env` with no token line "inherits the gateway's env" (they were false). Measured on the PR's
+  worktree, before it was committed: **PASS 110 / WARN 3 / FAIL 1**, the FAIL being
+  `~/.forge/repo/scripts/claude-token.sh does not resolve`, which is correct until the deploy
+  (CLAUDE.md: a new script FAILs preflight in a worktree until it merges). On the deployed `main`
+  the pass condition is `FAIL 0`, and the expected reading is **PASS 111 and two or three WARNs**
+  (`lefthook`, the current board being `forge-ladder`, and a dirty checkout if there is one);
+  the operator records what it prints. Before this PR, `main` read PASS 110 / WARN 7 / FAIL 0.
+- `make verify` measured from the PR's worktree **563 passed, 4 failed (those four), 11 skipped**; the four `config/external-dirs` cases
+  fail there by design (the profiles point at `forge-runtime`, not at a worktree), so the deployed
+  `main` reads **567 passed / 0 failed / 11 skipped** at seven live boards (563 + the four cases).
+
+*Decisions this entry makes that the operator may overrule before rehearsal 6.*
+- The token is read from the root `.env` by the scripts that run `claude`, not injected by
+  Hermes and not copied into profile files. A name other than this token that a script needs from
+  the root `.env` has the same problem and is not handled here.
+- The function form (a `claude` shell function the script sources) was chosen over editing the
+  call, because the call is S5's control arm and is pinned byte for byte.
+- The real worker's terminal reading `~/.hermes/.env` cannot be proved without a worker; precondition
+  11 proves the environment the worker is built with and the helper's behaviour in it, and
+  rehearsal 6's R4 is the first paid proof. If the judge call fails again on authentication, that
+  is a finding about the terminal, not a reason to re-run the preconditions.
