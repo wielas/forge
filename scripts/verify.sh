@@ -10109,7 +10109,7 @@ CTSTUB
       case "$(basename "$f")" in
         verify.sh|preflight.sh|worker-env-probe.py) continue;;   # the harness; the preflight, which reads the token itself to probe it; and the probe, which runs a STUB claude through the helper on purpose
       esac
-      first="$(grep -vE '^[[:space:]]*#' "$f" | grep -nE "(^|[^-[:alnum:]_./])claude[[:space:]]+(-p|--print)([[:space:]]|\$)|[\"']claude[\"']" | head -1 | cut -d: -f1)"
+      first="$(grep -vE '^[[:space:]]*#' "$f" | grep -nE "(^|[^-[:alnum:]_./])claude[[:space:]].*(-p|--print)([[:space:]]|\$)|[\"']claude[\"']" | head -1 | cut -d: -f1)"
       [ -n "$first" ] || continue
       total=$((total+1))
       # first is counted among non-comment lines; count the source line the same way
@@ -10120,7 +10120,7 @@ CTSTUB
     [ -f "$sd/claude-token.sh" ] || d="$d claude-token.sh-is-missing"
     [ "$total" -ge 1 ] || d="$d the-scan-found-no-claude-call-at-all(went-blind:prejudge-review.sh-has-one)"
     # a prompt-file protocol cannot source anything: a `claude` call in a SOUL or a skill is unreachable by the helper
-    lines="$(grep -rnE '(^|[^-[:alnum:]_./])claude[[:space:]]+(-p|--print)([[:space:]]|$)' hermes skills adapters 2>/dev/null | head -3)"
+    lines="$(grep -rnE '(^|[^-[:alnum:]_./])claude[[:space:]].*(-p|--print)([[:space:]]|$)' hermes skills adapters 2>/dev/null | head -3)"
     [ -z "$lines" ] || d="$d a-profile-or-skill-calls-claude-directly($(printf '%s' "$lines" | cut -d: -f1,2 | tr '\n' ' '))"
     printf '%s' "$d"
   }

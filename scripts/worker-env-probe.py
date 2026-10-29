@@ -20,20 +20,30 @@ WHAT THIS DOES, per profile (forge-verifier, forge-prejudge, forge-codex-lane, w
      and through scripts/claude-token.sh (the repair). The stub prints only the sha256 of what it
      received, to this process; the comparison is here, and neither token nor hash is ever printed.
 
-PASS means: through the helper, the stub received exactly the root token. The bare control
+PASS means: through the helper, in the environment the dispatcher builds, the stub received
+exactly the root token. The bare control
 is reported as well. If the control already receives the token, Hermes no longer strips it and the
 scenario is not reproduced; that is said, and is not a failure (the helper is still required to
 deliver).
 
-WHAT THIS TOUCHES: reads ~/.hermes/.env and the profile `.env` files, writes nothing under
-~/.hermes (the stub lives in a temp dir that is removed on every exit path), spawns two `bash`
-processes per profile and no model. It spends no tokens.
+WHAT THIS PROVES, AND WHAT IT DOES NOT. It models the dispatcher's spawn: the environment
+`_spawn_worker` hands the worker process. The `claude` a worker runs is started by the Hermes
+agent's terminal tool, which builds the child's environment a second time
+(`_sanitize_subprocess_env`), and this probe does not model that step. If that build dropped
+HERMES_HOME, the helper would look in $HOME/.hermes/.env instead, which is the same root file on this
+host. That the real terminal's `claude` gets the token is proved by rehearsal 6, not here.
+
+WHAT THIS TOUCHES: reads ~/.hermes/.env and the profile `.env` files and writes nothing under
+~/.hermes: bytecode writing is switched off before anything from Hermes is imported, and the stub
+lives in a temp dir that is removed on every exit path. It spawns two `bash` processes per profile
+and no model. It spends no tokens.
 
 EXIT CODES (the precedent scripts/respawn-guard-probe.py sets; "cannot run" is not a pass):
   0  every profile received the root token through the helper.
   1  the probe ran and at least one profile did NOT receive it. The repair is broken or bypassed.
   2  the probe COULD NOT RUN: a Hermes import or function this code depends on moved, the helper
-     is missing, or forge-verifier does not exist. Nothing was verified.
+     is missing, forge-verifier does not exist, or the launch environment never held the token
+     (so the strip was not exercised). Nothing was verified.
   3  there is no CLAUDE_CODE_OAUTH_TOKEN in the root ~/.hermes/.env, so there is nothing to deliver.
 
 Run it with the Hermes venv's python3, in an environment with nothing but HOME and PATH (the
@@ -95,6 +105,7 @@ def main():
     home = os.path.join(os.path.expanduser("~"), ".hermes")
     if not os.path.isdir(os.path.join(home, "profiles", REQUIRED)):
         return cannot_run(f"no {REQUIRED} profile under {home}/profiles")
+    sys.dont_write_bytecode = True
     os.environ["HERMES_HOME"] = home
     sys.path.insert(0, os.path.join(home, "hermes-agent"))
     try:
@@ -115,6 +126,9 @@ def main():
             return EXIT_NO_TOKEN
         load_hermes_dotenv(hermes_home=home)
         launch_has = bool(os.environ.get(KEY))
+        if not launch_has:
+            return cannot_run("load_hermes_dotenv did not publish the token into the launch environment, "
+                              "so the dispatcher's strip was never exercised; Hermes' loading has changed")
     except Exception as exc:
         return cannot_run(f"loading the launch environment failed: {type(exc).__name__}: {exc}")
 
@@ -161,9 +175,6 @@ def main():
 
     for l in lines:
         print(l)
-    if not launch_has:
-        print("NOTE: load_hermes_dotenv did not publish the token into the launch environment; "
-              "the strip was not exercised.")
     if seen == 0:
         return cannot_run("no profile was exercised")
     if bad:

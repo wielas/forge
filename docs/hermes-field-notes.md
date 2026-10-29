@@ -51,10 +51,15 @@ that calls `claude`, defines a `claude` function and, when the environment has n
 one `CLAUDE_CODE_OAUTH_TOKEN` line of the **root** `.env` and gives it to that child only. The root
 is found from `HERMES_HOME`: a worker's is `<root>/profiles/<name>`, whose `.env` is the file with no
 token, so a path directly under a `profiles` directory resolves to its parent. `make preflight`
-section 12 proves it on every run, with `scripts/worker-env-probe.py` building the worker environment
-with Hermes' own code and comparing digests (no token is printed); it FAILs, rather than skips, if a
-Hermes function it uses has moved. Anything else a script needs from the root `.env` is lost the same
-way and needs the same treatment.
+section 12 checks the part that can be checked without a worker: `scripts/worker-env-probe.py`
+builds the environment the dispatcher hands a routed worker, with Hermes' own code, runs a stub
+`claude` through the helper in it and compares digests (no token is printed); it FAILs, rather than
+skips, if a Hermes function it uses has moved. It does not model the second environment build the
+agent's terminal tool does (`_sanitize_subprocess_env`) before the worker's `claude` starts, so that the
+real `claude` gets the token is proved by a rehearsal, not by preflight. Anything else a script needs
+from the root `.env` is lost the same way and needs the same treatment. The helper's parser is
+deliberately small and differs from Hermes' `_parse_env_text` on edge cases (escapes inside quotes,
+exotic whitespace); none of them matters for a real token.
 
 **`hermes config set` cannot write lists.** `hermes config set
 skills.external_dirs '["/path"]'` stores the *string* `'["/path"]'`;
@@ -651,8 +656,9 @@ and the dispatcher builds a worker's environment from it — and then, for a rou
 strips every name the root `.env` defines (`kanban_db_dispatch.py` 2828). The child's
 `HERMES_HOME` is the *profile* directory, so its own dotenv load reads
 `~/.hermes/profiles/<name>/.env`, not the root one. Nothing is "covered by inheritance": the
-token reaches a forge worker's `claude` because `scripts/claude-token.sh` reads the root `.env`
-itself. A hand-run `hermes -p <name>` is not routed, so it keeps the gateway's environment.
+helper `scripts/claude-token.sh` reads the root `.env` itself, which `make preflight` section 12
+shows delivers the token in the environment the dispatcher builds (the agent terminal's own second env
+build is shown only by a rehearsal). A hand-run `hermes -p <name>` is not routed, so it keeps the gateway's environment.
 
 **Something writes credentials into profile `.env` files.** All four forge
 profiles gained a `CLAUDE_CODE_OAUTH_TOKEN=` line, within the same minute, at a

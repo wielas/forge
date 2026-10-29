@@ -3124,19 +3124,19 @@ test -x ~/.forge/repo/scripts/claude-token.sh && echo helper-deployed ||
 Then amendment 4's two blocks, unchanged: `make preflight` (pass: `FAIL 0`) and `make verify`
 (pass: `failed 0`, `skipped 11`, `passed` equal to the baseline below).
 
-*Precondition 11, new: a routed worker's claude receives the root token.* Run after the deploy
+*Precondition 11, new: the helper delivers the root token in a routed worker's spawn environment.* Run after the deploy
 and before R2 of every rehearsal and before *Launch*. It never prints a token. It reads the
 deployed `main`'s `make preflight`, whose section 12 builds each forge profile's worker
 environment with Hermes' own functions (`strip_launch_profile_env` included), runs a stub
 `claude` bare and through the helper, and compares digests inside the probe. Pass: the line
-`receives the root token through claude-token.sh`, then `P11OK=1`. If Hermes has renamed one of
+`delivers the root token in the environment the dispatcher builds`, then `P11OK=1`. If Hermes has renamed one of
 the functions the probe uses, section 12 FAILs with `COULD NOT RUN`; that is the check reporting
 its own blindness, not a pass.
 ```bash
 P11OK=0
 P11="$(cd ~/dev/forge-runtime && make preflight 2>&1)"
-printf "%s\n" "$P11" | grep -E "receives the root token|^PASS [0-9]+ "
-printf "%s\n" "$P11" | grep -q "receives the root token through claude-token.sh" &&
+printf "%s\n" "$P11" | grep -E "delivers the root token|^PASS [0-9]+ "
+printf "%s\n" "$P11" | grep -q "delivers the root token in the environment the dispatcher builds" &&
 printf "%s\n" "$P11" | grep -qE "FAIL 0$" && P11OK=1 ||
 { echo "STOP: a routed worker does not get the token, do not run rehearsal 6"; false; }
 echo "P11OK=$P11OK"
@@ -3250,7 +3250,8 @@ failed rehearsal still costs no commission probe.
   `prejudge-review.sh` gives its judge call no token in a routed worker. The product stays
   `PRODUCT_SHA` `b66be28`.
 - *Inputs*' **Forge runtime** row reads "this PR's merge commit, or a later `main`". Its
-  baseline is restated as **failed 0, skipped 11, passed = 567 at 7 live boards, plus one per
+  baseline is restated as **failed 0, skipped 11, passed = 567 (derived: 563 + 4, to be confirmed
+  on the deployed `main`) at 7 live boards, plus one per
   live board beyond 7**, boards counted under `~/.hermes/kanban/boards` without `_archived`.
   The 567 is amendment 4's 563 and the four cases this PR adds. `hello-rehearsal-a2e` is
   archived, so the seven are the baseline's seven and the total is 567 until rehearsal 6's board
@@ -3261,7 +3262,7 @@ failed rehearsal still costs no commission probe.
   echo "live boards: $N, expected passed: $(( 567 + (N > 7 ? N - 7 : 0) ))"
   ```
   The operator records both numbers next to the reading in the launch record.
-- `make preflight` has a new section 12 and loses the four per-profile WARNs that said a profile
+- `make preflight` has a new section 12 and loses the five per-profile WARNs that said a profile
   `.env` with no token line "inherits the gateway's env" (they were false). Measured on the PR's
   worktree with the tree committed and clean: **PASS 111 / WARN 2 / FAIL 1**. The FAIL is
   `~/.forge/repo/scripts/claude-token.sh does not resolve`, which is correct until the deploy
@@ -3272,7 +3273,8 @@ failed rehearsal still costs no commission probe.
   PASS 110 / WARN 7 / FAIL 0.
 - `make verify` measured from the PR's worktree **563 passed, 4 failed (those four), 11 skipped**; the four `config/external-dirs` cases
   fail there by design (the profiles point at `forge-runtime`, not at a worktree), so the deployed
-  `main` reads **567 passed / 0 failed / 11 skipped** at seven live boards (563 + the four cases).
+  `main` is **expected** to read 567 passed / 0 failed / 11 skipped at seven live boards (563 + the
+  four cases; derived, not yet measured on `main`).
 
 *Decisions this entry makes that the operator may overrule before rehearsal 6.*
 - The token is read from the root `.env` by the scripts that run `claude`, not injected by

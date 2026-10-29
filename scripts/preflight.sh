@@ -1287,7 +1287,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-sect "12. A routed worker's claude gets the root token — Hermes' own spawn code, then the helper"
+sect "12. claude-token.sh delivers the root token in a routed worker's spawn environment — Hermes' own spawn code"
 # Rehearsal 5 of run A failed at the verifier's judge call with an expired-OAuth error: the
 # dispatcher's strip_launch_profile_env removes CLAUDE_CODE_OAUTH_TOKEN from a routed worker's
 # environment, and every earlier check had either built its own environment by hand (T1) or
@@ -1300,7 +1300,11 @@ sect "12. A routed worker's claude gets the root token — Hermes' own spawn cod
 #
 # The doctrine is section 11's, and for the same reason: if Hermes renames strip_launch_profile_env
 # the probe cannot run, and "I could not build the worker's environment" is this check reporting
-# its own blindness. That is a FAIL, never a note. A missing root token is a WARN (nothing to
+# its own blindness. That is a FAIL, never a note.
+#
+# SCOPE. This models the dispatcher's spawn (_spawn_worker). The `claude` a worker runs is started by
+# the agent's terminal tool, which builds the child's environment a second time; the probe does not
+# model that step, so a PASS here does not prove the terminal's `claude` has the token. A rehearsal does. A missing root token is a WARN (nothing to
 # deliver; section 3 says the same), because it is the machine, not the code.
 PF_WPROBE="$PF_SELF_REPO/scripts/worker-env-probe.py"
 PF_WHELPER="$PF_SELF_REPO/scripts/claude-token.sh"
@@ -1318,7 +1322,7 @@ else
   case $PF_WRC in
     0)
       if printf '%s\n' "$PF_WOUT" | grep -q '^RESULT: ALL GREEN'; then
-        pass "routed workers' claude receives the root token through claude-token.sh ($(printf '%s\n' "$PF_WOUT" | sed -n 's/^RESULT: ALL GREEN (\([0-9]*\) profiles.*/\1/p') profiles, Hermes' own spawn env)"
+        pass "claude-token.sh delivers the root token in the environment the dispatcher builds for a routed worker ($(printf '%s\n' "$PF_WOUT" | sed -n 's/^RESULT: ALL GREEN (\([0-9]*\) profiles.*/\1/p') profiles; the agent terminal's own env build is proved by a rehearsal)"
         printf '%s\n' "$PF_WOUT" | grep -q 'bare_claude=absent' \
           || info "a bare claude already receives the token in some profile — Hermes may no longer strip it; the helper is still required to deliver"
       else
@@ -1328,7 +1332,7 @@ else
       fi
       ;;
     1)
-      fail "a routed worker's claude does NOT receive the root token through claude-token.sh"
+      fail "claude-token.sh does NOT deliver the root token in a routed worker's spawn environment"
       say  "      (the judge call would authenticate from a keychain login instead: rehearsal 5)."
       while IFS= read -r _pfl; do say "      $_pfl"; done <<< "$PF_WOUT"
       ;;
