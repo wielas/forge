@@ -194,7 +194,7 @@ help_flags() { # $1=command -> newline-separated long flags it accepts
 # Join backslash-continued lines so a multi-line invocation is one record, then
 # split into per-command segments. Without the split, `hermes … --json | jq
 # --arg …` would charge jq's flags to hermes. Command substitutions are removed
-# first, so `--add-dir "$(git rev-parse --git-common-dir)"` does not charge
+# first, so a `--add-dir "$(git rev-parse --git-common-dir)"` does not charge
 # git's flags to codex.
 logical_lines() { # $1=file
   awk '{
@@ -2326,18 +2326,20 @@ run_substrate_group() {
   fi
 
   # F15: codex `workspace-write` cannot commit inside a worktree without
-  # --add-dir on the git common dir. Costs tokens, so it is opt-in.
+  # --add-dir on the git common dir AND, since codex-cli 0.164, the worktree's
+  # own gitdir. Costs tokens, so it is opt-in. The free witness is
+  # quota/codex-run-grants-both-git-roots; preflight section 13 probes the
+  # sandbox itself with `codex sandbox`.
   if [ "$WITH_CODEX" != 1 ]; then
     skip "codex-worktree-commit" "needs --with-codex (spends tokens)"
   elif ! command -v codex >/dev/null 2>&1; then
     skip "codex-worktree-commit" "codex not on PATH"
   else
-    local out common live_run setup_out audit_out check_ok=0
+    local out live_run setup_out audit_out check_ok=0
     # The audit root is redirected like every other lane case. Without this the
     # live probe writes run state into the operator's real ~/.forge/lane-audits
     # and never reaps it — a test that litters the directory it is testing.
     local live_audit="$TMPROOT/live-lane-audits"
-    common=$(git -C "$LABROOT/linked" rev-parse --git-common-dir)
     live_run="verify-codex-$(date +%s)-$$"
     setup_out="$(env FORGE_LANE_AUDIT_ROOT="$live_audit" \
                  $REPO_ROOT/scripts/lane-setup.sh "$LABROOT/linked" "$live_run" 2>&1)"
@@ -2364,9 +2366,22 @@ run_substrate_group() {
           "lane-setup emitted no FORGE_LANE_RUN_KEY — the audit key contract is broken"
       return
     fi
-    out=$(cd "$LABROOT/linked" && codex exec -s workspace-write \
+    # The grant is the runner's own, not a copy of it: a linked worktree needs
+    # its gitdir beside the common dir on codex-cli >= 0.164 (see
+    # quota/codex-run-grants-both-git-roots), and a hand-written --add-dir here
+    # is what let this probe and the lane disagree about what Codex may write.
+    # Seeded non-empty: expanding an empty array under `set -u` aborts on bash 3.2.
+    local live_dirs=(-s workspace-write) live_root
+    while IFS= read -r live_root; do
+      [ -n "$live_root" ] && live_dirs=("${live_dirs[@]}" --add-dir "$live_root")
+    done < <("$REPO_ROOT/scripts/codex-run.sh" --print-sandbox-roots "$LABROOT/linked" 2>/dev/null)
+    if [ "${#live_dirs[@]}" -lt 6 ]; then
+      bad "codex-worktree-commit" \
+          "codex-run.sh --print-sandbox-roots gave fewer than two roots for a linked worktree — the grant this probe exists to test cannot be read"
+      return
+    fi
+    out=$(cd "$LABROOT/linked" && codex exec "${live_dirs[@]}" \
             --ephemeral --ignore-user-config \
-            --add-dir "$common" \
             "create a file probe.txt containing hi, then git add and git commit it" \
             </dev/null 2>&1)
     make -C "$LABROOT/linked" check >/dev/null 2>&1 && check_ok=1
@@ -2737,7 +2752,7 @@ substrate/worktree-ownership      dispatcher resolves the worktree before spawni
 substrate/worktree-gitfile        .git is a file in a linked worktree; writes fail
 substrate/kanban-json-shapes      the --json shapes board-bootstrap and monitoring read are unchanged
 substrate/kanban-card-parking-semantics/<assertion>  create never yields running, block refuses from todo, and stickiness is the blocked EVENT, not the status column (--with-hermes)
-substrate/codex-worktree-commit   codex can commit in a worktree with --add-dir (--with-codex)
+substrate/codex-worktree-commit   codex can commit in a worktree with the runner's own --add-dir roots, common dir + gitdir (--with-codex)
 template/stamp                            copier stamps a project from the template into a durable path
 template/stamp-setup-check                the stamp/setup/check probe could not run (uvx absent)
 template/setup                            make setup builds the venv and installs the toolchain
@@ -2779,6 +2794,8 @@ lane/blast/hook-symlink-target-content-is-protected  writable target bytes are p
 lane/blast/unreadable-hook-fails-closed   hashing failure cannot become an empty clean set
 lane/blast/shared-config-is-protected     local config is outside the task contract
 lane/blast/worktree-config-is-protected   core.hooksPath lives here and --local never shows it
+lane/blast/worktree-gitdir-direct-write-is-protected  the gitdir Codex is granted holds config.worktree; a direct file write there (not touching hooksPath) is reported as worktree-config-edited
+lane/blast/worktree-commondir-rewrite-is-protected  a gitdir `commondir` repointed at another repository reads as common-git-changed
 lane/blast/shared-hooks-are-protected     the OPERATOR's hooks, which lanes no longer write
 lane/blast/forge-dirt-is-not-hidden       no whole-directory .forge exclusion remains
 lane/blast/unreadable-status-fails-closed git status exit 128 cannot read as empty output
@@ -3213,6 +3230,18 @@ quota/a-knob-that-reads-as-garbage-is-a-usage-error  an unparseable knob exits 2
 quota/codex-pin-is-passed-not-inherited   `codex exec` AND `codex exec resume` each carry -m and -c model_reasoning_effort out of scripts/model-pins.sh
 quota/codex-pin-on-the-fresh-branch-mutation-is-caught  a runner that pins only the resume call turns this group red
 quota/codex-pin-on-the-resume-branch-mutation-is-caught  a runner that pins only the first call turns this group red
+quota/codex-run-grants-both-git-roots     a linked worktree's common dir AND its own gitdir are granted on `codex exec --add-dir` and on the resume writable_roots (codex-cli 0.164 no longer covers the second via the first)
+quota/codex-run-grants-a-main-checkout-root-once  in a main checkout the gitdir is the common dir and is granted once on both branches
+quota/codex-run-prints-the-roots-it-grants  --print-sandbox-roots gives the same roots as the argv, one per line, and nothing on stdout when it fails
+quota/codex-run-gitdir-dropped-on-the-fresh-branch-mutation-is-caught  a runner that grants only the common dir to `codex exec` turns this group red
+quota/codex-run-gitdir-dropped-on-the-resume-branch-mutation-is-caught  a runner that grants only the common dir to `codex exec resume` turns this group red
+quota/codex-run-gitdir-never-resolved-mutation-is-caught  a runner that never adds the gitdir to its roots turns this group red
+quota/codex-run-duplicate-root-in-a-main-checkout-mutation-is-caught  a runner that grants a main checkout's single root twice turns this group red
+quota/codex-rollout-check-passes-a-clean-run  a rollout with no denial and no escalated call exits 0, and the schema prose that names require_escalated is not an escalation
+quota/codex-rollout-check-fails-on-a-denial-an-escalation-or-an-auto-review-thread  each of the three marks of an escalated commit is exit 1
+quota/codex-rollout-check-finding-no-rollout-is-exit-2-never-a-pass  an empty tree, another worktree's rollout, one outside the window and a missing root are all exit 2
+quota/codex-rollout-check-reads-the-granted-roots  --expect-root fails when the sandbox policy the lane's Codex recorded lacks a root the runner meant to grant, and is exit 2 when none was recorded
+quota/codex-rollout-check-mutation-is-caught  an escalation regex that matches nothing, zero rollouts read as success, an unread denial and ignored expected roots each turn a case red
 quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
 digest/fixture-message-exact        two fixture boards, a quiet one and an archived one produce one exact message: landed, in flight, waiting on you decision-first, spend
 digest/silent-when-nothing-happened a board with nothing landed, in flight or waiting prints nothing and exits 0 — under --no-agent that is no notification
@@ -3868,6 +3897,29 @@ DVSTUB
     _blast_fixture blast-worktree-config
     git -C "$brepo" config --worktree core.hooksPath "$TMPROOT/$brun-elsewhere"
     _expect_blast "blast/worktree-config-is-protected" 3 "$(_blast_rc)"
+
+    # The same surface, reached the way a sandboxed Codex reaches it. Codex is
+    # granted the worktree's own gitdir (codex-run.sh --print-sandbox-roots,
+    # codex-cli >= 0.164), so it can WRITE <gitdir>/config.worktree directly,
+    # without `git config`. The audit reads that file through
+    # `git config --worktree`, so a hand-written hooksPath is the same breach.
+    _blast_fixture blast-worktree-config-direct
+    printf '[credential]\n\thelper = !sh -c true\n' \
+      >> "$(git -C "$brepo" rev-parse --absolute-git-dir)/config.worktree"
+    _expect_blast "blast/worktree-gitdir-direct-write-is-protected" 3 "$(_blast_rc)"
+    grep -Fq 'worktree-config-edited' "$TMPROOT/$brun-check.out" 2>/dev/null \
+      || bad "blast/worktree-gitdir-direct-write-is-protected" \
+             "blocked, but not as worktree-config-edited: $(tr '\n' ' ' < "$TMPROOT/$brun-check.out" 2>/dev/null)"
+
+    # The other file in that gitdir that redirects Git: `commondir`, which says
+    # where the shared repository is. Rewritten to another repository it must
+    # read as common-git-changed, not as a worktree that merely looks odd.
+    _blast_fixture blast-commondir
+    printf '%s\n' "$borigin" > "$(git -C "$brepo" rev-parse --absolute-git-dir)/commondir"
+    _expect_blast "blast/worktree-commondir-rewrite-is-protected" 3 "$(_blast_rc)"
+    grep -Fq 'common-git-changed' "$TMPROOT/$brun-check.out" 2>/dev/null \
+      || bad "blast/worktree-commondir-rewrite-is-protected" \
+             "blocked, but not as common-git-changed: $(tr '\n' ' ' < "$TMPROOT/$brun-check.out" 2>/dev/null)"
 
     _blast_fixture blast-shared-hooks
     printf '#!/bin/sh\nexit 1\n' > "$bshared/pre-push"
@@ -15332,6 +15384,297 @@ QPIN
       pin-not-on-resume \
       's/^  ARGV=\(.*model_reasoning_effort.*\)$/  [ -z "${SESSION_ID:-}" ] \&\& ARGV=\1/' \
       'the resume attempt argv carries no -m'
+  fi
+
+  # ---- THE SANDBOX GRANT NAMES BOTH GIT ROOTS ------------------------------
+  #
+  # codex-cli 0.164.0 (installed 2026-10-25; 0.157.1 before it) stopped letting
+  # a `workspace-write` sandbox write a linked worktree's OWN gitdir
+  # (`<common>/worktrees/<name>/`) on the strength of a grant for the common dir
+  # alone: `git add` died on `index.lock: Operation not permitted`. Rehearsals
+  # 1-6 committed anyway, only because ~/.codex/config.toml carried
+  # approvals_reviewer = "auto_review", which approved an escalated retry. This
+  # case is the free witness that the runner now states both roots itself, on
+  # BOTH argv branches -- `codex exec` takes --add-dir, `codex exec resume`
+  # takes only the equivalent -c override, and a refactor that fixed one would
+  # leave every ADR-0016 park coming back through the broken grant.
+  #
+  # The argv is recorded by a stub codex from the REAL runner, one word per
+  # line, and the expectation is derived here from git itself rather than from
+  # a copy of the runner's string. The main-checkout case is the other half of
+  # the contract: there the gitdir IS the common dir, and it is granted once.
+  cat > "$qbin/roots-echo" <<'QROOTS'
+#!/usr/bin/env bash
+case "${1:-}" in --version) echo "roots-echo stub"; exit 0;; esac
+for a in "$@"; do
+  if [ "$a" = resume ]; then
+    printf '%s\n' "$@" > "$STUBDIR/roots-argv-resume"
+    printf '{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}\n'
+    exit 0
+  fi
+done
+printf '%s\n' "$@" > "$STUBDIR/roots-argv-first"
+printf '{"type":"session_meta","payload":{"session_id":"verify-roots-1"}}\n'
+printf '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"resets_at":%d}}}}\n' "$(( $(date +%s) + 2 ))"
+printf '{"type":"event_msg","payload":{"type":"error","error_type":"usage_limit_reached"}}\n'
+exit 1
+QROOTS
+  chmod +x "$qbin/roots-echo"
+
+  local qroots_linked="$qroot/ws-linked"
+  ( cd "$qws" && git worktree add -q "$qroots_linked" -b qroots-linked ) >/dev/null 2>&1
+
+  _qroots_check() { # <runner> <suffix> <workspace> -> diagnostic on stdout, 1 when a branch lost a root
+    local rrunner="$1" suffix="$2" rws="$3" out rc f exp_common exp_gitdir
+    local rt="$qroot/runtime-$suffix"
+    rm -rf "$rt"; mkdir -p "$rt"; printf 'contract\n' > "$rt/contract.md"
+    rm -f "$qroot/roots-argv-first" "$qroot/roots-argv-resume" "$qpark/task-$suffix.json"
+    # What git itself says, resolved the way the runner resolves it (pwd -P, so
+    # /var and /private/var cannot disagree).
+    exp_common="$(cd "$rws" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+    exp_gitdir="$(cd "$rws" && cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
+    out="$(_qrun 60 env PATH="$qbin:$PATH" STUBDIR="$qroot" CODEX_HOME="$qroot/codexhome" \
+             FORGE_LANE_RUNTIME="$rt" FORGE_LANE_PARK_ROOT="$qpark" \
+             FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
+             FORGE_CODEX_BIN="$qbin/roots-echo" \
+             "$rrunner" "$rws" "run-$suffix" "task-$suffix" 2>&1)"
+    rc=$?
+    printf '%s\n' "$out" > "$qroot/roots-run-$suffix.log"
+    [ "$rc" = 0 ] \
+      || { printf 'the runner exited %s instead of parking and resuming cleanly\n' "$rc"; return 1; }
+    local want_dirs want_toml
+    if [ "$exp_gitdir" = "$exp_common" ]; then
+      want_dirs="$exp_common"
+      want_toml="sandbox_workspace_write.writable_roots=[\"$exp_common\"]"
+    else
+      want_dirs="$exp_common
+$exp_gitdir"
+      want_toml="sandbox_workspace_write.writable_roots=[\"$exp_common\",\"$exp_gitdir\"]"
+    fi
+    f="$qroot/roots-argv-first"
+    [ -s "$f" ] || { printf 'the first attempt recorded no argv at all\n'; return 1; }
+    local got_dirs; got_dirs="$(awk 'p { print; p = 0 } $0 == "--add-dir" { p = 1 }' "$f")"
+    [ "$got_dirs" = "$want_dirs" ] \
+      || { printf 'the first attempt grants --add-dir {%s}, expected {%s}\n' \
+                  "$(printf '%s' "$got_dirs" | tr '\n' ' ')" "$(printf '%s' "$want_dirs" | tr '\n' ' ')"; return 1; }
+    f="$qroot/roots-argv-resume"
+    [ -s "$f" ] || { printf 'the resume attempt recorded no argv at all\n'; return 1; }
+    local got_toml; got_toml="$(grep '^sandbox_workspace_write\.writable_roots=' "$f")"
+    [ "$got_toml" = "$want_toml" ] \
+      || { printf 'the resume attempt grants {%s}, expected {%s}\n' "$got_toml" "$want_toml"; return 1; }
+    return 0
+  }
+
+  local qroots_diag qroots_rc qroots_dist
+  qroots_dist="$(cd "$qroots_linked" 2>/dev/null && [ "$(cd "$(git rev-parse --absolute-git-dir)" && pwd -P)" != "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)" ] && echo linked)"
+  if [ "$qroots_dist" != linked ]; then
+    bad "codex-run-grants-both-git-roots" \
+        "the linked-worktree fixture is not linked (gitdir == common dir), so the case would prove nothing"
+  else
+    qroots_diag="$(_qroots_check "$runner" roots-linked "$qroots_linked")"; qroots_rc=$?
+    if [ "$qroots_rc" = 0 ]; then
+      ok "codex-run-grants-both-git-roots (common dir + worktree gitdir on the fresh --add-dir and the resume writable_roots)"
+    else
+      bad "codex-run-grants-both-git-roots" \
+          "a linked worktree needs its own gitdir granted beside the common dir on BOTH branches (codex-cli 0.164) — $qroots_diag"
+    fi
+  fi
+  qroots_diag="$(_qroots_check "$runner" roots-main "$qws")"; qroots_rc=$?
+  if [ "$qroots_rc" = 0 ]; then
+    ok "codex-run-grants-a-main-checkout-root-once (gitdir == common dir: one root, no duplicate)"
+  else
+    bad "codex-run-grants-a-main-checkout-root-once" \
+        "in a main checkout the gitdir is the common dir and must be granted exactly once on both branches — $qroots_diag"
+  fi
+
+  # The print mode is what preflight and the paid verify probe read, so it is
+  # held to the same expectation as the argv: the same roots, one per line, and
+  # on a failure NOTHING on stdout (an `env:` line there would be read as a root).
+  local qpr_bad="" qpr_out qpr_exp
+  qpr_out="$(bash "$runner" --print-sandbox-roots "$qroots_linked" 2>/dev/null)"
+  qpr_exp="$(cd "$qroots_linked" && cd "$(git rev-parse --git-common-dir)" && pwd -P)
+$(cd "$qroots_linked" && cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
+  [ "$qpr_out" = "$qpr_exp" ] || qpr_bad="$qpr_bad linked"
+  qpr_out="$(bash "$runner" --print-sandbox-roots "$qws" 2>/dev/null)"
+  qpr_exp="$(cd "$qws" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+  [ "$qpr_out" = "$qpr_exp" ] || qpr_bad="$qpr_bad main"
+  qpr_out="$(bash "$runner" --print-sandbox-roots "$qroot/no-such-workspace" 2>/dev/null)"
+  [ -z "$qpr_out" ] || qpr_bad="$qpr_bad stdout-on-error"
+  bash "$runner" --print-sandbox-roots "$qroot/no-such-workspace" >/dev/null 2>&1
+  [ "$?" = 3 ] || qpr_bad="$qpr_bad exit-code"
+  if [ -z "$qpr_bad" ]; then
+    ok "codex-run-prints-the-roots-it-grants (linked: common dir + gitdir; main checkout: one; a missing workspace: exit 3 and an empty stdout)"
+  else
+    bad "codex-run-prints-the-roots-it-grants" "--print-sandbox-roots misreported:$qpr_bad"
+  fi
+
+  _qroots_mutant_case() { # <case> <mutant> <sed program> <expected diagnostic> [workspace]
+    local cname="$1" mname="$2" mprog="$3" want="$4" mws="${5:-$qroots_linked}" mpath mdiag mrc
+    mpath="$(_qmodel_mutant "$mname" "$mprog")"
+    if [ -z "$mpath" ]; then
+      bad "$cname" \
+          "the mutation changed nothing, so this case proves nothing — a moved call site must FAIL, not skip (F65)"
+      return
+    fi
+    mdiag="$(_qroots_check "$mpath" "x-$mname" "$mws")"; mrc=$?
+    if [ "$mrc" = 0 ]; then
+      bad "$cname" "a runner that drops the worktree gitdir from that argv branch was accepted"
+    elif ! printf '%s' "$mdiag" | grep -Fq "$want"; then
+      bad "$cname" \
+          "the mutant reddened for the wrong reason; expected a diagnostic naming '$want', got: ${mdiag:-none}"
+    else
+      ok "$cname"
+    fi
+  }
+  _qroots_mutant_case codex-run-gitdir-dropped-on-the-fresh-branch-mutation-is-caught \
+    roots-not-on-fresh \
+    's/^    for froot in "${SANDBOX_ROOTS\[@\]}"; do$/    for froot in "$GIT_COMMON"; do/' \
+    'the first attempt grants'
+  _qroots_mutant_case codex-run-gitdir-dropped-on-the-resume-branch-mutation-is-caught \
+    roots-not-on-resume \
+    's/^    for rroot in "${SANDBOX_ROOTS\[@\]}"; do$/    for rroot in "$GIT_COMMON"; do/' \
+    'the resume attempt grants'
+  _qroots_mutant_case codex-run-gitdir-never-resolved-mutation-is-caught \
+    roots-never-resolved \
+    's/^    SANDBOX_ROOTS=("${SANDBOX_ROOTS\[@\]}" "$GIT_DIR_ABS")$/    :/' \
+    'the first attempt grants'
+  # The other direction: a runner that stops comparing the two directories
+  # grants a main checkout's single root twice, and must be refused there.
+  _qroots_mutant_case codex-run-duplicate-root-in-a-main-checkout-mutation-is-caught \
+    roots-duplicated \
+    's/^  if \[ "$GIT_DIR_ABS" != "$GIT_COMMON" \]; then$/  if true; then/' \
+    'the first attempt grants' "$qws"
+
+  # ---- THE ROLLOUT CHECK READS WHAT CODEX DID, AND FAILS ON NOTHING ----------
+  #
+  # scripts/codex-rollout-check.py is rehearsal 7's extra pass check
+  # (docs/run-a.md, amendment 6): the lane's Codex rollouts for one worktree must
+  # show no `index.lock': Operation not permitted` and no escalated retry. It is
+  # the only reader of that fact, so these cases hold its four failure modes
+  # apart: a denial, an escalation (a tool CALL, not the schema prose every
+  # rollout carries), an auto-review sub-thread, and -- the one a lazy check
+  # gets wrong -- finding no rollout at all, which verified nothing and is
+  # never a pass. The clock is pinned: every fixture carries its own timestamp
+  # and the window is passed explicitly, so no case depends on today's date.
+  local qrc_check="$REPO_ROOT/scripts/codex-rollout-check.py"
+  local qrc_root="$qroot/rollouts" qrc_cwd="$qroot/hello-wt" qrc_since=1793311253
+  rm -rf "$qrc_root"; mkdir -p "$qrc_root/2026/10/29" "$qrc_cwd"
+  _qrc_rollout() { # <name> <thread_source> <body lines...>  -> writes one rollout for $qrc_cwd
+    local name="$1" tsrc="$2"; shift 2
+    local f="$qrc_root/2026/10/29/rollout-2026-10-29T23-01-06-$name.jsonl"
+    printf '{"type":"session_meta","payload":{"id":"%s","timestamp":"2026-10-29T22:01:06.159Z","cwd":"%s","originator":"codex_exec","cli_version":"0.164.0","thread_source":"%s","base_instructions":"schema: sandbox_permissions require_escalated is prose here"}}\n' \
+      "$name" "$qrc_cwd" "$tsrc" > "$f"
+    local l; for l in "$@"; do printf '%s\n' "$l" >> "$f"; done
+  }
+  local qrc_msg='{"type":"response_item","payload":{"type":"message","role":"developer","content":"tool schema: sandbox_permissions=require_escalated is how a command asks to leave the sandbox"}}'
+  local qrc_ok='{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({cmd:\"git commit -m x\",\"workdir\":\"/w\"});"}}'
+  local qrc_deny='{"type":"response_item","payload":{"type":"custom_tool_call_output","output":"fatal: Unable to create '"'"'/c/.git/worktrees/t/index.lock'"'"': Operation not permitted"}}'
+  local qrc_esc='{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({cmd:\"git add x\",\"sandbox_permissions\":\"require_escalated\",\"justification\":\"stage\"});"}}'
+  _qrc_run() { # <check> [extra args...] -> "rc" on stdout
+    local chk="$1"; shift
+    python3 -I "$chk" --cwd "$qrc_cwd" --since "$qrc_since" --sessions "$qrc_root" "$@" >"$qroot/rollout-check.out" 2>&1
+    printf '%s' "$?"
+  }
+  local qrc_got
+
+  _qrc_rollout clean exec "$qrc_msg" "$qrc_ok"
+  qrc_got="$(_qrc_run "$qrc_check")"
+  if [ "$qrc_got" = 0 ] && grep -q '^clean' "$qroot/rollout-check.out"; then
+    ok "codex-rollout-check-passes-a-clean-run (schema prose naming require_escalated is not an escalation)"
+  else
+    bad "codex-rollout-check-passes-a-clean-run" \
+        "a rollout with no denial and no escalated call must exit 0, got $qrc_got: $(tr '\n' ' ' < "$qroot/rollout-check.out")"
+  fi
+
+  qrc_got=""; local qrc_bad="" qrc_case
+  for qrc_case in denial escalation guardian; do
+    rm -f "$qrc_root"/2026/10/29/*.jsonl
+    case "$qrc_case" in
+      denial)     _qrc_rollout "$qrc_case" exec "$qrc_msg" "$qrc_deny" ;;
+      escalation) _qrc_rollout "$qrc_case" exec "$qrc_msg" "$qrc_esc" ;;
+      guardian)   _qrc_rollout "$qrc_case" guardian_review "$qrc_msg" ;;
+    esac
+    [ "$(_qrc_run "$qrc_check")" = 1 ] || qrc_bad="$qrc_bad $qrc_case"
+  done
+  if [ -z "$qrc_bad" ]; then
+    ok "codex-rollout-check-fails-on-a-denial-an-escalation-or-an-auto-review-thread"
+  else
+    bad "codex-rollout-check-fails-on-a-denial-an-escalation-or-an-auto-review-thread" \
+        "exit 1 expected for each; not produced for:$qrc_bad"
+  fi
+
+  # The grant the lane's Codex RECORDED, against the roots the runner meant to
+  # give it. Nothing free proves that `codex exec` maps two --add-dir flags to
+  # two writable roots; the rollout's turn_context is the first place that is
+  # observable. Rehearsal 6's recorded
+  # roots held the common dir alone.
+  local qrc_tc_both qrc_tc_common
+  qrc_tc_both='{"type":"turn_context","payload":{"sandbox_policy":{"type":"workspace-write","writable_roots":["'"$qroot"'/c","'"$qroot"'/c/worktrees/t"]}}}'
+  qrc_tc_common='{"type":"turn_context","payload":{"sandbox_policy":{"type":"workspace-write","writable_roots":["'"$qroot"'/c"]}}}'
+  qrc_bad=""
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout roots exec "$qrc_msg" "$qrc_tc_both" "$qrc_ok"
+  [ "$(_qrc_run "$qrc_check" --expect-root "$qroot/c" --expect-root "$qroot/c/worktrees/t")" = 0 ] || qrc_bad="$qrc_bad both-granted"
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout roots exec "$qrc_msg" "$qrc_tc_common" "$qrc_ok"
+  [ "$(_qrc_run "$qrc_check" --expect-root "$qroot/c" --expect-root "$qroot/c/worktrees/t")" = 1 ] || qrc_bad="$qrc_bad gitdir-missing"
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout roots exec "$qrc_msg" "$qrc_ok"
+  [ "$(_qrc_run "$qrc_check" --expect-root "$qroot/c")" = 2 ] || qrc_bad="$qrc_bad no-policy-recorded"
+  if [ -z "$qrc_bad" ]; then
+    ok "codex-rollout-check-reads-the-granted-roots (both roots recorded: 0; the gitdir absent: 1; no policy recorded: 2)"
+  else
+    bad "codex-rollout-check-reads-the-granted-roots" "--expect-root misjudged:$qrc_bad"
+  fi
+
+  # Nothing to read is exit 2, and three different ways of having nothing are
+  # held apart: an empty tree, a rollout for another worktree, and one outside
+  # the time window.
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  qrc_bad=""
+  [ "$(_qrc_run "$qrc_check")" = 2 ] || qrc_bad="$qrc_bad empty-tree"
+  _qrc_rollout clean exec "$qrc_msg" "$qrc_ok"
+  [ "$(python3 -I "$qrc_check" --cwd "$qroot/some-other-wt" --since "$qrc_since" --sessions "$qrc_root" >/dev/null 2>&1; printf '%s' "$?")" = 2 ] \
+    || qrc_bad="$qrc_bad other-cwd"
+  [ "$(python3 -I "$qrc_check" --cwd "$qrc_cwd" --since 1793400000 --sessions "$qrc_root" >/dev/null 2>&1; printf '%s' "$?")" = 2 ] \
+    || qrc_bad="$qrc_bad outside-window"
+  [ "$(python3 -I "$qrc_check" --cwd "$qrc_cwd" --since "$qrc_since" --sessions "$qroot/no-such-root" >/dev/null 2>&1; printf '%s' "$?")" = 2 ] \
+    || qrc_bad="$qrc_bad no-sessions-dir"
+  if [ -z "$qrc_bad" ]; then
+    ok "codex-rollout-check-finding-no-rollout-is-exit-2-never-a-pass"
+  else
+    bad "codex-rollout-check-finding-no-rollout-is-exit-2-never-a-pass" \
+        "exit 2 expected when there is nothing to read; not produced for:$qrc_bad"
+  fi
+
+  # Mutants, on copies under $TMPROOT: one that lets the escalation regex match
+  # nothing, one that reads zero rollouts as success, one that stops reading the
+  # denial. Each must redden the case aimed at it.
+  local qrc_mut_ok=1 qrc_mut_detail="" qrc_m
+  for qrc_m in \
+    "no-escalation:s/^ESCALATION = re.compile(.*/ESCALATION = re.compile(r\"(?!x)x\")/:escalation" \
+    "zero-is-a-pass:s/^        return 2\$/        return 0/:empty" \
+    "no-denial:s/^DENIAL = .*/DENIAL = \"\\\\x00never\"/:denial" \
+    "roots-ignored:s/^        missing = \\[r for r in .*/        missing = []/:roots"; do
+    local qrc_name="${qrc_m%%:*}" qrc_rest="${qrc_m#*:}"
+    local qrc_prog="${qrc_rest%:*}" qrc_aim="${qrc_rest##*:}"
+    local qrc_mp="$qroot/codex-rollout-check-$qrc_name.py"
+    sed "$qrc_prog" "$qrc_check" > "$qrc_mp" 2>/dev/null
+    if cmp -s "$qrc_mp" "$qrc_check"; then
+      qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-changed-nothing"; continue
+    fi
+    rm -f "$qrc_root"/2026/10/29/*.jsonl
+    case "$qrc_aim" in
+      escalation) _qrc_rollout m exec "$qrc_msg" "$qrc_esc"; qrc_got="$(_qrc_run "$qrc_mp")"; [ "$qrc_got" = 1 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
+      denial)     _qrc_rollout m exec "$qrc_msg" "$qrc_deny"; qrc_got="$(_qrc_run "$qrc_mp")"; [ "$qrc_got" = 1 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
+      empty)      qrc_got="$(_qrc_run "$qrc_mp")"; [ "$qrc_got" = 2 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
+      roots)      _qrc_rollout m exec "$qrc_msg" "$qrc_tc_common" "$qrc_ok"; qrc_got="$(_qrc_run "$qrc_mp" --expect-root "$qroot/c" --expect-root "$qroot/c/worktrees/t")"; [ "$qrc_got" = 1 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
+    esac
+  done
+  if [ "$qrc_mut_ok" = 1 ]; then
+    ok "codex-rollout-check-mutation-is-caught (an escalation regex that matches nothing, zero rollouts read as success, a denial that is never read, and expected roots that are ignored each turn a case red)"
+  else
+    bad "codex-rollout-check-mutation-is-caught" "a mutant of the rollout check was accepted:$qrc_mut_detail"
   fi
 
   # ---- a pin with no source is SUBSTRATE, and it is exit 3, not 127 -------

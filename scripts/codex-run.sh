@@ -14,6 +14,10 @@
 # blast-radius capture taken before Codex started still governs the whole run.
 #
 # Usage: codex-run.sh <workspace> <run-id> <task-id>
+#        codex-run.sh --print-sandbox-roots <workspace>
+#            prints, one per line, the directories the runner grants Codex's
+#            sandbox beyond the workspace, and exits. No codex call. preflight.sh
+#            probes exactly these (see resolve_sandbox_roots below).
 #
 # Requires FORGE_LANE_RUNTIME in the environment -- the value lane-setup.sh
 # printed as its last line. Recomputing it would invent a second scratch dir.
@@ -74,8 +78,64 @@
 #                                                  [FORGE_PIN_CODEX_EFFORT]
 set -uo pipefail
 
+# THE SANDBOX GRANT -- which directories `workspace-write` may write beyond the
+# workspace itself. Resolved once, here, and consumed by BOTH argv branches and
+# by `--print-sandbox-roots` (scripts/preflight.sh asks it, so the probe cannot
+# test a hand-copied grant that has drifted from the real one).
+#
+# A linked worktree's Git state lives in two places: the shared common dir
+# (objects, refs, config) and the worktree's OWN gitdir, `<common>/worktrees/
+# <name>/` (index, HEAD, config.worktree, locks). codex-cli 0.157.1 let a grant
+# on the common dir cover the second as a subdirectory. codex-cli 0.164.0 does
+# not: with only the common dir granted, `git add` dies on
+# `<common>/worktrees/<name>/index.lock: Operation not permitted`. Measured with
+# `codex sandbox`, writable_roots=[common] fails, [common, gitdir] succeeds,
+# [gitdir] alone passes the lock but cannot write objects -- so BOTH are
+# granted. In a main checkout the two are the same directory and are granted
+# once; a duplicate root is not an error today but it is not worth the bet.
+#
+# Until this was fixed the lane only committed because ~/.codex/config.toml
+# carried `approvals_reviewer = "auto_review"`, which approved an escalated
+# retry (rehearsals 1-6). That file is rewritten by the Codex desktop app, so
+# an unattended run may not depend on it; the sandbox alone must suffice.
+resolve_sandbox_roots() { # run inside the workspace; sets GIT_COMMON, GIT_DIR_ABS, SANDBOX_ROOTS
+  local raw
+  raw="$(git rev-parse --git-common-dir 2>/dev/null)" || {
+    echo "env: workspace $WS is not a git checkout"
+    return 3
+  }
+  GIT_COMMON="$(cd "$raw" && pwd -P)" || {
+    echo "env: the shared git directory cannot be resolved"
+    return 3
+  }
+  raw="$(git rev-parse --absolute-git-dir 2>/dev/null)" \
+    && GIT_DIR_ABS="$(cd "$raw" && pwd -P)" || {
+    echo "env: the worktree's own git directory cannot be resolved"
+    return 3
+  }
+  SANDBOX_ROOTS=("$GIT_COMMON")
+  if [ "$GIT_DIR_ABS" != "$GIT_COMMON" ]; then
+    SANDBOX_ROOTS=("${SANDBOX_ROOTS[@]}" "$GIT_DIR_ABS")
+  fi
+}
+
+if [ "${1:-}" = --print-sandbox-roots ]; then
+  [ "$#" -eq 2 ] || {
+    echo "usage: codex-run.sh --print-sandbox-roots <workspace>" >&2
+    exit 2
+  }
+  WS="$2"
+  # Diagnostics go to stderr here, unlike the run path: a caller reads stdout as
+  # the list of roots, and an `env:` line must never be mistaken for one.
+  cd "$WS" 2>/dev/null || { echo "env: workspace $WS does not exist" >&2; exit 3; }
+  resolve_sandbox_roots >&2 || exit 3
+  printf '%s\n' "${SANDBOX_ROOTS[@]}"
+  exit 0
+fi
+
 [ "$#" -eq 3 ] || {
   echo "usage: codex-run.sh <workspace> <run-id> <task-id>" >&2
+  echo "       codex-run.sh --print-sandbox-roots <workspace>" >&2
   exit 2
 }
 WS="$1" RUN_ID="$2" TASK_ID="$3"
@@ -237,14 +297,7 @@ MODEL_FILE="$RUNTIME/codex-model"
 LAST_MESSAGE="$RUNTIME/codex-last.md"
 
 cd "$WS" 2>/dev/null || { echo "env: workspace $WS does not exist"; exit 3; }
-GIT_COMMON="$(git rev-parse --git-common-dir 2>/dev/null)" || {
-  echo "env: workspace $WS is not a git checkout"
-  exit 3
-}
-GIT_COMMON="$(cd "$GIT_COMMON" && pwd -P)" || {
-  echo "env: the shared git directory cannot be resolved"
-  exit 3
-}
+resolve_sandbox_roots || exit 3
 
 mkdir -p "$PARK_ROOT" 2>/dev/null || {
   echo "env: park records cannot be written under $PARK_ROOT"
@@ -576,16 +629,22 @@ build_argv() {
     if [ "$BOUNCE_DELIVERED" = no ] && [ -s "$BOUNCE_PROMPT_FILE" ]; then
       prompt="$(cat "$BOUNCE_PROMPT_FILE")"
     fi
+    local roots_toml="" rroot
+    for rroot in "${SANDBOX_ROOTS[@]}"; do
+      roots_toml="${roots_toml:+$roots_toml,}\"$rroot\""
+    done
     ARGV=("${ARGV[@]}"
           -c 'sandbox_mode="workspace-write"'
-          -c "sandbox_workspace_write.writable_roots=[\"$GIT_COMMON\"]"
+          -c "sandbox_workspace_write.writable_roots=[$roots_toml]"
           --output-last-message "$LAST_MESSAGE"
           "$prompt")
   else
+    ARGV=("${ARGV[@]}" -C "$WS" -s workspace-write)
+    local froot
+    for froot in "${SANDBOX_ROOTS[@]}"; do
+      ARGV=("${ARGV[@]}" --add-dir "$froot")
+    done
     ARGV=("${ARGV[@]}"
-          -C "$WS"
-          -s workspace-write
-          --add-dir "$GIT_COMMON"
           --output-last-message "$LAST_MESSAGE"
           "$(cat "$CONTRACT")")
   fi

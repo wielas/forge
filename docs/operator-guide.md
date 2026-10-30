@@ -161,9 +161,12 @@ comment linking an open PR.
 - Sandbox: `-s read-only | workspace-write | danger-full-access`. There is **no
   `--full-auto`** in 0.145. `workspace-write` grants the workdir plus `/tmp` and
   `$TMPDIR` — which means a probe run under `/tmp` proves nothing about the
-  sandbox. Inside a git worktree, committing also needs
-  `--add-dir "$(git rev-parse --git-common-dir)"`; without it `git commit` dies
-  with `Unable to create …/index.lock: Operation not permitted` (measured).
+  sandbox. Inside a git worktree, committing also needs the git common dir
+  (`git rev-parse --git-common-dir`) **and, since codex-cli 0.164.0, the
+  worktree's own gitdir** (`git rev-parse --absolute-git-dir`) as writable roots;
+  `scripts/codex-run.sh --print-sandbox-roots <workspace>` prints exactly what the
+  lane grants. Without them `git commit` dies with `Unable to create
+  …/index.lock: Operation not permitted` (measured).
 - `AGENTS.md` in the repo is how you configure Codex per project — the template
   already ships one.
 
