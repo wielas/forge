@@ -1930,10 +1930,12 @@ roots.
   reports the denial, two escalated calls, the guardian thread, and recorded roots of the common
   dir alone: it would have caught rehearsals 1 to 6. It is rehearsal 7's extra pass check.
 - *Blast radius.* The lane's audit (`scripts/lane-blast-radius.sh`) was checked against the new
-  grant. The gitdir is a subdirectory of the common dir, so the grant names nothing the common-dir
-  grant did not already reach: against 0.157.1 the exposure is unchanged, and against what
-  rehearsals 1 to 6 actually ran (an escalated, unsandboxed retry) it is narrower. The
-  surfaces in the gitdir that matter are audited: `config.worktree`, where the lane's per-worktree
+  grant. The gitdir is a subdirectory of the common dir, so by path the grant names nothing the
+  common-dir grant did not already name, and on 0.157.1 it reached it: against 0.157.1 the
+  exposure is unchanged. On 0.164.0 it is a real widening, though: the sandbox could not write
+  `config.worktree`, `HEAD`, `commondir` or `hooks/` there before and now can. Against what
+  rehearsals 1 to 6 actually ran (an escalated, unsandboxed retry) it is still narrower. The
+  audit catches those surfaces: `config.worktree`, where the lane's per-worktree
   `core.hooksPath` lives, through `git config --worktree` (`worktree-config-edited`; a new case
   writes the file directly, as a sandboxed Codex would, and asserts that reading); `hooks/`, the
   per-worktree hooks directory (`hooks-edited`); `HEAD` (`branch-changed`); and `commondir`

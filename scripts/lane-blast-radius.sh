@@ -7,9 +7,12 @@
 # and `workspace-write` alone cannot commit (codex-cli 0.164.0 stopped treating
 # the second as covered by the first). The grant is therefore wide — this script
 # is what bounds it afterwards. The gitdir is a subdirectory of the common dir,
-# so granting it names nothing the common-dir grant did not already reach; the
-# surfaces in it that matter (config.worktree, hooks/, HEAD, commondir) are the
-# ones audited below. Capture must run BEFORE §4; a hash taken afterwards proves nothing.
+# so by PATH the new grant names nothing the common-dir grant did not already
+# name, and on 0.157.1 it reached it. On 0.164.0 the sandbox could NOT write
+# the gitdir through the common-dir grant, so what changes is real: it can now
+# write this worktree's config.worktree, HEAD, commondir and hooks/. Those are
+# exactly the surfaces audited below, which is why the audit, not the grant,
+# is the bound. Capture must run BEFORE §4; a hash taken afterwards proves nothing.
 #
 # WHAT THIS PROTECTS, AND WHAT IT DELIBERATELY DOES NOT.
 # The audit compares a named set of surfaces, not the whole shared `.git`. An

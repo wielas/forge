@@ -1365,6 +1365,12 @@ sect "13. A Codex workspace-write sandbox can commit in a linked worktree — wi
 # means either Codex fixed it (good news, the grant is then merely redundant) or this lab no longer
 # exercises the defect — either way the positive result still stands, so that is a WARN, not a FAIL.
 #
+# WHAT THIS DOES NOT PROVE. The lab has no hooks. A worktree with a pre-commit hook (the lane's
+# has one, via lefthook) is not exercised, and in rehearsal 6 Codex escalated `git commit`
+# pre-emptively, justifying it as "allowing the repository hooks to run normally". So a PASS here
+# proves the grant fixes the plain index.lock denial and nothing about the hooked case; rehearsal 7
+# is the first test of that.
+#
 # Everything is a FAIL when it cannot run: no codex, no `codex sandbox`, an unrecognised CLI shape, a
 # runner that prints fewer than two roots for a linked worktree. "I could not probe" is this check
 # reporting its own blindness.
@@ -1423,7 +1429,7 @@ else
           if [ "$PF_SB_GRC" = 0 ] \
              && [ "$(git -C "$PF_SB_LAB/wt-grant" log -1 --format=%s 2>/dev/null)" = probe ] \
              && git -C "$PF_SB_LAB/wt-grant" cat-file -e HEAD:p.txt 2>/dev/null; then
-            pass "the sandbox alone lets a linked worktree git add + git commit with the roots codex-run.sh grants ($PF_SB_N roots; $PF_CODEX_VER)"
+            pass "the sandbox alone lets a linked worktree git add + git commit with the roots codex-run.sh grants ($PF_SB_N roots; $PF_CODEX_VER; a lab without hooks)"
           else
             fail "git add + git commit FAILED in a linked worktree under the roots codex-run.sh grants (exit $PF_SB_GRC; $PF_CODEX_VER)"
             say  "      roots: $(printf '%s' "$PF_SB_ROOTS" | tr '\n' ' ')"

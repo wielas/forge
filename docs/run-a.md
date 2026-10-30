@@ -3409,7 +3409,12 @@ sandbox` has no approval path, so `auto_review` cannot make it pass. Pass: the l
 alone lets a linked worktree git add + git commit`, then `P12OK=1`. The control line (`control:
 the common dir alone is DENIED as predicted`) is expected on this Codex; a WARN saying the control
 passed means Codex changed, and is recorded, not a stop. A FAIL saying `codex sandbox` is missing
-or its CLI shape changed is the check reporting its own blindness.
+or its CLI shape changed is the check reporting its own blindness. **What it does not
+prove:** its lab has no hooks. The lane's worktree has a pre-commit hook, and in rehearsal 6 Codex
+escalated `git commit` pre-emptively, with the justification "allowing the repository hooks to run
+normally", before any denial. So a green section 13 shows the grant fixes the plain `index.lock`
+denial, and rehearsal 7 can still show an escalation with the gitdir granted. Rehearsal 7 is the
+first test of the hooked case.
 ```bash
 P12OK=0
 P12="$(cd ~/dev/forge-runtime && make preflight 2>&1)"
@@ -3521,11 +3526,22 @@ repeated and R5 stands. The next unused suffixes after `a2g` are `a2h`, then `a2
   { echo "STOP: no clean rollout was found for this card (exit 2 means none was found at all), this is a finding: R6"; false; }
   echo "R4ROLLOUTOK=$R4ROLLOUTOK"
   ```
-  The expected roots must read 2 for a card in a linked worktree. A `FINDING ... denial=1` or
-  `escalation=` line is the P37 defect again. A `FINDING expected writable root never granted`
-  line with no denial means the lane's `codex exec` did not map its two `--add-dir` flags to two
-  roots: **the free checks do not prove that mapping, only this block does**, so that is a finding
-  about `codex exec`, not a reason to rerun the preconditions.
+  The expected roots must read 2 for a card in a linked worktree. Read a `FINDING` by what is
+  with it:
+  - **A denial (`denial=1`), then an escalation:** the grant is wrong. This is the P37 defect
+    again.
+  - **An escalation with `denial=0`:** a pre-emptive escalation, Codex's own choice (rehearsal 6's
+    was justified as "allowing the repository hooks to run normally"). The grant may be fine. The
+    sandbox probe's lab has no hooks, so this is the first test of the hooked case; record it and
+    decide, do not call it P37.
+  - **`expected writable root never granted` with no denial and no escalation:** either the
+    lane's `codex exec` did not map its two `--add-dir` flags to two roots, or Codex
+    deduplicated a gitdir nested under the common dir when it recorded `writable_roots`, so the
+    recorded list shows one root although the grant is effective. Tell them apart by the commit:
+    a clean `denial=0` with the lane's commit on the branch means the grant worked and only the
+    record is short; a denial means the mapping failed. **The free checks do not prove that
+    mapping, only this block does**, so either reading is a finding about `codex exec`, not a
+    reason to rerun the preconditions.
 - **R6.** Amendment 3's rule stands. The rerun sentence now reads: a rerun after a repair is
   merged and deployed needs a new board and a new, never-used suffix, **`a2h`** with
   `hello-rehearsal-a2h`, then `a2i`. `a2b` to `a2g` are spent. R7 on the failed run still comes
