@@ -33,6 +33,16 @@ proof of codex-run.sh's argv: nothing free proves that `codex exec` maps two
 takes the `-c` form instead). No turn_context at all is exit 2: the grant was
 not observed.
 
+With --expect-approval it reads the approval policy the same turn_context
+records (payload.approval_policy) and fails when any turn of the lane's own
+rollouts ran under another one. codex-run.sh passes `-c approval_policy="never"`
+so a sandbox refusal is a plain failure and not an auto-approved escalation;
+rehearsal 6's rollout recorded `on-request`. `codex debug prompt-input` shows
+that `-c` reaches the core config, but only the rollout shows that `codex exec`
+did not override it. A turn_context with no approval_policy is exit 2, as for
+the roots: the pin was not observed. The auto-review sub-thread's own turns are
+not the lane's and are not read.
+
 Prints counts and paths only, never rollout content.
 """
 
@@ -73,6 +83,7 @@ def first_meta(path):
 def scan(path):
     denial = escalation = 0
     roots = set()
+    policies = set()
     with open(path, "r", errors="replace") as handle:
         for number, line in enumerate(handle):
             if number == 0:
@@ -81,7 +92,10 @@ def scan(path):
                 denial += 1
             if '"turn_context"' in line:
                 try:
-                    policy = (json.loads(line).get("payload") or {}).get("sandbox_policy") or {}
+                    tc = json.loads(line).get("payload") or {}
+                    policy = tc.get("sandbox_policy") or {}
+                    if tc.get("approval_policy") is not None:
+                        policies.add(json.dumps(tc["approval_policy"]).strip('"'))
                     for root in policy.get("writable_roots") or []:
                         roots.add(os.path.realpath(str(root)))
                 except (ValueError, AttributeError):
@@ -95,7 +109,7 @@ def scan(path):
             kind = str(payload.get("type", ""))
             if kind.endswith("_call") and ESCALATION.search(json.dumps(payload)):
                 escalation += 1
-    return denial, escalation, roots
+    return denial, escalation, roots, policies
 
 
 def main():
@@ -105,6 +119,8 @@ def main():
     ap.add_argument("--until", type=int, default=None, help="epoch seconds: the lane run's end")
     ap.add_argument("--expect-root", action="append", default=[],
                     help="a directory the sandbox must have been granted (repeatable)")
+    ap.add_argument("--expect-approval", default=None, metavar="POLICY",
+                    help="the approval policy every turn of the lane's Codex must have run under")
     ap.add_argument("--sessions", default=None,
                     help="rollout root [${CODEX_HOME:-~/.codex}/sessions]")
     args = ap.parse_args()
@@ -146,11 +162,13 @@ def main():
 
     findings = 0
     granted = set()
+    approvals = set()
     for path, meta in sorted(matched):
-        denial, escalation, roots = scan(path)
+        denial, escalation, roots, policies = scan(path)
         guardian = 1 if meta.get("thread_source") == "guardian_review" else 0
         if not guardian:
             granted |= roots
+            approvals |= policies
         bad = denial or escalation or guardian
         findings += 1 if bad else 0
         print("%s %s denial=%d escalation=%d guardian_review=%d (codex %s)" % (
@@ -167,7 +185,16 @@ def main():
         missing = [r for r in args.expect_root if os.path.realpath(r) not in granted]
         for root in missing:
             print("FINDING expected writable root never granted: %s" % root)
-    return 1 if findings or missing else 0
+    wrong = []
+    if args.expect_approval is not None:
+        print("approval_policy recorded by the lane's Codex: %s" % (sorted(approvals) or "none"))
+        if not approvals:
+            print("codex-rollout-check: no turn_context carried an approval_policy — the pin was not observed")
+            return 2
+        wrong = sorted(a for a in approvals if a != args.expect_approval)
+        for policy in wrong:
+            print("FINDING approval_policy %s was recorded, expected %s" % (policy, args.expect_approval))
+    return 1 if findings or missing or wrong else 0
 
 
 if __name__ == "__main__":
