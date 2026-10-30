@@ -3620,3 +3620,102 @@ costs no commission probe.
   `substrate/codex-worktree-commit` the second. Until then it is unproven.
 - The commission is moved after rehearsal 7, so that a failing rehearsal still costs no
   commission probe.
+
+**2026-10-30 (amendment 7) — attempt 2, the P37 repair merged and deployed: the lane's Codex now also runs under `approval_policy = "never"`, so a sandbox refusal can no longer be auto-approved; what that changes in rehearsal 7's reading.**
+
+*Why.* Amendment 6's repair grants the sandbox both roots, so the sandbox alone should suffice.
+But the lane still inherited Codex's approval policy and, from `~/.codex/config.toml`,
+`approvals_reviewer = "auto_review"` (a file the Codex desktop app rewrites). In rehearsals 1 to 6
+that is what turned a refusal into an approved, unsandboxed `git add` and `git commit`. The user
+decided the lane must state the policy itself, for the reason F22 states the model: a refusal
+becomes a plain failure instead of a retry nobody sees, and run A stops depending on user config.
+This entry edits nothing above; where it and amendment 6 differ, this governs rehearsal 7.
+
+*State recorded.* PR #94 (amendment 6, P37) merged as `72028ee` and is deployed to the runtime
+checkout. Recorded as measured on `main` before this entry: `make verify` **581 passed / 0 failed /
+11 skipped** at 7 live boards, `make preflight` **PASS 114 / WARN 2 / FAIL 0**, sections 12 and 13
+PASS, codex-cli **0.164.0**, and H1 OK. Those are the baselines amendment 6 derived, now measured.
+
+*The pin (epic P38; the PR that carries this entry, branch `slice/codex-approval-never`).*
+- `scripts/codex-run.sh` passes `-c 'approval_policy="never"'` on the common path of `build_argv`,
+  so it reaches both `codex exec` and `codex exec resume`. `codex exec` has no `-a` flag on
+  0.164.0 (only `codex` itself does); `-c` is shared by both, and is what the F22 pin uses.
+- It was established without a model call. `codex sandbox -c 'approval_policy="never"' -- true`
+  accepts the key and `-c 'approval_policy="bogus"'` is refused with the variant list
+  (`untrusted`, `on-failure`, `on-request`, `granular`, `never`). `codex debug -c
+  'approval_policy="never"' prompt-input hi` renders the model's permissions instructions as
+  `Approval policy is currently never. Do not provide the sandbox_permissions for any reason,
+  commands will be rejected.`, where without the flag they name `approvals_reviewer` `auto_review`.
+  **What this does not prove:** that `codex exec`, which builds its own overrides, does not replace
+  it. Rehearsal 7's rollout is the first proof (below); until then it is unproven for `exec`.
+- `substrate/codex-worktree-commit` (the paid probe) passes the same pin. It already ran with
+  `--ignore-user-config`, which removes `auto_review` but leaves Codex's own default, which asks.
+- Free cases: `quota/codex-run-pins-approval-never-on-both-branches` records the real runner's
+  argv from a stub `codex` on both branches, with three mutants (dropped from the fresh path,
+  dropped from the resume path, another value). `quota/codex-rollout-check-reads-the-approval-policy`
+  and three further mutants cover the rollout check's new `--expect-approval`.
+
+*Reading a sandbox refusal now.* Under `never` the model is told a command outside the sandbox
+will be rejected, and Codex does not ask. A `Operation not permitted` is a failed command in the
+rollout, and the model may retry or work around it; if it cannot commit, the lane fails or blocks
+at its own gate rather than escalating. So a FINDING with `denial=1` is no longer followed by a
+silent success: read it as the grant being wrong (the P37 defect) and look at `lane.sh`'s reason
+and the lane log for the failed `git` command. `escalation=0` with a `guardian_review` thread
+cannot occur if the pin held; either appearing means the policy was not `never`, and the
+`approval_policy` line below says what was recorded.
+
+*Rehearsal 7's R4 rollout block, restated.* It gains `--expect-approval never`. It replaces
+amendment 6's block of the same name; everything else about R4 stands. Pass: no `FINDING`, the
+`writable_roots recorded` line naming both roots, **`approval_policy recorded by the lane's
+Codex: ['never']`**, then `R4ROLLOUTOK=1`. A recorded `on-request` is a FINDING and exit 1 (it
+is what rehearsal 6 recorded: `codex-rollout-check.py` run on its rollout with
+`--expect-approval never` prints `approval_policy recorded by the lane's Codex: ['on-request']`
+and `FINDING approval_policy on-request was recorded, expected never`). No recorded policy at all is
+exit 2: the pin was not observed, a STOP. If `codex exec` ignores the pin, that is a finding about
+`codex exec`, not a reason to rerun the preconditions.
+```bash
+R4ROLLOUTOK=0
+SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")"
+WP="$(sqlite3 "$SNAP" "select workspace_path from tasks where id='$ID'")"
+LT0="$(sqlite3 "$SNAP" "select min(started_at) from task_runs where task_id='$ID' and profile='forge-codex-lane'")"
+LT1="$(sqlite3 "$SNAP" "select max(coalesce(ended_at, strftime('%s','now'))) from task_runs where task_id='$ID' and profile='forge-codex-lane'")"
+echo "workspace=$WP lane window=$LT0..$LT1"
+RO_ARGS=(); while IFS= read -r ROOT; do RO_ARGS=("${RO_ARGS[@]+"${RO_ARGS[@]}"}" --expect-root "$ROOT"); done < <(~/.forge/repo/scripts/codex-run.sh --print-sandbox-roots "$WP")
+echo "expected roots: $(( ${#RO_ARGS[@]} / 2 ))"
+[ -n "$WP" ] && [ -n "$LT0" ] && [ "${#RO_ARGS[@]}" -ge 4 ] &&
+python3 -I ~/.forge/repo/scripts/codex-rollout-check.py --cwd "$WP" --since "$LT0" --until "$LT1" "${RO_ARGS[@]}" --expect-approval never | tee "$EV/codex-rollout-check.txt" &&
+[ "${PIPESTATUS[0]}" = 0 ] && R4ROLLOUTOK=1 ||
+{ echo "STOP: no clean rollout was found for this card (exit 2 means none was found at all), this is a finding: R6"; false; }
+echo "R4ROLLOUTOK=$R4ROLLOUTOK"
+```
+The deployed checker must carry the flag before this runs: `~/.forge/repo/scripts/codex-rollout-check.py
+--help | grep -q expect-approval && echo flag-deployed`.
+
+*The deploy.* After this PR merges and `git -C ~/dev/forge pull --ff-only`, amendment 6's deploy
+block stands unchanged (runtime = `main`, checker deployed), plus the line above. Then
+`make preflight` and `make verify` on the deployed `main`, then precondition 11, precondition 12,
+T1, T2 and H1 as amendment 6's order says.
+
+*Baseline.* Replaces amendment 6's numbers for rehearsal 7 and for *Launch*:
+- `make verify`: failed 0, skipped 11, **passed = 586** at 7 live boards (581 + the 5 cases this PR adds),
+  plus one per live board beyond 7. The count block in amendment 6 stands with `581` replaced:
+  ```bash
+  N="$(find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " ")"
+  echo "live boards: $N, expected passed: $(( 586 + (N > 7 ? N - 7 : 0) ))"
+  ```
+  Measured from this PR's worktree, committed and clean: **582 passed, 4 failed, 11 skipped**; the four
+  `config/external-dirs` cases fail there by design, so the deployed `main` is expected to read
+  586 / 0 / 11 (derived, not yet measured on `main`).
+- `make preflight`: this PR adds no preflight check. Measured from the worktree, committed and
+  clean: **PASS 114 / WARN 2 / FAIL 0**; expected on the deployed `main`: PASS 114 / WARN 2 / FAIL 0, the pass
+  condition being `FAIL 0`.
+- `FORGE_SHA` is the merge commit of this PR, or a later `main`. It is not `72028ee`, whose
+  `codex-run.sh` leaves the approval policy to user config.
+
+*Decisions this entry makes that the operator may overrule before rehearsal 7.*
+- `never` and not `on-failure`: under `never` a refusal is final, which is the property run A
+  needs to see; `on-failure` would keep an escalation path open.
+- The paid probe mirrors the lane rather than staying minimal, because a probe that can be
+  approved is not a test of the sandbox alone. Its change is not exercised by any free check; the
+  next `--with-codex` run (the commission) is its first.
+- Rehearsal 7 keeps `a2g`; this entry spends no suffix.
