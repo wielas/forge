@@ -21,7 +21,8 @@ tool's schema, which names `require_escalated` in prose, so a plain grep for the
 word is true of a clean run too.
 
 Exit: 0  at least one rollout matched and none shows a denial or an escalation
-      1  a matched rollout shows one (a finding)
+      1  a matched rollout shows one (a finding). A finding outranks 2 below:
+         exit 2 means "nothing was found to read" and must not hide one
       2  no rollout matched, or the inputs cannot be read. This is NOT a pass:
          a check that found nothing to read has verified nothing.
 
@@ -84,6 +85,7 @@ def scan(path):
     denial = escalation = 0
     roots = set()
     policies = set()
+    unpinned = 0  # turn_contexts that recorded no approval_policy at all
     with open(path, "r", errors="replace") as handle:
         for number, line in enumerate(handle):
             if number == 0:
@@ -96,6 +98,8 @@ def scan(path):
                     policy = tc.get("sandbox_policy") or {}
                     if tc.get("approval_policy") is not None:
                         policies.add(json.dumps(tc["approval_policy"]).strip('"'))
+                    else:
+                        unpinned += 1
                     for root in policy.get("writable_roots") or []:
                         roots.add(os.path.realpath(str(root)))
                 except (ValueError, AttributeError):
@@ -109,7 +113,7 @@ def scan(path):
             kind = str(payload.get("type", ""))
             if kind.endswith("_call") and ESCALATION.search(json.dumps(payload)):
                 escalation += 1
-    return denial, escalation, roots, policies
+    return denial, escalation, roots, policies, unpinned
 
 
 def main():
@@ -163,12 +167,14 @@ def main():
     findings = 0
     granted = set()
     approvals = set()
+    unpinned = 0
     for path, meta in sorted(matched):
-        denial, escalation, roots, policies = scan(path)
+        denial, escalation, roots, policies, nopolicy = scan(path)
         guardian = 1 if meta.get("thread_source") == "guardian_review" else 0
         if not guardian:
             granted |= roots
             approvals |= policies
+            unpinned += nopolicy
         bad = denial or escalation or guardian
         findings += 1 if bad else 0
         print("%s %s denial=%d escalation=%d guardian_review=%d (codex %s)" % (
@@ -176,13 +182,17 @@ def main():
             denial, escalation, guardian, meta.get("cli_version", "?")))
     print("codex-rollout-check: %d rollout(s) for %s, %d with a denial or an escalation" % (
         len(matched), want, findings))
+    # A finding is exit 1 and outranks "not observed" (exit 2): exit 2 reads as
+    # "no rollout found", and must never hide a denial, an escalation or a wrong
+    # policy that was in fact found.
+    unobserved = False
     missing = []
     if args.expect_root:
         print("writable_roots recorded by the lane's Codex: %s" % (sorted(granted) or "none"))
         if not granted:
             print("codex-rollout-check: no turn_context carried a sandbox policy — the grant was not observed")
-            return 2
-        missing = [r for r in args.expect_root if os.path.realpath(r) not in granted]
+            unobserved = True
+        missing = [r for r in args.expect_root if os.path.realpath(r) not in granted] if granted else []
         for root in missing:
             print("FINDING expected writable root never granted: %s" % root)
     wrong = []
@@ -190,11 +200,17 @@ def main():
         print("approval_policy recorded by the lane's Codex: %s" % (sorted(approvals) or "none"))
         if not approvals:
             print("codex-rollout-check: no turn_context carried an approval_policy — the pin was not observed")
-            return 2
+            unobserved = True
         wrong = sorted(a for a in approvals if a != args.expect_approval)
         for policy in wrong:
             print("FINDING approval_policy %s was recorded, expected %s" % (policy, args.expect_approval))
-    return 1 if findings or missing or wrong else 0
+        if approvals and unpinned:
+            # Other turns recorded a policy, so a turn that recorded none is a
+            # turn nobody can vouch for, not one to skip.
+            print("FINDING %d turn_context(s) of the lane's Codex recorded no approval_policy" % unpinned)
+    if findings or missing or wrong or (args.expect_approval is not None and approvals and unpinned):
+        return 1
+    return 2 if unobserved else 0
 
 
 if __name__ == "__main__":

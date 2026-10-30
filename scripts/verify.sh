@@ -3252,6 +3252,8 @@ quota/codex-run-approval-pin-on-the-fresh-branch-mutation-is-caught  a runner th
 quota/codex-run-approval-pin-on-the-resume-branch-mutation-is-caught  a runner that drops the approval pin from the resume argv turns the case red
 quota/codex-run-approval-pin-wrong-value-mutation-is-caught  a runner that passes another approval policy turns the case red
 quota/codex-rollout-check-reads-the-approval-policy  --expect-approval fails when a lane turn's recorded approval_policy is not the pinned one (rehearsal 6's read on-request), and is exit 2 when none was recorded
+quota/codex-rollout-check-a-finding-outranks-not-observed  a denial or a wrong policy found alongside an unrecorded policy or sandbox root is exit 1, never 2; nothing recorded and nothing found stays 2
+quota/codex-rollout-check-a-turn-with-no-approval-policy-is-a-finding  a lane turn that recorded no approval_policy while another did is a FINDING, not a skip
 quota/codex-rollout-check-mutation-is-caught  an escalation regex that matches nothing, zero rollouts read as success, an unread denial and ignored expected roots each turn a case red
 quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
 digest/fixture-message-exact        two fixture boards, a quiet one and an archived one produce one exact message: landed, in flight, waiting on you decision-first, spend
@@ -15750,6 +15752,42 @@ $(cd "$qroots_linked" && cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
     bad "codex-rollout-check-reads-the-approval-policy" "--expect-approval misjudged:$qrc_bad"
   fi
 
+  # Exit 1 outranks exit 2. Exit 2 reads as "no rollout found"; if a denial, an
+  # escalation or a wrong policy WAS found, an unobserved policy or root must not
+  # turn that into 2. And a lane turn that recorded no approval_policy while
+  # others did is a finding, not something to skip.
+  local qrc_ap_nosb
+  qrc_ap_nosb='{"type":"turn_context","payload":{"approval_policy":"on-request"}}'
+  qrc_bad=""
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout o exec "$qrc_msg" "$qrc_deny" "$qrc_ap_none"
+  [ "$(_qrc_run "$qrc_check" --expect-approval never)" = 1 ] || qrc_bad="$qrc_bad denial-and-no-policy"
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout o exec "$qrc_msg" "$qrc_deny" "$qrc_ap_nosb"
+  [ "$(_qrc_run "$qrc_check" --expect-root "$qroot/c")" = 1 ] || qrc_bad="$qrc_bad denial-and-no-sandbox-policy"
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout o exec "$qrc_msg" "$qrc_ap_nosb" "$qrc_ok"
+  [ "$(_qrc_run "$qrc_check" --expect-root "$qroot/c" --expect-approval never)" = 1 ] || qrc_bad="$qrc_bad wrong-policy-and-no-sandbox-policy"
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout o exec "$qrc_msg" "$qrc_ok"
+  [ "$(_qrc_run "$qrc_check" --expect-root "$qroot/c" --expect-approval never)" = 2 ] || qrc_bad="$qrc_bad nothing-recorded-stays-2"
+  if [ -z "$qrc_bad" ]; then
+    ok "codex-rollout-check-a-finding-outranks-not-observed (a denial or a wrong policy with an unrecorded policy or root is exit 1; nothing recorded and nothing found stays exit 2)"
+  else
+    bad "codex-rollout-check-a-finding-outranks-not-observed" "exit 1 must win over exit 2:$qrc_bad"
+  fi
+  qrc_bad=""
+  rm -f "$qrc_root"/2026/10/29/*.jsonl
+  _qrc_rollout u exec "$qrc_msg" "$qrc_ap_never" "$qrc_ap_none" "$qrc_ok"
+  [ "$(_qrc_run "$qrc_check" --expect-approval never)" = 1 ] \
+    && grep -q '^FINDING 1 turn_context(s) of the lane.s Codex recorded no approval_policy' "$qroot/rollout-check.out" \
+    || qrc_bad="$qrc_bad one-turn-unpinned"
+  if [ -z "$qrc_bad" ]; then
+    ok "codex-rollout-check-a-turn-with-no-approval-policy-is-a-finding (never on one turn, none on another: exit 1 naming it)"
+  else
+    bad "codex-rollout-check-a-turn-with-no-approval-policy-is-a-finding" "a lane turn with no approval_policy was skipped:$qrc_bad"
+  fi
+
   # Nothing to read is exit 2, and three different ways of having nothing are
   # held apart: an empty tree, a rollout for another worktree, and one outside
   # the time window.
@@ -15780,8 +15818,10 @@ $(cd "$qroots_linked" && cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
     "no-denial:s/^DENIAL = .*/DENIAL = \"\\\\x00never\"/:denial" \
     "roots-ignored:s/^        missing = \\[r for r in .*/        missing = []/:roots" \
     "approval-ignored:s/^        wrong = sorted(.*/        wrong = []/:approval" \
-    "approval-unobserved-is-a-pass:/the pin was not observed/{n;s/return 2/return 0/;}:approvalnone" \
-    "approval-unread:s/^                        policies.add(.*/                        pass/:approval"; do
+    "approval-unobserved-is-a-pass:/the pin was not observed/{n;s/unobserved = True/unobserved = False/;}:approvalnone" \
+    "approval-unread:s/^                        policies.add(.*/                        pass/:approval" \
+    "exit2-wins:s/^\\( *\\)unobserved = True\$/\\1return 2/:outrank" \
+    "unpinned-skipped:s/^\\( *\\)unpinned += 1\$/\\1pass/:unpinned"; do
     local qrc_name="${qrc_m%%:*}" qrc_rest="${qrc_m#*:}"
     local qrc_prog="${qrc_rest%:*}" qrc_aim="${qrc_rest##*:}"
     local qrc_mp="$qroot/codex-rollout-check-$qrc_name.py"
@@ -15796,11 +15836,13 @@ $(cd "$qroots_linked" && cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
       empty)      qrc_got="$(_qrc_run "$qrc_mp")"; [ "$qrc_got" = 2 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
       approval)   _qrc_rollout m exec "$qrc_msg" "$qrc_ap_req" "$qrc_ok"; qrc_got="$(_qrc_run "$qrc_mp" --expect-approval never)"; [ "$qrc_got" = 1 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
       approvalnone) _qrc_rollout m exec "$qrc_msg" "$qrc_ap_none" "$qrc_ok"; qrc_got="$(_qrc_run "$qrc_mp" --expect-approval never)"; [ "$qrc_got" = 2 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
+      outrank)    _qrc_rollout m exec "$qrc_msg" "$qrc_deny" "$qrc_ap_none"; qrc_got="$(_qrc_run "$qrc_mp" --expect-approval never)"; [ "$qrc_got" = 1 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
+      unpinned)   _qrc_rollout m exec "$qrc_msg" "$qrc_ap_never" "$qrc_ap_none" "$qrc_ok"; qrc_got="$(_qrc_run "$qrc_mp" --expect-approval never)"; [ "$qrc_got" = 1 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
       roots)      _qrc_rollout m exec "$qrc_msg" "$qrc_tc_common" "$qrc_ok"; qrc_got="$(_qrc_run "$qrc_mp" --expect-root "$qroot/c" --expect-root "$qroot/c/worktrees/t")"; [ "$qrc_got" = 1 ] && { qrc_mut_ok=0; qrc_mut_detail="$qrc_mut_detail $qrc_name-accepted"; } ;;
     esac
   done
   if [ "$qrc_mut_ok" = 1 ]; then
-    ok "codex-rollout-check-mutation-is-caught (an escalation regex that matches nothing, zero rollouts read as success, a denial that is never read, expected roots that are ignored, an approval policy that is ignored, never read, or whose absence reads as success each turn a case red)"
+    ok "codex-rollout-check-mutation-is-caught (an escalation regex that matches nothing, zero rollouts read as success, a denial that is never read, expected roots that are ignored, an approval policy that is ignored, never read, or whose absence reads as success, exit 2 outranking a finding, and a turn with no policy skipped each turn a case red)"
   else
     bad "codex-rollout-check-mutation-is-caught" "a mutant of the rollout check was accepted:$qrc_mut_detail"
   fi

@@ -1959,7 +1959,7 @@ escalated `git add` and `git commit` in rehearsals 1 to 6 (the rollout of rehear
 `approval_policy: on-request`). The user decided the lane must state the policy itself, as F22
 made it state the model.
 
-*Closed 2026-10-30 by `slice/codex-approval-never`.*
+*Written 2026-10-30 on `slice/codex-approval-never` (PR #95); open until that PR merges — dated and closed at merge.*
 - `scripts/codex-run.sh` passes `-c 'approval_policy="never"'` on the common path of `build_argv`,
   so it reaches `codex exec` and `codex exec resume`. `codex exec` has no `-a` flag on codex-cli
   0.164.0; `-c` is the form both share. Under `never` a command the sandbox refuses is a plain
@@ -1970,8 +1970,9 @@ made it state the model.
   `auto_review`. Neither shows that `codex exec` does not override it, so that is unproven until
   rehearsal 7's rollout.
 - `scripts/codex-rollout-check.py` gains `--expect-approval <policy>`, which reads each non-guardian
-  turn's `turn_context.payload.approval_policy` and fails on any other (exit 1), or on none
-  recorded (exit 2, as for the roots). Run on rehearsal 6's own rollout it reads `on-request` and
+  turn's `turn_context.payload.approval_policy` and fails on any other (exit 1), on a lane turn that recorded none while another did (exit 1), and on none
+  recorded anywhere (exit 2, as for the roots). A finding outranks exit 2 on every path, so 2 only ever means
+  nothing was found to read. Run on rehearsal 6's own rollout it reads `on-request` and
   fails, the negative control. It is part of rehearsal 7's `R4ROLLOUTOK`.
 - Four `quota/` cases for the argv (both branches, plus three mutants: dropped from the fresh
   path, dropped from the resume path, another value), one for the rollout check's new flag and

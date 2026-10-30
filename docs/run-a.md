@@ -3499,7 +3499,7 @@ repeated and R5 stands. The next unused suffixes after `a2g` are `a2h`, then `a2
   run count of 0 is rehearsal 4's failure again: R6.
 - **R4's wait and the hook-acted block.** Amendment 3's wait and amendment 4's hook block,
   unchanged, in the same shell as R3.
-- **R4, the Codex rollout: no denial, no escalation, and the gitdir actually granted.** New. In the
+- **R4, the Codex rollout: no denial, no escalation, and the gitdir actually granted.** *(Superseded by amendment 7, which restates this block with `--expect-approval never`; use that one.)* New. In the
   same shell, after R4's standing blocks and **before R7**, because it asks the runner for the
   grant of a worktree that R7 removes. It finds the lane's Codex rollouts under
   `~/.codex/sessions` (`$CODEX_HOME` is honoured) the robust way: the card's `workspace_path` from
@@ -3655,6 +3655,13 @@ PASS, codex-cli **0.164.0**, and H1 OK. Those are the baselines amendment 6 deri
   dropped from the resume path, another value). `quota/codex-rollout-check-reads-the-approval-policy`
   and three further mutants cover the rollout check's new `--expect-approval`.
 
+*What exercises the resume pin.* A straight rehearsal run is one `codex exec`, so it proves the
+pin on the fresh path only. The resume pin (`exec resume`, which every ADR-0016 park and every
+bounce comes back through) is exercised only if rehearsal 7 parks or bounces; otherwise it stays
+argv-only, proved by the stub-recorded case and by nothing live. The rollout of the resumed turn
+is the evidence when it happens: `--expect-approval never` reads every lane turn, resumed ones
+included. Absent a park or bounce, record the resume pin as unexercised, not as proved.
+
 *Reading a sandbox refusal now.* Under `never` the model is told a command outside the sandbox
 will be rejected, and Codex does not ask. A `Operation not permitted` is a failed command in the
 rollout, and the model may retry or work around it; if it cannot commit, the lane fails or blocks
@@ -3671,7 +3678,7 @@ Codex: ['never']`**, then `R4ROLLOUTOK=1`. A recorded `on-request` is a FINDING 
 is what rehearsal 6 recorded: `codex-rollout-check.py` run on its rollout with
 `--expect-approval never` prints `approval_policy recorded by the lane's Codex: ['on-request']`
 and `FINDING approval_policy on-request was recorded, expected never`). No recorded policy at all is
-exit 2: the pin was not observed, a STOP. If `codex exec` ignores the pin, that is a finding about
+exit 2: the pin was not observed, a STOP (a denial, escalation or wrong policy found alongside it is exit 1 and outranks it, so exit 2 always means nothing was found to read). A lane turn that recorded no policy while another did is a FINDING. If `codex exec` ignores the pin, that is a finding about
 `codex exec`, not a reason to rerun the preconditions.
 ```bash
 R4ROLLOUTOK=0
