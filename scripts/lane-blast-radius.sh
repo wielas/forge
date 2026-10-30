@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Prove that `codex exec` stayed inside the Git boundary forge-lane grants it.
 #
-# §4 hands Codex `--add-dir "$(git rev-parse --git-common-dir)"`, because in a
-# worktree the real `.git` lives in the main repo and `workspace-write` alone
-# cannot commit. The grant is therefore wide — this script is what bounds it
-# afterwards. Capture must run BEFORE §4; a hash taken afterwards proves nothing.
+# codex-run.sh hands Codex the git common dir AND the worktree's own gitdir
+# (`<common>/worktrees/<name>/`, which holds this worktree's index, HEAD and
+# config.worktree), because in a worktree the real `.git` lives in the main repo
+# and `workspace-write` alone cannot commit (codex-cli 0.164.0 stopped treating
+# the second as covered by the first). The grant is therefore wide — this script
+# is what bounds it afterwards. The gitdir is a subdirectory of the common dir,
+# so granting it names nothing the common-dir grant did not already reach; the
+# surfaces in it that matter (config.worktree, hooks/, HEAD, commondir) are the
+# ones audited below. Capture must run BEFORE §4; a hash taken afterwards proves nothing.
 #
 # WHAT THIS PROTECTS, AND WHAT IT DELIBERATELY DOES NOT.
 # The audit compares a named set of surfaces, not the whole shared `.git`. An

@@ -110,6 +110,10 @@ All must hold before `RUN_START`. Each is the operator's.
    ```
    The report in `~/dev/the-squatfather/.forge/commission-*.md` must end
    `overall: PASS` and `posture: UNGATED`.
+   *Corrected by amendment 6 (2026-10-30): for attempt 2 this runs from
+   `~/dev/forge-runtime`, with `BOARD=squatfather-run-a2`, not from `~/dev/forge`. Run
+   from the development checkout it fails four `config/external-dirs` cases by design.
+   The block is in that amendment.*
 8. **No other board can dispatch.** The gateway runs one card at a time
    (`max_in_progress: 1`), across every board, and Codex has one quota. A card
    running on another board would take run A's slot and quota, and confound
@@ -3286,3 +3290,317 @@ failed rehearsal still costs no commission probe.
   11 proves the environment the worker is built with and the helper's behaviour in it, and
   rehearsal 6's R4 is the first paid proof. If the judge call fails again on authentication, that
   is a finding about the terminal, not a reason to re-run the preconditions.
+
+**2026-10-30 (amendment 6) — attempt 2, rehearsal 6 passed and the first commission failed: the lane's Codex could not commit inside its own sandbox; what the repair, the corrected precondition 7, the new precondition 12 and rehearsal 7 are.**
+
+*Why.* Amendment 5 gave rehearsal 6 its commands and said the first paid proof that the
+judge authenticates would be its R4. Rehearsal 6 supplied it, and then the commission, run for
+the first time on this attempt, failed on something rehearsal 6 had passed over. This entry
+records both, repairs the cause, corrects the directory precondition 7 named, adds a precondition
+that would have caught the cause for free, and gives rehearsal 7 its commands and one further
+pass check. There is no amendment numbered 6 above; amendment 5 is the newest, and this is the
+next. Nothing above is edited; where this entry and the text above differ, this entry governs
+attempt 2. The one addition outside this entry is a one-line note under precondition 7 pointing
+here, in the way amendment 5 added its correction under T2. The cleanup of rehearsal 6 was done
+before this entry was written, so only its result is recorded.
+
+*What rehearsal 6 found.* Board `hello-rehearsal-a2f`, card `t_a52f3935`, branch
+`chunk/HELLO-1-greet-a2f`, PR `wielas/hello-forge#11`. **PASSED.**
+- The lane handed off, the verifier ran, and hello-forge PR #11 got a hold whose reason begins
+  `merge-pending:`.
+- The judge was opus. It approved with 0 findings, at $0.4635.
+- `R4HOOKOK=1`. The P34 hook acted again on both calls.
+- **The judge authenticated.** That is the first live proof of PR #93 (P36): a routed worker's
+  `claude` carried the root token.
+- **R7 was done.** The evidence is tagged `run-a-attempt-2/rehearsal-6` at
+  `c4ce8305200a793791a82be350a2df8c0a70e646`, the board `hello-rehearsal-a2f` is archived.
+  **`a2f` is spent.** The next suffix is `a2g`, then `a2h`.
+- *What it passed over.* Reading the lane's Codex rollouts afterwards, for the first time, showed
+  that Codex had not committed inside its sandbox. The rollout of `t_a52f3935` records one
+  `index.lock': Operation not permitted`, two tool calls with `sandbox_permissions:
+  "require_escalated"`, a `guardian_review` sub-thread (the auto-review session that approves
+  one), and a recorded sandbox policy whose `writable_roots` is the common dir alone. Rehearsal 5's card
+  (`t_45b0240f`) has the same `guardian_review` sub-thread and the same denial. Run on 2026-10-30 against rehearsal 6's worktree path and lane
+  window, the new rollout check printed (the positive control; it is what a run needing the
+  escalation looks like):
+  ```text
+  FINDING rollout-2026-10-29T23-01-06-01a189ae-5358-7840-a997-ef4e0ad795b6.jsonl denial=1 escalation=2 guardian_review=0 (codex 0.164.0)
+  FINDING rollout-2026-10-29T23-01-06-01a189ae-55e4-7223-85cb-a4a1d5f6de00.jsonl denial=1 escalation=0 guardian_review=1 (codex 0.164.0)
+  codex-rollout-check: 2 rollout(s) for /Users/goonlab/dev/hello-forge/.worktrees/t_a52f3935, 2 with a denial or an escalation
+  writable_roots recorded by the lane's Codex: ['/Users/goonlab/dev/hello-forge/.git']
+  FINDING expected writable root never granted: /Users/goonlab/dev/hello-forge/.git/worktrees/t_a52f3935
+  ```
+
+*What the first commission of attempt 2 found.* Precondition 7, run from `~/dev/forge` with
+`--with-codex` (paid), per the text above. Report
+`~/dev/the-squatfather/.forge/commission-20261029T220942Z.3wRnsR.md`; evidence in
+`~/dev/the-squatfather/.forge/run-a-attempt-2-commission-1/`.
+- **`overall: FAIL`, `posture: UNGATED`.** `--with-codex` read **563 passed, 5 failed, 10
+  skipped**.
+- **Four of the five were `config/external-dirs`.** They assert that the profiles' external
+  directories point at the runtime checkout, so they fail in any other checkout. Precondition 7
+  said `cd ~/dev/forge`, which is a different checkout from `~/dev/forge-runtime`. That is the
+  text's error, corrected below.
+- **One was `substrate/codex-worktree-commit`, and it is real:** the defect below.
+- Board `squatfather-run-a2` was **not** created. The commission leaves the board absent when it
+  fails, and the report's `board-unchanged` section reads ABSENT before and after.
+
+*Root cause (P37).* codex-cli 0.164.0 (installed 2026-10-25; 0.157.1 before it, on which this was
+green) no longer lets a `workspace-write` sandbox write a linked worktree's own gitdir,
+`<git-common-dir>/worktrees/<name>/`, when only `--add-dir <git-common-dir>` is granted. `git
+add` and `git commit` die with `Unable to create '<common>/worktrees/<name>/index.lock': Operation
+not permitted`. Measured free with `codex sandbox`, in a lab built as `verify.sh`'s is:
+`writable_roots=[common]` fails, `[common, gitdir]` succeeds, `[gitdir]` alone passes the lock but
+cannot write objects.
+
+*Why nothing saw it.* Rehearsals 1 to 6 hit the denial every time and still committed:
+`~/.codex/config.toml` has `approvals_reviewer = "auto_review"`, which approved an escalated retry.
+The Codex desktop app rewrites that file, so run A would have rested on a setting nobody pinned.
+`substrate/codex-worktree-commit` is the one paid check of the grant, and the commission was its
+first run on 0.164.0.
+
+*P37, the code* (epic P37; the PR that carries this entry, branch
+`slice/codex-worktree-gitdir-root`). The user's choice: grant both roots.
+- `scripts/codex-run.sh` grants the common dir and the worktree's own gitdir (`git rev-parse
+  --absolute-git-dir`; the same directory in a main checkout, where it is granted once) on the
+  fresh path and on the resume path. `codex-run.sh --print-sandbox-roots <workspace>` prints the
+  grant without calling a model.
+- `quota/` cases run the real runner against a stub `codex` and mutation-test each path.
+  `make preflight` **section 13** runs `codex sandbox` in a throwaway lab under `$HOME` with
+  exactly those roots (and the common dir alone as a control). `scripts/codex-rollout-check.py`
+  reads a real run's rollouts.
+- The blast-radius audit still catches tampering with the gitdir's `config.worktree`, `hooks/`,
+  `HEAD` and `commondir`; two new `lane/blast/` cases write `config.worktree` and `commondir`
+  directly, as a sandboxed Codex could. Against 0.157.1 the exposure is unchanged (the gitdir is a
+  subdirectory of the common dir that was already granted). Against what rehearsals 1 to 6 ran, an
+  escalated unsandboxed retry, it is narrower.
+
+*The deploy.* Once the PR has merged and `git -C ~/dev/forge pull --ff-only` has brought it
+to the main checkout:
+```bash
+git -C ~/dev/forge-runtime pull --ff-only &&
+test "$(git -C ~/.forge/repo rev-parse HEAD)" = "$(git -C ~/dev/forge rev-parse HEAD)" && echo runtime=main &&
+test -x ~/.forge/repo/scripts/codex-rollout-check.py && echo checker-deployed &&
+~/.forge/repo/scripts/codex-run.sh --print-sandbox-roots "$HOME/dev/hello-forge" | wc -l | tr -d " " ||
+{ echo "STOP: the deploy did not complete, run nothing below"; false; }
+```
+The last line prints `1`: `~/dev/hello-forge` is a main checkout, where the gitdir is the common
+dir and is granted once. A linked worktree prints 2. Then amendment 5's two blocks, unchanged:
+`make preflight` (pass: `FAIL 0`) and `make verify` (pass: `failed 0`, `skipped 11`, `passed`
+equal to the baseline below).
+
+*Precondition 7, corrected.* The commission runs from the runtime checkout, not the development
+one. This governs attempt 2 and replaces the `cd` in precondition 7's block (the text above stays,
+with a pointer to this entry). Run it alone (P17), after rehearsal 7 passes, and not before:
+```bash
+cd ~/dev/forge-runtime && make commission PROJECT="$HOME/dev/the-squatfather" BOARD=squatfather-run-a2
+ls -1t ~/dev/the-squatfather/.forge/commission-*.md | head -1
+tail -2 "$(ls -1t ~/dev/the-squatfather/.forge/commission-*.md | head -1)"
+```
+Pass: the report ends `overall: PASS` and `posture: UNGATED`. The four `config/external-dirs`
+cases pass there because the profiles point at that checkout. If `substrate/codex-worktree-commit`
+fails again, that is the grant: do not launch.
+
+*Precondition 12, new: the sandbox alone lets a linked worktree commit with the roots the runner
+grants.* Run after the deploy and before R2 of every rehearsal and before *Launch*. It spends no
+tokens: section 13 of `make preflight` builds a throwaway linked-worktree lab under `$HOME`, asks
+`codex-run.sh --print-sandbox-roots` for the roots, and runs `codex sandbox` with them. `codex
+sandbox` has no approval path, so `auto_review` cannot make it pass. Pass: the line `the sandbox
+alone lets a linked worktree git add + git commit`, then `P12OK=1`. The control line (`control:
+the common dir alone is DENIED as predicted`) is expected on this Codex; a WARN saying the control
+passed means Codex changed, and is recorded, not a stop. A FAIL saying `codex sandbox` is missing
+or its CLI shape changed is the check reporting its own blindness.
+```bash
+P12OK=0
+P12="$(cd ~/dev/forge-runtime && make preflight 2>&1)"
+printf "%s\n" "$P12" | grep -E "codex version under test|the sandbox alone lets|control: |CONTROL passed|^PASS [0-9]+ "
+printf "%s\n" "$P12" | grep -q "the sandbox alone lets a linked worktree git add + git commit" &&
+printf "%s\n" "$P12" | grep -qE "FAIL 0$" && P12OK=1 ||
+{ echo "STOP: the sandbox cannot commit in a worktree, do not run rehearsal 7"; false; }
+echo "P12OK=$P12OK"
+```
+
+*Rehearsal 7.* The 2026-10-27 entry's R0 to R7, as amendments 3 to 5 restated them, apply with
+the values below: the variables become `SUF=a2g`, `RB=hello-rehearsal-a2g` and
+`BR=chunk/HELLO-1-greet-$SUF`, and the evidence directory is
+`$P/.forge/run-a-attempt-2-rehearsal-7`. **Every block that sets `SUF` or `BR` (R0, R2, R3 and
+R7 step 1) is restated here with the new values; none of amendment 5's may be pasted as written.**
+The blocks that depend on those (R4's, R6's, R7 steps 2 to 6) read `$BR` and stand; R1 is not
+repeated and R5 stands. The next unused suffixes after `a2g` are `a2h`, then `a2i`; `a2b` to
+`a2f` are spent.
+
+- **R0.** Run the replacement precondition 8 with `SKIP=-` first. Then:
+  ```bash
+  SUF=a2g; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-7"; mkdir -p "$EV"
+  hermes gateway status | sed -n 2,3p
+  hermes kanban boards list --all --json | jq --arg s "$RB" 'any(.[]; .slug == $s)'
+  hermes kanban assignees --json | jq -e 'map(select(.name | IN("forge-codex-lane","forge-verifier")) | select(.on_disk)) | length == 2'
+  git -C "$H" fetch origin
+  git -C "$H" branch --show-current
+  git -C "$H" status --porcelain
+  git -C "$H" merge-base --is-ancestor HEAD origin/main && echo ancestor-ok
+  git -C "$H" diff --stat 582455c origin/main
+  test ! -e "$H/src/hello_forge/greet.py" && echo greet-absent
+  gh pr list --repo "$R" --head "$BR" --state all --json number
+  git -C "$H" ls-remote --heads origin "$BR"
+  git -C "$H" ls-remote --heads origin
+  git -C "$H" branch --list "chunk/*"
+  git -C "$H" worktree list
+  ```
+  Expected, in order: launchd; `false`; `true`; `main`; nothing; `ancestor-ok`; nothing;
+  `greet-absent`; `[]`; nothing; `refs/heads/main` alone; nothing; `$H` alone. `$H` is on
+  `main`, clean, equal to `origin/main` (`81d9b23`).
+- **R2.** After the token, hook and sandbox preconditions (T1, T2, H1 and precondition 12 all
+  passed):
+  ```bash
+  SUF=a2g; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-7"
+  cd "$H" && ~/.forge/repo/hermes/board-bootstrap.sh "$RB" --hello --branch-suffix "$SUF"; echo "bootstrap exit=$?"
+  ```
+  It must print `free     chunk/HELLO-1-greet-a2g`, create the card, and print `bootstrap
+  exit=0`. Then, in the same shell:
+  ```bash
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"; echo "$ID"
+  hermes kanban --board "$RB" show "$ID" --json | jq -e --arg b "$BR" '.task | .assignee == "forge-codex-lane" and .workspace_kind == "worktree" and .branch_name == $b and .max_retries == 1 and .skills == ["forge-lane"]'
+  hermes kanban --board "$RB" show "$ID" --json | jq -e '.task | (.title | capture("^CHUNK-(?<id>[A-Za-z0-9][A-Za-z0-9._-]*)").id) as $i | .branch_name | startswith("chunk/" + $i + "-")'
+  ```
+  Expected: the card id, then `true`, then `true`.
+- **R3.** The bounded poll of amendment 3, with the new values:
+  ```bash
+  SUF=a2g; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-7"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  T0=$(date +%s); DONE=0
+  for i in $(seq 1 36); do
+    J="$(hermes kanban --board "$RB" show "$ID" --json)"
+    printf '%s min  ' "$(( ($(date +%s) - T0) / 60 ))"
+    printf '%s\n' "$J" | jq -r '[.task.status, (.events | last | .kind), "verifier runs: \([.runs[] | select(.profile == "forge-verifier")] | length)"] | @tsv'
+    printf '%s\n' "$J" | jq -e '[.runs[] | select(.profile == "forge-verifier")] | last | .ended_at != null' >/dev/null && { DONE=1; break; }
+    printf '%s\n' "$J" | jq -e '.task.status == "blocked"' >/dev/null && { DONE=2; break; }
+    printf '%s\n' "$J" | jq -e '.task.status | IN("done","archived")' >/dev/null && { DONE=3; break; }
+    sleep 150
+  done
+  echo "DONE=$DONE"
+  hermes kanban --board "$RB" runs "$ID"
+  hermes kanban --board "$RB" log "$ID" | tail -40
+  gh pr list --repo "$R" --head "$BR" --state all
+  [ "$DONE" = 1 ] && echo "R3 poll: a verifier run ended, R4 decides" || { echo "STOP: R3 poll ended with DONE=$DONE, read the prose before R4"; false; }
+  ```
+  Pass and the meanings of `DONE=0` to `DONE=3` are amendment 3's. `DONE=2` with a verifier
+  run count of 0 is rehearsal 4's failure again: R6.
+- **R4's wait and the hook-acted block.** Amendment 3's wait and amendment 4's hook block,
+  unchanged, in the same shell as R3.
+- **R4, the Codex rollout: no denial, no escalation, and the gitdir actually granted.** New. In the
+  same shell, after R4's standing blocks and **before R7**, because it asks the runner for the
+  grant of a worktree that R7 removes. It finds the lane's Codex rollouts under
+  `~/.codex/sessions` (`$CODEX_HOME` is honoured) the robust way: the card's `workspace_path` from
+  the board snapshot, not a path built by hand, and the window from the lane's own runs on the
+  card, the earliest `started_at` to the latest `ended_at` over every `forge-codex-lane` row
+  (a bounce gives several). A rollout is the lane's when its `cwd` is that worktree and it began
+  inside the window, so a sibling worktree's or another day's rollout cannot be read for it. Its
+  roots to expect are asked of the deployed `codex-run.sh`, the same function that built the argv.
+  **Finding no rollout is exit 2 and a STOP, never a pass.** Pass: no `FINDING` line, the
+  `writable_roots recorded by the lane's Codex` line naming both the common dir and
+  `.git/worktrees/<card id>`, then `R4ROLLOUTOK=1`.
+  ```bash
+  R4ROLLOUTOK=0
+  SNAP="$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")"
+  WP="$(sqlite3 "$SNAP" "select workspace_path from tasks where id='$ID'")"
+  LT0="$(sqlite3 "$SNAP" "select min(started_at) from task_runs where task_id='$ID' and profile='forge-codex-lane'")"
+  LT1="$(sqlite3 "$SNAP" "select max(coalesce(ended_at, strftime('%s','now'))) from task_runs where task_id='$ID' and profile='forge-codex-lane'")"
+  echo "workspace=$WP lane window=$LT0..$LT1"
+  RO_ARGS=(); while IFS= read -r ROOT; do RO_ARGS=("${RO_ARGS[@]+"${RO_ARGS[@]}"}" --expect-root "$ROOT"); done < <(~/.forge/repo/scripts/codex-run.sh --print-sandbox-roots "$WP")
+  echo "expected roots: $(( ${#RO_ARGS[@]} / 2 ))"
+  [ -n "$WP" ] && [ -n "$LT0" ] && [ "${#RO_ARGS[@]}" -ge 4 ] &&
+  python3 -I ~/.forge/repo/scripts/codex-rollout-check.py --cwd "$WP" --since "$LT0" --until "$LT1" "${RO_ARGS[@]}" | tee "$EV/codex-rollout-check.txt" &&
+  [ "${PIPESTATUS[0]}" = 0 ] && R4ROLLOUTOK=1 ||
+  { echo "STOP: no clean rollout was found for this card (exit 2 means none was found at all), this is a finding: R6"; false; }
+  echo "R4ROLLOUTOK=$R4ROLLOUTOK"
+  ```
+  The expected roots must read 2 for a card in a linked worktree. A `FINDING ... denial=1` or
+  `escalation=` line is the P37 defect again. A `FINDING expected writable root never granted`
+  line with no denial means the lane's `codex exec` did not map its two `--add-dir` flags to two
+  roots: **the free checks do not prove that mapping, only this block does**, so that is a finding
+  about `codex exec`, not a reason to rerun the preconditions.
+- **R6.** Amendment 3's rule stands. The rerun sentence now reads: a rerun after a repair is
+  merged and deployed needs a new board and a new, never-used suffix, **`a2h`** with
+  `hello-rehearsal-a2h`, then `a2i`. `a2b` to `a2g` are spent. R7 on the failed run still comes
+  first.
+- **R7 step 1.** `K` is 7 and the evidence directory is rehearsal 7's:
+  ```bash
+  SUF=a2g; export H="$HOME/dev/hello-forge" R=wielas/hello-forge RB="hello-rehearsal-$SUF" BR="chunk/HELLO-1-greet-$SUF"
+  export P="$HOME/dev/the-squatfather"
+  export EV="$P/.forge/run-a-attempt-2-rehearsal-7"
+  export ID="$(sqlite3 "$(~/.forge/repo/scripts/board-snapshot.sh "$HOME/.hermes/kanban/boards/$RB/kanban.db" "$(mktemp -d "$EV/board.XXXXXX")")" "select id from tasks where idempotency_key='hello-1'")"
+  K=7; WT="$H/.worktrees/$ID"
+  git -C "$H" fetch origin
+  if [ -e "$WT" ]; then
+    { echo "status:"; git -C "$WT" status --porcelain; echo "HEAD: $(git -C "$WT" rev-parse HEAD)"; } | tee "$EV/worktree-before-archive.txt"
+    TIP="$(git -C "$WT" rev-parse HEAD)"
+  else
+    echo worktree-absent | tee "$EV/worktree-before-archive.txt"
+    TIP="$(git -C "$H" ls-remote --heads origin "$BR" | cut -f1)"
+  fi
+  echo "TIP=$TIP"
+  ```
+  Steps 2 to 6 stand, in the same shell. Step 6's expected reading gains the tags
+  `rehearsal-1` at `46fabde…`, `rehearsal-2` at `093c30c…`, `rehearsal-3` at `0c2f5ea…`,
+  `rehearsal-4` at `9342c0f…`, `rehearsal-5` at `4b74940…`, `rehearsal-6` at `c4ce830…` and
+  `rehearsal-$K` at `$TIP`.
+
+*Order before `RUN_START`* (supersedes amendment 5's). This PR merged and deployed (the deploy
+block above), then **precondition 3 (`make verify`) and preflight on the deployed `main`**;
+**precondition 11**; **precondition 12**; the token precondition (T1, T2) and the hook check
+(H1); **rehearsal 7** (R0 to R7 with `a2g`, including `R4ROLLOUTOK=1`); **7 (commission, from
+`~/dev/forge-runtime`, the corrected block above)**; the disposition of `t_da03d07a` (T1 to T4
+of the 2026-10-27 entry, which archives the card and never unblocks it); and then stop. *Launch*
+is a separate decision, taken after the commission report and T1 to T4 have been read. Precondition
+11, precondition 12, T1, T2 and H1 run again immediately before *Launch*. A failed rehearsal still
+costs no commission probe.
+
+*FORGE_SHA and the baseline.* Following amendments 2 to 5:
+- **`FORGE_SHA` is the merge commit of the PR that carries this entry** (squash), or a later
+  `main` if more PRs land first. It is not `7a086d5`, amendment 5's merge commit, whose
+  `codex-run.sh` leaves Codex unable to commit inside its sandbox on 0.164.0. The product stays
+  `PRODUCT_SHA` `b66be28`.
+- *Inputs*' **Codex** row read 0.157.1 at registration, recorded and not pinned. It moved to
+  **0.164.0 on 2026-10-25** (read 2026-10-30); that is the precondition 1 case, a recorded move
+  and not a stop, and it is the move that exposed P37.
+- *Inputs*' **Forge runtime** row reads "this PR's merge commit, or a later `main`". Its
+  baseline is restated as **failed 0, skipped 11, passed = 581 (derived: 567 + the 14 cases this PR adds, to be
+  confirmed on the deployed `main`) at 7 live boards, plus one per live board beyond 7**, boards counted under
+  `~/.hermes/kanban/boards` without `_archived`. `hello-rehearsal-a2f` is archived, so the seven
+  are the baseline's seven until rehearsal 7's board exists, when the total is one higher. The
+  count and the expected `passed`, replacing amendment 5's block:
+  ```bash
+  N="$(find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " ")"
+  echo "live boards: $N, expected passed: $(( 581 + (N > 7 ? N - 7 : 0) ))"
+  ```
+  The operator records both numbers next to the reading in the launch record.
+- `make preflight` has a new **section 13** (two PASS lines on this machine: the commit, and the
+  control). Measured on the PR's worktree with the tree committed and clean: **PASS 114 / WARN 2 / FAIL 0**.
+  The expected reading on the deployed `main` is **PASS 114 / WARN 2 / FAIL 0**, the two WARNs being `lefthook`
+  and the current board being `forge-ladder`; the pass condition is `FAIL 0`, and the operator
+  records what it prints. Before this PR, the deployed `main` read PASS 112 / WARN 2 / FAIL 0.
+- `make verify` measured from the PR's worktree **577 passed, 4 failed (those four), 11 skipped**; the four `config/external-dirs` cases
+  fail there by design, so the deployed `main` is **expected** to read 581 passed / 0 failed / 11
+  skipped at seven live boards (derived, not yet measured on `main`). Before this PR, the deployed
+  `main` read 567 / 0 / 11 at 7 boards.
+
+*Decisions this entry makes that the operator may overrule before rehearsal 7.*
+- Both roots are granted (the user's choice). The alternative the lab ruled out is the gitdir
+  alone, which cannot write objects.
+- The rollout check counts a `guardian_review` sub-thread for the worktree as a finding even with
+  no denial in it, because an auto-review session exists only when something was escalated.
+- Section 13 FAILs when `codex sandbox` is missing or changes shape, and WARNs when its control
+  passes. A control that passes means the extra gitdir root is redundant on that Codex, which is
+  harmless; it does not mean the positive result is wrong.
+- Nothing free proves that `codex exec` turns two `--add-dir` flags into two writable roots.
+  Rehearsal 7's `R4ROLLOUTOK` is the first proof, and the commission's
+  `substrate/codex-worktree-commit` the second. Until then it is unproven.
+- The commission is moved after rehearsal 7, so that a failing rehearsal still costs no
+  commission probe.

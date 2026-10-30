@@ -683,6 +683,11 @@ without --add-dir:  fatal: Unable to create '…/.git/worktrees/<id>/index.lock'
 with    --add-dir "$(git rev-parse --git-common-dir)":            exit 0
 ```
 
+**Corrected 2026-10-30: the `--add-dir` line above is true only up to codex-cli
+0.157.1.** On 0.164.0 the common dir alone no longer covers the worktree's own
+gitdir; see "codex-cli 0.164 stopped covering a linked worktree's own gitdir"
+below.
+
 The real `.git` lives in the main repo, outside the workspace. **Anyone
 re-testing this: do not build the lab under `/tmp`.** Codex announces `sandbox:
 workspace-write [workdir, /tmp, $TMPDIR]`, so a probe there passes for the wrong
@@ -711,6 +716,46 @@ playbook, including "push, open the PR, operate the board". It followed the
 pointer in the project's own `AGENTS.md`. Nothing in the sandbox prevents this,
 so the role boundary has to be **stated in the prompt** (`forge-lane` §4) and
 `AGENTS.md` must scope the ceremony skills to the interactive operator.
+
+**codex-cli 0.164 stopped covering a linked worktree's own gitdir (P37, found in
+rehearsal 6, 2026-10-30).** A linked worktree's Git state is in two places: the
+common dir (objects, refs, config) and the worktree's own gitdir,
+`<common>/worktrees/<name>/` (index, HEAD, `config.worktree`, locks). On
+codex-cli 0.157.1 a grant for the common dir covered the second as a
+subdirectory. On 0.164.0 (installed 2026-10-25) it does not: with only
+`--add-dir <common>`, `git add` dies on `Unable to create
+'<common>/worktrees/<name>/index.lock': Operation not permitted`. Measured with
+`codex sandbox`, which makes no model call, in a lab built under `$HOME`:
+
+| `writable_roots` | `git add` + `git commit` |
+|---|---|
+| `[common]` | fails at `index.lock` |
+| `[common, gitdir]` | succeeds |
+| `[gitdir]` | passes the lock, cannot write objects |
+
+So the lane grants both (`scripts/codex-run.sh`, on the `codex exec` and the
+`codex exec resume` paths; `--print-sandbox-roots <workspace>` prints them; a main
+checkout's gitdir is its common dir and is granted once).
+
+**Why six rehearsals did not see it.** Every one of rehearsals 1-6 hit the
+denial and committed anyway. `~/.codex/config.toml` carries `approvals_reviewer =
+"auto_review"`, so the sandbox's refusal was turned into an escalated retry
+(`sandbox_permissions: "require_escalated"`) that a guardian sub-thread approved,
+and the run came back green. In rehearsal 6's rollouts (`t_a52f3935`) there is one
+`index.lock': Operation not permitted`, two escalated calls, a
+`guardian_review` thread, and a recorded `writable_roots` of the common dir
+alone. Nothing about the *result* differed from a run that never needed the
+escalation. The Codex desktop app rewrites that file, so an unattended run must
+not depend on it. `make preflight` section 13 probes the sandbox alone
+(`codex sandbox` has no approval or escalation path) and
+`scripts/codex-rollout-check.py` reads a real run's rollouts for the denial, the
+escalation and the roots Codex recorded.
+
+Two traps in reading rollouts for this. Every rollout carries the tool schema,
+which names `require_escalated` in prose, so a grep for the word is true of a
+clean run; only a tool *call* with `sandbox_permissions` set counts. And the
+auto-review sub-thread has the worktree as its `cwd` too, so a matcher on `cwd`
+finds it: its existence is itself the escalation.
 
 ## lefthook
 

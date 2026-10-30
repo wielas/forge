@@ -1348,6 +1348,119 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+sect "13. A Codex workspace-write sandbox can commit in a linked worktree — with the roots codex-run.sh actually grants"
+# ---------------------------------------------------------------------------
+# codex-cli 0.164.0 (installed 2026-10-25; 0.157.1 before) stopped letting a sandbox that was granted
+# only the git COMMON dir write the worktree's own gitdir (<common>/worktrees/<name>/): `git add` died
+# on index.lock "Operation not permitted". Rehearsals 1-6 of run A hit that denial every time and
+# committed only because ~/.codex/config.toml carried approvals_reviewer = "auto_review", which
+# approved an escalated retry. The Codex desktop app rewrites that file, so an unattended run must not
+# depend on it: the sandbox alone has to suffice. This section proves it, for free, with `codex
+# sandbox` — it makes no model call and has no approval or escalation path at all, so a PASS here
+# cannot be borrowed from auto_review.
+#
+# The roots come from scripts/codex-run.sh --print-sandbox-roots, i.e. the same function that builds
+# the argv of the fresh AND the resume attempt, not from a copy of them in this file. The CONTROL
+# grants the common dir alone and EXPECTS the denial on this Codex version; a control that passes
+# means either Codex fixed it (good news, the grant is then merely redundant) or this lab no longer
+# exercises the defect — either way the positive result still stands, so that is a WARN, not a FAIL.
+#
+# Everything is a FAIL when it cannot run: no codex, no `codex sandbox`, an unrecognised CLI shape, a
+# runner that prints fewer than two roots for a linked worktree. "I could not probe" is this check
+# reporting its own blindness.
+PF_CODEX_RUN="$PF_SELF_REPO/scripts/codex-run.sh"
+# The binary codex-run.sh would use (its FORGE_CODEX_BIN knob), so a probe cannot bless one codex while the lane runs another.
+PF_CODEX="${FORGE_CODEX_BIN:-codex}"
+if [ "$PIPED" = 1 ]; then
+  warn "cannot locate scripts/codex-run.sh because this script was piped in on stdin — there is no file"
+  say  "      path to resolve it from. Re-run from a checkout to probe the sandbox grant."
+elif ! command -v "$PF_CODEX" >/dev/null 2>&1; then
+  fail "$PF_CODEX is not on PATH — the sandbox grant that lets the implementation lane commit is UNCHECKED"
+elif [ ! -f "$PF_CODEX_RUN" ]; then
+  fail "scripts/codex-run.sh is missing — nothing states the sandbox grant the lane gives Codex"
+else
+  PF_CODEX_VER="$("$PF_CODEX" --version 2>&1 | head -1)"
+  info "codex version under test: ${PF_CODEX_VER:-<codex --version printed nothing>}"
+  PF_SB_HELP="$("$PF_CODEX" sandbox --help 2>&1)"; PF_SB_RC=$?
+  if [ "$PF_SB_RC" != 0 ] \
+     || ! printf '%s\n' "$PF_SB_HELP" | grep -q 'Usage: codex sandbox' \
+     || ! printf '%s\n' "$PF_SB_HELP" | grep -qE -- '(^|[[:space:]])-c, --config'; then
+    fail "\`codex sandbox\` is missing or its CLI shape changed (needs: Usage: codex sandbox [OPTIONS] [COMMAND]... and -c/--config)"
+    say  "      the sandbox grant is UNCHECKED, not fine. version: ${PF_CODEX_VER:-unknown}"
+  else
+    PF_SB_LAB="$(mktemp -d "$HOME/.forge-preflight-sandbox.XXXXXX" 2>/dev/null)"
+    if [ -z "$PF_SB_LAB" ] || [ ! -d "$PF_SB_LAB" ]; then
+      fail "cannot create a throwaway lab under \$HOME — the sandbox grant is UNCHECKED"
+    else
+      # Under $HOME on purpose: a workspace-write sandbox also writes $TMPDIR by default, which would
+      # let a lab in /tmp pass for a reason that has nothing to do with the grant under test.
+      PF_SB_HERE="$(pwd)"
+      PF_SB_GIT="git -c user.email=pf@forge -c user.name=preflight"
+      if ( cd "$PF_SB_LAB" && mkdir main && cd main && git init -q -b main . \
+             && printf 'setup:\n\t@true\n' > Makefile && git add Makefile \
+             && $PF_SB_GIT commit -qm init \
+             && git worktree add -q ../wt-grant -b probe-grant \
+             && git worktree add -q ../wt-control -b probe-control ) >/dev/null 2>&1; then
+        PF_SB_ROOTS="$(bash "$PF_CODEX_RUN" --print-sandbox-roots "$PF_SB_LAB/wt-grant" 2>&1)"; PF_SB_RRC=$?
+        PF_SB_N="$(printf '%s\n' "$PF_SB_ROOTS" | grep -c .)"
+        if [ "$PF_SB_RRC" != 0 ] || [ "$PF_SB_N" -lt 2 ]; then
+          fail "codex-run.sh --print-sandbox-roots gave $PF_SB_N root(s) (exit $PF_SB_RRC) for a LINKED worktree; it must grant the common dir AND the worktree gitdir"
+          say  "      output: $(printf '%s' "$PF_SB_ROOTS" | tr '\n' ' ')"
+        else
+          PF_SB_TOML=""
+          while IFS= read -r PF_SB_R; do
+            [ -n "$PF_SB_R" ] && PF_SB_TOML="${PF_SB_TOML:+$PF_SB_TOML,}\"$PF_SB_R\""
+          done <<< "$PF_SB_ROOTS"
+          # The runner's FIRST root is the common dir; the control grants that alone.
+          PF_SB_COMMON="$(printf '%s\n' "$PF_SB_ROOTS" | sed -n 1p)"
+          PF_SB_CMD='echo hi > p.txt && git add p.txt && git -c user.email=pf@forge -c user.name=preflight commit -qm probe'
+
+          cd "$PF_SB_LAB/wt-grant" || true
+          bounded 90 "$PF_CODEX" sandbox -c 'sandbox_mode="workspace-write"' \
+            -c "sandbox_workspace_write.writable_roots=[$PF_SB_TOML]" -- sh -c "$PF_SB_CMD"
+          PF_SB_GRC=$?; PF_SB_GOUT="$BOUNDED_OUT"
+          cd "$PF_SB_HERE" || true
+          if [ "$PF_SB_GRC" = 0 ] \
+             && [ "$(git -C "$PF_SB_LAB/wt-grant" log -1 --format=%s 2>/dev/null)" = probe ] \
+             && git -C "$PF_SB_LAB/wt-grant" cat-file -e HEAD:p.txt 2>/dev/null; then
+            pass "the sandbox alone lets a linked worktree git add + git commit with the roots codex-run.sh grants ($PF_SB_N roots; $PF_CODEX_VER)"
+          else
+            fail "git add + git commit FAILED in a linked worktree under the roots codex-run.sh grants (exit $PF_SB_GRC; $PF_CODEX_VER)"
+            say  "      roots: $(printf '%s' "$PF_SB_ROOTS" | tr '\n' ' ')"
+            say  "      Without this the lane commits only through an auto_review escalation that ~/.codex/config.toml may lose."
+            while IFS= read -r PF_SB_L; do say "      $PF_SB_L"; done <<< "$(printf '%s\n' "$PF_SB_GOUT" | tail -6)"
+          fi
+
+          # The control: the common dir alone. Meaningful only once the positive ran, since a CLI that
+          # cannot run the probe at all would "deny" this too.
+          if [ "$PF_SB_GRC" = 0 ]; then
+            cd "$PF_SB_LAB/wt-control" || true
+            bounded 90 "$PF_CODEX" sandbox -c 'sandbox_mode="workspace-write"' \
+              -c "sandbox_workspace_write.writable_roots=[\"$PF_SB_COMMON\"]" -- sh -c "$PF_SB_CMD"
+            PF_SB_CRC=$?; PF_SB_COUT="$BOUNDED_OUT"
+            cd "$PF_SB_HERE" || true
+            if git -C "$PF_SB_LAB/wt-control" cat-file -e HEAD:p.txt 2>/dev/null; then
+              warn "CONTROL passed: the common dir ALONE let a linked worktree commit on $PF_CODEX_VER."
+              say  "      Either Codex fixed the defect (the extra gitdir root is then merely redundant) or this lab no"
+              say  "      longer exercises it. The positive result above still stands; investigate before relying on it."
+            elif [ "$PF_SB_CRC" != 0 ] && printf '%s\n' "$PF_SB_COUT" | grep -q 'Operation not permitted'; then
+              pass "control: the common dir alone is DENIED as predicted — the gitdir root is load-bearing on $PF_CODEX_VER"
+            else
+              warn "control failed, but not with the predicted 'Operation not permitted' (exit $PF_SB_CRC):"
+              while IFS= read -r PF_SB_L; do say "      $PF_SB_L"; done <<< "$(printf '%s\n' "$PF_SB_COUT" | tail -4)"
+            fi
+          fi
+        fi
+      else
+        fail "could not build the throwaway linked-worktree lab under $PF_SB_LAB — the sandbox grant is UNCHECKED"
+      fi
+      # A worktree registered inside the lab is removed with it; nothing here touches a real repository.
+      rm -rf "$PF_SB_LAB"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 say ""
 say "## Summary"
 say ""
