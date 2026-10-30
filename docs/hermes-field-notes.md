@@ -757,6 +757,20 @@ clean run; only a tool *call* with `sandbox_permissions` set counts. And the
 auto-review sub-thread has the worktree as its `cwd` too, so a matcher on `cwd`
 finds it: its existence is itself the escalation.
 
+**Pin `approval_policy` too; the grant alone does not close the escape (P38).** The
+escalation that hid P37 needed two things: a sandbox that refused and an approver
+that said yes. The grant fixes the first; `approval_policy = "never"` removes the
+second, so the same refusal on a future Codex is a failed command and not a silent
+success. `codex exec` has no `-a` (only `codex` does); `-c 'approval_policy="never"'`
+is the form, shared with `exec resume`. It is checkable without a model call in two
+ways: `codex sandbox -c 'approval_policy="bogus"' -- true` is refused with the variant
+list (`untrusted`, `on-failure`, `on-request`, `granular`, `never`), and `codex debug
+-c 'approval_policy="never"' prompt-input x` renders `Approval policy is currently
+never` where the default names `approvals_reviewer`. Neither shows `codex exec`
+honouring it; the rollout does: `turn_context.payload.approval_policy` read
+`on-request` in rehearsal 6 and `scripts/codex-rollout-check.py --expect-approval
+never` is how a run proves otherwise.
+
 ## lefthook
 
 **Pre-push commands without file templates run on an empty commit.** An earlier

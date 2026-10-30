@@ -617,6 +617,15 @@ build_argv() {
   # turn, so "the flag is somewhere in the file" cannot pass for "it reaches
   # both invocations".
   ARGV=("${ARGV[@]}" -m "$MODEL" -c "model_reasoning_effort=\"$EFFORT\"")
+  # THE APPROVAL PIN, for the same reason and on the same common path. Left
+  # unstated, the lane inherits Codex's default plus whatever ~/.codex/config.toml
+  # holds -- and the desktop app rewrites that file. With `approvals_reviewer =
+  # "auto_review"` there, rehearsals 1-6 escalated `git add` / `git commit` out
+  # of the sandbox and had them approved. Under `never` a command the sandbox
+  # refuses is a plain failure returned to the model, not an unsandboxed retry.
+  # `codex exec` has no -a flag (codex-cli 0.164.0), only -c, which it shares
+  # with `exec resume`. quota/codex-run-pins-approval-never-on-both-branches.
+  ARGV=("${ARGV[@]}" -c 'approval_policy="never"')
 
   if [ -n "${SESSION_ID:-}" ]; then
     # `codex exec resume` accepts neither -s, -C nor --add-dir (measured
