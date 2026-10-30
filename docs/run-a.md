@@ -3726,3 +3726,99 @@ T1, T2 and H1 as amendment 6's order says.
   approved is not a test of the sandbox alone. Its change is not exercised by any free check; the
   next `--with-codex` run (the commission) is its first.
 - Rehearsal 7 keeps `a2g`; this entry spends no suffix.
+
+**2026-10-30 (amendment 8) — attempt 2, rehearsal 7 passed: the lane committed inside its sandbox for the first time on codex 0.164.0, with no escalation and approval policy `never`; what it proves, what it does not, the corrected baseline and what runs next.**
+
+*Why.* Amendments 6 and 7 gave rehearsal 7 its commands and one extra pass check, the Codex
+rollout reading. Rehearsal 7 has run and passed. This entry records it, says exactly how much of
+P37 and P38 it proves, corrects one number in amendment 7, and restates the order of what remains
+before *Launch*. It changes no code, and this PR adds no verify case. Nothing above is edited;
+where this entry and the text above differ, this entry governs attempt 2. The cleanup of
+rehearsal 7 was done before this entry was written, so only its result is recorded.
+
+*What rehearsal 7 found.* Board `hello-rehearsal-a2g`, card `t_70dbba8e`, branch
+`chunk/HELLO-1-greet-a2g`, PR `wielas/hello-forge#12`. **PASSED.** Evidence in
+`~/dev/the-squatfather/.forge/run-a-attempt-2-rehearsal-7/`.
+- **The preconditions all passed** on the deployed `main` `59c0ba1` with codex-cli **0.164.0**:
+  `make preflight` PASS 114 / WARN 2 / FAIL 0, `make verify` **588 passed / 0 failed / 11
+  skipped** at 7 live boards, `P11OK=1`, `P12OK=1`, `T1OK=1`, T2 `token-lines-agree`, `H1OK=1`.
+- **R3 ended `DONE=1`** after about 5 minutes. The lane's run lasted about a minute (`review_requested`),
+  the verifier's about a minute after it (`blocked`).
+- **The verdict was a hold** whose reason begins `merge-pending:`. The judge was opus. It approved
+  with 0 findings, scores 3/3/3/3/3/3, at $0.4320. The implementer ran as `gpt-5.6-luna` at `xhigh`.
+- **R4: every standing block passed, and `R4HOOKOK=1`.** The P34 hook acted on both calls. The
+  lane's raw `kanban_request_review` call carried no reviewer and no `task_id`, and the hook
+  restored `reviewer: forge-verifier`. The verifier's raw `kanban_block` call had the keys
+  `["reason"]` only.
+- **R4's rollout block: `R4ROLLOUTOK=1`, the checker exiting 0.** `codex-rollout-check.txt`:
+  ```text
+  clean   rollout-2026-10-30T17-47-58-01a18db5-ffcc-79b1-b9fc-477deeef8c4c.jsonl denial=0 escalation=0 guardian_review=0 (codex 0.164.0)
+  codex-rollout-check: 1 rollout(s) for /Users/goonlab/dev/hello-forge/.worktrees/t_70dbba8e, 0 with a denial or an escalation
+  writable_roots recorded by the lane's Codex: ['/Users/goonlab/dev/hello-forge/.git', '/Users/goonlab/dev/hello-forge/.git/worktrees/t_70dbba8e']
+  approval_policy recorded by the lane's Codex: ['never']
+  ```
+  The expected roots read 2. There was **no `FINDING`**. Amendment 6 feared a one-root ambiguous
+  case, in which Codex deduplicates a nested gitdir when it records `writable_roots`; it did not
+  occur, so `codex exec` does map the runner's two `--add-dir` flags to two writable roots.
+- **The lane committed without an escalation.** That is the first time since codex 0.164.0
+  arrived: rehearsals 1 to 6 committed only through an `auto_review` escalation. The commits were
+  `6d9fe51` and `c4ad862`; the branch tip was `c4ad862de71b1753fbd3864126095dde13273aa5`.
+- **R7 was done.** The evidence is tagged `run-a-attempt-2/rehearsal-7` at `c4ad862`. PR
+  hello-forge#12 is closed unmerged and its remote and local branches are deleted; the card is
+  archived; the board was archived softly to `_archived/hello-rehearsal-a2g-1793379344`.
+  hello-forge `main` is clean at `81d9b23`. **`a2g` is spent.** The next suffix is `a2h`, then
+  `a2i`.
+
+*What it proves.* On the fresh `codex exec` path, on codex-cli 0.164.0, with the hooked worktree
+that rehearsal 6 escalated for: the sandbox granted both roots lets the lane `git add` and `git
+commit` with no denial and no escalation (P37), and the recorded approval policy is `never` (P38).
+It is the first live proof of PR #94 and PR #95, and of the mapping that amendment 6 listed as
+unproven.
+
+*What it does not prove.* **The `codex exec resume` path's `approval_policy` pin is still
+unexercised.** The card neither parked nor bounced: there was one fresh `exec` and one rollout.
+Only the fresh-exec pin is proven live; the resume pin is argv-only, held by
+`quota/codex-run-pins-approval-never-on-both-branches` and its mutants, and by nothing live. Do not
+read P38 as fully proven. It stays unexercised until a park or a bounce sends a card back through
+`exec resume`, and `--expect-approval never` reads every lane turn, resumed ones included, so the
+rollout check of that run will say. Epic P38 carries the same note.
+
+*Corrections to amendment 7.*
+1. **The `make verify` baseline is 588, not 586.** Amendment 7 stated 586 (581 + the 5 cases that
+   PR adds) and the formula `586 + max(0, N - 7)`. Measured on `main` `59c0ba1` it is **588 passed
+   / 0 failed / 11 skipped** at 7 live boards: two review-fix cases were added to #95 after the
+   number was written. The formula, replacing amendment 7's, is **`588 + max(0, N - 7)`**, with `N`
+   the live boards:
+   ```bash
+   N="$(find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " ")"
+   echo "live boards: $N, expected passed: $(( 588 + (N > 7 ? N - 7 : 0) ))"
+   ```
+   `hello-rehearsal-a2g` is archived, so the seven are the baseline's seven until the next
+   rehearsal's board exists. This PR is docs-only and adds no case, so the deployed `main` reads
+   588 / 0 / 11 after it merges as well; measured from this PR's worktree it reads 584 passed / 4
+   failed (the four `config/external-dirs` cases, by design) / 11 skipped. `make preflight`
+   stays PASS 114 / WARN 2 / FAIL 0, the pass condition being `FAIL 0`.
+2. **`FORGE_SHA` is the merge commit of this PR, or a later deployed `main`.** It is not `59c0ba1`
+   (#95's merge commit) and not `72028ee`: this PR is the one that records the proof, and a
+   `FORGE_SHA` at an earlier commit would freeze a protocol whose baseline still says 586. The
+   product stays `PRODUCT_SHA` `b66be28`.
+
+*Next, in order.* Rehearsal 7 passed, so amendment 6's order resumes at its seventh step.
+1. **Deploy this PR.** Once it has merged and `git -C ~/dev/forge pull --ff-only` has brought it to
+   the main checkout, amendment 6's deploy block stands unchanged, then `make preflight` and `make
+   verify` on the deployed `main` (588 / 0 / 11 at 7 boards).
+2. **Precondition 7, the paid commission, from `~/dev/forge-runtime`**, as amendment 6 corrected it
+   and run alone (P17). It must end `overall: PASS` and `posture: UNGATED`. If
+   `substrate/codex-worktree-commit` fails, that is the grant: do not launch.
+3. **T1 to T4 of the 2026-10-27 entry for the dead attempt-1 card `t_da03d07a`.** They archive the
+   card; it is never unblocked.
+4. **Then stop.** *Launch* is a separate decision, taken by the user after the commission report
+   and T1 to T4 have been read. Precondition 11, precondition 12, T1, T2 and H1 run again
+   immediately before it.
+
+*Decisions this entry makes that the operator may overrule before Launch.*
+- The resume pin is recorded as unexercised and not as a stop. A run that never parks or bounces
+  never meets it; one that does is the first to prove it, and the rollout check will read it.
+- `FORGE_SHA` waits for this PR rather than naming #95's merge commit, so that the frozen
+  protocol carries the corrected 588 and the record of the proof.
+- Nothing is spent: no suffix beyond `a2g`, and no commission probe.
