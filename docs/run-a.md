@@ -3742,7 +3742,7 @@ rehearsal 7 was done before this entry was written, so only its result is record
 - **The preconditions all passed** on the deployed `main` `59c0ba1` with codex-cli **0.164.0**:
   `make preflight` PASS 114 / WARN 2 / FAIL 0, `make verify` **588 passed / 0 failed / 11
   skipped** at 7 live boards, `P11OK=1`, `P12OK=1`, `T1OK=1`, T2 `token-lines-agree`, `H1OK=1`.
-- **R3 ended `DONE=1`** after about 5 minutes. The lane's run lasted about a minute (`review_requested`),
+- **R3 ended `DONE=1`** after about 4 minutes (card created 16:47:03, blocked 16:50:40, UTC; `show.json`'s epoch seconds, which read an hour later on this machine's clock, CET). The lane's run lasted about a minute (`review_requested`),
   the verifier's about a minute after it (`blocked`).
 - **The verdict was a hold** whose reason begins `merge-pending:`. The judge was opus. It approved
   with 0 findings, scores 3/3/3/3/3/3, at $0.4320. The implementer ran as `gpt-5.6-luna` at `xhigh`.
@@ -3793,10 +3793,12 @@ rollout check of that run will say. Epic P38 carries the same note.
    N="$(find "$HOME/.hermes/kanban/boards" -mindepth 2 -maxdepth 2 -type f -name kanban.db -not -path "*/_archived/*" | wc -l | tr -d " ")"
    echo "live boards: $N, expected passed: $(( 588 + (N > 7 ? N - 7 : 0) ))"
    ```
-   `hello-rehearsal-a2g` is archived, so the seven are the baseline's seven until the next
-   rehearsal's board exists. This PR is docs-only and adds no case, so the deployed `main` reads
-   588 / 0 / 11 after it merges as well; measured from this PR's worktree it reads 584 passed / 4
-   failed (the four `config/external-dirs` cases, by design) / 11 skipped. `make preflight`
+   Amendment 6's count block stands with its number (581 in amendment 6, 586 in amendment 7)
+   replaced by 588; this block is that substitution. `hello-rehearsal-a2g` is archived, so the
+   seven are the baseline's seven until the next rehearsal's board exists. This PR is docs-only
+   and adds no case, so the deployed `main` reads 588 / 0 / 11 after it merges as well. What I
+   measured in this PR's worktree, committed and clean, is 584 passed / 4 failed (the four
+   `config/external-dirs` cases, by design) / 11 skipped. `make preflight`
    stays PASS 114 / WARN 2 / FAIL 0, the pass condition being `FAIL 0`.
 2. **`FORGE_SHA` is the merge commit of this PR, or a later deployed `main`.** It is not `59c0ba1`
    (#95's merge commit) and not `72028ee`: this PR is the one that records the proof, and a
@@ -3806,7 +3808,8 @@ rollout check of that run will say. Epic P38 carries the same note.
 *Next, in order.* Rehearsal 7 passed, so amendment 6's order resumes at its seventh step.
 1. **Deploy this PR.** Once it has merged and `git -C ~/dev/forge pull --ff-only` has brought it to
    the main checkout, amendment 6's deploy block stands unchanged, then `make preflight` and `make
-   verify` on the deployed `main` (588 / 0 / 11 at 7 boards).
+   verify` on the deployed `main`, **run from `~/dev/forge-runtime`, not `~/dev/forge`** (588 / 0 /
+   11 at 7 boards; from `~/dev/forge` the four `config/external-dirs` cases fail).
 2. **Precondition 7, the paid commission, from `~/dev/forge-runtime`**, as amendment 6 corrected it
    and run alone (P17). It must end `overall: PASS` and `posture: UNGATED`. If
    `substrate/codex-worktree-commit` fails, that is the grant: do not launch.
@@ -3817,8 +3820,17 @@ rollout check of that run will say. Epic P38 carries the same note.
    immediately before it.
 
 *Decisions this entry makes that the operator may overrule before Launch.*
-- The resume pin is recorded as unexercised and not as a stop. A run that never parks or bounces
-  never meets it; one that does is the first to prove it, and the rollout check will read it.
+- The resume pin is recorded as unexercised and not as a stop. That undersells the risk, so read
+  it as a plan and not as a rare case: run A's seeded defect S-1 and drill D-1 make a bounce
+  expected, so the resume pin's first live test will come mid-run, after Launch.
+  **After the first park or bounce of run A, and before judging that card's next verdict or
+  digest,** the operator runs `python3 -I ~/.forge/repo/scripts/codex-rollout-check.py
+  --expect-approval never` on that card's rollouts, in R4's form (`--cwd`, `--since`, `--until`
+  and an `--expect-root` per root of `codex-run.sh --print-sandbox-roots`). A `FINDING` there, or
+  exit 2, is a stop under *Stop rules*, treated as a card blocked `env:` is: preserve everything and
+  diagnose before the card goes on. A park is
+  still not a stop by itself; only a `FINDING` in its resumed turn is. This is an addition to
+  attempt 2's *Stop rules* made by this entry, not a new numbered rule.
 - `FORGE_SHA` waits for this PR rather than naming #95's merge commit, so that the frozen
   protocol carries the corrected 588 and the record of the proof.
 - Nothing is spent: no suffix beyond `a2g`, and no commission probe.
