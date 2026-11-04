@@ -2946,6 +2946,7 @@ metadata/live-requires-rfc3339-since     an absent or malformed cutoff refuses b
 metadata/live-operator-interface          automation is directed to the script that preserves exit 0/1/2
 metadata/live-valid-counts               valid envelopes are counted by profile and schema
 metadata/live-classifies-every-bad-row   nested, null, cross-profile and unreadable rows are named
+metadata/live-bootstrap-holds            operator bootstrap classes pass only on their producer; malformed and unknown reasons fail
 metadata/live-rejects-bad-block-reason   a model-authored reason outside the registry names task, run and reason
 metadata/live-ignores-pre-cutoff         historical rows are counted as ignored, never judged
 metadata/live-uses-snapshot              the opt-in reader depends on board-snapshot.sh at runtime
@@ -8141,6 +8142,40 @@ run_metadata_live_cases() {
   else
     bad "live-valid-counts" \
         "canonical counts or missing-producer enforcement drifted; got exits $good_rc/$rc: $(printf '%s' "$out" | tail -6 | tr '\n' ' ')"
+  fi
+
+  # Bootstrap holds are real run-linked events, but their two classes belong to
+  # the operator-handoff producer rather than the worker-block vocabulary.
+  local interactive gate bootstrap_out bootstrap_rc
+  interactive="$(bash -c '. scripts/decision-message.sh; printf %s "$INTERACTIVE_HOLD_REASON"')"
+  gate="$(bash -c '. scripts/decision-message.sh; decision_message milestone-gate "gate held" "parents wait" "run probe" "early release" "complete later"')"
+  sqlite3 "$db" "INSERT INTO task_runs VALUES (8,'t_interactive','forge-operator-handoff','blocked',1786234060,1786234060,'blocked',NULL), (9,'t_gate','forge-operator-handoff','blocked',1786234070,1786234070,'blocked',NULL);"
+  DB="$db" INTERACTIVE="$interactive" GATE="$gate" python3 -c 'import json, os, sqlite3; c=sqlite3.connect(os.environ["DB"]); c.executemany("INSERT INTO task_events VALUES (?, ?, ?, ?, ?, ?)", [(8,"t_interactive",8,"blocked",json.dumps({"reason":os.environ["INTERACTIVE"]}),1786234060),(9,"t_gate",9,"blocked",json.dumps({"reason":os.environ["GATE"]}),1786234070)]); c.commit()'
+  bootstrap_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; bootstrap_rc=$?
+  sqlite3 "$db" "UPDATE task_events SET payload=json_object('reason','interactive:   ') WHERE id=8; UPDATE task_events SET payload=json_object('reason','unknown: bad') WHERE id=9;"
+  out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; rc=$?
+  local bad_out="$out" bad_rc="$rc" wrong_out wrong_rc blank_out blank_rc
+  sqlite3 "$db" "UPDATE task_events SET payload=json_object('reason','interactive: ') WHERE id=8; UPDATE task_events SET payload=json_object('reason','milestone-gate: ') WHERE id=9;"
+  blank_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; blank_rc=$?
+  sqlite3 "$db" "UPDATE task_runs SET profile='forge-codex-lane' WHERE id=8; UPDATE task_runs SET profile='other' WHERE id=9; UPDATE task_events SET payload=json_object('reason','interactive: valid text') WHERE id=8; UPDATE task_events SET payload=json_object('reason','milestone-gate: valid text') WHERE id=9;"
+  wrong_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; wrong_rc=$?
+  sqlite3 "$db" "UPDATE task_runs SET profile='forge-operator-handoff' WHERE id IN (8,9); UPDATE task_events SET payload=json_object('reason',NULL) WHERE id=8; UPDATE task_events SET payload=json_object('reason',42) WHERE id=9;"
+  local null_out null_rc multiline_out multiline_rc
+  null_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; null_rc=$?
+  sqlite3 "$db" "UPDATE task_events SET payload='{}' WHERE id=8; UPDATE task_events SET payload=json_object('reason','interactive: ' || char(10) || 'body') WHERE id=9;"
+  multiline_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; multiline_rc=$?
+  sqlite3 "$db" "DELETE FROM task_events WHERE id IN (8,9); DELETE FROM task_runs WHERE id IN (8,9);"
+  if [ "$bootstrap_rc" = 0 ] && printf '%s' "$bootstrap_out" | grep -Fq 'valid=7 invalid=0' \
+     && [ "$bad_rc" = 1 ] && printf '%s' "$bad_out" | grep -Fq 'invalid=2' \
+     && printf '%s' "$bad_out" | grep -Fq 'task=t_interactive' && printf '%s' "$bad_out" | grep -Fq 'task=t_gate' \
+     && [ "$blank_rc" = 1 ] && printf '%s' "$blank_out" | grep -Fq 'invalid=2' \
+     && [ "$wrong_rc" = 1 ] && printf '%s' "$wrong_out" | grep -Fq 'invalid=2' \
+     && [ "$null_rc" = 1 ] && printf '%s' "$null_out" | grep -Fq 'invalid=2' \
+     && [ "$multiline_rc" = 1 ] && printf '%s' "$multiline_out" | grep -Fq 'invalid=1' \
+     && printf '%s' "$multiline_out" | grep -Fq 'task=t_interactive'; then
+    ok "live-bootstrap-holds (formatter holds pass; blank, unknown and wrong producer fail)"
+  else
+    bad "live-bootstrap-holds" "expected valid bootstrap holds and invalid empty/unknown classes; exits $bootstrap_rc/$rc"
   fi
 
   # Mutate only post-cutoff rows. The historical nested envelope and bad reason

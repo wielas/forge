@@ -286,7 +286,10 @@ def validate_batch(contract: dict[str, Any], path_arg: str, since: float) -> int
         if not isinstance(reason, str):
             counts["invalid"] += 1
             print(f"invalid {row_identity(row)}: blocked event has no string reason")
-        elif not re.fullmatch(contract["blocked_reason_pattern"], reason):
+        elif not (re.fullmatch(contract["blocked_reason_pattern"], reason) or (
+            profile == "forge-operator-handoff"
+            and re.fullmatch(r"(?:interactive|milestone-gate): (?=[\s\S]*\S)[\s\S]+", reason)
+        )):
             counts["invalid"] += 1
             print(
                 f"invalid {row_identity(row)} reason={json.dumps(reason)}: "
