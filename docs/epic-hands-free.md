@@ -760,6 +760,15 @@ shadow too.
 recommended PR from the phone. After the flip: planning sessions, a daily
 digest, a reply at each milestone checkpoint, and rare exceptions.
 
+
+**S7 recovery note, 2026-11-02:** The later evidence and its limitations are
+recorded in `docs/run-a.md`'s recovery record. D-1 and the resumed approval
+pin have live evidence; the original S-1 has not been evidenced or credited.
+Three owner digest approvals are recorded, with timing unverified for the
+third; qualifying judgments and the end-of-run ledger remain outstanding. Fresh product checks and the M1 probe were reported green,
+but S7 is still in progress and no flip is authorized by those results.
+`docs/s8-opening-brief.md` prepares S8 offline; it does not release the gate.
+
 ## How we run this epic
 
 **Three places, kept apart.**

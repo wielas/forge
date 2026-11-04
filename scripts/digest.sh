@@ -159,6 +159,25 @@ SELECT json_object(
 SQL
 }
 
+# Add display spacing only to an unambiguous GW1 message. Ambiguous or
+# nonstandard text is passed through byte-for-byte (apart from final newline).
+format_waiting_fields() {
+  awk '
+    { line[NR]=$0 }
+    /^What it means: / { m=NR; mc++ }
+    /^Decision needed: / { d=NR; dc++ }
+    /^Risk: / { r=NR; rc++ }
+    /^Reply: / { p=NR; pc++ }
+    END {
+      structured = mc==1 && dc==1 && rc==1 && pc==1 && m<d && d<r && r<p
+      for (i=1; i<=NR; i++) {
+        if (structured && (i==d || i==r) && i>1 && line[i-1]!="") print ""
+        print line[i]
+      }
+    }
+  '
+}
+
 # A waiting card, in GW1's format. $1=board $2=one element of .waiting
 render_waiting() {
   local board="$1" card id title status reason class headline means decision risk reply
@@ -178,7 +197,7 @@ render_waiting() {
       "the verifier, or you through bounce.sh, returned it to you; no lane will pick it up" \
       "fix it on its branch and hand it off again, or decide the reasons are wrong" \
       "its children and its milestone gate wait; nothing is merged" \
-      "\`hermes kanban --board $board show $id\` for the reasons; after the fix, \`/end-chunk\` hands it back to the verifier"
+      "\`hermes kanban --board $board show $id\` for the reasons; after the fix, \`/end-chunk\` hands it back to the verifier" | format_waiting_fields
     return
   fi
   # A verifier hold already speaks the format. Show it as written, up to the end
@@ -190,7 +209,7 @@ render_waiting() {
   # cannot see where its own block landed — the run ends with the transition, and a fenced
   # terminal cannot read back — so THIS is where a stranded hold is told apart from a real one.
   if [ "$status" != triage ] && printf '%s' "$reason" | grep -q '^Decision needed: '; then
-    printf '%s\n' "$reason" | awk '/^Reply: /{r=1} r && /^$/{exit} {print}'
+    printf '%s\n' "$reason" | awk '/^Reply: /{r=1} r && /^$/{exit} {print}' | format_waiting_fields
     return
   fi
   class="${reason%%:*}"
@@ -205,7 +224,7 @@ render_waiting() {
   fi
   { read -r means; read -r decision; read -r risk; read -r reply; } < <(class_decision "$class")
   reply="${reply//<id>/$id}"; reply="${reply//<board>/$board}"
-  decision_message "$class" "$headline" "$means" "$decision" "$risk" "$reply"
+  decision_message "$class" "$headline" "$means" "$decision" "$risk" "$reply" | format_waiting_fields
 }
 
 # The driver spend on the day, as metrics.sh reports it — never recomputed.
@@ -240,10 +259,10 @@ for BOARD in $BOARDS; do
     printf '\n== %s ==\n' "$BOARD"
     printf '%s' "$json" | jq -r '
       . as $b |
-      "Landed (\(.landed | length))"
-        + (if (.landed | length) == 0 then ": nothing" else "" end),
+      "\nLanded (\(.landed | length))"
+        + (if (.landed | length) == 0 then ": nothing" else "" end) + "\n────────────",
       (.landed[] | "- \(.title) — \(.pr // "no PR recorded") (\(.id))"),
-      "In flight: "
+      "\nIn flight: "
         + ([ ["running","running"], ["review","in review"], ["ready","ready"], ["todo","waiting on parents"] ]
            as $order | [ $order[] as [$s,$label]
                          | ([$b.flight[] | select(.status == $s)] | length) as $n
@@ -251,8 +270,8 @@ for BOARD in $BOARDS; do
            | if length == 0 then "nothing" else join(" · ") end),
       (.flight[] | select(.status == "running" or .status == "review")
                  | "- \(if .status == "review" then "in review" else .status end): \(.title) (\(.id))"),
-      "Waiting on you (\(.waiting | length))"
-        + (if (.waiting | length) == 0 then ": nothing" else "" end)' \
+      "\nWaiting on you (\(.waiting | length))"
+        + (if (.waiting | length) == 0 then ": nothing" else "" end) + "\n────────────"' \
       || { echo "digest: rendering board $BOARD failed" >&2; rc=3; }
     printf '%s' "$json" | jq -c '.waiting[]' | while IFS= read -r card; do
       echo; render_waiting "$BOARD" "$card"

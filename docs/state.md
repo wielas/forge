@@ -1,5 +1,11 @@
 # Forge — current state
 
+**Recovery note, 2026-11-02:** Run A's D-1 and resumed Codex approval pin
+have live evidence. The original S-1 is not evidenced or credited, the digest
+window and S7 closeout remain open, and no flip to merge mode follows from the
+fresh product checks. See `docs/run-a.md`'s recovery record and the epic's S7
+row; the dated historical observations below have not been remeasured here.
+
 **Updated 2026-10-26 (this header and the driver-model note below; the rest is
 as dated).** `origin/main` is `bd255a4` (epic S6d, #87), which measured `make
 verify` 534 passed / 0 failed / 11 skipped and `make preflight` PASS 105 / WARN 4
