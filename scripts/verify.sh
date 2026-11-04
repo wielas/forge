@@ -3257,6 +3257,9 @@ quota/codex-rollout-check-a-turn-with-no-approval-policy-is-a-finding  a lane tu
 quota/codex-rollout-check-mutation-is-caught  an escalation regex that matches nothing, zero rollouts read as success, an unread denial and ignored expected roots each turn a case red
 quota/a-pin-with-no-source-is-substrate-not-a-crash  an absent pin file, or one missing a key, exits 3 by name rather than 127 under set -u
 digest/fixture-message-exact        two fixture boards, a quiet one and an archived one produce one exact message: landed, in flight, waiting on you decision-first, spend
+digest/empty-sections-readable     empty landed and waiting sections stay explicit and separated
+digest/hold-and-title-verbatim      heading-like lines inside a card remain unchanged
+digest/decision-risk-spacing        unambiguous decision and risk fields have visual separation
 digest/silent-when-nothing-happened a board with nothing landed, in flight or waiting prints nothing and exits 0 — under --no-agent that is no notification
 digest/an-unreadable-board-is-named a board that cannot be read is named on stdout and exits 3; it is never reported as quiet
 digest/a-gate-speaks-only-when-its-milestone-is-done  a held gate is silent while a chunk it closes is open, and decision-first once all are done
@@ -15974,6 +15977,67 @@ run_digest_group() {
   else
     bad "fixture-message-exact" "rc=$rc $(head -14 "$root/diff" | tr '\n' ' ') $(head -3 "$root/err" | tr '\n' ' ')"
   fi
+  # The decision and risk labels stay on their own visually separated lines;
+  # the fixture has five decisions, so a blind test cannot pass.
+  if awk '
+    /^Decision needed: / { decisions++; if (previous != "") bad=1 }
+    /^Risk: / { risks++; if (previous != "") bad=1 }
+    { previous=$0 }
+    END { exit (bad || decisions != 5 || risks != 5) }
+  ' "$root/out.txt"; then
+    ok "decision-risk-spacing"
+  else
+    bad "decision-risk-spacing" "five decision and risk lines must follow blank lines"
+  fi
+
+  # A busy board can have no landed or waiting work; zero remains visible.
+  mkdir -p "$kb/empty-sections"
+  sqlite3 "$kb/empty-sections/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  sqlite3 "$kb/empty-sections/kanban.db" "DELETE FROM tasks WHERE id <> 't_d4';" >/dev/null 2>&1
+  local empty_output
+  empty_output="$(_dg --board empty-sections --day 2026-07-28 2>/dev/null)"; rc=$?
+  { [ "$rc" = 0 ] && printf '%s\n' "$empty_output" | grep -qxF 'Landed (0): nothing' \
+    && printf '%s\n' "$empty_output" | grep -qxF 'Waiting on you (0): nothing' \
+    && printf '%s\n' "$empty_output" | grep -qxF 'In flight: 1 running' \
+    && [ "$(printf '%s\n' "$empty_output" | grep -cFx '────────────')" = 2 ]; } \
+    && ok "empty-sections-readable" \
+    || bad "empty-sections-readable" "zero-count headings must remain explicit and underlined (rc=$rc)"
+  rm -rf "$kb/empty-sections"
+
+  # Heading-shaped lines in card text are data, not digest section headings.
+  mkdir -p "$kb/verbatim"
+  sqlite3 "$kb/verbatim/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+  local verbatim_reason verbatim_title payload_sql verbatim_out
+  verbatim_reason="$(cat <<'REASON'
+merge-pending: a heading-shaped hold
+What it means: keep unusual content
+SENTINEL_START
+Landed (1)
+Waiting on you (0): nothing
+In flight: nothing
+Spend: no metered driver runs on the day
+Decision needed: inspect the card
+Risk: preserve this line
+SENTINEL_END
+Decision needed: the real decision
+Risk: the real risk
+Reply: inspect it
+REASON
+)"
+  verbatim_title="$(printf 'A title\nLanded (1)\nRisk: title line')"
+  payload_sql="$(jq -cn --arg r "$verbatim_reason" '{reason:$r,kind:"needs_input"}' | sed "s/'/''/g")"
+  sqlite3 "$kb/verbatim/kanban.db" "DELETE FROM tasks WHERE id <> 't_d1'; DELETE FROM task_events;
+    UPDATE tasks SET title = 'A title
+Landed (1)
+Risk: title line' WHERE id = 't_d1';
+    INSERT INTO task_events (task_id,kind,payload,created_at) VALUES ('t_d1','blocked','$payload_sql',1785206000);" >/dev/null 2>&1
+  verbatim_out="$(_dg --board verbatim --day 2026-07-28 2>/dev/null)"; rc=$?
+  { [ "$rc" = 0 ] && [[ "$verbatim_out" = *"$verbatim_reason"* ]] \
+    && [[ "$verbatim_out" = *"$verbatim_title"* ]]; } \
+    && ok "hold-and-title-verbatim" \
+    || bad "hold-and-title-verbatim" "heading-like card content must not be restyled (rc=$rc)"
+  rm -rf "$kb/verbatim"
+
   [ -n "$before" ] && [ "$before" = "$after" ] \
     && ok "is-read-only" \
     || bad "is-read-only" "a board or one of its sidecars changed while the digest read it"
