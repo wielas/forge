@@ -3834,3 +3834,84 @@ rollout check of that run will say. Epic P38 carries the same note.
 - `FORGE_SHA` waits for this PR rather than naming #95's merge commit, so that the frozen
   protocol carries the corrected 588 and the record of the proof.
 - Nothing is spent: no suffix beyond `a2g`, and no commission probe.
+
+
+## Recovery record — 2026-11-02 (S7 remains open)
+
+This retrospective does not amend the protocol frozen at `RUN_START`. The
+operator's live notes are in the product's ignored
+`.forge/run-a-attempt-2-run/operator-notes.md`; the final Results above still
+require the recorded outputs and end-of-run measurements.
+
+- The notes record CHUNK-1 through CHUNK-4 verifier outcomes and operator
+  merges. CHUNK-1 reused attempt-1 commits, so its lane time is contaminated.
+  CHUNK-2 required an operator conflict resolution after its reviewed head.
+- D-1's three clauses were recorded as met, including the lane's re-entry and
+  handoff on the same card. The resumed Codex rollout recorded both writable
+  roots and `approval_policy=never`, with no denial or escalation. This closes
+  the live resume-path observation left open by amendment 8, not S7 itself.
+- The original S-1 seeded handoff has no located seed tag, SHA, drill artifact,
+  or scorer outcome. It is **not evidenced and is not credited** as caught.
+  The ordinary CHUNK-5 approval is not an S-1 verdict. A supplemental isolated
+  evaluation could supply new evidence, but cannot be presented as the original
+  pre-registered live test; its design and interpretation need a recorded
+  operator decision before it runs. Never merge a seeded head.
+- The root metadata sweep reported valid lane and verifier envelopes but also
+  the obsolete `forge-prejudge` producer as missing (P39). The owner explicitly
+  allowed that one exception for the root and end-of-M1 readings; another
+  missing producer, an invalid row, or an unjudged row remains a stop.
+- Two of seven digest judgments were recorded for October 31 and November 1,
+  both accepted late and nonblind by the owner. The agreed window is October 31
+  through November 6. In the November 2 recovery chat the owner said they saw
+  and approved that day's digest, without yet replying to it. Phone-only and
+  before-board timing are unverified, and no waiver is recorded. Three owner
+  approvals are thus recorded, not three qualifying blind judgments; the
+  remaining judgments are pending.
+- On November 2, on product base `12208388bc4399b7784f0f3dd99bc97888c5b416`,
+  a fresh `make check` at 14:46:15–14:46:24 UTC exited 0 with 80 passed, 1
+  skipped and 91.61% coverage; the M1 probe at 14:46:28 UTC passed 5/5. The
+  product planning slice retains the outputs under
+  `docs/research/baseline-2026-11-02/` (`README.md`, `make-check.txt`, and
+  `m1-probes.txt`); their landing in the product is pending. These later
+  observations are not historical Run A output or the complete end-of-run
+  ledger.
+
+S7 remains in progress: reconcile CHUNK-5's card and PR evidence, collect the
+remaining digest judgments and end-of-M1 ledger and metadata, then record each
+flip clause against its evidence. A passing product check or milestone probe
+alone does not authorize merge mode. Keep GATE-M1 held and Run B in shadow
+unless the documented criteria and outstanding merge-mode prerequisites are
+met and the decision is recorded. See `docs/s8-opening-brief.md` for offline
+preparation only.
+
+### 2026-11-04 — profile path correction
+
+The operator corrected only `skills.external_dirs` on `forge-orchestrator`,
+`forge-codex-lane`, `forge-verifier` and `forge-digest` using Hermes's native
+configuration command. Each now names `~/.forge/repo/skills` in expanded-home
+form; the alias and the prior runtime path resolve to the same skills directory.
+The operator checked typed readbacks and that the other configuration values
+were preserved. Private pre-change backups and a per-profile journal were kept
+at `/private/tmp/forge-p7-backup-5azu0k7b`; this temporary location is recovery
+evidence, not durable project documentation. The focused `config` suite then
+reported **31 passed / 0 failed / 3 skipped** (`/private/tmp/forge-p7-config-check.log`).
+The earlier 584 / 4 / 11 full verification preceded this correction; it does
+not prove a green full suite after it. This host correction did not deploy the
+runtime or complete S7, the gate, or the merge-authority decision.
+
+### 2026-11-04 — digest feedback
+
+The owner reported in the recovery chat that they reviewed the November 3 and 4
+reports and found their contents acceptable, while requesting clearer separate
+lines for landed work, waiting work, the decision and risk, plus removal of the
+job-management footer. The product's ignored
+`.forge/run-a-attempt-2-run/operator-notes.md` records the feedback. There are
+now five owner content judgments: the first two were accepted late and nonblind,
+and phone-only and before-board timing remain unverified for November 2–4. No
+waiver or GW2 qualification is inferred; the remaining window and final
+assessment are still open.
+
+The owner requested the digest readability change during this recovery. That
+explicit scope addition is included with the S7 recovery work rather than
+waiting for a separate epic session. A formatter change is not evidence that
+the deployed digest has changed; deployment remains a separate operator action.
