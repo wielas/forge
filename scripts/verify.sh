@@ -13731,6 +13731,56 @@ PYM
   if [ -z "$detail" ]; then ok "unusable-arguments-are-exit-2"
   else bad "unusable-arguments-are-exit-2" "each must be exit 2, never a verdict:$detail"; fi
 
+  # -- P20 (S8): --logs keeps the whole output; a case that rewrites its own
+  # frozen input is named by case. Neither changes a verdict.
+  local pl="$TMPROOT/probe-logs" lg="$TMPROOT/probe-logs.dir" last_line
+  detail=""
+  _probe_fixture "$pl"
+  # A failing case that prints 30 lines to stdout and ~100 KB to stderr: the
+  # console keeps the last five lines, the logs keep all of it.
+  _probe_mutate "$pl" 'p["cases"][1]["run"] = ["sh", "-c", "i=0; while [ $i -lt 30 ]; do echo line-$i; i=$((i+1)); done; python3 -c \"import sys; sys.stderr.write(\\\"E\\\" * 100000 + \\\"\\\\nlast-err\\\\n\\\")\"; exit 9", "{input}"]' && "$freeze" "$pl" >/dev/null 2>&1
+  rm -rf "$lg"
+  out="$("$runner" "$pl" GATE-M1 --logs "$lg" 2>&1)"; rc=$?
+  [ "$rc" = 1 ] || detail="$detail exit=$rc"
+  [ "$(grep -c '^line-' "$lg/02-a-relabelled-record-is-stopped.stdout" 2>/dev/null)" = 30 ] || detail="$detail stdout-not-whole"
+  [ "$(wc -c < "$lg/02-a-relabelled-record-is-stopped.stderr" 2>/dev/null | tr -d ' ')" -gt 100000 ] 2>/dev/null || detail="$detail stderr-not-whole"
+  grep -Fxq 'last-err' "$lg/02-a-relabelled-record-is-stopped.stderr" 2>/dev/null || detail="$detail stderr-tail-missing"
+  # here-strings, not pipes: the output holds a 100 KB line, and grep -q closing a
+  # pipe early would fail the pipeline under pipefail.
+  grep -Fq 'line-0' <<<"$out" && detail="$detail console-shows-more-than-a-tail"
+  grep -Fq '| line-29' <<<"$out" || detail="$detail console-lost-its-tail"
+  grep -Fxq 'advance 3' "$lg/01-three-records-advance.stdout" 2>/dev/null || detail="$detail passing-case-not-logged"
+  [ "$(tail -n 1 <<<"$out")" = 'probe GATE-M1: FAIL — 1 of 2 cases passed (realistic 1/1, adversarial 0/1); failed: a relabelled record is stopped' ] \
+    || detail="$detail outcome-not-last"
+  # Not into the frozen inputs, and no logs unless asked.
+  out="$("$runner" "$pp" GATE-M1 --logs "$pp/tests/probes/m1/logs" 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && [ ! -e "$pp/tests/probes/m1/logs" ] || detail="$detail logs-inside-the-frozen-inputs(rc=$rc)"
+  out="$("$runner" "$pp" GATE-M1 --logs 2>&1)"; rc=$?
+  [ "$rc" = 2 ] || detail="$detail logs-without-a-dir(rc=$rc)"
+  if [ -z "$detail" ]; then ok "logs-dir-keeps-full-output (30 stdout lines and 100 KB of stderr kept whole while the console shows a tail; a passing case too; the outcome is still the last line; a directory inside tests/probes is refused)"
+  else bad "logs-dir-keeps-full-output" "--logs <dir> must keep every case's whole stdout and stderr, changing no verdict:$detail"; fi
+
+  detail=""
+  local pm="$TMPROOT/probe-mutator"
+  _probe_fixture "$pm"
+  _probe_mutate "$pm" 'p["cases"][0]["run"] = ["sh", "-c", "echo extra >> \"$0/corpus.txt\"; echo advance 3", "{input}"]' && "$freeze" "$pm" >/dev/null 2>&1
+  out="$("$runner" "$pm" GATE-M1 2>&1)"; rc=$?
+  last_line="$(printf '%s\n' "$out" | tail -1)"
+  # The verdict is unchanged: both cases met their expectations, so exit 0.
+  [ "$rc" = 0 ] || detail="$detail verdict-changed(exit=$rc)"
+  printf '%s\n' "$out" | grep -Fxq "NOTE  case 'three records advance' changed its frozen input: tests/probes/m1/corpus.txt" || detail="$detail case-not-named($(printf '%s' "$out" | grep NOTE | head -2 | tr '\n' '|'))"
+  [ "$(printf '%s\n' "$out" | grep -c '^NOTE ')" = 1 ] || detail="$detail named-more-than-once"
+  [ "$last_line" = 'probe GATE-M1: PASS — 2 of 2 cases passed (realistic 1/1, adversarial 1/1); input changed by three records advance' ] \
+    || detail="$detail outcome-not-last($last_line)"
+  # A run that touches nothing names nothing.
+  out="$("$runner" "$pp" GATE-M1 2>&1)"
+  printf '%s\n' "$out" | grep -q '^NOTE ' && detail="$detail named-a-clean-run"
+  # The cause is now named on the run that did it; the next run still has no verdict.
+  out="$("$runner" "$pm" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | tail -1 | grep -Fq 'tests/probes/m1/corpus.txt differs from its frozen digest' || detail="$detail next-run-not-no-verdict(rc=$rc)"
+  if [ -z "$detail" ]; then ok "post-run-input-change-is-named (the case that appended to its input is named with the path, once, exit 0 as before; a clean run names nothing; the next run is NO VERDICT)"
+  else bad "post-run-input-change-is-named" "a case that changes its frozen input is named by case, after that case, and no verdict moves:$detail"; fi
+
   # -- MS2's done-when: the replay on redglass -------------------------------
   # redglass (wielas/vault) is private and this repo is public, so nothing of
   # it is here. The replay reads a local checkout, read-only, through

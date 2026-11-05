@@ -35,8 +35,21 @@
 # holds a character a double-quoted shell word would act on:
 #   hermes kanban --board <board> complete <gate> --result "<last line>"
 #
+# --logs <dir> keeps every case's whole stdout and stderr there, as
+# <NN>-<case>.stdout and .stderr (P20). The console shows only a tail of a
+# failing case; whoever reads a gate's result with no operator beside them
+# needs the rest. The directory is made if missing, and may not lie inside the
+# probe's own inputs (tests/probes/), which are frozen.
+#
+# After each case the frozen files are digested again. A case that changed its
+# own probe or input is named at once, with the paths ("NOTE  case ... changed
+# its frozen input"), and the outcome line ends "; input changed by <case>".
+# Before this the NEXT run named the path and not the cause. It changes no
+# verdict and no exit code: a pass that rewrote its input still passes, and the
+# outcome line is still the last line.
+#
 # Usage:
-#   ./scripts/probe-run.sh <project-dir> GATE-<milestone> [--timeout <seconds>]
+#   ./scripts/probe-run.sh <project-dir> GATE-<milestone> [--timeout <seconds>] [--logs <dir>]
 #
 # Exit: 0 every case met its expectation — the probe passes,
 #       1 at least one case did not — the probe found something,
@@ -55,12 +68,15 @@ while [ -L "$_self" ]; do
 done
 HERE="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" \
   || { echo "probe-run: script directory cannot be resolved" >&2; exit 2; }
-PROJECT=""; GATE=""; TIMEOUT=600
+PROJECT=""; GATE=""; TIMEOUT=600; LOGS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --timeout)
       [ $# -ge 2 ] || { echo "probe-run: --timeout needs a number of seconds" >&2; exit 2; }
       TIMEOUT="$2"; shift 2;;
+    --logs)
+      [ $# -ge 2 ] && [ -n "$2" ] || { echo "probe-run: --logs needs a directory" >&2; exit 2; }
+      LOGS="$2"; shift 2;;
     -h|--help) helptext; exit 0;;
     -*) echo "probe-run: unknown argument: $1" >&2; exit 2;;
     *) if [ -z "$PROJECT" ]; then PROJECT="$1"
@@ -84,10 +100,11 @@ esac
 [ "$TIMEOUT_OK" = 1 ] || { echo "probe-run: --timeout must be 1 to 86400 seconds, not '$TIMEOUT'" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "probe-run: python3 is not on PATH" >&2; exit 2; }
 
-python3 - "$HERE" "$PROJECT" "$GATE" "$TIMEOUT" <<'PY'
+python3 - "$HERE" "$PROJECT" "$GATE" "$TIMEOUT" "$LOGS" <<'PY'
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -176,6 +193,7 @@ def main():
 
     project = Path(sys.argv[2]).resolve()
     timeout = int(sys.argv[4])
+    logs = Path(sys.argv[5]).resolve() if sys.argv[5] else None
     rel = probe_path(gate)
     case_env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
 
@@ -207,13 +225,23 @@ def main():
             if path not in digests:
                 unrunnable(f"{path} is frozen in {manifest_rel} but no longer exists")
 
+    if logs is not None:
+        frozen_root = (project / "tests" / "probes").resolve()
+        if logs == frozen_root or frozen_root in logs.parents:
+            unrunnable(f"--logs {sys.argv[5]} lies inside tests/probes, which is frozen")
+        try:
+            logs.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            unrunnable(f"cannot create --logs directory {sys.argv[5]}: {exc.strerror or exc}")
+
     # Read before any case runs: a case may itself touch the checkout.
     at = checkout(project)
     where = f" at {at}" if at else ""
     print(f"probe {gate}: {rel} ({len(probe['cases'])} cases, frozen){where}")
     passed = {"realistic": 0, "adversarial": 0}
     total = {"realistic": 0, "adversarial": 0}
-    failed, unstarted = [], []
+    failed, unstarted, mutators = [], [], []
+    baseline = digests
     with tempfile.TemporaryDirectory(prefix="forge-probe-") as scratch:
         for index, case in enumerate(probe["cases"]):
             kind, name, expect = case["kind"], case["name"], case["expect"]
@@ -244,6 +272,27 @@ def main():
                 kill_group(proc.pid)
                 proc.kill()  # in case the leader left its own group; a no-op once it has exited
                 proc.wait()
+            if logs is not None:
+                stem = "".join(c if c.isalnum() else "-" for c in name).strip("-")[:60] or "case"
+                for ext, src in (("stdout", out_path), ("stderr", err_path)):
+                    try:
+                        shutil.copyfile(src, logs / f"{index + 1:02d}-{stem}.{ext}")
+                    except OSError as exc:
+                        unrunnable(f"cannot write --logs file for case '{name}': {exc.strerror or exc}")
+            # The frozen files again, after THIS case: the one that changed them
+            # is the one named, and the baseline moves on so it is named once.
+            again, now_digests, again_error = validate_probe(project, gate)
+            state = again_error if again_error else now_digests
+            if state != baseline:
+                if again_error:
+                    changed = [again_error.removeprefix(f"{gate}: ")]
+                else:
+                    before = baseline if isinstance(baseline, dict) else {}
+                    changed = sorted(p for p in set(before) | set(now_digests)
+                                     if before.get(p) != now_digests.get(p)) or ["the probe"]
+                print(f"NOTE  case '{name}' changed its frozen input: {', '.join(changed)}")
+                mutators.append(name)
+                baseline = state
             if timed_out:
                 print(f"FAIL  {label} — timed out after {timeout}s; expected exit {expect['exit']}")
                 show(out_path, err_path)
@@ -269,6 +318,7 @@ def main():
         also = f"; {len(failed)} of the {ran} cases that ran also failed: {', '.join(failed)}" if failed else ""
         unrunnable(unstarted[0] + also)
     named = f"; failed: {', '.join(failed)}" if failed else ""
+    named += f"; input changed by {', '.join(mutators)}" if mutators else ""
     result(f"{'PASS' if ok == count else 'FAIL'} — {ok} of {count} cases passed "
            f"(realistic {passed['realistic']}/{total['realistic']}, "
            f"adversarial {passed['adversarial']}/{total['adversarial']}){named}{where}",
