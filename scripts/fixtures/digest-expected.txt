@@ -42,11 +42,15 @@ Decision needed: read the reason and decide
 Risk: unknown — the card holds until someone looks
 Reply: `hermes kanban --board digest-fixture show t_d3`
 
-What it means
+Where this board stands
 ────────────
+Overall: work continues on what is in flight; no waiting card is behind the cards that need you.
 Progress: 1 card landed on 2026-07-28; now 1 running.
-Waiting on parents: 1 card; none needs you yet, each starts or speaks in this digest once its parents are done.
-Waiting on you: 3 cards — 1 verified chunk awaiting your merge; 1 blocked by env: codex usage limit — waited past FORGE_QUOTA_MAX_WAIT (park record: .forge/park-1.json); 1 stopped for a reason outside the known classes.
+Waiting on parents: 1 card; none needs you yet, each starts on its own once its parents finish.
+Waiting on you: 3 cards
+  · 1 verified chunk, waiting for your merge; its children stay held until it is merged.
+  · 1 blocked by env: codex usage limit — waited past FORGE_QUOTA_MAX_WAIT (park record: .forge/park-1.json); it holds, with its children, until you fix the cause and unblock.
+  · 1 stopped for an unrecognised reason; read it with `hermes kanban --board digest-fixture show t_d3`.
 
 What to do
 ────────────
@@ -92,11 +96,14 @@ Decision needed: read the reason and decide
 Risk: unknown — the card holds until someone looks
 Reply: `hermes kanban --board metrics-fl3 show t_tr`
 
-What it means
+Where this board stands
 ────────────
+Overall: work continues on what is in flight; no waiting card is behind the cards that need you.
 Progress: 5 cards landed on 2026-07-28; now 1 in review.
 Waiting on parents: none.
-Waiting on you: 2 cards — 1 verified chunk awaiting your merge; 1 in triage (no script can complete a triage card).
+Waiting on you: 2 cards
+  · 1 verified chunk, waiting for your merge; its children stay held until it is merged.
+  · 1 in triage; no script can complete a triage card, so it stays until you decide.
 
 What to do
 ────────────

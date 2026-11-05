@@ -38,7 +38,7 @@
 # sits `ready` on the non-spawnable sentinel; nothing but the operator picks it
 # up, so it is waiting on them and is not counted in flight (epic P21).
 #
-# WHAT IT MEANS and WHAT TO DO close each board (owner feedback, 2026-11-05). Both
+# WHERE THIS BOARD STANDS and WHAT TO DO close each board (owner feedback, 2026-11-05). Both
 # are computed from the same rows as the sections above them — counts and block
 # reasons, never a model's prose — and neither restates a card's own Decision or
 # Reply line: they say what the board's state amounts to and what to do next,
@@ -137,7 +137,7 @@ SELECT json_object(
                                            WHEN 'ready' THEN 2 ELSE 3 END, id)),
   -- Held on purpose, with a parent still open: a gate or an interactive chunk. It
   -- is not in "waiting" (it asks nothing yet) but it is waiting on parents, and
-  -- "What it means" counts it as such. `links` lets it tell the cards that wait on
+  -- "Where this board stands" counts it as such. `links` lets it tell the cards that wait on
   -- a parent from the ones that wait, through a parent, on the operator.
   'links', (SELECT COALESCE(json_group_array(json_array(parent_id, child_id)), json_array()) FROM task_links),
   'held', (SELECT COALESCE(json_group_array(h.id), json_array()) FROM tasks h
@@ -276,7 +276,7 @@ waiting_kind() {
   else printf '%s\t%s\n' "$class" "${first#*: }"; fi
 }
 
-# "What it means" and "What to do" for one board. $1=board $2=board json $3=file of
+# "Where this board stands" and "What to do" for one board. $1=board $2=board json $3=file of
 # one JSON object per waiting card (id, title, kind, headline, probe).
 read -r -d '' GUIDANCE_JQ <<'JQ'
 def pl($n; $one; $many): "\($n) \(if $n == 1 then $one else $many end)";
@@ -284,23 +284,24 @@ def short($n): if length > $n then .[0:$n-1] + "…" else . end;
 def nm: if (.title | test("^[A-Z]+-[A-Za-z0-9]+:")) then (.title | split(":")[0]) else (.title | short(48)) end;
 def prio: {"milestone-gate":0,"merge-pending":1,"bounce-budget":2,"interactive":3,"returned":4,"triage":6,"other":6}[.] // 5;
 def unblockable: IN("env","ci-red","stale-spec","failing-prereq","gate-unrunnable");
-def kind_text($n; $h):
-  if   . == "milestone-gate" then "\(pl($n; "milestone gate is"; "milestone gates are")) ready for your sign-off"
-  elif . == "merge-pending"  then "\(pl($n; "verified chunk"; "verified chunks")) awaiting your merge"
-  elif . == "bounce-budget"  then "\(pl($n; "chunk"; "chunks")) the verifier bounced without converging"
-  elif . == "interactive"    then "\(pl($n; "chunk"; "chunks")) that you implement yourself"
-  elif . == "returned"       then "\(pl($n; "human chunk"; "human chunks")) sent back for changes"
-  elif . == "triage"         then "\($n) in triage (no script can complete a triage card)"
-  elif . == "other"          then "\($n) stopped for a reason outside the known classes"
-  else "\($n) blocked by \(.): \($h | short(90))" + (if $n > 1 then " (and \($n - 1) like it)" else "" end) end;
+def fact($n; $h; $board; $id):
+  if   . == "milestone-gate" then "\(pl($n; "milestone gate"; "milestone gates")) ready for your sign-off; the chunks behind \(if $n == 1 then "it stay" else "them stay" end) held until you complete \(if $n == 1 then "it" else "each" end)."
+  elif . == "merge-pending"  then "\(pl($n; "verified chunk"; "verified chunks")), waiting for your merge; \(if $n == 1 then "its children stay" else "their children stay" end) held until \(if $n == 1 then "it is" else "each is" end) merged."
+  elif . == "bounce-budget"  then "\(pl($n; "chunk"; "chunks")) the verifier bounced without converging; held, with their children, until you decide."
+  elif . == "interactive"    then "\(pl($n; "chunk"; "chunks")) for you to implement; nothing is built until you start."
+  elif . == "returned"       then "\(pl($n; "human chunk"; "human chunks")) sent back for changes; their children and milestone gate wait."
+  elif . == "triage"         then "\($n) in triage; no script can complete a triage card, so \(if $n == 1 then "it stays" else "they stay" end) until you decide."
+  elif . == "other"          then "\($n) stopped for an unrecognised reason; read \(if $n == 1 then "it" else "each" end) with `hermes kanban --board \($board) show \(if $n == 1 then $id else "<card id>" end)`."
+  else "\($n) blocked by \(.): \($h | short(90))" + (if $n > 1 then " (and \($n - 1) like it)" else "" end) + "; \(if $n == 1 then "it holds, with its children," else "they hold, with their children," end) until you fix the cause and unblock." end;
 def cmd($board; $verb; $id): "`hermes kanban --board \($board) \($verb) \($id)`";
 def step($board):
   . as $c | $c.id as $id | ($c | nm) as $name
   | "\($name) (\($id)): " +
     ( if   $c.kind == "milestone-gate" then
-        "all its chunks are done, so probe the milestone"
+        "no chunk it closes is still open, so probe the milestone"
         + (if $c.probe != "" then ":\n   `\($c.probe)`" else " as the card above says:" end)
         + "\n   Exit 0: `hermes kanban --board \($board) complete \($id) --result \"<the runner's last line>\"`"
+        + "\n   Completing it releases the next milestone; do it only when your run plan says to."
         + "\n   Exit 1 (a finding) or 2 (no verdict): do not complete it."
       elif $c.kind == "merge-pending" then
         "merge its PR on GitHub, or send it back; both are in its Reply above."
@@ -339,7 +340,11 @@ def step($board):
         | { seen: ($s.seen + $new), frontier: $new })
     | .seen - $seed ) as $down
 | ([ ($b.flight[] | select(.status == "todo") | .id), $heldids[] ] | map(select(. as $i | $down | any(. == $i))) | length) as $behind
-| "What it means\n────────────",
+| "Where this board stands\n────────────",
+  ( if $nw == 0 then empty
+    elif $run + $rev + $rdy == 0 then "Overall: nothing is running, so the run is stopped until you act."
+    elif $behind > 0 then "Overall: work continues on what is in flight, but \(pl($behind; "waiting card"; "waiting cards")) cannot start until you act."
+    else "Overall: work continues on what is in flight; no waiting card is behind the cards that need you." end ),
   ( "Progress: "
     + (if $landed == 0 then "nothing landed on \($day)" else "\(pl($landed; "card"; "cards")) landed on \($day)" end)
     + "; "
@@ -351,16 +356,16 @@ def step($board):
   ( "Waiting on parents: "
     + (if $todo + $held == 0 then "none."
        else pl($todo + $held; "card"; "cards")
-            + (if   $behind == 0 then "; none needs you yet, each starts or speaks in this digest once its parents are done."
-               elif $behind == $todo + $held then " (all behind the cards waiting on you: they start only after you act)."
-               else " (\($behind) behind the cards waiting on you: those start only after you act; the rest start, or speak in this digest, once their parents are done)." end)
+            + (if   $behind == 0 then "; none needs you yet, each starts on its own once its parents finish."
+               elif $behind == $todo + $held then " (all behind the cards waiting on you, so they start only after you act)."
+               else " (\($behind) behind the cards waiting on you, so they start only after you act; the rest start on their own once their parents finish)." end)
+            + (if $held > 0 and $behind < $todo + $held then " Held gates and human chunks appear under Waiting on you once their parents finish." else "" end)
        end) ),
-  ( "Waiting on you: "
-    + (if $nw == 0 then "nothing."
-       else "\(pl($nw; "card"; "cards")) — "
-            + ([ $w | group_by(.kind)[] | { k: .[0].kind, n: length, h: .[0].headline } ]
-               | sort_by(.k | prio)
-               | map(.k as $k | .n as $n | .h as $h | $k | kind_text($n; $h)) | join("; ")) + "." end) ),
+  ( if $nw == 0 then "Waiting on you: nothing."
+    else "Waiting on you: \(pl($nw; "card"; "cards"))",
+         ( [ $w | group_by(.kind)[] | { k: .[0].kind, n: length, h: .[0].headline, i: .[0].id } ]
+           | sort_by(.k | prio)[]
+           | . as $g | "  · " + ($g.k | fact($g.n; $g.h; $board; $g.i)) ) end ),
   "",
   "What to do\n────────────",
   ( if $nw == 0 then

@@ -3260,11 +3260,15 @@ digest/fixture-message-exact        two fixture boards, a quiet one and an archi
 digest/empty-sections-readable     empty landed and waiting sections stay explicit and separated
 digest/hold-and-title-verbatim      heading-like lines inside a card remain unchanged
 digest/decision-risk-spacing        unambiguous decision and risk fields have visual separation
-digest/what-it-means-explains-the-board  each board ends in a "What it means" section computed from its rows: progress, what waits on parents (told apart from the cards, transitively, behind one that waits on the operator), and what waits on the operator with the blocked reason, one labelled line each
+digest/board-stands-explains-state-and-consequence  each board ends in a "Where this board stands" section computed from its rows: an overall consequence, progress, what waits on parents (told apart from the cards, transitively, behind one that waits on the operator), and one line per kind of card waiting on the operator, with its consequence and, for a blocked card, its reason
 digest/what-to-do-names-the-gate-step     a held gate whose chunks are all done gets its probe command, the board-qualified complete command and the exit-code rule, none of which repeats a line above it
 digest/what-to-do-when-nothing-waits      a board with nothing waiting says "Nothing needs you today", and adds only what the board supports: moving on its own, or running nothing with cards waiting on parents; a gate held on an open chunk is counted as waiting on parents
 digest/what-to-do-names-what-to-inspect   a blocked card is sent to its board-qualified show, and unblock once its cause is fixed; a triage card to show alone
 digest/what-to-do-covers-every-step-and-repeats-nothing  an interactive chunk, a returned human chunk, a bounce-budget hold and a judge-bounce each get their own step, and on every board checked no What to do line repeats a line printed above it
+digest/what-to-do-survives-a-parent-cycle  cards linked in a loop behind a waiting card end the digest (under a process-group watchdog) and are counted once
+digest/what-to-do-orders-its-steps        a mixed board lists its steps gate, merge, bounce-budget, interactive, returned, blocked, counts the rest, and words several cards of one kind ("2 blocked by env ... (and 1 like it)") and each other kind
+digest/what-to-do-gate-wording-holds-for-archived-and-parentless-gates  a gate behind an archived chunk, or behind none, says "no chunk it closes is still open"; a gate behind an open chunk gets no step
+digest/what-to-do-stays-phone-sized-for-six-gates  six gates give six probe steps, and the two sections stay under one 4096-unit Telegram chunk
 digest/what-to-do-is-board-qualified     every hermes kanban command in every What to do section names its --board
 digest/what-to-do-stays-phone-sized       nine triage cards get six steps and a count of the rest, the two sections stay under 1800 characters, and no job-management footer appears
 digest/silent-when-nothing-happened a board with nothing landed, in flight or waiting prints nothing and exits 0 — under --no-agent that is no notification
@@ -16196,16 +16200,22 @@ Risk: title line' WHERE id = 't_d1';
   local wd_means wd_do wd_rest
 
   # The fixture message (two boards) is where "What it means" is read in full.
-  wd_means="$(_section 'What it means' < "$root/out.txt")"
-  if [ "$(printf '%s\n' "$wd_means" | grep -c .)" = 6 ] \
-     && printf '%s\n' "$wd_means" | head -3 | grep -qxF 'Progress: 1 card landed on 2026-07-28; now 1 running.' \
-     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on parents: 1 card; none needs you yet, each starts or speaks in this digest once its parents are done.' \
-     && printf '%s\n' "$wd_means" | grep -q '^Waiting on you: 3 cards — 1 verified chunk awaiting your merge; 1 blocked by env: codex usage limit — waited past FORGE_QUOTA_MAX_WAIT' \
-     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on you: 2 cards — 1 verified chunk awaiting your merge; 1 in triage (no script can complete a triage card).' \
-     && printf '%s\n' "$wd_means" | grep -qxF 'Progress: 5 cards landed on 2026-07-28; now 1 in review.'; then
-    ok "what-it-means-explains-the-board (progress, parents and the operator, one labelled line each, on both fixture boards)"
+  wd_means="$(_section 'Where this board stands' < "$root/out.txt")"
+  if [ "$(printf '%s\n' "$wd_means" | grep -c .)" = 13 ] \
+     && [ "$(printf '%s\n' "$wd_means" | grep -cxF 'Overall: work continues on what is in flight; no waiting card is behind the cards that need you.')" = 2 ] \
+     && printf '%s\n' "$wd_means" | grep -qxF 'Progress: 1 card landed on 2026-07-28; now 1 running.' \
+     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on parents: 1 card; none needs you yet, each starts on its own once its parents finish.' \
+     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on you: 3 cards' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 verified chunk, waiting for your merge; its children stay held until it is merged.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 blocked by env: codex usage limit — waited past FORGE_QUOTA_MAX_WAIT (park record: .forge/park-1.json); it holds, with its children, until you fix the cause and unblock.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 stopped for an unrecognised reason; read it with `hermes kanban --board digest-fixture show t_d3`.' \
+     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on you: 2 cards' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 in triage; no script can complete a triage card, so it stays until you decide.' \
+     && printf '%s\n' "$wd_means" | grep -qxF 'Progress: 5 cards landed on 2026-07-28; now 1 in review.' \
+     && ! printf '%s\n' "$wd_means" | grep -qE 'speaks in this digest|outside the known classes'; then
+    ok "board-stands-explains-state-and-consequence (overall, progress, parents and one line per waiting kind with its consequence, on both fixture boards)"
   else
-    bad "what-it-means-explains-the-board" "got: $(printf '%s' "$wd_means" | tr '\n' '|' | head -c 700)"
+    bad "board-stands-explains-state-and-consequence" "got: $(printf '%s' "$wd_means" | tr '\n' '|' | head -c 900)"
   fi
 
   # A held gate whose every chunk is done: the exact decision step.
@@ -16224,14 +16234,16 @@ Risk: title line' WHERE id = 't_d1';
       VALUES ('t_g2', 'blocked', json_object('reason', '$(printf '%s' "$tg_reason" | sed "s/'/''/g")'), 1785200000);" >/dev/null 2>&1
   out="$(_dg --board todogate --day 2026-07-28 2>/dev/null)"; rc=$?
   wd_do="$(printf '%s\n' "$out" | _section 'What to do')"
-  wd_rest="$(printf '%s\n' "$out" | awk '/^What it means$/{exit} {print}')"
+  wd_rest="$(printf '%s\n' "$out" | awk '/^Where this board stands$/{exit} {print}')"
   if [ "$rc" = 0 ] \
      && printf '%s\n' "$wd_do" | grep -qxF "   \`~/.forge/repo/scripts/probe-run.sh '/p/product' GATE-M1\`" \
      && printf '%s\n' "$wd_do" | grep -qxF '   Exit 0: `hermes kanban --board todogate complete t_g2 --result "<the runner'"'"'s last line>"`' \
+     && printf '%s\n' "$wd_do" | grep -qxF '   Completing it releases the next milestone; do it only when your run plan says to.' \
      && printf '%s\n' "$wd_do" | grep -qxF '   Exit 1 (a finding) or 2 (no verdict): do not complete it.' \
-     && printf '%s\n' "$wd_do" | head -1 | grep -qxF '1. GATE-M1 (t_g2): all its chunks are done, so probe the milestone:' \
-     && printf '%s\n' "$out" | _section 'What it means' | grep -qxF 'Waiting on you: 1 card — 1 milestone gate is ready for your sign-off.' \
-     && printf '%s\n' "$out" | _section 'What it means' | grep -qxF 'Waiting on parents: 2 cards (1 behind the cards waiting on you: those start only after you act; the rest start, or speak in this digest, once their parents are done).' \
+     && printf '%s\n' "$wd_do" | head -1 | grep -qxF '1. GATE-M1 (t_g2): no chunk it closes is still open, so probe the milestone:' \
+     && printf '%s\n' "$out" | _section 'Where this board stands' | grep -qxF '  · 1 milestone gate ready for your sign-off; the chunks behind it stay held until you complete it.' \
+     && printf '%s\n' "$out" | _section 'Where this board stands' | grep -qxF 'Overall: work continues on what is in flight, but 1 waiting card cannot start until you act.' \
+     && printf '%s\n' "$out" | _section 'Where this board stands' | grep -qxF 'Waiting on parents: 2 cards (1 behind the cards waiting on you, so they start only after you act; the rest start on their own once their parents finish).' \
      && ! printf '%s\n' "$wd_do" | grep -qxFf <(printf '%s\n' "$wd_rest" | grep .); then
     ok "what-to-do-names-the-gate-step (probe, complete with --board, the exit rule; no line repeated from the card above)"
   else
@@ -16246,7 +16258,7 @@ Risk: title line' WHERE id = 't_d1';
     VALUES ('t_n1', 'CHUNK-1: done on the day', 'forge-verifier', 'done', 1785200000, 1785210000);" >/dev/null 2>&1
   out="$(_dg --board nothing --day 2026-07-28 2>/dev/null)"; rc=$?
   local n_a_do n_a_means
-  n_a_do="$(printf '%s\n' "$out" | _section 'What to do')"; n_a_means="$(printf '%s\n' "$out" | _section 'What it means')"
+  n_a_do="$(printf '%s\n' "$out" | _section 'What to do')"; n_a_means="$(printf '%s\n' "$out" | _section 'Where this board stands')"
   all_do="$all_do
 $n_a_do"
   local n_a_ok=0
@@ -16265,14 +16277,14 @@ $n_a_do"
       VALUES ('t_m3', 'blocked', json_object('reason', 'milestone-gate: held'), 1785200000);" >/dev/null 2>&1
   out="$(_dg --board moving --day 2026-07-28 2>/dev/null)"; rc=$?
   local n_b_do n_b_means
-  n_b_do="$(printf '%s\n' "$out" | _section 'What to do')"; n_b_means="$(printf '%s\n' "$out" | _section 'What it means')"
+  n_b_do="$(printf '%s\n' "$out" | _section 'What to do')"; n_b_means="$(printf '%s\n' "$out" | _section 'Where this board stands')"
   all_do="$all_do
 $n_b_do"
   local n_b_ok=0
   { [ "$rc" = 0 ] \
     && [ "$n_b_do" = 'Nothing needs you today. The run is moving on its own; the next digest says if that changes.' ] \
     && printf '%s\n' "$n_b_means" | grep -qxF 'Progress: nothing landed on 2026-07-28; now 1 running.' \
-    && printf '%s\n' "$n_b_means" | grep -qxF 'Waiting on parents: 2 cards; none needs you yet, each starts or speaks in this digest once its parents are done.' \
+    && printf '%s\n' "$n_b_means" | grep -qxF 'Waiting on parents: 2 cards; none needs you yet, each starts on its own once its parents finish. Held gates and human chunks appear under Waiting on you once their parents finish.' \
     && printf '%s\n' "$n_b_means" | grep -qxF 'Waiting on you: nothing.'; } && n_b_ok=1
 
   _boardfix stalled
@@ -16303,12 +16315,14 @@ $n_c_do"
     INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
       ('t_b1', 'blocked', json_object('reason', 'env: the workspace is gone'), 1785200000);" >/dev/null 2>&1
   out="$(_dg --board blocked --day 2026-07-28 2>/dev/null)"; rc=$?
-  wd_do="$(printf '%s\n' "$out" | _section 'What to do')"; wd_means="$(printf '%s\n' "$out" | _section 'What it means')"
+  wd_do="$(printf '%s\n' "$out" | _section 'What to do')"; wd_means="$(printf '%s\n' "$out" | _section 'Where this board stands')"
   all_do="$all_do
 $wd_do"
   if [ "$rc" = 0 ] \
-     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on you: 2 cards — 1 blocked by env: the workspace is gone; 1 in triage (no script can complete a triage card).' \
-     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on parents: 2 cards (all behind the cards waiting on you: they start only after you act).' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 blocked by env: the workspace is gone; it holds, with its children, until you fix the cause and unblock.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 in triage; no script can complete a triage card, so it stays until you decide.' \
+     && printf '%s\n' "$wd_means" | grep -qxF 'Overall: nothing is running, so the run is stopped until you act.' \
+     && printf '%s\n' "$wd_means" | grep -qxF 'Waiting on parents: 2 cards (all behind the cards waiting on you, so they start only after you act).' \
      && printf '%s\n' "$wd_do" | grep -qxF '1. CHUNK-8 (t_b1): blocked by env. Inspect with `hermes kanban --board blocked show t_b1`; once the cause is fixed, `hermes kanban --board blocked unblock t_b1`.' \
      && printf '%s\n' "$wd_do" | grep -qxF '2. follow-up: a nit (t_b2): read it with `hermes kanban --board blocked show t_b2` and decide whether to keep it; no script can complete it.'; then
     ok "what-to-do-names-what-to-inspect (a blocked card: show then unblock; a triage card: show and decide)"
@@ -16324,7 +16338,7 @@ $wd_do"
       VALUES ('t_x$mi', 'follow-up: nit number $mi', NULL, 'triage', 1785200000);" >/dev/null 2>&1
   done
   out="$(_dg --board many --day 2026-07-28 2>/dev/null)"; rc=$?
-  wd_do="$(printf '%s\n' "$out" | _section 'What to do')"; wd_means="$(printf '%s\n' "$out" | _section 'What it means')"
+  wd_do="$(printf '%s\n' "$out" | _section 'What to do')"; wd_means="$(printf '%s\n' "$out" | _section 'Where this board stands')"
   all_do="$all_do
 $wd_do"
   local both_len
@@ -16332,7 +16346,7 @@ $wd_do"
   if [ "$rc" = 0 ] && [ "$(printf '%s\n' "$wd_do" | grep -c '^[0-9]\. ')" = 6 ] \
      && printf '%s\n' "$wd_do" | tail -1 | grep -qxF '…and 3 more waiting cards; the cards above have their own Reply lines.' \
      && [ "$both_len" -lt 1800 ] \
-     && ! printf '%s\n' "$out" | grep -qi 'to stop or manage this job'; then
+     && ! printf '%s\n' "$out" | grep -qi 'to stop or manage this job'; then  # a regression guard, not a live check: the footer is Hermes's cron.wrap_response, which this script can never emit
     ok "what-to-do-stays-phone-sized (nine cards: six steps and a count, $both_len characters for both sections, no job-management footer)"
   else
     bad "what-to-do-stays-phone-sized" "rc=$rc steps=$(printf '%s\n' "$wd_do" | grep -c '^[0-9]\. ') chars=$both_len last: $(printf '%s' "$wd_do" | tail -1)"
@@ -16379,6 +16393,130 @@ $r_do"
     bad "what-to-do-covers-every-step-and-repeats-nothing" "repeats on:${dup_bad:- none}; humans: $(printf '%s' "$h_do" | tr '\n' '|' | head -c 500); returned: $(printf '%s' "$r_do" | tr '\n' '|'); bounced: $(printf '%s' "$k_do" | tr '\n' '|')"
   fi
   rm -rf "$kb/bounced"
+
+  # Mutants that survived the first review, now pinned.
+  # (a) A parent-link cycle among cards behind a waiting card must terminate: the
+  # walk down the links subtracts what it has seen. Run under a watchdog that
+  # kills the whole process group, so a looping jq cannot outlive the case.
+  _with_timeout() {  # $1=seconds, then the command
+    perl -e 'use POSIX; setpgid(0,0); my $s = shift; my $pid = fork;
+             if (!$pid) { exec @ARGV or exit 127 }
+             $SIG{ALRM} = sub { kill "KILL", -$$; exit 142 }; alarm $s;
+             waitpid $pid, 0; exit($? >> 8)' "$@"
+  }
+  _boardfix cycle
+  sqlite3 "$kb/cycle/kanban.db" "
+    INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+      ('t_c0', 'CHUNK-1: blocked',  'forge-codex-lane', 'blocked', 1785200000),
+      ('t_c1', 'CHUNK-2: in a loop', 'forge-codex-lane', 'todo',    1785200000),
+      ('t_c2', 'CHUNK-3: in a loop', 'forge-codex-lane', 'todo',    1785200000);
+    INSERT INTO task_links (parent_id, child_id) VALUES ('t_c0', 't_c1'), ('t_c1', 't_c2'), ('t_c2', 't_c1');
+    INSERT INTO task_events (task_id, kind, payload, created_at)
+      VALUES ('t_c0', 'blocked', json_object('reason', 'env: a tool is missing'), 1785200000);" >/dev/null 2>&1
+  out="$(_with_timeout 20 env TZ=UTC HERMES_HOME="$root/hermes" "$REPO_ROOT/$ds" --board cycle --day 2026-07-28 2>/dev/null)"; rc=$?
+  if [ "$rc" = 0 ] \
+     && printf '%s\n' "$out" | grep -qxF 'Waiting on parents: 2 cards (all behind the cards waiting on you, so they start only after you act).'; then
+    ok "what-to-do-survives-a-parent-cycle (two cards linked in a loop behind a blocked one: the digest ends, rc 0, and counts both once)"
+  else
+    bad "what-to-do-survives-a-parent-cycle" "rc=$rc (142 = killed by the 20s watchdog: the walk down the links did not end); got: $(printf '%s' "$out" | grep '^Waiting on parents' | head -2)"
+  fi
+  rm -rf "$kb/cycle"
+
+  # (b) The order of the steps, and (c) the wording for several cards of one kind.
+  # Nine waiting cards of eight kinds, six shown: a gate first, then the merge,
+  # the bounce-budget hold, the human chunk, the returned chunk, the blocked
+  # cards; the unrecognised one and the triage card are the two left over.
+  _boardfix mixed
+  local mx_gate mx_hold
+  mx_gate="$(bash -c '. scripts/decision-message.sh && decision_message milestone-gate "GATE-M1 holds milestone M1" "means" "run its probe with \`probe-cmd GATE-M1\` and decide" "risk" "reply"' | sed "s/'/''/g")"
+  mx_hold="$(bash -c '. scripts/decision-message.sh && printf %s "$INTERACTIVE_HOLD_REASON"' | sed "s/'/''/g")"
+  sqlite3 "$kb/mixed/kanban.db" "
+    INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+      ('t_o1', 'CHUNK-1: verified',      'forge-verifier',         'blocked', 1785200000),
+      ('t_o2', 'GATE-M1: Milestone 1',   NULL,                     'blocked', 1785200000),
+      ('t_o3', 'CHUNK-3: not converging', 'forge-verifier',        'blocked', 1785200000),
+      ('t_o4', 'CHUNK-5: a human chunk', NULL,                     'blocked', 1785200000),
+      ('t_o5', 'CHUNK-6: sent back',     'forge-operator-handoff', 'ready',   1785200000),
+      ('t_o6', 'CHUNK-7: first env',     'forge-codex-lane',       'blocked', 1785200000),
+      ('t_o7', 'CHUNK-8: second env',    'forge-codex-lane',       'blocked', 1785200000),
+      ('t_o8', 'CHUNK-9: odd',           'forge-codex-lane',       'blocked', 1785200000),
+      ('t_o9', 'follow-up: a nit',       NULL,                     'triage',  1785200000);
+    INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+      ('t_o1', 'blocked', json_object('reason', 'merge-pending: verified'), 1785200000),
+      ('t_o2', 'blocked', json_object('reason', '$mx_gate'), 1785200000),
+      ('t_o3', 'blocked', json_object('reason', 'bounce-budget: no convergence'), 1785200000),
+      ('t_o4', 'blocked', json_object('reason', '$mx_hold'), 1785200000),
+      ('t_o6', 'blocked', json_object('reason', 'env: first problem'), 1785200000),
+      ('t_o7', 'blocked', json_object('reason', 'env: second problem'), 1785200000),
+      ('t_o8', 'blocked', json_object('reason', 'something odd with no class'), 1785200000);" >/dev/null 2>&1
+  out="$(_dg --board mixed --day 2026-07-28 2>/dev/null)"; rc=$?
+  wd_do="$(printf '%s\n' "$out" | _section 'What to do')"; wd_means="$(printf '%s\n' "$out" | _section 'Where this board stands')"
+  all_do="$all_do
+$wd_do"
+  local mx_order
+  mx_order="$(printf '%s\n' "$wd_do" | sed -n 's/^[0-9]\. [^(]*(\(t_o[0-9]\)):.*/\1/p' | tr '\n' ' ')"
+  if [ "$rc" = 0 ] && [ "$mx_order" = 't_o2 t_o1 t_o3 t_o4 t_o5 t_o6 ' ] \
+     && printf '%s\n' "$wd_do" | tail -1 | grep -qxF '…and 3 more waiting cards; the cards above have their own Reply lines.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 2 blocked by env: first problem (and 1 like it); they hold, with their children, until you fix the cause and unblock.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 stopped for an unrecognised reason; read it with `hermes kanban --board mixed show t_o8`.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 chunk the verifier bounced without converging; held, with their children, until you decide.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 chunk for you to implement; nothing is built until you start.' \
+     && printf '%s\n' "$wd_means" | grep -qxF '  · 1 human chunk sent back for changes; their children and milestone gate wait.'; then
+    ok "what-to-do-orders-its-steps (gate, merge, bounce-budget, interactive, returned, blocked; three left to a count) and the-kinds-are-worded-for-several-cards"
+  else
+    bad "what-to-do-orders-its-steps" "rc=$rc order='$mx_order' want 't_o2 t_o1 t_o3 t_o4 t_o5 t_o6 '; means: $(printf '%s' "$wd_means" | tr '\n' '|' | head -c 900)"
+  fi
+  rm -rf "$kb/mixed"
+
+  # The gate's wording must hold for the gates the digest really shows: one whose
+  # chunks are archived rather than done, and one that closes no chunk at all.
+  _boardfix gatewords
+  sqlite3 "$kb/gatewords/kanban.db" "
+    INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+      ('t_w1', 'CHUNK-1: archived', 'forge-verifier', 'archived', 1785200000),
+      ('t_w2', 'GATE-M1: after an archived chunk', NULL, 'blocked', 1785200000),
+      ('t_w3', 'GATE-M2: closes no chunk',        NULL, 'blocked', 1785200000),
+      ('t_w4', 'CHUNK-2: still open',  'forge-codex-lane', 'running', 1785200000),
+      ('t_w5', 'GATE-M3: held on an open chunk', NULL, 'blocked', 1785200000);
+    INSERT INTO task_links (parent_id, child_id) VALUES ('t_w1', 't_w2'), ('t_w4', 't_w5');
+    INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+      ('t_w2', 'blocked', json_object('reason', '$mx_gate'), 1785200000),
+      ('t_w3', 'blocked', json_object('reason', '$mx_gate'), 1785200000),
+      ('t_w5', 'blocked', json_object('reason', '$mx_gate'), 1785200000);" >/dev/null 2>&1
+  out="$(_dg --board gatewords --day 2026-07-28 2>/dev/null)"; rc=$?
+  wd_do="$(printf '%s\n' "$out" | _section 'What to do')"
+  if [ "$rc" = 0 ] \
+     && printf '%s\n' "$wd_do" | grep -qxF '1. GATE-M1 (t_w2): no chunk it closes is still open, so probe the milestone:' \
+     && printf '%s\n' "$wd_do" | grep -qxF '2. GATE-M2 (t_w3): no chunk it closes is still open, so probe the milestone:' \
+     && [ "$(printf '%s\n' "$wd_do" | grep -c '^[0-9]\. ')" = 2 ] \
+     && ! printf '%s\n' "$wd_do" | grep -q 'are done'; then
+    ok "what-to-do-gate-wording-holds-for-archived-and-parentless-gates (a gate behind an archived chunk and one behind none get the accurate wording; one behind an open chunk gets no step)"
+  else
+    bad "what-to-do-gate-wording-holds-for-archived-and-parentless-gates" "rc=$rc; got: $(printf '%s' "$wd_do" | tr '\n' '|' | head -c 600)"
+  fi
+  rm -rf "$kb/gatewords"
+
+  # Six gates waiting at once (more than a run will ever have): the two sections
+  # still fit one Telegram chunk (4096 UTF-16 units; they are BMP-only here) and
+  # list every probe. The whole message cannot: six verbatim holds are ~7 KB,
+  # which Hermes sends as several messages (epic GW2).
+  _boardfix gates6
+  local gi gr
+  for gi in 1 2 3 4 5 6; do
+    gr="$(bash -c '. scripts/decision-message.sh && decision_message milestone-gate "GATE-M$1 holds milestone M$1'"'"'s successors until you complete it" "every chunk that depends on this gate waits, by the board'"'"'s own parent rule, until the gate is done" "once every chunk of M$1 is merged, run its probe (tests/probes/gate_m$1.json) with \`~/.forge/repo/scripts/probe-run.sh '"'"'/Users/goonlab/dev/the-product'"'"' GATE-M$1\` and decide whether M$1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide" "completing it early starts the next milestone on work nobody has probed" "reply"' _ "$gi" | sed "s/'/''/g")"
+    sqlite3 "$kb/gates6/kanban.db" "INSERT INTO tasks (id, title, status, created_at) VALUES ('t_y$gi', 'GATE-M$gi: Milestone $gi', 'blocked', 1785200000);
+      INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_y$gi', 'blocked', json_object('reason', '$gr'), 1785200000);" >/dev/null 2>&1
+  done
+  out="$(_dg --board gates6 --day 2026-07-28 2>/dev/null)"; rc=$?
+  local g6_len
+  g6_len="$(printf '%s\n' "$out" | awk '/^Where this board stands$/{f=1} /^Spend:/{f=0} f' | wc -m | tr -d ' ')"
+  if [ "$rc" = 0 ] && [ "$g6_len" -gt 1500 ] && [ "$g6_len" -lt 4096 ] \
+     && [ "$(printf '%s\n' "$out" | grep -c 'probe-run.sh .*/Users/goonlab/dev/the-product. GATE-M[1-6]`$')" = 6 ]; then
+    ok "what-to-do-stays-phone-sized-for-six-gates ($g6_len characters for both sections, under one 4096-unit Telegram chunk, with all six probes)"
+  else
+    bad "what-to-do-stays-phone-sized-for-six-gates" "rc=$rc sections=$g6_len characters (want 1500..4095), probes=$(printf '%s\n' "$out" | grep -c 'probe-run.sh')"
+  fi
+  rm -rf "$kb/gates6"
 
   # Every command the section names carries its board: one without lands on the
   # wrong board. The fixture message's own sections count too. Zero commands
