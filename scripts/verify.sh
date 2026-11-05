@@ -8164,6 +8164,17 @@ run_metadata_live_cases() {
   null_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; null_rc=$?
   sqlite3 "$db" "UPDATE task_events SET payload='{}' WHERE id=8; UPDATE task_events SET payload=json_object('reason','interactive: ' || char(10) || 'body') WHERE id=9;"
   multiline_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; multiline_rc=$?
+  # Case and spacing variants are not the formatter's literal prefixes, so each
+  # is rejected: capitalised, no space after the colon, leading space.
+  local variant_rc=1 variant_a_out variant_a_rc variant_b_out variant_b_rc
+  sqlite3 "$db" "UPDATE task_events SET payload=json_object('reason','Interactive: x') WHERE id=8; UPDATE task_events SET payload=json_object('reason','MILESTONE-GATE: x') WHERE id=9;"
+  variant_a_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; variant_a_rc=$?
+  sqlite3 "$db" "UPDATE task_events SET payload=json_object('reason','interactive:x') WHERE id=8; UPDATE task_events SET payload=json_object('reason',' interactive: x') WHERE id=9;"
+  variant_b_out="$(HERMES_KANBAN_HOME="$live_root" scripts/metadata-live.sh "$board" --since "$cutoff" 2>&1)"; variant_b_rc=$?
+  [ "$variant_a_rc" = 1 ] && [ "$variant_b_rc" = 1 ] \
+    && printf '%s' "$variant_a_out" | grep -Fq 'invalid=2' \
+    && printf '%s' "$variant_b_out" | grep -Fq 'invalid=2' \
+    && variant_rc=0
   sqlite3 "$db" "DELETE FROM task_events WHERE id IN (8,9); DELETE FROM task_runs WHERE id IN (8,9);"
   if [ "$bootstrap_rc" = 0 ] && printf '%s' "$bootstrap_out" | grep -Fq 'valid=7 invalid=0' \
      && [ "$bad_rc" = 1 ] && printf '%s' "$bad_out" | grep -Fq 'invalid=2' \
@@ -8172,8 +8183,9 @@ run_metadata_live_cases() {
      && [ "$wrong_rc" = 1 ] && printf '%s' "$wrong_out" | grep -Fq 'invalid=2' \
      && [ "$null_rc" = 1 ] && printf '%s' "$null_out" | grep -Fq 'invalid=2' \
      && [ "$multiline_rc" = 1 ] && printf '%s' "$multiline_out" | grep -Fq 'invalid=1' \
-     && printf '%s' "$multiline_out" | grep -Fq 'task=t_interactive'; then
-    ok "live-bootstrap-holds (formatter holds pass; blank, unknown and wrong producer fail)"
+     && printf '%s' "$multiline_out" | grep -Fq 'task=t_interactive' \
+     && [ "$variant_rc" = 0 ]; then
+    ok "live-bootstrap-holds (formatter holds pass; blank, unknown, wrong producer, case and spacing variants fail)"
   else
     bad "live-bootstrap-holds" "expected valid bootstrap holds and invalid empty/unknown classes; exits $bootstrap_rc/$rc"
   fi

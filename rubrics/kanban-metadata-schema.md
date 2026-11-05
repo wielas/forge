@@ -195,9 +195,11 @@ writes a key the schema does not name.
 
 ## Blocked card reasons
 
-A later validator additionally recognizes nonblank `interactive:` and
-`milestone-gate:` holds when their run profile is `forge-operator-handoff`,
-the bootstrap's human-card producer. Other profiles remain subject to the
+A later validator additionally recognizes holds of the exact forms
+`interactive: <text>` and `milestone-gate: <text>` when their run profile is
+`forge-operator-handoff`, the bootstrap's human-card producer. Each means a
+lowercase prefix, one space after the colon, and a non-blank tail; case
+variants, a missing space and leading whitespace are rejected. Other profiles remain subject to the
 worker-block registry. This does not alter historical observations: the frozen
 Run A validator at `0c69368` returned exit 1 on four such events; a later
 validator's result is a separate measurement, not a waiver or a historical
