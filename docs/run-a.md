@@ -3944,7 +3944,9 @@ is left as written.
   not an independently observed timing. It affirms the phone-only,
   before-board procedure for November 2, 3 and 4, and **supersedes, by owner
   affirmation, the earlier lines above that call that timing unverified for
-  those three dates.** The October 31 and November 1 judgments remain late and
+  those three dates.** This also supersedes, on this point, the 2 November S7
+  note in `docs/epic-hands-free.md` (line 767, “timing unverified …”), which is
+  left as written. The October 31 and November 1 judgments remain late and
   nonblind under the 1 November owner ruling, retained under that ruling only
   for those two dates; the clarification waives no other requirement. No 5
   November GW2 line is recorded (the owner's 5 November reading and content note
@@ -4034,8 +4036,9 @@ session on 2026-11-05. They are decisions, not new observations.
   present-day disposition. The historical review and authorization gap stays
   recorded. The retrospective is not the original verifier review, and the
   acceptance does not turn the gap into a contemporaneous approval.
-- **S-1.** The owner chose to continue toward S7 closeout with the original S-1
-  explicitly **uncredited**. Flip clause 1 is therefore not established, the
+- **S-1.** The owner chose to continue toward S7 closeout, once all other
+  requirements and decisions are satisfied, with the original S-1 explicitly
+  **uncredited**. Flip clause 1 is therefore not established, the
   flip criterion is unmet, and Run B runs in shadow. No supplemental exercise
   was approved and none is run. The original seeded handoff remains unlocated;
   ordinary CHUNK-5 approval and the retrospective do not establish it.
