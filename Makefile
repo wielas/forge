@@ -125,7 +125,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/prejudge-review.sh scripts/merge-check.sh \
 	  scripts/merge-watcher.sh scripts/bounce.sh \
 	  scripts/decision-message.sh scripts/digest.sh scripts/plan-check.sh \
-	  scripts/probe-run.sh scripts/forge-state.sh scripts/driver-call-hook.sh \
+	  scripts/probe-run.sh scripts/checkpoint.sh scripts/forge-state.sh scripts/driver-call-hook.sh \
 	  scripts/claude-token.sh \
   scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by

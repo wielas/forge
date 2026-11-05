@@ -678,6 +678,25 @@ lat_med AS (
           LIMIT 2 - (SELECT COUNT(*) FROM lat) % 2
          OFFSET ((SELECT COUNT(*) FROM lat) - 1) / 2)
 ),
+-- ===========================================================================
+-- Milestone cost against the architect's estimate (epic MS4, S8). Each GATE
+-- card carries `**Estimate:** <n> chunks` (PL2) and is a child of exactly its
+-- milestone's chunk cards, so the actual is a count of the gate's parents on
+-- the board, in the estimate's own unit: chunks. An archived parent was dropped
+-- from the plan and is not a cost. The estimate is parsed in the jq step below,
+-- not here, so that an absent or malformed one is named rather than read as 0.
+-- Board state, not a period: --since/--until do not narrow it.
+-- ===========================================================================
+gt AS (
+  SELECT t.id, t.title, t.status, t.body,
+         (SELECT COUNT(*) FROM task_links l JOIN tasks p ON p.id = l.parent_id
+           WHERE l.child_id = t.id AND p.status <> 'archived') AS chunks,
+         (SELECT COUNT(*) FROM task_links l JOIN tasks p ON p.id = l.parent_id
+           WHERE l.child_id = t.id AND p.status = 'done') AS done,
+         (SELECT COUNT(*) FROM task_links l JOIN tasks p ON p.id = l.parent_id
+           WHERE l.child_id = t.id AND p.status = 'archived') AS archived
+    FROM tasks t WHERE t.title LIKE 'GATE-%'
+),
 ns AS (
   SELECT (SELECT COUNT(*) FROM ns_chunks) AS chunks,
          (SELECT COUNT(*) FROM mc WHERE merger IS NOT NULL) AS merged,
@@ -722,9 +741,12 @@ SELECT json_object(
                      ELSE printf('%.2f', 1.0 * cards / chunks) END),
      'human_implemented', json_object('count', human, 'of', chunks),
      'not_yet_measurable', json_array(
-        'defects the milestone probe catches before the operator does — no probe exists until MS2',
-        'architect estimate vs actual cost per milestone — the estimate rides each GATE card since PL2, and the comparison arrives with the checkpoint (MS4)'))
+        'defects the milestone probe catches before the operator does — no probe exists until MS2'))
      FROM ns),
+  '_gates', (SELECT COALESCE(json_group_array(json_object(
+               'card', id, 'title', title, 'status', status, 'body', body,
+               'chunks', chunks, 'done', done, 'archived', archived)), json_array())
+             FROM (SELECT * FROM gt ORDER BY title)),
   'chunk_cards', (SELECT COUNT(*) FROM cc),
   'verdicts', json_object(
      'total', (SELECT COUNT(*) FROM va),
@@ -814,6 +836,27 @@ DRIVER_JSON="$(driver_usage_json "$JSON")" || {
   echo "driver usage assembly failed for board $BOARD" >&2
   exit 2
 }
+# Milestone cost against the architect's estimate (MS4). The estimate is read from
+# the gate card's `**Estimate:** <n> chunks` line with the pattern roadmap-check
+# enforces; a card with no such line, or one that is not '<n> chunks', is named
+# `absent` or `malformed` and compares nothing. It is never read as zero, which
+# would make every milestone look over.
+JSON="$(printf '%s' "$JSON" | jq '
+  def field($name): ((.body // "") | split("\n")
+      | map(select(test("^[-* \\t]*\\*\\*" + $name + ":\\*\\*"))) | .[0]
+      | if . == null then null
+        else sub("^[-* \\t]*\\*\\*" + $name + ":\\*\\*[ \\t]*"; "") | sub("[ \\t\\r]+$"; "") end);
+  .milestones = [._gates[] | . as $g
+    | (field("Estimate")) as $raw
+    | (if $raw == null then null else ([$raw | capture("^(?<n>[0-9]+) chunks?$") | .n | tonumber] | .[0]) end) as $est
+    | { gate: ($g.title | capture("^(?<id>GATE-[A-Za-z0-9][A-Za-z0-9._-]*)") | .id? // $g.title),
+        card: $g.card, status: $g.status, unit: "chunks",
+        actual: $g.chunks, done: $g.done, archived: $g.archived,
+        estimate: $est,
+        estimate_status: (if $raw == null then "absent" elif $est == null then "malformed" else "ok" end),
+        estimate_raw: $raw,
+        over: (if $est == null then null else $g.chunks > $est end) }]
+  | del(._gates)')"
 JSON="$(printf '%s' "$JSON" | jq --argjson driver "$DRIVER_JSON" '
   . as $base
   | del(._driver_runs, .operator)
@@ -884,6 +927,12 @@ text)
          + (if $n.cards_per_chunk.rate == null then "n/a — 0 chunk cards (\($n.cards_per_chunk.cards) cards)"
             else "\($n.cards_per_chunk.rate) (\($n.cards_per_chunk.cards) cards / \($n.cards_per_chunk.chunks) chunks)" end),
        "  human-implemented chunks  \($n.human_implemented.count) of \($n.human_implemented.of)",
+       (if (.milestones | length) == 0 then "  milestone cost vs estimate  n/a — no GATE card on the board"
+        else (.milestones[] | "  \(.gate) cost vs estimate  "
+          + (if .estimate == null
+             then "\(.actual) chunk(s) against " + (if .estimate_status == "absent" then "no estimate on the card" else "an estimate that is not <n> chunks (\(.estimate_raw))" end)
+             else "\(.actual) of \(.estimate) estimated chunks" + (if .over then " — OVER" else "" end) end)
+          + " (\(.done) done, card \(.status))") end),
        (if $n.merged.unrecorded > 0
         then "  \($n.merged.unrecorded) done chunk card(s) record no merge — pre-FL4 cards, or completed by hand — and are in no rate above"
         else empty end),
