@@ -42,6 +42,22 @@ Decision needed: read the reason and decide
 Risk: unknown — the card holds until someone looks
 Reply: `hermes kanban --board digest-fixture show t_d3`
 
+Where this board stands
+────────────
+Overall: work continues on what is in flight; no waiting card is behind the cards that need you.
+Progress: 1 card landed on 2026-07-28; now 1 running.
+Waiting on parents: 1 card; none needs you yet, each starts on its own once its parents finish.
+Waiting on you: 3 cards
+  · 1 verified chunk, waiting for your merge; its children stay held until it is merged.
+  · 1 blocked by env: codex usage limit — waited past FORGE_QUOTA_MAX_WAIT (park record: .forge/park-1.json); it holds, with its children, until you fix the cause and unblock.
+  · 1 stopped for an unrecognised reason; read it with `hermes kanban --board digest-fixture show t_d3`.
+
+What to do
+────────────
+1. CHUNK-7 (t_d1): merge its PR on GitHub, or send it back; both are in its Reply above.
+2. CHUNK-8 (t_d2): blocked by env. Inspect with `hermes kanban --board digest-fixture show t_d2`; once the cause is fixed, `hermes kanban --board digest-fixture unblock t_d2`.
+3. CHUNK-9 (t_d3): read the reason with `hermes kanban --board digest-fixture show t_d3` and decide.
+
 Spend: driver actual n/a · estimated n/a — 0/1 runs joined. Codex quota is not metered here.
 
 == metrics-fl3 ==
@@ -79,5 +95,19 @@ Decision needed: read the reason and decide
 
 Risk: unknown — the card holds until someone looks
 Reply: `hermes kanban --board metrics-fl3 show t_tr`
+
+Where this board stands
+────────────
+Overall: work continues on what is in flight; no waiting card is behind the cards that need you.
+Progress: 5 cards landed on 2026-07-28; now 1 in review.
+Waiting on parents: none.
+Waiting on you: 2 cards
+  · 1 verified chunk, waiting for your merge; its children stay held until it is merged.
+  · 1 in triage; no script can complete a triage card, so it stays until you decide.
+
+What to do
+────────────
+1. CHUNK-5 (t_ce): merge its PR on GitHub, or send it back; both are in its Reply above.
+2. follow-up: a verifier nit (t_tr): read it with `hermes kanban --board metrics-fl3 show t_tr` and decide whether to keep it; no script can complete it.
 
 Spend: driver actual n/a · estimated n/a — 0/3 runs joined. Codex quota is not metered here.
