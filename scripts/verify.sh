@@ -3040,6 +3040,7 @@ verifier/merge-watcher-reports-once  a closed PR, a hold with no PR url and a me
 verifier/watcher-flags-head-drift  P9, CHUNK-5's shape: a merge at a head the verdict did not approve completes the card with both heads and NOT a verified merge in its result, once on stdout, in a comment and in the digest's landed line; a clean merge and a repaired bounce-budget exception are silent
 verifier/merge-mode-refuses-a-head-that-moved  P9: the PR's head is not the verdict's head, so no gh pr merge is made, the refusal names both heads and the review is not re-opened
 verifier/merge-nonzero-exit-reads-back  P10(4): gh pr merge lands the squash and exits 1; GitHub is asked, MERGED takes rc 4 and a merge-pending hold the watcher finishes; an exit that merged nothing stays substrate
+verifier/head-drift-refusal-then-hand-merge-is-flagged  P9: a refused moved head is held merge-pending, so the operator's hand merge is completed by the watcher and flagged HEAD DRIFT, not stranded
 verifier/failed-hold-write-keeps-merge-pending-prefix  P10(5): merged-held's hold is refused by the real kernel; the fallback block still starts merge-pending: and the watcher completes the card
 verifier/merged-tree-keeps-its-tree-for-the-probe  --keep-at leaves the green union (HEAD the merge of head and base, clean) for the probe; an existing path is refused
 verifier/mutation-probe-finds-unobserved-lines  CI-green fixtures of t_624586d7, a hollow Then, C21's unreached config and an unpinned message bounce on exactly their unobserved lines; a well-tested change passes (FL5)
@@ -10332,6 +10333,7 @@ CTSTUB
              merge-mode-survives-a-failed-completion merge-watcher-reports-once \
              watcher-flags-head-drift merge-mode-refuses-a-head-that-moved \
              merge-nonzero-exit-reads-back failed-hold-write-keeps-merge-pending-prefix \
+             head-drift-refusal-then-hand-merge-is-flagged \
              mutation-probe-bounces-only-behind-its-switch \
              the-hook-restores-the-handoff the-hook-restores-the-verifiers-calls \
              the-hook-refuses-a-record-that-is-not-this-runs the-hook-policy-keeps-an-exit-open \
@@ -10349,19 +10351,21 @@ printf '%s\n' "$*" >> "$VSTUB/gh.log"
 case "$1 $2" in
   "pr view")
     case "$*" in
-      # The base is the case's to choose ($VSTUB/base), so a case can prove the
-      # verifier passes the PR's OWN base on rather than an assumed `main`.
-      *headRefName*) printf '{"headRefName":"chunk/7-sync-engine","baseRefName":"%s"}\n' \
-                       "$(cat "$VSTUB/base" 2>/dev/null || echo main)"; exit 0;;
-      *headRefOid*)  printf '{"headRefOid":"%s"}\n' "$(cat "$VSTUB/head" 2>/dev/null || echo feedfacecafebabe0123456789abcdef01234567)"; exit 0;;
+      # The state arm comes FIRST: the watcher asks for state,mergedAt,mergeCommit,headRefOid in one
+      # read (epic P9), and a bare `*headRefOid*` arm above it would answer only the head.
       *state*) [ -f "$VSTUB/state-down" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
                if [ -f "$VSTUB/merged" ]; then
-                 echo '{"state":"MERGED","mergedAt":"2026-09-26T10:00:00Z","mergeCommit":{"oid":"abcdef1234567890"}}'
+                 echo '{"state":"MERGED","mergedAt":"2026-09-26T10:00:00Z","mergeCommit":{"oid":"abcdef1234567890"},"headRefOid":"'"$(cat "$VSTUB/head" 2>/dev/null || echo feedfacecafebabe0123456789abcdef01234567)"'"}'
                elif [ -f "$VSTUB/closed" ]; then
                  echo '{"state":"CLOSED","mergedAt":null,"mergeCommit":null}'
                else
                  echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'
                fi; exit 0;;
+      # The base is the case's to choose ($VSTUB/base), so a case can prove the
+      # verifier passes the PR's OWN base on rather than an assumed `main`.
+      *headRefName*) printf '{"headRefName":"chunk/7-sync-engine","baseRefName":"%s"}\n' \
+                       "$(cat "$VSTUB/base" 2>/dev/null || echo main)"; exit 0;;
+      *headRefOid*)  printf '{"headRefOid":"%s"}\n' "$(cat "$VSTUB/head" 2>/dev/null || echo feedfacecafebabe0123456789abcdef01234567)"; exit 0;;
     esac;;
   "repo view")
     # Real `gh repo view` with NO repository argument asks git about the cwd and
@@ -11360,8 +11364,9 @@ $(jq -c . "$vh2/.forge/verdicts/vlab-$vP.json")
     # is somewhere else. That is what `--match-head-commit` is for.
     printf '9999999999999999999999999999999999999999\n' > "$vbin/head"
     vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
-    { [ "$vrc" = 3 ] && [ "$(_vst "$vP" | cut -d/ -f1)" != done ] \
-      && jq -e '(.reason | test("^other: handoff-integrity"))' "$vbin/out.json" >/dev/null 2>&1; } \
+    # Epic P9: refused before the merge, and HELD `merge-pending:` (rc 4), not a substrate fault.
+    { [ "$vrc" = 4 ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
+      && jq -e '.action == "merge-refused-head-drift"' "$vbin/out.json" >/dev/null 2>&1; } \
       || vdetail="$vdetail a-moved-head-was-merged(rc=$vrc,$(_vst "$vP"))"
     ! grep -q '^pr merge.*--match-head-commit 9999' "$vbin/gh.log" 2>/dev/null \
       || vdetail="$vdetail the-merge-named-the-new-head-instead-of-the-verified-one"
@@ -12019,7 +12024,7 @@ VWRAP
     # reported, never counted as verified, and review is NOT re-opened by it.
     # =========================================================================
     local vA=0ec8c80886a4c4b1233d0557d9e2a270a8ebc340 vB=2dfaf68f82b03370a6c188a47dce492889405c6e
-    local vfxA="$TMPROOT/verifier-fx-head-a" vgh="$TMPROOT/verifier-gh-exit1" vres vdig vday
+    local vfxA="$TMPROOT/verifier-fx-head-a" vgh="$TMPROOT/verifier-gh-exit1" vres vdig
     # The real CHUNK-5 shape: a recorded PR whose head is the one the verdict is about (A).
     rm -rf "$vfxA" "$vgh"; mkdir -p "$vfxA" "$vgh"
     cp -R "$REPO_ROOT/$prs/pr-9/." "$vfxA/"
@@ -12043,8 +12048,11 @@ VGHX
     chmod +x "$vgh/gh"
     _vmw()  { env PATH="$vbin:$PATH" VSTUB="$vbin" HERMES_HOME="$vhome" FORGE_STATE_ROOT="$vstate" "$REPO_ROOT/$mw" "$@"; }
     _vres() { _v show "$1" --json 2>/dev/null | jq -r '.task.result // ""'; }
-    vday="$(date -u +%F)"
-    _vdig() { HERMES_HOME="$vhome" TZ=UTC "$REPO_ROOT/scripts/digest.sh" --board vlab --day "$vday" 2>/dev/null; }
+    # THE CLOCK IS PINNED (verify.sh's rule for digest cases): the kernel stamps a completion with
+    # the wall clock, so the card's completed_at is set to the fixtures' epoch and the digest is
+    # asked for the day that epoch is in, as the digest group does.
+    _vpin() { sqlite3 "$vhome/kanban/boards/vlab/kanban.db" "UPDATE tasks SET completed_at = 1785200000 WHERE id = '$1';" 2>/dev/null; }
+    _vdig() { HERMES_HOME="$vhome" TZ=UTC "$REPO_ROOT/scripts/digest.sh" --board vlab --day 2026-07-28 2>/dev/null; }
 
     # ---- P9: the watcher flags a merge at a head the verdict was not about --------
     # CHUNK-5: verified at 0ec8c80, the operator pushed and merged 2dfaf68, and the
@@ -12059,8 +12067,14 @@ VGHX
     printf '%s' "$vout" | grep -q "$vP: would complete.*HEAD DRIFT" \
       || vdetail="$vdetail dry-run-does-not-say-head-drift('$vout')"
     [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || vdetail="$vdetail dry-run-moved-the-card($(_vst "$vP"))"
+    : > "$vbin/gh.log"
     vout="$(_vmw --board vlab 2>/dev/null)"; vrc=$?
     [ "$vrc" = 0 ] || vdetail="$vdetail watcher-rc=$vrc"
+    # ONE READ says MERGED and names the head, so a head that cannot be read cannot be a completion
+    # that only the result admits was unchecked.
+    { grep -q '^pr view .* --json state,mergedAt,mergeCommit,headRefOid$' "$vbin/gh.log" \
+      && ! grep -q '^pr view .* --json headRefOid$' "$vbin/gh.log"; } \
+      || vdetail="$vdetail the-merged-head-is-not-read-with-the-state($(grep '^pr view' "$vbin/gh.log" | sort -u | tr '\n' ';'))"
     [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail drifted-card-not-completed($(_vst "$vP"))"
     [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail drifted-card-stranded-its-child($(_vst "$vC"))"
     vres="$(_vres "$vP")"
@@ -12076,7 +12090,8 @@ VGHX
       || vdetail="$vdetail no-head-drift-comment-on-the-card"
     # Visible to the digest, and to the metadata: the verdict still rides the completion (it IS
     # about head A) and the contract accepts it; the result is what metrics.sh reads as the merger.
-    _vdig | grep -q "$vP.*HEAD DRIFT\|HEAD DRIFT.*$vP\|(${vP}) — HEAD DRIFT" \
+    _vpin "$vP"
+    _vdig | grep -q "(${vP}) — HEAD DRIFT" \
       || vdetail="$vdetail digest-does-not-mark-the-landed-card"
     _v show "$vP" --json | jq -r '[ .runs[] | select(.outcome == "completed") ] | last | .metadata // empty' \
       > "$vbin/completed-meta.json" 2>/dev/null
@@ -12090,7 +12105,10 @@ VGHX
     vres="$(_vres "$vP")"
     { [ "$(_vst "$vP" | cut -d/ -f1)" = done ] && [ -z "$vout" ]; } || vdetail="$vdetail control-merge-was-not-silent-and-done('$vout',$(_vst "$vP"))"
     case "$vres" in *"HEAD DRIFT"*) vdetail="$vdetail control-merge-flagged-a-drift('$vres')";; esac
-    ! _vdig | grep -q 'HEAD DRIFT' || vdetail="$vdetail digest-marked-a-clean-merge"
+    # The control must SEE the card before its absence of a mark means anything.
+    _vpin "$vP"; vdig="$(_vdig)"
+    printf '%s' "$vdig" | grep -q "($vP)" || vdetail="$vdetail control-digest-does-not-list-the-landed-card"
+    ! printf '%s' "$vdig" | grep -q 'HEAD DRIFT' || vdetail="$vdetail digest-marked-a-clean-merge"
     # A `bounce-budget:` exception was never APPROVED by a verdict, and the operator repairing it by
     # hand (a different head) is its normal exit: not a drift.
     _vboard; printf '%s\n' "$vA" > "$vbin/head"
@@ -12107,18 +12125,23 @@ VGHX
 
     # ---- P9: merge mode refuses a head that moved after the verdict --------------
     # `--match-head-commit` only makes GitHub refuse the merge. The verifier now compares the head
-    # the verdict is about with the head the PR has NOW and does not call `gh pr merge` at all.
-    # Nothing re-opens the review: the card is held by the substrate block, as any refused merge is.
+    # the verdict is about with the head the PR has NOW and does not call `gh pr merge` at all. The
+    # card is HELD `merge-pending:` (not blocked `other: handoff-integrity`, which the watcher never
+    # sweeps), so a later hand merge is completed and flagged. Nothing re-opens the review.
     vdetail=""; _vboard; printf '%s\n' "$vB" > "$vbin/head"
     vrc="$(VFIXTURE="$vfxA" _vrun FORGE_VERIFIER_MERGE=1)"
-    [ "$vrc" = 3 ] || vdetail="$vdetail rc=$vrc"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc"
     jq -e --arg a "${vA:0:12}" --arg b "${vB:0:12}" '
-        (.reason | startswith("other: handoff-integrity — head-drift")) and (.reason | contains($a)) and (.reason | contains($b))' \
+        .action == "merge-refused-head-drift" and .terminate.tool == "kanban_block"
+        and (.terminate.args.reason | startswith("merge-pending: ") and contains("head-drift") and contains($a) and contains($b))
+        and (.on_error.args.reason | startswith("merge-pending: "))' \
       "$vbin/out.json" >/dev/null 2>&1 \
-      || vdetail="$vdetail refusal-does-not-name-both-heads($(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 160))"
+      || vdetail="$vdetail refusal-is-not-a-merge-pending-hold-naming-both-heads($(jq -r '.action' "$vbin/out.json" 2>/dev/null))"
     ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail gh-pr-merge-was-called-on-a-moved-head"
     { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
       || vdetail="$vdetail card-not-held($(_vst "$vP"),$(_vst "$vC"))"
+    _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason | startswith("merge-pending: ")' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-card-is-not-held-merge-pending"
     case ",$(_vkinds)," in *,changes_requested,*|*,review_reopened,*) vdetail="$vdetail review-was-reopened($(_vkinds))";; esac
     # THE PIN STILL HOLDS FOR A PUSH THAT LANDS AFTER THAT READ: the verifier's own comparison
     # passes (the PR is at A), the head moves as `gh pr merge` runs, and GitHub refuses the pinned
@@ -12139,6 +12162,30 @@ VGHX
       || bad "merge-mode-refuses-a-head-that-moved" \
           "merge mode must refuse, before asking GitHub, a PR whose head is not the verified head —$vdetail"
 
+    # ---- P9: the refusal, then the operator merges by hand -----------------------
+    # The path that made "a merge the verdict did not cover is flagged" untrue: a refusal that ended
+    # `other: handoff-integrity` was never swept, so a hand merge left the card stuck and unflagged.
+    vdetail=""; _vboard; printf '%s\n' "$vB" > "$vbin/head"
+    vrc="$(VFIXTURE="$vfxA" _vrun FORGE_VERIFIER_MERGE=1)"
+    [ "$vrc" = 4 ] || vdetail="$vdetail refusal-rc=$vrc"
+    vout="$(_vmw --board vlab 2>/dev/null)"
+    { [ -z "$vout" ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
+      || vdetail="$vdetail the-watcher-spoke-or-moved-the-card-while-the-pr-was-open('$vout',$(_vst "$vP"))"
+    touch "$vbin/merged"
+    vout="$(_vmw --board vlab 2>/dev/null)"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail the-hand-merge-did-not-complete-the-card($(_vst "$vP"))"
+    [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail the-child-stayed-held($(_vst "$vC"))"
+    case "$(_vres "$vP")" in
+      *"HEAD DRIFT"*"${vA:0:12}"*"${vB:0:12}"*"NOT a verified merge"*) ;;
+      *) vdetail="$vdetail the-hand-merge-was-not-flagged('$(_vres "$vP")')";;
+    esac
+    printf '%s\n' "$vout" | grep -q "was merged at ${vB:0:12}, but the verdict approved ${vA:0:12}" \
+      || vdetail="$vdetail the-operator-was-not-told('$(printf '%s' "$vout" | head -1)')"
+    [ -z "$vdetail" ] \
+      && ok "head-drift-refusal-then-hand-merge-is-flagged (merge mode refuses a moved head and holds the card merge-pending; the watcher is silent while the PR is open, and when the operator merges the new head it completes the card, releases the child and flags the HEAD DRIFT)" \
+      || bad "head-drift-refusal-then-hand-merge-is-flagged" \
+          "a refusal on a moved head must leave a card the watcher completes and flags after a hand merge —$vdetail"
+
     # ---- P10(4): a non-zero `gh pr merge` that merged is read back ----------------
     vdetail=""; _vboard; printf '%s\n' "$vA" > "$vbin/head"
     vrc="$(VFIXTURE="$vfxA" _vrun FORGE_VERIFIER_MERGE=1 PATH="$vgh:$vbin:$PATH")"
@@ -12158,8 +12205,28 @@ VGHX
     { [ "$vrc" = 3 ] && jq -e '.reason | test("^other: handoff-integrity — the squash merge did not take")' "$vbin/out.json" >/dev/null 2>&1 \
       && [ ! -e "$vbin/merged" ]; } \
       || vdetail="$vdetail control-refused-merge-was-not-substrate(rc=$vrc,$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 100))"
+    # THE READ-BACK ITSELF FAILS (GitHub down) after an exit 1 that DID merge: unreadable is not "nothing
+    # merged". The retry also fails, and rc 4 holds the card `merge-pending:`, which the watcher completes
+    # once GitHub answers. Were it `return 1` the card would end `other: handoff-integrity`, unswept.
+    _vboard; printf '%s\n' "$vA" > "$vbin/head"; touch "$vbin/state-down"
+    vrc="$(VFIXTURE="$vfxA" _vrun FORGE_VERIFIER_MERGE=1 PATH="$vgh:$vbin:$PATH")"
+    { [ "$vrc" = 4 ] && jq -e '.action == "merged-held" and (.terminate.args.reason | startswith("merge-pending: "))' "$vbin/out.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+      || vdetail="$vdetail unreadable-readback-after-a-merge-was-not-held(rc=$vrc,$(_vst "$vP"),$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 80))"
+    rm -f "$vbin/state-down"
+    vout="$(_vmw --board vlab 2>&1)"
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = done ] && [ "$(_vst "$vC" | cut -d/ -f1)" = ready ]; } \
+      || vdetail="$vdetail the-watcher-did-not-finish-the-unreadable-case($(_vst "$vP"),'$vout')"
+    # ... and the same hold on a merge that did NOT land is resolved by the watcher too, in silence while OPEN.
+    _vboard; printf '%s\n' "$vA" > "$vbin/head"; touch "$vbin/state-down"
+    vrc="$(VFIXTURE="$vfxA" _vrun FORGE_VERIFIER_MERGE=1 VF_GH_MERGE=refuse PATH="$vgh:$vbin:$PATH")"
+    [ "$vrc" = 4 ] || vdetail="$vdetail unreadable-after-a-refusal-rc=$vrc"
+    rm -f "$vbin/state-down"
+    vout="$(_vmw --board vlab 2>&1)"
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && ! printf '%s' "$vout" | grep -q 'Decision needed'; } \
+      || vdetail="$vdetail the-watcher-was-not-silent-on-an-open-pr($(_vst "$vP"),'$(printf '%s' "$vout" | head -c 80)')"
     [ -z "$vdetail" ] \
-      && ok "merge-nonzero-exit-reads-back (gh pr merge lands the squash and exits 1: GitHub is asked, MERGED takes rc 4 and a merge-pending hold the watcher finishes; an exit 1 that merged nothing is still substrate)" \
+      && ok "merge-nonzero-exit-reads-back (gh pr merge lands the squash and exits 1: GitHub is asked, MERGED takes rc 4 and a merge-pending hold the watcher finishes; an exit 1 that merged nothing is still substrate; an unreadable answer after a retry is held merge-pending, never stranded)" \
       || bad "merge-nonzero-exit-reads-back" \
           "a non-zero exit from gh pr merge must be read back from GitHub, not taken for 'nothing merged' —$vdetail"
 

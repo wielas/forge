@@ -174,7 +174,7 @@ for card in $held; do
       "the card and its children stay held indefinitely" \
       "merge the PR and \`hermes kanban --board $BOARD complete $card --result \"merged: <pr>\"\`, or \`~/.forge/repo/scripts/bounce.sh $card \"<reason>\" --board $BOARD\`")"; rc=1; continue; }
 
-  state="$(gh pr view "$pr" --json state,mergedAt,mergeCommit < /dev/null 2>/dev/null)" || {
+  state="$(gh pr view "$pr" --json state,mergedAt,mergeCommit,headRefOid < /dev/null 2>/dev/null)" || {
     echo "merge-watcher: $card: cannot read $pr from GitHub" >&2; rc=1; continue; }
   case "$(printf '%s' "$state" | jq -r '.state')" in
     MERGED)
@@ -210,7 +210,7 @@ for card in $held; do
       drift=""; vhead=""; mhead=""
       if [ "$hclass" = merge-pending ] && [ -n "$meta" ]; then
         vhead="$(printf '%s' "$meta" | jq -r '(.gate_result.head // .head // empty)' 2>/dev/null)"
-        mhead="$(gh pr view "$pr" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty' 2>/dev/null)"
+        mhead="$(printf '%s' "$state" | jq -r '.headRefOid // empty' 2>/dev/null)"   # the SAME read that said MERGED
         if [ -z "$vhead" ]; then
           drift="; the stored verdict records no head, so head drift was NOT checked"
         elif [ -z "$mhead" ]; then
