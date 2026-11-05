@@ -3915,3 +3915,174 @@ The owner requested the digest readability change during this recovery. That
 explicit scope addition is included with the S7 recovery work rather than
 waiting for a separate epic session. A formatter change is not evidence that
 the deployed digest has changed; deployment remains a separate operator action.
+
+### 2026-11-04 and 2026-11-05 — further interim evidence and owner decisions
+
+These are interim observations and owner decisions, not the end-of-M1 Results
+and not an amendment to the protocol frozen at `RUN_START`. The product's
+ignored `.forge/run-a-attempt-2-run/operator-notes.md` records the owner
+clarifications below. Detailed local evidence was gathered under
+`/private/tmp/forge-s7-evidence-2026-11-04/`, with a review draft at
+`/private/tmp/forge-s7-evidence-decision-table-2026-11-04.md`. On 2026-11-05
+these working records were copied to
+`~/forge-evidence/run-a/2026-11-04-snapshot/` and
+`~/forge-evidence/run-a/2026-11-05-digest-receipts/`, each with a SHA-256
+manifest. They remain working records, not Results, and are not durable
+substitutes for the final pasted Results. Where this entry differs from the
+recovery-record text above, it supersedes it by dated addition; the earlier text
+is left as written.
+
+- **Recovery PR and deployment.** The owner authorized Forge PR #97 at reviewed
+  head `de54d2fb04501c4a256c76c03c758b8627c4d3a9`; it squash-merged
+  2026-11-04 11:13:53 UTC as `a07348f80fd4aa4fe544ed7b3befcd6a67908d61`, also
+  verified as remote main. The primary Forge source checkout was still at
+  `7cf2bb6`. This did not deploy the runtime or change the board, jobs or gate.
+- **GW2.** Five owner content approvals are recorded for October 31 through
+  November 4. Asked whether each November 2–4 digest was read on the phone
+  before any Forge board, the owner answered on 4 November: “yes, I read the
+  phone only - board is hard to reach remotely”. That is an owner affirmation,
+  not an independently observed timing. It affirms the phone-only,
+  before-board procedure for November 2, 3 and 4, and **supersedes, by owner
+  affirmation, the earlier lines above that call that timing unverified for
+  those three dates.** The October 31 and November 1 judgments remain late and
+  nonblind under the 1 November owner ruling, retained under that ruling only
+  for those two dates; the clarification waives no other requirement. No 5
+  November GW2 line is recorded (the owner's 5 November reading and content note
+  are recorded below without a yes/no) and the 6 November line is future.
+  Saved cron output proves generation, not by itself Telegram delivery; the
+  delivery receipts below are the delivery evidence. The protocol's textual
+  done-when still requires seven deliveries and seven yes lines.
+- **Interim metadata sweep (frozen reading).** Earlier attempts ended with
+  exit 2 and no verdict because the host uv cache could not be written and a
+  temporary empty cache could not fetch dependencies. A subsequent offline run
+  with a copied existing uv cache and the unchanged locked validator produced
+  exit 1: `valid=17 invalid=4 unjudged=0 ignored=0`, plus the missing obsolete
+  `forge-prejudge`. The four invalid rows are the intentional October 31
+  bootstrap operator holds: one `interactive:` and three `milestone-gate:`
+  reasons rejected by the frozen blocked-reason pattern (CHUNK-5 and
+  GATE-M1–M3). Source: `interim-metadata-offline.txt` in the evidence pack and
+  an independent root-cause investigation. The owner's P39 exception covered
+  the missing producer only; it did not waive invalid rows. This frozen failure
+  stays recorded as an actual interim failure; it is not a retroactive pass and
+  not a final end-of-M1 measurement. A prospective repair does not rewrite it.
+- **Later metadata reading (separate).** A prospective bootstrap metadata repair
+  is draft Forge PR #98 at head `f28e22145aa685756670fe622fa94de16c906dd7`;
+  PR #98 is an unmerged draft. On a copied board its later validator returned
+  `valid=21 invalid=0 unjudged=0` and exit 1 only for the known missing
+  `forge-prejudge`. This is a separate reading; it does not replace the frozen
+  exit-1 result, is not a retroactive pass, and is not a runtime deployment.
+  Local Python 3.12 full verification on that head passed 592 / 0 / 11 and
+  `make validate` passed; GitHub validate and verify succeeded in run
+  41909411716, and the draft reported merge state CLEAN. Sources:
+  `/private/tmp/forge-s7-later-validator-f28e221.txt` and
+  `/private/tmp/forge-s7-metadata-full-python312.log`.
+- **Bounded historical exception (owner decision, 4 November).** Asked about
+  the proposed disposition of the four intentional bootstrap holds, the owner
+  answered: “Approve the bounded historical exception”. This covers only those
+  four historical holds (CHUNK-5 and GATE-M1–M3). It permits S7 evidence
+  collection and closeout preparation while the frozen exit 1 and
+  `valid=17 invalid=4 unjudged=0` stay recorded as the historical failure. P39
+  remains limited to its existing missing-producer exception; all other stop
+  rules and gates remain in force. It is not a broader exemption, and it does
+  not merge or approve PR #98.
+- **CHUNK-5 reviewed and merged heads (observed).** The recorded verifier gate
+  head was `0ec8c80886a4c4b1233d0557d9e2a270a8ebc340`; its recommend-only hold
+  was 2 November 10:33:35 UTC. Child `2dfaf68f82b03370a6c188a47dce492889405c6e`
+  (Squatfather PR #9) was committed after the hold, changing guard, seam, tests
+  and decision log; squash merge `031485221da425e3bc01f80c8914b5e2b5e98d17`
+  has the same tree as that final head. The preserved board events show no later
+  verifier review, and GitHub reports no reviews. The original recommendation is
+  therefore not evidence that the changed head was reviewed by the board
+  verifier. An independent retrospective review found no concrete blocker in the
+  post-verdict diff; exact-head GitHub CI `branch-name` and `check` succeeded,
+  with `make check` reporting 80 passed, 1 skipped and 91.61% coverage. GitHub
+  reports account `wielas` merged at 11:27:40 UTC. There is no evidenced new
+  exact-head live-provider rerun. Sources: the retrospective
+  `/private/tmp/forge-s7-chunk5-retrospective-review-2026-11-04.md` and pack
+  files `chunk5-events.json`, `chunk5-runs.json` and `chunk5-post-verdict.diff`.
+- **Tool versions.** Launch, preflight and root checkpoint recorded Claude Code
+  2.1.310 and Codex 0.164.0 (`.forge/run-a-launch.txt`,
+  `.forge/run-a-attempt-2-run/preflight-full.txt` and `root-checkpoint.txt`).
+  On 4 November the explicit gateway path `~/.hermes/node/bin/claude --version`
+  reported 2.1.318; another shell resolved `/opt/homebrew/bin/claude` to
+  2.1.308. The earlier interim 2.1.318 reading did not capture its resolved
+  path. Package and symlink timestamps do not establish activation time or the
+  CLI used by any individual run. Saved CHUNK-1–4 lane receipts identify Codex,
+  not a per-run Claude scorer version; the version-change timing and affected
+  scorer or interactive runs remain unknown. The protocol records versions and
+  movements; a version change alone is not a stop. Path and version are to be
+  captured at final measurement.
+
+**Owner decisions recorded 2026-11-05.** The owner gave these in a working
+session on 2026-11-05. They are decisions, not new observations.
+
+- **CHUNK-5 changed head, historical.** Asked whether they contemporaneously
+  authorized merging `2dfaf68` (Squatfather PR #9) after the verifier's
+  recommendation covered `0ec8c80`, the owner answered “uncertain / cannot
+  recall”. This is recorded as an **open historical authorization gap**, not as
+  authorization; nothing here establishes that the changed head was authorized
+  when it merged.
+- **CHUNK-5 permission to proceed.** The owner stated: “I grant the permission
+  to move forward before tomorrow's digest on CHUNK-5.” Read narrowly, this
+  permits the CHUNK-5 parts of the closeout work (reconciling CHUNK-5's card and
+  PR evidence and recording its disposition) to proceed before the 6 November
+  digest. It does not release `GATE-M1`, complete S7, deploy, or alter the
+  historical “uncertain / cannot recall” authorization gap above.
+- **CHUNK-5 present-day disposition.** The owner **accepts** the retrospective
+  technical review plus green exact-head CI on `2dfaf68` (80 passed, 1 skipped,
+  91.61% coverage; tree equal to squash merge `0314852`) as the code's
+  present-day disposition. The historical review and authorization gap stays
+  recorded. The retrospective is not the original verifier review, and the
+  acceptance does not turn the gap into a contemporaneous approval.
+- **S-1.** The owner chose to continue toward S7 closeout with the original S-1
+  explicitly **uncredited**. Flip clause 1 is therefore not established, the
+  flip criterion is unmet, and Run B runs in shadow. No supplemental exercise
+  was approved and none is run. The original seeded handoff remains unlocated;
+  ordinary CHUNK-5 approval and the retrospective do not establish it.
+- **5 November digest.** For the digest delivered 2026-11-05 09:00:33 as
+  message_id 700 with header 2026-11-04, the owner gave this content note:
+  “The "What it means" part of the digest should be a bit longer and clearer.
+  I'm also missing a "What to do" or "How to progress" part of the digest.” The
+  owner said they read it. No yes/no GW2 line and no phone-only or before-board
+  provenance was given for that day, and none is inferred. That digest came from
+  the undeployed runtime at `0c69368`, so it predates #97's formatter. The
+  formatter follow-up is a separate source-only PR and is not deployed during
+  Run A.
+
+**Digest delivery receipts.** Delivery evidence for the `forge-digest` job
+(schedule `0 9 * * *`, Telegram delivery), read from the Hermes gateway log
+lines “delivered to telegram:… message_id=”. The ids come from that log, not
+from run outputs, which carry no message_id. The header date is read from the
+copied run output.
+
+| Delivery date | Delivery time (log) | Telegram message_id | Digest header date |
+|---|---|---|---|
+| 31 Oct 2026 | 09:00:23 | 694 | 2026-10-30 |
+| 1 Nov 2026 | 15:09:31 | 696 | 2026-10-31 |
+| 2 Nov 2026 | 09:00:31 | 697 | 2026-11-01 |
+| 3 Nov 2026 | 09:00:32 | 698 | 2026-11-02 |
+| 4 Nov 2026 | 09:00:32 | 699 | 2026-11-03 |
+| 5 Nov 2026 | 09:00:33 | 700 | 2026-11-04 |
+
+Header dates lag delivery by one day on every row, since each digest reports the
+previous day. The 1 November delivery was off-schedule: no 09:00 run occurred
+that day and the 15:09 delivery is likely scheduler catch-up, a cause not
+confirmed. Message_id 695 falls between the 31 October and 1 November
+deliveries and is unattributed to this job. This is delivery evidence only; it
+is **not a new GW2 acceptance requirement**, and it is not a judgment of any
+digest's content.
+
+**What remains for S7.**
+
+- The 5 and 6 November GW2 lines.
+- End-of-M1 measurements (metrics, metadata, ledger) at the actual end state,
+  with tool path and version captured.
+- The GATE-M1 probe, run by the operator with the probe command in this
+  document's operator table, leaving `GATE-M1` held.
+- The worktree sweep, and the wrapper restore if applicable.
+- The Results PR with the clause-by-clause flip verdict.
+
+Nothing recorded here completes S7, releases a gate, deploys the runtime, or
+changes merge authority. Run A and S7 remain open, `GATE-M1` stays held and the
+runtime undeployed; the checkpoint is rehearsed against held M1 in S8, and gate
+completion is considered in S9 only after its prerequisites.
