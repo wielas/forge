@@ -231,7 +231,15 @@ ACTUAL="$(printf '%s' "$COST" | jq -r '.actual')"
 DONE="$(printf '%s' "$COST" | jq -r '.done')"
 EST_STATUS="$(printf '%s' "$COST" | jq -r '.estimate_status')"
 EST="$(printf '%s' "$COST" | jq -r '.estimate // empty')"
-OVER="$(printf '%s' "$COST" | jq -r '.over // empty')"
+OVER="$(printf '%s' "$COST" | jq -r 'if .over == null then "" else (.over | tostring) end')"   # not // empty: false is a value
+
+# metrics.sh reads the board through its own snapshot, and this script through
+# another, so a board that moved between the two reads would otherwise be
+# judged on two different boards. The gate's chunks are counted here too, from
+# this script's snapshot, and any disagreement is no verdict, never a pass.
+P_TOTAL="$(printf '%s' "$PARENTS" | jq -r 'length')"
+P_DONE="$(printf '%s' "$PARENTS" | jq -r '[.[] | select(.status == "done")] | length')"
+if [ "$ACTUAL" != "$P_TOTAL" ] || [ "$DONE" != "$P_DONE" ]; then no_verdict "metrics.sh counts $DONE of $ACTUAL chunk(s) done but this checkpoint's own read of the board counts $P_DONE of $P_TOTAL, so the two reads saw different boards; run it again once the board is quiet"; fi # consistency-check
 
 # ---- the probe: probe-run.sh -----------------------------------------------
 # Run only for a finished milestone. A probe over unmerged work says nothing
@@ -303,7 +311,8 @@ def judge(case):
         want = norm(spec["expect"]["stdout"])
         for row in shown:
             body = row[2:] if row.startswith("| ") else row
-            if want and want in norm(body):
+            # the whole expected text, bounded: "advance 3" is not found in "Advance 30"
+            if want and re.search(r"(?<![a-z0-9])" + re.escape(want) + r"(?![a-z0-9])", norm(body)):
                 return ("probe", "the product printed the expected text with different case or spacing "
                         f"({body!r}); the expectation is over-literal", body)
     if "usage:" in text.lower() and exit_miss and exit_miss.group(1) == "2":
@@ -375,16 +384,23 @@ if [ "$PROBE_RC" = 1 ]; then
   esac
 fi
 case "$EST_STATUS" in
-  ok) [ "$OVER" = true ] && add_reason cost-over;;
+  ok) case "$OVER" in
+        false) ;;
+        true) add_reason cost-over;;
+        *) add_reason cost-unmeasured;;   # an estimate with no comparison is unmeasured
+      esac;;
   *) add_reason cost-unmeasured;;
 esac
 REASONS="${REASONS# }"
 FIRST="${REASONS%% *}"
 
-OUTCOME=pass
+# Fail closed: no verdict is the default, and a pass is set in exactly one
+# place, by a probe that exited 0 with nothing else blocking. A probe that never
+# ran, or whose exit is anything but 0 or 1, stays no verdict.
+OUTCOME=no-verdict
 if [ -n "$NOT_DONE" ] || [ "$ACTUAL" = 0 ]; then OUTCOME=no-verdict
-elif [ "$PROBE_RC" = 2 ]; then OUTCOME=no-verdict
-elif [ -n "$REASONS" ]; then OUTCOME=block
+elif [ "$PROBE_RC" = 0 ] && [ -z "$REASONS" ]; then OUTCOME=pass
+elif [ "$PROBE_RC" = 0 ] || [ "$PROBE_RC" = 1 ]; then OUTCOME=block
 fi
 
 # ---- the report ------------------------------------------------------------
@@ -400,7 +416,7 @@ say_numbers() {
   if [ -n "$PROBE_RC" ]; then
     printf '  [probe-run.sh]  exit %s — %s\n' "$PROBE_RC" "$PROBE_LAST"
   else
-    printf '  [probe-run.sh]  not run — the milestone is not finished\n'
+    printf '  [probe-run.sh]  not run\n'
   fi
   printf '  [metrics.sh]    %s of %s chunk(s) done\n' "$DONE" "$ACTUAL"
   case "$EST_STATUS" in
@@ -454,7 +470,7 @@ case "$OUTCOME" in
   no-verdict)
     if [ -n "$NOT_DONE" ]; then why="the milestone is not finished: $NOT_DONE"
     elif [ "$ACTUAL" = 0 ]; then why="$GATE has no chunk cards, so there is no milestone to check"
-    else why="the probe has no verdict — $PROBE_LAST"; fi
+    else why="the probe has no verdict — ${PROBE_LAST:-it did not run}"; fi
     echo "NO VERDICT: $why"
     echo
     say_numbers

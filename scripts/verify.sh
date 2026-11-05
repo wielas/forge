@@ -3179,6 +3179,8 @@ checkpoint/numbers-are-scripted           every number in the report is read fro
 checkpoint/outcomes                       probe 0 passes and proceeds, 1 blocks decision-first, 2 is no verdict, cost over blocks; an absent estimate blocks (MS4, decision 6)
 checkpoint/rehearse-writes-nothing        --rehearse on a snapshot of a fixture board, against a hermes stub that fails on any write verb: every outcome, and the held gate stays held (P10(1))
 checkpoint/finding-is-classified          a product defect drafts a chunk card, a probe defect drafts an amendment, an ambiguous finding blocks with no draft; nothing is created (MS2)
+checkpoint/disagreeing-counts-block      metrics.sh's chunk counts and the checkpoint's own differ: no verdict, no probe, nothing completed (fail closed)
+checkpoint/skipped-probe-never-passes     with that check cut out, a probe that did not run is still never a pass and --apply never completes the gate
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
 gate/classic-protection-is-a-gate         classic protection carrying both halves is GATED (exit 0)
@@ -13914,6 +13916,33 @@ echo "STUB: refusing write verb '$verb'" >&2
 exit 1
 CK_STUB
   chmod +x "$root/bin/hermes"
+  # git and gh stubs: a write verb is refused and logged in CK_WLOG; git reads
+  # pass through to the real git (probe-run.sh asks which commit it ran on).
+  cat > "$root/bin/git" <<'CK_GITSTUB'
+#!/bin/sh
+verb=""; skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in -C|-c|--git-dir|--work-tree) skip=1;; -*) ;; *) verb="$a"; break;; esac
+done
+case "$verb" in
+  add|commit|push|merge|rebase|reset|checkout|switch|tag|branch|stash|fetch|pull|clean|rm|mv|apply|am|cherry-pick|revert|worktree|config|restore|update-ref|gc|init|clone|remote|submodule)
+    echo "git $*" >> "${CK_WLOG:?}"; echo "STUB: refusing git write verb '$verb'" >&2; exit 1;;
+esac
+exec "${CK_REAL_GIT:?}" "$@"
+CK_GITSTUB
+  cat > "$root/bin/gh" <<'CK_GHSTUB'
+#!/bin/sh
+case "$1 $2" in "auth status"|"pr view"|"pr list"|"pr checks"|"pr diff"|"pr status"|"repo view") exit 0;; esac
+if [ "$1" = api ]; then
+  shift
+  for a in "$@"; do case "$a" in -X|--method|-f|-F|--field|--raw-field|--input) echo "gh api $*" >> "${CK_WLOG:?}"; echo "STUB: refusing gh api write" >&2; exit 1;; esac; done
+  exit 0
+fi
+echo "gh $*" >> "${CK_WLOG:?}"; echo "STUB: refusing gh $1" >&2; exit 1
+CK_GHSTUB
+  chmod +x "$root/bin/git" "$root/bin/gh"
+  local real_git; real_git="$(command -v git)"
 
   # The product project: one chunk, GATE-M1 and its probe, frozen by the real
   # acceptance-freeze (the same plan probe/ freezes).
@@ -13985,12 +14014,16 @@ CK_PROBE
   # stub on PATH and its log reset. Sets out and rc; the log is $root/stub.log.
   _ck_run() {
     local b="$1" p="$2" mode="$3"; shift 3
-    : > "$root/stub.log"
+    : > "$root/stub.log"; : > "$root/wlog.log"
     out="$(cd / && env HERMES_HOME="$root/b-$b/home" HERMES_KANBAN_HOME="$root/b-$b/kanban" \
-            HERMES_STUB_LOG="$root/stub.log" PATH="$root/bin:$PATH" \
+            HERMES_STUB_LOG="$root/stub.log" CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
             "$ck" "$root/proj-$p" --board ck --gate GATE-M1 "$mode" "$@" 2>&1)"; rc=$?
   }
-  _ck_hash() { shasum -a 256 "$root/b-$1/kanban/boards/ck/kanban.db" | cut -d' ' -f1; }
+  # The board AND its WAL sidecars: a write that lands in the -wal changes no byte of the .db.
+  _ck_hash_dir() { # $1=boards/ck directory
+    ( cd "$1" && for f in kanban.db kanban.db-wal kanban.db-shm; do [ -f "$f" ] && { printf '%s ' "$f"; shasum -a 256 "$f" | cut -d' ' -f1; }; done ) | shasum -a 256 | cut -d' ' -f1
+  }
+  _ck_hash() { _ck_hash_dir "$root/b-$1/kanban/boards/ck"; }
   # A WAL board is never opened mode=ro, nor in place: copy, then read the copy.
   _ck_q() { # $1=board $2=sql
     local c="$root/q-$1"; rm -rf "$c"; mkdir -p "$c"
@@ -14142,13 +14175,14 @@ $case_
 EOF_CASE
     # the cp-snapshot of the fixture board this case runs on
     rm -rf "$root/b-snap"; mkdir -p "$root/b-snap"; cp -R "$root/b-$b/kanban" "$root/b-snap/kanban"
-    h0="$(shasum -a 256 "$root/b-snap/kanban/boards/ck/kanban.db" | cut -d' ' -f1)"
-    : > "$root/stub.log"
+    h0="$(_ck_hash_dir "$root/b-snap/kanban/boards/ck")"
+    : > "$root/stub.log"; : > "$root/wlog.log"
     out="$(cd / && env HERMES_HOME="$root/b-snap/home" HERMES_KANBAN_HOME="$root/b-snap/kanban" \
-            HERMES_STUB_LOG="$root/stub.log" PATH="$root/bin:$PATH" \
+            HERMES_STUB_LOG="$root/stub.log" CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
             "$ck" "$root/proj-$pj" --board ck --gate GATE-M1 --rehearse 2>&1)"; rc=$?
-    h1="$(shasum -a 256 "$root/b-snap/kanban/boards/ck/kanban.db" | cut -d' ' -f1)"
+    h1="$(_ck_hash_dir "$root/b-snap/kanban/boards/ck")"
     n_calls="$(grep -c . "$root/stub.log")"
+    [ ! -s "$root/wlog.log" ] || detail="$detail $case_:git-or-gh-write($(head -1 "$root/wlog.log"))"
     [ "$rc" = "$want" ] || detail="$detail $case_:rc=$rc"
     [ "$n_calls" = 0 ] || detail="$detail $case_:hermes-called($(head -1 "$root/stub.log"))"
     [ "$h0" = "$h1" ] || detail="$detail $case_:board-bytes-changed"
@@ -14157,7 +14191,13 @@ EOF_CASE
     [ "$st" = blocked ] || detail="$detail $case_:gate-is-$st"
     printf '%s\n' "$out" | grep -Fq 'rehearsal: nothing was written to the board' || detail="$detail $case_:no-closing-line"
   done
-  # The positive control: --apply on a pass reaches the stub with exactly one complete.
+  # The positive controls: the git and gh stubs are on PATH and refuse a write, and
+  # --apply on a pass reaches the hermes stub with exactly one complete.
+  : > "$root/wlog.log"
+  env CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" git -C "$root" commit -m x >/dev/null 2>&1; rc=$?
+  env CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" gh pr merge 1 >/dev/null 2>&1
+  [ "$rc" = 1 ] && [ "$(grep -c . "$root/wlog.log")" = 2 ] || detail="$detail git-gh-stubs-not-on-path"
+  : > "$root/wlog.log"
   _ck_run std pass --apply
   if [ "$rc" = 2 ] && [ "$(grep -c 'kanban --board ck complete t_g1 --result checkpoint pass: ' "$root/stub.log")" = 1 ]; then :; else
     detail="$detail stub-not-reached(rc=$rc log=$(tr '\n' '|' < "$root/stub.log"))"; fi
@@ -14198,6 +14238,12 @@ EOF_CASE
     && printf '%s\n' "$out" | grep -Fxq 'DRAFT amendment to tests/probes/gate_m1.json — not applied:' \
     && printf '%s\n' "$out" | grep -Fxq -- "- proposed: expect stdout 'Advance  3' instead" \
     && ! printf '%s\n' "$out" | grep -q 'DRAFT chunk card' && [ "$rc" = 1 ] || detail="$detail probe(rc=$rc)"
+  # A probe defect needs the WHOLE expected text: "advance 3" is not found in
+  # "Advance 30", so that miss is not an over-literal probe.
+  _ck_variant prefix 's/print("advance %d"/print("Advance %d0"/'
+  _ck_run std prefix --rehearse
+  printf '%s\n' "$out" | grep -Fq '    AMBIGUOUS  three records advance' && ! printf '%s\n' "$out" | grep -q '    PROBE  ' \
+    && ! printf '%s\n' "$out" | grep -q 'DRAFT amendment' && [ "$rc" = 1 ] || detail="$detail probe-substring(rc=$rc)"
   # An ambiguous finding: a wrong output with the right exit and no sign of which side is wrong.
   # It blocks, says it cannot classify, and offers no draft of either kind.
   _ck_variant ambiguous 's/print("advance %d"/print("moved %d"/'
@@ -14213,6 +14259,57 @@ EOF_CASE
   [ "$h0" = "$(_ck_hash classify)" ] && [ "$(_ck_q classify 'SELECT COUNT(*) FROM tasks')" = 9 ] || detail="$detail board-changed"
   if [ -z "$detail" ]; then ok "finding-is-classified (fail-open and a crash are PRODUCT with a chunk-card draft; wording is PROBE with an amendment draft; an unexplained miss blocks as AMBIGUOUS with no draft; nothing is created)"
   else bad "finding-is-classified" "a product defect drafts a chunk card, a probe defect an amendment, an ambiguous finding blocks:$detail"; fi
+
+  # -- fail closed ------------------------------------------------------------
+  # metrics.sh reads the board through its own snapshot and the checkpoint through
+  # another, so the two can see a different board. SKEWED stands for that: a copy of
+  # the checkpoint beside a metrics.sh that reports one chunk fewer done than the
+  # board has. Two defences, tested apart. (b) the checkpoint counts the gate's
+  # chunks itself and refuses to judge two different boards. (a) with that check cut
+  # out of a copy, the probe is skipped (done != actual), and a skipped probe is
+  # still never a pass: pass is set only by a probe that exited 0.
+  local sk="$root/scripts-skew" sk2="$root/scripts-skew-nocheck" f_
+  for d_ in "$sk" "$sk2"; do
+    rm -rf "$d_"; mkdir -p "$d_"
+    for f_ in checkpoint.sh decision-message.sh board-snapshot.sh probe-run.sh forge_probe.py; do cp "$REPO_ROOT/scripts/$f_" "$d_/$f_"; done
+    printf '#!/bin/sh\n"%s/scripts/metrics.sh" "$@" | jq -c ".milestones |= map(.done -= 1)"\n' "$REPO_ROOT" > "$d_/metrics.sh"
+    chmod +x "$d_/metrics.sh"
+  done
+  grep -v '# consistency-check' "$REPO_ROOT/scripts/checkpoint.sh" > "$sk2/checkpoint.sh"; chmod +x "$sk2/checkpoint.sh"
+  _ck_skew() { # $1=script dir $2=mode ; extra env HERMES_STUB_ALLOW from the caller
+    : > "$root/stub.log"; : > "$root/wlog.log"
+    out="$(cd / && env HERMES_HOME="$root/b-std/home" HERMES_KANBAN_HOME="$root/b-std/kanban" \
+            HERMES_STUB_LOG="$root/stub.log" HERMES_STUB_ALLOW=complete CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
+            "$1/checkpoint.sh" "$root/proj-pass" --board ck --gate GATE-M1 "$2" 2>&1)"; rc=$?
+  }
+  detail=""
+  # (b) the two counts disagree: no verdict (exit 2), never a pass, nothing completed.
+  _ck_skew "$sk" --apply
+  [ "$rc" = 2 ] && grep -Fq 'metrics.sh counts 4 of 5 chunk(s) done but this checkpoint' <<<"$out" \
+    && grep -Fq 'so the two reads saw different boards' <<<"$out" && ! grep -q '^checkpoint: GATE-M1 passes' <<<"$out" \
+    && [ ! -s "$root/stub.log" ] || detail="$detail disagree-apply(rc=$rc)"
+  _ck_skew "$sk" --rehearse
+  [ "$rc" = 2 ] && ! grep -q '^checkpoint: GATE-M1 passes' <<<"$out" || detail="$detail disagree-rehearse(rc=$rc)"
+  # the real script, unskewed, still passes: the check is not a blanket refusal
+  _ck_run std pass --rehearse
+  [ "$rc" = 0 ] || detail="$detail unskewed-no-longer-passes(rc=$rc)"
+  if [ -z "$detail" ]; then ok "disagreeing-counts-block (metrics.sh 4 of 5 done against this checkpoint's own 5 of 5: exit 2, no probe, nothing completed, with --apply too)"
+  else bad "disagreeing-counts-block" "two reads of the board that disagree must not be judged:$detail"; fi
+
+  detail=""
+  cmp -s "$sk2/checkpoint.sh" "$REPO_ROOT/scripts/checkpoint.sh" && detail="$detail consistency-check-not-found-to-cut"
+  # (a) the probe never ran, and --apply is allowed `complete` by the stub: it must not be called.
+  _ck_skew "$sk2" --apply
+  [ "$rc" = 2 ] && grep -Fq 'NO VERDICT: the probe has no verdict — it did not run' <<<"$out" \
+    && grep -Fq '[probe-run.sh]  not run' <<<"$out" && ! grep -q '^checkpoint: GATE-M1 passes' <<<"$out" \
+    && ! grep -q '^completed ' <<<"$out" && [ ! -s "$root/stub.log" ] || detail="$detail skipped-probe-passed-or-completed(rc=$rc log=$(tr '\n' '|' < "$root/stub.log"))"
+  rm -rf "$root/q-sk"; mkdir -p "$root/q-sk"; cp "$root/b-std/kanban/boards/ck/kanban.db" "$root/q-sk/k.db"
+  [ "$(sqlite3 "$root/q-sk/k.db" "SELECT status FROM tasks WHERE id='t_g1'")" = blocked ] || detail="$detail gate-not-held"
+  # an unfinished milestone never reaches the probe either, and never completes
+  _ck_run unfinished pass --apply
+  [ "$rc" = 2 ] && [ ! -s "$root/stub.log" ] || detail="$detail unfinished-apply(rc=$rc)"
+  if [ -z "$detail" ]; then ok "skipped-probe-never-passes (a probe that did not run is no verdict, never a pass, and --apply never reaches complete)"
+  else bad "skipped-probe-never-passes" "pass requires a probe that exited 0:$detail"; fi
 }
 wants checkpoint && run_checkpoint_group
 
