@@ -195,8 +195,18 @@ writes a key the schema does not name.
 
 ## Blocked card reasons
 
+A later validator additionally recognizes holds of the exact forms
+`interactive: <text>` and `milestone-gate: <text>` when their run profile is
+`forge-operator-handoff`, the bootstrap's human-card producer. Each means a
+lowercase prefix, one space after the colon, and a non-blank tail; case
+variants, a missing space and leading whitespace are rejected. Other profiles remain subject to the
+worker-block registry. This does not alter historical observations: the frozen
+Run A validator at `0c69368` returned exit 1 on four such events; a later
+validator's result is a separate measurement, not a waiver or a historical
+pass.
+
 There is no `forge.block.v1` metadata envelope. Hermes `kanban_block` stores a
-reason string and accepts no metadata argument. The reason must start with one
+reason string and accepts no metadata argument. A worker-authored reason must start with one
 of these documented class prefixes: `stale-spec`, `failing-prereq`, `env`,
 `ci-red`, `judge-bounce`, `gate-misrouted`, `gate-unrunnable`, or `other`.
 `scripts/metrics.sh` derives the class from the `task_events.reason` prefix and
