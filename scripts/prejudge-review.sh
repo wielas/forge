@@ -650,11 +650,18 @@ hold_call() {  # $1=reason, already carrying its registry class
 # without merging (a race, an unmergeable state) must not complete a card whose
 # work is not on `main`.
 merge_mode() { [ "${FORGE_VERIFIER_MERGE:-}" = 1 ]; }
-# Return 1: nothing was merged. Return 4: `gh pr merge` ACCEPTED the merge and
-# GitHub did not confirm it afterwards: the work is probably on the base branch,
-# and the card has to be held where the merge-watcher will finish it (see the
-# caller). The completion is NOT made here (no board writes): the caller names
-# `kanban_complete`, with the `merge-pending:` hold as its `on_error`.
+# Return 1: nothing was merged. Return 4: the merge LANDED, or `gh pr merge`
+# ACCEPTED it, and GitHub did not confirm it afterwards: the work is probably on
+# the base branch, and the card has to be held where the merge-watcher will finish
+# it (see the caller). Return 5: the PR's head is not the head this run verified,
+# so nothing was attempted (epic P9). The completion is NOT made here (no board
+# writes): the caller names `kanban_complete`, with the `merge-pending:` hold as
+# its `on_error`.
+pr_reads_merged() {
+  gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
+    | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null
+}
+MERGE_REFUSAL=""
 route_merge() {
   # `--match-head-commit` is not belt-and-braces: without it this merges whatever
   # the head is NOW, and every stage above read the PR separately over several
@@ -663,10 +670,34 @@ route_merge() {
   # VERIFIED_HEAD means the read failed, and a merge that cannot name what it
   # verified must not happen at all.
   [ -n "$VERIFIED_HEAD" ] || return 1
-  gh pr merge --squash --delete-branch --match-head-commit "$VERIFIED_HEAD" "$PR_URL" \
-    >/dev/null 2>&1 < /dev/null || return 1
-  gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
-    | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 4
+  # P9 (owner decision, 2026-11-05): MERGE MODE REFUSES A HEAD THAT MOVED AFTER THE
+  # VERDICT. The pin above only fails the merge at GitHub; this refuses it here, by
+  # name, before `gh pr merge` is asked at all, and compares the head the verdict
+  # was ABOUT (the gate's own read, `$GATE .head`, which the scorer's diff came
+  # from) with the head Stage 0 pinned and the head the PR has now. Review is NOT
+  # re-opened by this: the card is held for the operator, and a merge made later
+  # is flagged by the merge-watcher as a head drift, never counted as verified.
+  local verdict_head live_head
+  verdict_head="$(jq -r '.head // empty' "$GATE" 2>/dev/null)"
+  live_head="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
+  [ -n "$verdict_head" ] && [ -n "$live_head" ] || return 1
+  if [ "$verdict_head" != "$VERIFIED_HEAD" ] || [ "$live_head" != "$VERIFIED_HEAD" ]; then
+    MERGE_REFUSAL="head-drift — the verdict is about ${verdict_head:0:12} (pinned ${VERIFIED_HEAD:0:12}) and $PR_URL is now at ${live_head:0:12}, so nothing was merged"
+    return 5
+  fi
+  if ! gh pr merge --squash --delete-branch --match-head-commit "$VERIFIED_HEAD" "$PR_URL" \
+         >/dev/null 2>&1 < /dev/null; then
+    # A NON-ZERO EXIT IS NOT "NOTHING MERGED" (epic P10(4)). `gh pr merge` can land the
+    # squash and then fail on the rest (`--delete-branch`, say). Treating that as
+    # return 1 blocked the card `other: handoff-integrity`, which the merge-watcher
+    # does not sweep, so the PR was on the base branch and the card was held forever.
+    # GitHub is asked instead: MERGED takes the rc-4 path (held `merge-pending:`,
+    # finished by the watcher); anything else, including an unreadable answer, is a
+    # merge that did not take.
+    pr_reads_merged && return 4
+    return 1
+  fi
+  pr_reads_merged || return 4
   return 0
 }
 
@@ -795,7 +826,9 @@ $1")")" \
 # merge (route_merge) rather than merging something it cannot name. Reading it
 # earlier does not close the window — the gate's CI read still happens after this —
 # but it makes a moved head a REFUSED MERGE instead of an unnoticed one, which is
-# the difference between a failure and a defect. P9 owns the rest.
+# the difference between a failure and a defect. `route_merge` closes the rest (epic P9):
+# it refuses a head that is not the one the verdict was about, and the merge-watcher
+# flags a merge the operator made at a different head.
 #
 # In fixture mode it comes out of the recorded `pr.json`, so no dry-run case needs
 # a live `gh`.
@@ -1322,6 +1355,8 @@ case "$VERDICT" in
     stash_envelope "$TMP/verdict.json"
     if merge_mode; then
       route_merge; merge_rc=$?
+      [ "$merge_rc" = 5 ] \
+        && substrate "other: handoff-integrity — $MERGE_REFUSAL"
       [ "$merge_rc" = 1 ] \
         && substrate "other: handoff-integrity — the squash merge did not take, so nothing was merged"
       # MERGED, BUT THE CARD IS A SEPARATE QUESTION. `gh pr merge` accepted it, so the

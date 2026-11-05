@@ -36,6 +36,19 @@
 #     work was abandoned; `done` would tell the board it landed.
 #   * OPEN -> nothing, silently.
 #
+# A MERGE AT A HEAD THE VERDICT WAS NOT ABOUT IS FLAGGED, NOT COUNTED AS VERIFIED
+# (epic P9, owner decision 2026-11-05). A `merge-pending:` hold rests on a verdict
+# about ONE head (`gate_result.head` in the stored judge envelope, `head` in a gate
+# envelope). A push to a held card's branch starts no new review, so the operator can
+# merge a different head: that is what happened to CHUNK-5 (verified 0ec8c80, merged
+# 2dfaf68). The watcher reads the merged PR's head, and when it differs it still
+# completes the card (the work is on the base branch; leaving it blocked would strand
+# its children) but says so on the card: the completion result carries `HEAD DRIFT`
+# and both heads, a `FORGE-WATCHER-NOTIFIED head-drift` comment is left and the
+# finding is printed once, decision-first, and the digest marks the card under
+# "landed". Review is NOT re-opened. A `bounce-budget:` hold is never flagged: no
+# verdict ever approved it, and the operator repairing it by hand is its normal exit.
+#
 # NO DECISION, NO MESSAGE (epic GW1). stdout carries only what the operator must
 # decide, each in the one decision-first format (scripts/decision-message.sh):
 # a closed PR, a hold with no PR to watch, a merged PR whose card would not
@@ -166,7 +179,6 @@ for card in $held; do
   case "$(printf '%s' "$state" | jq -r '.state')" in
     MERGED)
       sha="$(printf '%s' "$state" | jq -r '.mergeCommit.oid // "unknown"')"
-      [ "$DRY" = 1 ] && { echo "$card: would complete — $pr merged as ${sha:0:12}"; continue; }
       # THE VERDICT RIDES THIS COMPLETION. `block` and `request-changes` take no
       # `--metadata`, so the verifier leaves its envelope on the host
       # (`<state root>/verdicts/<board>-<card>.json`, forge-state.sh): a worker's
@@ -190,8 +202,37 @@ for card in $held; do
           | sed -n '/^```json$/,/^```$/p' | sed '1d;$d')"
         printf '%s' "$meta" | jq -e 'type == "object"' >/dev/null 2>&1 || meta=""
       fi
+      # P9: WHICH HEAD DID THE VERDICT APPROVE, AND WHICH WAS MERGED? Only a
+      # `merge-pending:` hold claims a verdict approved the merge. The verdict's head
+      # is `gate_result.head` in a judge envelope and `head` in a gate envelope; the
+      # merged head is the PR's own `headRefOid`, which GitHub keeps after the squash.
+      # Either unread is said out loud in the result, never taken for "no drift".
+      drift=""; vhead=""; mhead=""
+      if [ "$hclass" = merge-pending ] && [ -n "$meta" ]; then
+        vhead="$(printf '%s' "$meta" | jq -r '(.gate_result.head // .head // empty)' 2>/dev/null)"
+        mhead="$(gh pr view "$pr" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty' 2>/dev/null)"
+        if [ -z "$vhead" ]; then
+          drift="; the stored verdict records no head, so head drift was NOT checked"
+        elif [ -z "$mhead" ]; then
+          drift="; the merged head could not be read from GitHub, so head drift was NOT checked"
+        elif [ "$vhead" != "$mhead" ]; then
+          drift="; HEAD DRIFT: the verdict approved ${vhead:0:12} but $pr was merged at ${mhead:0:12} — NOT a verified merge"
+        fi
+      fi
+      if [ "$DRY" = 1 ]; then
+        echo "$card: would complete — $pr merged as ${sha:0:12}${drift}"; continue
+      fi
+      case "$drift" in
+        *"HEAD DRIFT"*)
+          notify_once "$card" "head-drift $pr" "$(decision_message "$hclass" \
+            "$card: $pr was merged at ${mhead:0:12}, but the verdict approved ${vhead:0:12}" \
+            "the code that landed is not the code the verifier reviewed, so this is NOT a verified merge; the card is completed so its children are not stranded, and review is not re-opened" \
+            "accept the merged head, or have it reviewed" \
+            "unreviewed code is on the base branch, and everything built on this chunk rests on it" \
+            "nothing, to accept it; or review ${mhead:0:12} yourself and record the outcome on $card")";;
+      esac
       if [ -n "$meta" ]; then
-        kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher)" \
+        kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher${drift})" \
           --metadata "$meta" >/dev/null 2>&1
       else
         kanban complete "$card" --result "merged: $pr as ${sha:0:12} (completed by merge-watcher; NO stored verdict envelope on this card)" >/dev/null 2>&1
