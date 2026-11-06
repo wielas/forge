@@ -1399,8 +1399,8 @@ $EVIDENCE")")" \
       # children were held forever. So the hold is the `on_error` of the completion,
       # and the terminator itself when the merge was not confirmed.
       merged_hold="$(decision_message merge-pending \
-        "${chunk_title:-this chunk} was squash-merged by the verifier, but this card could not be completed" \
-        "\`gh pr merge\` accepted $PR_URL at ${VERIFIED_HEAD:-an unread head}, and then the read-back from GitHub or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
+        "${chunk_title:-this chunk}: merge attempted by the verifier; GitHub did not confirm either way, or this card could not be completed" \
+        "The verifier ran \`gh pr merge\` for $PR_URL at ${VERIFIED_HEAD:-an unread head}. GitHub did not confirm the outcome either way (the merge may have failed or the read-back was unreadable), or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
         "confirm $PR_URL is merged; if it is not, merge it or send it back" \
         "until the card completes, its children stay held" \
         "nothing, if the PR shows MERGED — the merge-watcher completes this card on its next sweep — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
@@ -1416,7 +1416,7 @@ $EVIDENCE")"
       # still starts `merge-pending:` and names the PR, so the watcher finds it.
       envelope merged-held "$SUMMARY — merged, and held for the merge-watcher because GitHub did not confirm it" "$TMP/verdict.json" "" 4 \
         "$(hold_call "$merged_hold")" \
-        "$(term_block "merge-pending: $PR_URL was squash-merged by the verifier, but neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged")"
+        "$(term_block "merge-pending: $PR_URL merge attempted by the verifier; GitHub did not confirm either way, and neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged")"
     fi
     envelope recommend "$SUMMARY" "$TMP/verdict.json" "" 4 \
       "$(hold_call "$(decision_message merge-pending \

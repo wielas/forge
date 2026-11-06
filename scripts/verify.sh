@@ -11443,7 +11443,7 @@ VWRAP
       [ "$(_vst "$vC" | cut -d/ -f1)" = todo ] || vdetail="$vdetail $vmode:child-released-early($(_vst "$vC"))"
       _v show "$vP" --json | jq -e '
           [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
-          | startswith("merge-pending: ") and test("squash-merged by the verifier")' >/dev/null 2>&1 \
+          | startswith("merge-pending: ") and test("merge attempted by the verifier; GitHub did not confirm either way")' >/dev/null 2>&1 \
         || vdetail="$vdetail $vmode:hold-is-not-a-merge-pending-hold"
       # The verdict is a HOST file, written before the merge (nothing is retyped by the driver).
       jq -e '.schema == "forge.judge.v1"' "$vstate/verdicts/vlab-$vP.json" >/dev/null 2>&1 \
@@ -12213,6 +12213,11 @@ VGHX
     { [ "$vrc" = 4 ] && jq -e '.action == "merged-held" and (.terminate.args.reason | startswith("merge-pending: "))' "$vbin/out.json" >/dev/null 2>&1 \
       && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
       || vdetail="$vdetail unreadable-readback-after-a-merge-was-not-held(rc=$vrc,$(_vst "$vP"),$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 80))"
+    # ADR-0003: the hold's wording is an emitted claim. With the read-back unreadable it cannot say the
+    # merge landed, and must say GitHub did not confirm either way.
+    jq -e '.terminate.args.reason | (contains("merge attempted by the verifier; GitHub did not confirm either way")
+           and (contains("squash-merged by the verifier") | not))' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail unreadable-hold-claims-a-merge-it-cannot-confirm($(jq -r '.terminate.args.reason // "none"' "$vbin/out.json" 2>/dev/null | head -c 120))"
     rm -f "$vbin/state-down"
     vout="$(_vmw --board vlab 2>&1)"
     { [ "$(_vst "$vP" | cut -d/ -f1)" = done ] && [ "$(_vst "$vC" | cut -d/ -f1)" = ready ]; } \
@@ -12239,7 +12244,7 @@ VGHX
     vrc="$(VPERFORM=0 VFIXTURE="$vfxA" _vrun FORGE_VERIFIER_MERGE=1)"
     [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc"
     jq -e '.action == "merged-held" and .terminate.tool == "kanban_block" and .on_error.tool == "kanban_block"
-           and (.on_error.args.reason | startswith("merge-pending: ")) and (.on_error.args.reason | contains("squash-merged by the verifier"))
+           and (.on_error.args.reason | startswith("merge-pending: ")) and (.on_error.args.reason | contains("merge attempted by the verifier; GitHub did not confirm either way"))
            and (.on_error.args | has("kind") | not)' "$vbin/out.json" >/dev/null 2>&1 \
       || vdetail="$vdetail the-fallback-is-not-a-merge-pending-block($(jq -c '.on_error.args.reason // "none"' "$vbin/out.json" 2>/dev/null | head -c 120))"
     jq '.terminate.args.kind = "no-such-kind"' "$vbin/out.json" > "$vbin/out-garbled.json"
