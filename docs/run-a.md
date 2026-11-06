@@ -469,6 +469,11 @@ never written as output.*
   script. The board prints a verifier's reason as a Python dict with `\n`
   escapes; a hold or reason is shown with those escapes read back as line
   breaks, and nothing else changed.
+- **Product source is not pasted.** `wielas/forge` is public and Squatfather is private.
+  Where the board or the scorer quoted product code, the line is cut to its file and line
+  and marked `[private product code omitted; see Squatfather PR #n at <sha>]`; the sha is the
+  PR head named in `10-ci-summary.txt` and `10b` (the lane's last commit for CHUNK-2, the
+  reviewed head for CHUNK-5). Names, SHAs, card titles and paths are kept.
 - **Hashes.** The manifests of `$E`, `$R` and the 2026-11-04 snapshot were
   re-checked with `shasum -a 256 -c` on 2026-11-06, at the time of this PR, and
   every listed file matched. Five files in `$E` are not in its manifest because
@@ -488,8 +493,9 @@ d65a9e3938970e11b610fb5b3c1dbc4b7f2ff1c64c91f1c855c0e4a23f8cb47c  forge-digest.s
   dry run only) were an agent's read-only capture and that steps 4, 5, 12, 13 and
   14 were the owner's. The probe (04), the gate reading after it (05), the sweep apply
   (12) and the wrapper restore (13) are therefore the owner's runs.
-- **The metadata files.** `$E` holds `07-metadata-frozen.txt` only, and that is what
-  is pasted. The later validator reading (a separate, prospective one) is in the
+- **A file that does not exist.** The brief for this section named a `07b`
+  metadata file. `$E` holds `07-metadata-frozen.txt` only, and that is what is
+  pasted. The later validator reading (a separate, prospective one) is in the
   recovery record below, not here.
 
 ### Launch record
@@ -1416,9 +1422,9 @@ lane envelope: stored copy equals the one the lane validated
 gate: clear — warnings: size-budget
 merged tree: make check is green on chunk/1-store-owner-history-in-a-migrated-sqlite-a2 merged with main (b66be28f53b72851be78daacec15e88b32db93e8), and was green on chunk/1-store-owner-history-in-a-migrated-sqlite-a2 alone first
 mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 29 of 135 probed changed line(s) are observed by no test: every mutation left the suite green (147 mutants run in 30s)
-  - src/the_squatfather/domain.py:12 `model_config = ConfigDict(frozen=True)` — no test failed under True -> False
-  - src/the_squatfather/domain.py:23 `strength_per_week: int = 3` — no test failed under 3 -> 4
-  - src/the_squatfather/domain.py:24 `cardio_per_week: int = 2` — no test failed under 2 -> 3
+  - src/the_squatfather/domain.py:12 [private product code omitted; see Squatfather PR #4 at 5c9b3c5]
+  - src/the_squatfather/domain.py:23 [private product code omitted; see Squatfather PR #4 at 5c9b3c5]
+  - src/the_squatfather/domain.py:24 [private product code omitted; see Squatfather PR #4 at 5c9b3c5]
 [… 7 lines trimmed …]
   - …and 19 more
 verdict: approve — 2 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/2/3/3/3/2
@@ -1461,12 +1467,12 @@ lane envelope: stored copy equals the one the lane validated
 gate: clear — no warnings
 merged tree: make check is green on chunk/2-vendor-the-garmin-exercise-catalogue-with-a2 merged with main (fa8c911938ffd581935a55f4533ec8d310dc9de5), and was green on chunk/2-vendor-the-garmin-exercise-catalogue-with-a2 alone first
 mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 6 of 74 probed changed line(s) are observed by no test: every mutation left the suite green (84 mutants run in 27s)
-  - scripts/refresh_catalogue.py:14 `DEFAULT_OUT = ROOT / "src" / "the_squatfather" / "catalogue" / "catalogue.json"` — no test failed under "src" -> ""; "the_squatfather" -> ""; "catalogue" -> ""; "catalogue.json" -> ""
-  - scripts/refresh_catalogue.py:51 `raise TypeError(f"exercises for {category!r} must be an object")` — no test failed under raise TypeError(f"exercises for {category!r} must be an obj… -> pass; f"exercises for {category!r} must be an object" -> ""
-  - scripts/refresh_catalogue.py:54 `raise TypeError(f"muscle data for {category}/{exercise} must be an object")` — no test failed under raise TypeError(f"muscle data for {category}/{exercise} mus… -> pass; f"muscle data for {category}/{exercise} must be an object" -> ""
+  - scripts/refresh_catalogue.py:14 [private product code omitted; see Squatfather PR #5 at 4c52a66]
+  - scripts/refresh_catalogue.py:51 [private product code omitted; see Squatfather PR #5 at 4c52a66]
+  - scripts/refresh_catalogue.py:54 [private product code omitted; see Squatfather PR #5 at 4c52a66]
 [… 3 lines trimmed …]
 verdict: approve — 1 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/3/2/3/3/3
-spot-check: tests/steps/test_chunk_2.py:24-29: scenario 1 counts the 1475 entries with primary muscles via `catalogue.allowed(EQUIPMENT_TAGS)` instead of counting directly, because Catalogue has no public iteration. The count is correct only because every equipment tag in catalogue.json is one of the 14 EQUIPMENT_TAGS keys, which holds today since both taggers use the same names. This is indirect, not weaker than the contract. Also, its 'When it is loaded' step doesn't load anything; the Given step does.
+spot-check: tests/steps/test_chunk_2.py:24-29: scenario 1 counts the 1475 entries with primary muscles via [private product code omitted; see Squatfather PR #5 at 4c52a66] instead of counting directly, because Catalogue has no public iteration. The count is correct only because every equipment tag in catalogue.json is one of the 14 EQUIPMENT_TAGS keys, which holds today since both taggers use the same names. This is indirect, not weaker than the contract. Also, its 'When it is loaded' step doesn't load anything; the Given step does.
 ```
 
 Second recommendation (run 13), after the lane's re-entry:
@@ -1536,13 +1542,13 @@ lane envelope: stored copy equals the one the lane validated
 gate: clear — warnings: size-budget
 merged tree: make check is green on chunk/3-summarise-the-week-and-diff-plans-a2 merged with main (fa8c911938ffd581935a55f4533ec8d310dc9de5), and was green on chunk/3-summarise-the-week-and-diff-plans-a2 alone first
 mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 39 of 127 probed changed line(s) are observed by no test: every mutation left the suite green (157 mutants run in 34s)
-  - src/the_squatfather/domain.py:144 `author: Literal["rules", "coach"] = "rules"` — no test failed under "rules" -> ""
-  - src/the_squatfather/rules/__init__.py:6 `__all__ = ["WeekSummary", "annotate", "diff", "summarise_week", "unexplained"]` — no test failed under "WeekSummary" -> ""; "annotate" -> ""; "diff" -> ""; "summarise_week" -> ""
-  - src/the_squatfather/rules/diff.py:13 `return value.strftime("%A")` — no test failed under value.strftime("%A") -> None; "%A" -> ""
+  - src/the_squatfather/domain.py:144 [private product code omitted; see Squatfather PR #6 at cb8948a]
+  - src/the_squatfather/rules/__init__.py:6 [private product code omitted; see Squatfather PR #6 at cb8948a]
+  - src/the_squatfather/rules/diff.py:13 [private product code omitted; see Squatfather PR #6 at cb8948a]
 [… 7 lines trimmed …]
   - …and 29 more
 verdict: approve — 1 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/2/3/3/3/3
-spot-check: tests/steps/test_chunk_3.py:32-50 (`_probe_state`): it builds the probe window from raw sets and ignores `data["corrections"]`, so the summary is computed from non-effective input (the squat 106 kg watch error shows up as a PB in line 3).
+spot-check: tests/steps/test_chunk_3.py:32-50 (`_probe_state`): it builds the probe window from raw sets and ignores [private product code omitted; see Squatfather PR #6 at cb8948a], so the summary is computed from non-effective input (the squat 106 kg watch error shows up as a PB in line 3).
 ```
 
 ```
@@ -1570,8 +1576,8 @@ https://github.com/wielas/Squatfather/pull/7
 implementer model: gpt-5.6-luna xhigh — source: rollout (Codex own session log; evidence) printf '\n%s' lane envelope: stored copy equals the one the lane validated;; esac)
 scenario_integrity
 
-- **scenario_integrity** (block) — tests/steps/test_chunk_4.py:117 `state["constraints"].append(Constraint(day=date(2026, 10, 15), kind="one_off", label="Squash"))`. This appends the squash to the fixture's constraints, which already mark Wed 14, Thu 15 and Fri 16 as unavailable (tests/probes/m1/history.json:262-275). That leaves 4 candidate days: Mon 12, Tue 13, Sat 17, Sun 18. The cap at src/the_squatfather/rules/schedule.py:39, `run_count = min(run_count, max(0, len(candidates) - strength_count))`, then allows only 4-3 = 1 run, whether or not the one-off is subtracted at schedule.py:38. The squash also sits on a day that was already taken. So the Then at test_chunk_4.py:141, 'the plan holds one run instead of two', passes even if the `- one_offs` subtraction is deleted. No other test exercises one-offs.
-  - action: 1. In tests/steps/test_chunk_4.py `probe_profile_with_squash` (lines 114-118), replace the `.append(...)` line with `state["constraints"] = [Constraint(day=date(2026, 10, 15), kind="one_off", label="Squash")]`. This drops the fixture's Wed-Fri away days for this scenario and leaves 6 candidate days, so the plan gets 1 run with the one-off and would get 2 runs without it. 2. In `assert_one_off_replaces_run` (line 141 onward), keep the existing run-count assertion and add `assert all(s.day != date(2026, 10, 15) for s in scenario_state["plan"].sessions)` and `assert sum(s.kind == "strength" for s in scenario_state["plan"].sessions) == 3`. 3. Append a line to the CHUNK-4 entry in docs/decision-log.md saying the squash scenario replaces the fixture's away-day constraints, because Thursday is already an away day in the frozen fixture and the scenario would otherwise pass without testing one-offs. Then confirm the scenario fails if `- one_offs` is temporarily removed from src/the_squatfather/rules/schedule.py:38, and restore it.
+- **scenario_integrity** (block) — tests/steps/test_chunk_4.py:117 [private product code omitted; see Squatfather PR #7 at 815b9e1] The finding says the squash scenario cannot show that one-offs matter: the fixture's constraints (tests/probes/m1/history.json:262-275) already leave too few candidate days, so the run count at src/the_squatfather/rules/schedule.py:38-39 would be the same without them, and the assertion at tests/steps/test_chunk_4.py:141 passes either way.
+  - action: [private product code omitted; see Squatfather PR #7 at 815b9e1] The action asks for the scenario's setup to be replaced (tests/steps/test_chunk_4.py:114-118), its assertions strengthened (from line 141), a line added to docs/decision-log.md, and a check that the scenario fails when the one-off subtraction at src/the_squatfather/rules/schedule.py:38 is removed.
 ```
 
 Then, after the lane re-entered (run 18), the recommendation (run 19):
@@ -1591,9 +1597,9 @@ lane envelope: stored copy equals the one the lane validated
 gate: clear — warnings: size-budget
 merged tree: make check is green on chunk/4-build-the-baseline-plan-and-validate-plans-a2 merged with main (7be05b384e0839655d8177984f39a7013e113b86), and was green on chunk/4-build-the-baseline-plan-and-validate-plans-a2 alone first
 mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 51 of 109 probed changed line(s) are observed by no test: every mutation left the suite green (120 mutants run in 46s)
-  - src/the_squatfather/rules/baseline.py:26 `if item.performed_on < week_start:` — no test failed under < -> >=
-  - src/the_squatfather/rules/baseline.py:27 `grouped.setdefault((item.category, item.exercise), []).append(item)` — no test failed under grouped.setdefault((item.category, item.exercise), []).appe… -> pass
-  - src/the_squatfather/rules/baseline.py:32 `latest[key] = [item for item in items if item.performed_on == latest_day]` — no test failed under == -> !=
+  - src/the_squatfather/rules/baseline.py:26 [private product code omitted; see Squatfather PR #7 at 815b9e1]
+  - src/the_squatfather/rules/baseline.py:27 [private product code omitted; see Squatfather PR #7 at 815b9e1]
+  - src/the_squatfather/rules/baseline.py:32 [private product code omitted; see Squatfather PR #7 at 815b9e1]
 [… 7 lines trimmed …]
   - …and 41 more
 verdict: approve — 5 finding(s) (derived; the scorer asserted approve-with-nits) — scores 2/2/2/3/3/3
@@ -1619,8 +1625,8 @@ Runs (5):
 `tests/steps/test_chunk_4.py:117`. The operator then merged the recommendation.
 **Reading, beside the metrics block (see *End of M1*).** `make metrics` reports
 `bounce rate ... tier 1  0.00 (0/5 chunk cards)   from 0/5 verdicts` while this
-ledger line contains `changes_requested`. The pasted output does not explain the
-difference; it is recorded as an unreconciled measurement, not corrected.
+ledger line contains `changes_requested`. The reason is a measurement gap, explained
+under *End of M1*; the block is pasted as printed and is not corrected.
 
 
 #### CHUNK-5 — `t_e964f95f` — PR #9 — the human chunk
@@ -1639,9 +1645,9 @@ implementer model: NOT RECORDED — no completed run on this chunk card names th
 gate: clear — warnings: touches
 merged tree: make check is green on chunk/5-guard-every-model-payload-behind-one-audited-a2 merged with main (1763c261bdccd7a1a12555b5ed6bd3c541969059), and was green on chunk/5-guard-every-model-payload-behind-one-audited-a2 alone first
 mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 31 of 103 probed changed line(s) are observed by no test: every mutation left the suite green (103 mutants run in 412s; budget ended with 158 line(s) not fully probed)
-  - scripts/egress_proxy.py:23 `_IDLE_S = 300` — no test failed under 300 -> 301
-  - scripts/egress_proxy.py:27 `daemon_threads = True` — no test failed under True -> False
-  - scripts/egress_proxy.py:28 `allow_reuse_address = True` — no test failed under True -> False
+  - scripts/egress_proxy.py:23 [private product code omitted; see Squatfather PR #9 at 0ec8c80]
+  - scripts/egress_proxy.py:27 [private product code omitted; see Squatfather PR #9 at 0ec8c80]
+  - scripts/egress_proxy.py:28 [private product code omitted; see Squatfather PR #9 at 0ec8c80]
 [… 7 lines trimmed …]
   - …and 21 more
 verdict: approve — 2 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/3/3/2/3/2
@@ -1670,7 +1676,7 @@ The change made to the PR after that recommendation (`$S/chunk5-post-verdict-dif
  4 files changed, 118 insertions(+), 13 deletions(-)
 ```
 
-The verifier's completion record for the card (run 23 metadata, `$S/chunk5-runs.json`; the findings and the cards proposed, re-indented JSON of the stored values):
+The verifier's completion record for the card (run 23 metadata, `$S/chunk5-runs.json`; re-indented JSON of the stored values; the `evidence` and `action` text of each finding quotes product source and is not pasted):
 
 ```
 {
@@ -1687,42 +1693,21 @@ The verifier's completion record for the card (run 23 metadata, `$S/chunk5-runs.
     {
       "dimension": "scope_discipline",
       "severity": "nit",
-      "evidence": "docs/REQUIREMENTS.md NFR-3: \"key enforces zero-data retention. No upstream pin is pinned (owner decision, 2026-11-02)\" — the branch rewrites NFR-3 after the decision-log entry \"NFR-3's 'one pinned upstream, no fallback' was therefore not met at acceptance\"",
-      "action": "No code change. The operator should confirm that the owner approved dropping the pinned-upstream clause from NFR-3 in this chunk branch, as docs/decision-log.md (2026-11-02 CHUNK-5, last entry) claims. If the owner did not, revert the NFR-3 hunks in docs/REQUIREMENTS.md, docs/adr/0008-model-provider-over-stdlib-https.md, docs/ARCHITECTURE.md and docs/feasibility.md, and re-run scenario 5 with an upstream pin set on the key."
+      "evidence": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]",
+      "action": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]"
     },
     {
       "dimension": "doc_reconciliation",
       "severity": "nit",
-      "evidence": "src/the_squatfather/coach/seam.py HttpsModel docstring: \"The pin, zero-data-retention and no-fallback settings live on the provider account and key\"",
-      "action": "In src/the_squatfather/coach/seam.py, change the HttpsModel docstring sentence to \"Zero-data retention and the other privacy settings live on the provider account and key, not in the request body (ADR-0008).\" ADR-0008 dropped the pin and no-fallback controls."
+      "evidence": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]",
+      "action": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]"
     }
   ],
   "nits_as_cards": [
     "Remove stale 'pin'/'no-fallback' wording from HttpsModel docstring (seam.py)",
     "Operator: confirm owner sign-off on NFR-3 pinned-upstream removal made in CHUNK-5 branch"
-  ],
-  "spot_check_suggestion": "docs/REQUIREMENTS.md NFR-3 hunk, together with the last two docs/decision-log.md entries. The chunk branch changed a requirement after scenario 5 ran without meeting the old wording. Confirm the owner actually made that decision."
+  ]
 }
-```
-
-The `seam.py` part of that change (`$S/chunk5-post-verdict.diff`):
-
-```
-diff --git a/src/the_squatfather/coach/seam.py b/src/the_squatfather/coach/seam.py
-index ba76655..8961d1c 100644
---- a/src/the_squatfather/coach/seam.py
-+++ b/src/the_squatfather/coach/seam.py
-@@ -117,8 +117,8 @@ class HttpsModel:
-     """One POST to `{base_url}/chat/completions` per request, over stdlib HTTPS.
-
-     `urllib` honours `HTTPS_PROXY`, which is how the egress proxy observes it.
--    The pin, zero-data-retention and no-fallback settings live on the provider
--    account and key, not in the request body (ADR-0008).
-+    Zero-data retention and spend limits live on the provider account and key,
-+    not in the request body (ADR-0008).
-     """
-
-     def __init__(
 ```
 
 **Reading.** The recommendation (run 22, 2 November 11:33 board time) covers the head
@@ -1730,7 +1715,11 @@ the verifier reviewed. The PR commits above (`$E/10b`) show that the commit
 `2dfaf68` ("fix(CHUNK-5): address judge nits: guard checks keys and stray contain…") was
 committed after it, and the PR was merged at `2dfaf68`, not at `0ec8c80`. The preserved
 card events show no later verifier review. CI on `2dfaf68`: both checks `COMPLETED SUCCESS`
-(`10-ci-summary.txt`).
+(`10-ci-summary.txt`). The change includes four lines in `src/the_squatfather/coach/seam.py`
+(lines 117 to 124 of the post-change file, the `HttpsModel` docstring): a wording change that
+answers the verifier's second finding (`doc_reconciliation`, above). The rest is guard code,
+tests and the decision log (diffstat above). [private product code omitted; see Squatfather PR #9
+at 2dfaf68]
 **Disclosures (judgement; sources: the recovery record, entries of 2026-11-04 and
 2026-11-05, and the owner's answers there).**
 - **The verdict covered `0ec8c80`; `2dfaf68` was merged.** The original recommendation is
@@ -1764,12 +1753,13 @@ ledger events above.
 | CHUNK-4, run 19 | `mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 51 of 109 probed changed line(s) are observed by no test: every mutation left the suite green (120 mutants run in 46s)` | merged |
 | CHUNK-5, run 22 | `mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 31 of 103 probed changed line(s) are observed by no test: every mutation left the suite green (103 mutants run in 412s; budget ended with 158 line(s) not fully probed)` | merged, at a head the verifier did not review |
 
-**Judgement (source: `docs/run-a.md`, *What is measured*, and the owner decisions of
-2026-11-04 and 2026-11-05).** The protocol asks the operator to decide the probe's
-switch (`FORGE_MUTATION_PROBE_BOUNCE`) and its precision from this row, at M1's
-checkpoint. **No such decision is recorded in any source read for this PR.** The
-operator's own judgement of each PR, beyond merge or bounce, is not recorded either. The
-switch stays unset and the row is a list, as the protocol says it is. No precision figure
+**Judgement (source: `docs/run-a.md`, *What is measured*, and the owner ruling below).**
+The protocol asks the operator to decide the probe's switch (`FORGE_MUTATION_PROBE_BOUNCE`)
+and its precision from this row, at M1's checkpoint.
+**Owner ruling, 2026-11-06 (verbatim choice: "Keep reporting-only").**
+`FORGE_MUTATION_PROBE_BOUNCE` stays unset. Precision is measured in Run B (shadow) and
+decided at the M2 checkpoint. The operator's own judgement of each PR, beyond merge or
+bounce, is not recorded. The row is a list, as the protocol says it is. No precision figure
 is computed here.
 
 
@@ -1880,11 +1870,15 @@ from the delivered text itself, not from the owner.
 |---|---|---|---|---|
 | 31 Oct 09:00:23 | 694 | 1 / 5 / 2 | "Yes, nothing missing" (`2026-11-04-snapshot/forge-s7-evidence-decision-table-2026-11-04.md`, a working record) | Judged late and non-blind, after an operator summary; retained only by the owner's ruling of 1 Nov |
 | 1 Nov 15:09:31 | 696 | 3 / 5 / 1 | "Yes, nothing missing" (decision table) | Delivered off-schedule (no 09:00 run that day; cause not confirmed). Judged late and non-blind, after a summary; retained only by the 1 Nov ruling |
-| 2 Nov 09:00:31 | 697 | 0 / 5 / 1 | Owner "saw and approved" it in the 2 Nov recovery chat, "without yet replying to it" (recovery record). **Not a yes/no line** | Read phone-only before any board: owner affirmation of 4 Nov |
-| 3 Nov 09:00:32 | 698 | 1 / 5 / 1 | Owner "found their contents acceptable", reported 4 Nov (recovery record). **Not a yes/no line**; with a request for clearer separate lines for landed work, waiting work, the decision and risk, and no job-management footer | Phone-only before any board: owner affirmation of 4 Nov |
-| 4 Nov 09:00:32 | 699 | 0 / 5 / 1 | Same entry as 3 Nov: "contents acceptable". **Not a yes/no line** | Phone-only before any board: owner affirmation of 4 Nov |
+| 2 Nov 09:00:31 | 697 | 0 / 5 / 1 | Owner "saw and approved" it in the 2 Nov recovery chat, "without yet replying to it" (recovery record). **Recorded as yes by owner ruling of 2026-11-06** | Read phone-only before any board: owner affirmation of 4 Nov |
+| 3 Nov 09:00:32 | 698 | 1 / 5 / 1 | Owner "found their contents acceptable", reported 4 Nov (recovery record). **Recorded as yes by owner ruling of 2026-11-06**; with a request for clearer separate lines for landed work, waiting work, the decision and risk, and no job-management footer | Phone-only before any board: owner affirmation of 4 Nov |
+| 4 Nov 09:00:32 | 699 | 0 / 5 / 1 | Same entry as 3 Nov: "contents acceptable". **Recorded as yes by owner ruling of 2026-11-06** | Phone-only before any board: owner affirmation of 4 Nov |
 | 5 Nov 09:00:33 | 700 | 0 / 5 / 1 | **yes** (`gw2-lines-2026-11-05-06.md`), with the owner's note, verbatim: "The "What it means" part of the digest should be a bit longer and clearer. I'm also missing a "What to do" or "How to progress" part of the digest." | Owner, 6 Nov: "I read them before looking at the board." Phone-only was **not restated** for this day |
 | 6 Nov 09:00:34 | 701 | 0 / 5 / 1 | **yes**, "nothing stated" as wrong or missing (`gw2-lines-2026-11-05-06.md`) | Same: read before the board; phone-only not restated |
+
+**Owner ruling, 2026-11-06, on 2 to 4 November (verbatim):** "Yes, they were yes." The
+three lines are recorded as yes under this ruling; before it they stood in the recovery record
+as an approval (2 Nov) and "acceptable" (3 and 4 Nov), not as yes/no lines.
 
 The owner's 4 November affirmation, verbatim (recovery record): "yes, I read the phone only
 - board is hard to reach remotely". The 6 November statement, verbatim
@@ -2112,18 +2106,15 @@ Spend: no metered driver runs on the day
 ```
 
 **Judgement: GW2's done-when, "seven digests delivered and all seven lines say yes".**
-**Met with caveats, and not as a clean pass.**
+**Met — 2–4 Nov by owner ruling of 2026-11-06.** The provenance caveats stay.
 - **Seven deliveries: evidenced.** Seven `message_id`s (694, 696 to 701), each from the
   gateway log's "delivered to telegram" line.
-- **"All seven lines say yes": evidenced for four.** 31 Oct, 1 Nov, 5 Nov and 6 Nov
-  have a plain yes. 2, 3 and 4 Nov have an owner approval or "acceptable" in the
-  recovery record and no yes/no line. They are not "no" lines, and no source records a "no"
-  for any day. Whether they count as yes lines is **an owner ruling** (listed first
-  under *Flip verdict*); if they do not, the done-when is not met.
+- **Seven yes lines.** 31 Oct, 1 Nov, 5 Nov and 6 Nov are plain yes lines. 2, 3 and 4 Nov are
+  yes by the owner ruling above. No source records a "no" for any day.
 - **Provenance.** The protocol prescribes phone only, before any board. 31 Oct and
-  1 Nov were late and non-blind and stand only by the owner's 1 November ruling. 2 to 4 Nov
-  stand on the owner's affirmation of 4 November, not on an observed timing. 5 and 6 Nov
-  were read before the board, and phone-only was not restated.
+  1 Nov were late and non-blind and are retained by the owner's 1 November ruling. 2 to 4 Nov
+  were read phone-only before the board, on the owner's affirmation of 4 November (not an
+  observed timing). 5 and 6 Nov were read before the board; phone-only was not restated.
 - **The 5 November line is a yes with a stated deficiency.** The protocol's
   parking-lot rule is for "no" lines. The note was acted on in the source by #100
   ("Digest: clearer 'What it means' and a new 'What to do' section"); that formatter is not
@@ -2492,9 +2483,17 @@ recomputed.**
   when the board was bootstrapped (CHUNK-5, `GATE-M1`, `GATE-M2`, `GATE-M3`, author
   `default`), and the remaining unblock is CHUNK-5's hand-off on 2 Nov. S-1 left no event.
 - `merged without the operator  0.00 (0/5)` is the design of recommend-only.
-- **Unreconciled:** the block's `bounce rate ... 0.00 (0/5 chunk cards)   from 0/5
-  verdicts` and its five `approve-with-nits` verdicts, against CHUNK-4's `changes_requested`
-  in the ledger (run 17, pasted under CHUNK-4). The output does not say why.
+- **Why the block undercounts verifier bounces — a Reading of the frozen runtime's scripts,
+  read-only in `~/dev/forge-runtime` at `0c69368`.** `scripts/metrics.sh` (lines 430 to 441,
+  and 469) counts only `task_runs` rows whose metadata schema is `forge.judge.v1` and sums
+  those whose `verdict` is `bounce`. `scripts/prejudge-review.sh` (lines 569 to 624) records
+  that `kanban_request_changes` and `kanban_block` carry no metadata: a verdict's envelope is
+  written to one host file per board and card (replaced with `mv -f` each time) and only the
+  merge-watcher's `completed` run carries it. So the five counted verdicts are each card's
+  **final** `approve-with-nits`. CHUNK-4's run 17 `changes_requested` and the D-1 drill leave
+  no metadata row. The block's `bounce rate  0.00 (0/5 chunk cards)` is therefore not a count
+  of verifier bounces: the metric undercounts them. This is a measurement gap, not a Run A
+  result. The block above is unaltered.
 - Estimate against actual: `GATE-M1` says `Estimate: 5 chunks` (`02-board-before-probe.txt`
   below); the block says `5 chunk cards, 5 with a recorded merge`. The block reports no
   bounce rounds, subject to the point above.
@@ -2714,18 +2713,19 @@ digest exit=0
 *Judgement throughout, with sources. The definitions are pasted from this file; the
 evidence is the pasted output above.*
 
-**Owner rulings outstanding. None blocks this record, and none can change its overall
-outcome, because clause 1 alone leaves the criterion unmet.**
-1. **Clause 2, undetermined — owner ruling needed.** Does the operator's post-recommendation
-   change of a recommended PR's head count as "the operator bounced" a PR the verifier
-   recommended? It arises for CHUNK-5 (`2dfaf68`, merged instead of the reviewed `0ec8c80`)
-   and, in a milder form, for CHUNK-2 (a merge-main conflict resolution, `690b541`, after the
-   reviewed head).
-2. **GW2, 2 to 4 November.** Do the owner's "approved" and "acceptable" for those three days
-   stand as yes lines? If they do, GW2's done-when is met with the caveats stated; if not,
-   it is not met.
-3. **FL5's probe switch.** `FORGE_MUTATION_PROBE_BOUNCE` stays unset. The protocol asked for
-   a decision at M1's checkpoint from the mutation row; none is recorded.
+**Owner rulings recorded 2026-11-06.** Three rulings were given in a working session on
+2026-11-06. **No owner ruling is left outstanding.**
+1. **GW2, 2 to 4 November (verbatim: "Yes, they were yes.").** The three lines are recorded as
+   yes. GW2's done-when is met on that basis, with the provenance caveats (under *Digests*).
+2. **Flip clause 2 (verbatim choice: "CHUNK-5 counts, CHUNK-2 not").** A substantive operator
+   code change to a recommended head counts as a bounce. CHUNK-5 was recommended at `0ec8c80`
+   and merged at `2dfaf68` with substantive changes, so it counts. CHUNK-2's `690b541` is a
+   conflict-only merge of `main` and does not count. Under this ruling clause 2 is **not met**.
+   The reading is the owner's, made after the run; it is not the pre-registered wording.
+3. **FL5's probe switch (verbatim choice: "Keep reporting-only").** See *Per chunk*.
+
+The overall outcome is the same on any reading, because clause 1 alone leaves the criterion
+unmet.
 
 #### Clause 1 — "the verifier bounced every seeded defect"
 
@@ -2797,26 +2797,37 @@ board does not carry GitHub-only actions (the metrics method says so), so a revi
 or a hand edit on GitHub would not appear; the pack holds no GitHub review records, and the
 retrospective reports none for PR #9.
 
-**The deciding texts.** Clause 2 names `bounce.sh` ("Any other `bounce.sh` on a recommended
-PR fails this clause"). The operator's loop calls every disagreement, made with
-`bounce.sh`, a finding. The criterion itself says "bounced" and does not define it. None of
-these three texts says whether pushing further commits to a recommended PR, after the
-recommendation and without `bounce.sh`, is a disagreement. The facts that bear on it:
-- CHUNK-5 `2dfaf68` was committed after the hold and changed guard, seam, tests and the
-  decision log (`chunk5-post-verdict-diffstat.txt`, above). Its commit message says it
-  addresses "judge nits". The product's decision log attributes six fixes to a separate
-  subagent review; its `seam.py` hunk rewrites the very docstring sentence that the board
-  verifier's own second finding quoted and asked to change. So the head change is partly
-  the operator acting on the verifier's nits and partly on another reviewer's. The
-  implementer of CHUNK-5 is the operator (`human-implemented chunks  1 of 5`).
-- CHUNK-2 `690b541` is a merge of `main` into the branch, a conflict resolution.
+**Two readings, labelled.**
 
-**Assessment: undetermined — owner ruling needed.** On the clause's own mechanism
-(`bounce.sh`), the ledger shows no non-excluded bounce. Whether the head changes are
-bounces is not settled by the wording, and this record does not decide it. The honest
-statement is: no non-excluded `bounce.sh` is evidenced, and two recommended PRs were
-merged at heads other than the ones the verifier reviewed. It does not change the overall
-verdict.
+*(a) The pre-registered wording.* Clause 2's reading (lines 392 to 395) says: "Any other
+`bounce.sh` on a recommended PR fails this clause until it is triaged into the parking lot,
+fixed in FL5 and replayed." The operator's loop (lines 193 to 197) names `bounce.sh` as the
+disagree path. No non-excluded `bounce.sh` is evidenced in the board ledger (the D-1 drill is
+excluded). **On the frozen wording alone, clause 2 is established, on board-only evidence**
+(the board carries no GitHub-only actions; see above).
+
+*(b) The owner's ruling, 2026-11-06 (verbatim choice: "CHUNK-5 counts, CHUNK-2 not").* A
+substantive operator code change to a recommended head counts as a bounce. The facts it
+rests on:
+- CHUNK-5 `2dfaf68` was committed after the hold and changed guard code, tests and the
+  decision log (`chunk5-post-verdict-diffstat.txt`, above). Its commit message says it
+  addresses "judge nits"; the product's decision log attributes six fixes to a separate
+  subagent review, and the `seam.py` change answers the verifier's own second finding. The
+  implementer of CHUNK-5 is the operator (`human-implemented chunks  1 of 5`). The verdict
+  covered `0ec8c80`; `2dfaf68` was merged.
+- CHUNK-2 `690b541` is a merge of `main` into the branch, a conflict resolution, with no
+  change of substance recorded. It does not count.
+
+No triage into the parking lot, FL5 fix or replay of CHUNK-5's bounce is recorded in any
+source read for this PR.
+
+**Assessment under the owner's ruling: NOT met** (CHUNK-5 counts as an operator bounce of a
+recommended PR). On the frozen wording alone it is established.
+
+**Separate finding, independent of how clause 2 is read.** Two PRs were merged at heads the
+verifier had not reviewed: CHUNK-2 at `690b541` and CHUNK-5 at `2dfaf68`. The recommend-only
+flow does not stop a merge at a changed head. S8b's head-drift flag (#101) addresses it in
+source and is not deployed.
 
 #### Clause 3 — "every defect the milestone probe found was one per-chunk verification could not have seen"
 
@@ -2842,8 +2853,9 @@ unknown defects.
 
 #### Overall
 
-**The flip criterion is NOT met.** Clause 1 is not established, clause 2 is undetermined,
-clause 3 holds vacuously. The protocol's text is "Otherwise milestone 2 runs in shadow
+**The flip criterion is NOT met.** Clause 1 is not established, clause 2 is not met under the
+owner's ruling (established on the frozen wording alone), clause 3 holds only vacuously. Clause
+1 alone is enough. The protocol's text is "Otherwise milestone 2 runs in shadow
 too" (lines 382 to 383). **Run B runs in shadow.**
 
 The separate prerequisites for merge mode, P9 and P10(4) to (5) (lines 401 and 402), were
@@ -5820,11 +5832,15 @@ open" and the list headed "What remains for S7" above; those are left as written
   and are validated. Yes. I read them before looking at the board." Phone-only reading was
   not restated for those two days.
 - **Outcome.** The flip criterion is **not met**; run B runs in shadow. Clause 1 is not
-  established (S-1 uncredited), clause 2 is undetermined pending an owner ruling on a
-  recommended PR's changed head (CHUNK-5, and in a milder form CHUNK-2), and clause 3
-  holds only vacuously (the probe found nothing). GW2's done-when is met with caveats.
-  Owner rulings still outstanding: the clause 2 question, whether the 2 to 4 November
-  approvals stand as yes lines, and FL5's probe switch.
+  established (S-1 uncredited). Clause 2 is **not met under the owner's ruling of 2026-11-06**
+  ("CHUNK-5 counts, CHUNK-2 not"); on the frozen wording alone it is established on
+  board-only evidence. Clause 3 holds only vacuously (the probe found nothing). Two PRs
+  (CHUNK-2, CHUNK-5) merged at heads the verifier had not reviewed, recorded as a separate
+  finding. GW2's done-when is **met — 2–4 Nov by owner ruling of 2026-11-06** ("Yes, they were
+  yes."), with the provenance caveats under *Results › Digests*. FL5's probe switch: owner
+  ruling of 2026-11-06, "Keep reporting-only"; `FORGE_MUTATION_PROBE_BOUNCE` stays unset,
+  and precision is measured in run B (shadow) and decided at the M2 checkpoint. **No owner
+  ruling is outstanding.**
 - **Next operator step, not done here: deploy what main now carries.** The runtime
   checkout is still at `0c69368c96f633f685aac22069d038838af23847`, Run A's `FORGE_SHA`.
   From the operator's shell: `git -C ~/dev/forge-runtime pull --ff-only`, then `make

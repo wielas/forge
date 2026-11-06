@@ -1,8 +1,9 @@
 # Forge — current state
 
 **S7 closeout, 2026-11-06:** Run A is closed (epic S7, "met in part"). `docs/run-a.md`'s
-*Results* paste the evidence. **Not proven:** the flip criterion is *not met* (S-1 is uncredited,
-clause 2 awaits an owner ruling, clause 3 holds only vacuously), so **run B runs in shadow**.
+*Results* paste the evidence. **Not proven:** the flip criterion is *not met* (S-1 is uncredited;
+clause 2 is not met under the owner's ruling of 2026-11-06, "CHUNK-5 counts, CHUNK-2 not"; clause 3
+holds only vacuously), so **run B runs in shadow**. No owner ruling is outstanding.
 **Proven (by the probe, not by the flip):** the M1 probe passed 5 of 5 at `f0fd89f`; `GATE-M1`
 is still held. **Next, for the operator:** deploy what main carries (#97 to #102) with `git -C
 ~/dev/forge-runtime pull --ff-only`, then `make preflight`; rollback is `0c69368`. #98 changes
@@ -338,7 +339,7 @@ an isolated `HERMES_HOME` nothing is spawnable, and the control without the park
 ends in the same place — so the race itself is untested until run A.
 *Run A's drill D-1 then ran it on a live board (CHUNK-2, 2026-10-31): the card events show the
 park, `unblocked`, `review_reopened` with no `claimed` between them, and the lane re-entered
-on the same PR. The owner's record calls all three clauses met; the `bounce.sh` console output
+on the same PR. Per the owner's record all three clauses are met; the `bounce.sh` console output
 is not in the evidence pack. The tick landing inside the window remains improbable, not
 observed.*
 Since epic S6c (P21), a human-tier chunk handed off from outside a worker can be
@@ -371,7 +372,8 @@ through it.
   under `FORGE_MUTATION_PROBE_BOUNCE=1`. What that does NOT prove:
   - Its precision on a live run. Run A produced the holds (29 of 135, 6 of 74, not run,
     39 of 127, 51 of 109 and 31 of 103 lines unobserved, every PR merged) and no precision
-    was computed. **The owner's decision on its switch is not recorded**; it stays unset.
+    was computed. **Owner ruling, 2026-11-06: "Keep reporting-only"**; the switch stays unset,
+    and precision is measured in run B (shadow) and decided at the M2 checkpoint.
   - That it fits the verifier's 1800 s terminal timeout on every PR. The default
     budget is 420 s; the longest replay, JobApp C21, used 300 s of it.
   - Anything for a non-Python product.
@@ -387,14 +389,17 @@ through it.
   `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. What that
   does NOT prove:
   - ~~No live post-FL3 board exists yet~~ Run A's board `squatfather-run-a2` is the first
-    (`docs/run-a.md`, *Results*). One number there disagrees with the ledger: the bounce
-    rate reads 0/5 beside a `changes_requested` on CHUNK-4. Unreconciled.
+    (`docs/run-a.md`, *Results*). **`make metrics` undercounts verifier bounces:** its bounce rate
+    reads 0/5 beside a `changes_requested` on CHUNK-4, because only each card's final verdict
+    reaches a run's metadata (`metrics.sh` counts `forge.judge.v1` rows; `kanban_request_changes`
+    carries none).
   - PR open → merge is a board proxy, not GitHub's timestamps.
   - ~~The digest has never been delivered by `hermes cron --no-agent`.~~ It was, seven times
     (31 October to 6 November, Telegram `message_id` 694 and 696 to 701). Its done-when — a
-    week of digests read from a phone — is **met with caveats**: four plain yes lines, three
-    approvals (2 to 4 November) that are not yes/no lines, and read-before-board provenance
-    that rests on the owner's word for 2 to 6 November.
+    week of digests read from a phone — is **met: 2 to 4 November by owner ruling of 2026-11-06**
+    ("Yes, they were yes."). Provenance caveats: 31 October and 1 November were late and
+    non-blind, retained by the 1 November ruling; read-before-board rests on the owner's word
+    for 2 to 6 November.
 - **Planning with milestones and gates, live (epic S5; PL1–PL4, MS1, MS2's
   declaration).** `scripts/plan-check.sh` executes what `/scope` and
   `/architect` promise:
