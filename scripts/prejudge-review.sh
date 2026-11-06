@@ -650,11 +650,28 @@ hold_call() {  # $1=reason, already carrying its registry class
 # without merging (a race, an unmergeable state) must not complete a card whose
 # work is not on `main`.
 merge_mode() { [ "${FORGE_VERIFIER_MERGE:-}" = 1 ]; }
-# Return 1: nothing was merged. Return 4: `gh pr merge` ACCEPTED the merge and
-# GitHub did not confirm it afterwards: the work is probably on the base branch,
-# and the card has to be held where the merge-watcher will finish it (see the
-# caller). The completion is NOT made here (no board writes): the caller names
-# `kanban_complete`, with the `merge-pending:` hold as its `on_error`.
+# Three answers, never two: `merged`, `unmerged` (GitHub answered, and the PR is not merged) and
+# `unreadable` (it did not answer, twice). A read that fails once is retried once.
+pr_merge_state() {
+  local try out
+  for try in 1 2; do
+    out="$(gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null)" \
+      && printf '%s' "$out" | jq -e 'has("state")' >/dev/null 2>&1 && {
+        printf '%s' "$out" | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null \
+          && echo merged || echo unmerged
+        return 0; }
+    [ "$try" = 1 ] && sleep 1
+  done
+  echo unreadable
+}
+# Return 1: nothing was merged. Return 4: the merge LANDED, or `gh pr merge`
+# ACCEPTED it, and GitHub did not confirm it afterwards: the work is probably on
+# the base branch, and the card has to be held where the merge-watcher will finish
+# it (see the caller). Return 5: the PR's head is not the head this run verified,
+# so nothing was attempted (epic P9). The completion is NOT made here (no board
+# writes): the caller names `kanban_complete`, with the `merge-pending:` hold as
+# its `on_error`.
+MERGE_REFUSAL=""
 route_merge() {
   # `--match-head-commit` is not belt-and-braces: without it this merges whatever
   # the head is NOW, and every stage above read the PR separately over several
@@ -663,10 +680,39 @@ route_merge() {
   # VERIFIED_HEAD means the read failed, and a merge that cannot name what it
   # verified must not happen at all.
   [ -n "$VERIFIED_HEAD" ] || return 1
-  gh pr merge --squash --delete-branch --match-head-commit "$VERIFIED_HEAD" "$PR_URL" \
-    >/dev/null 2>&1 < /dev/null || return 1
-  gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null \
-    | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null || return 4
+  # P9 (owner decision, 2026-11-05): MERGE MODE REFUSES A HEAD THAT MOVED AFTER THE
+  # VERDICT. The pin above only fails the merge at GitHub; this refuses it here, by
+  # name, before `gh pr merge` is asked at all, and compares the head the verdict
+  # was ABOUT (the gate's own read, `$GATE .head`, which the scorer's diff came
+  # from) with the head Stage 0 pinned and the head the PR has now. Review is NOT
+  # re-opened by this: the card is held for the operator, and a merge made later
+  # is flagged by the merge-watcher as a head drift, never counted as verified.
+  local verdict_head live_head
+  verdict_head="$(jq -r '.head // empty' "$GATE" 2>/dev/null)"
+  live_head="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
+  [ -n "$verdict_head" ] && [ -n "$live_head" ] || return 1
+  if [ "$verdict_head" != "$VERIFIED_HEAD" ] || [ "$live_head" != "$VERIFIED_HEAD" ]; then
+    MERGE_REFUSAL="head-drift — the verdict is about ${verdict_head:0:12} (pinned ${VERIFIED_HEAD:0:12}) and $PR_URL is now at ${live_head:0:12}, so nothing was merged"
+    return 5
+  fi
+  if ! gh pr merge --squash --delete-branch --match-head-commit "$VERIFIED_HEAD" "$PR_URL" \
+         >/dev/null 2>&1 < /dev/null; then
+    # A NON-ZERO EXIT IS NOT "NOTHING MERGED" (epic P10(4)). `gh pr merge` can land the
+    # squash and then fail on the rest (`--delete-branch`, say). Treating that as
+    # return 1 blocked the card `other: handoff-integrity`, which the merge-watcher
+    # does not sweep, so the PR was on the base branch and the card was held forever.
+    # GitHub is asked, and the answer has three values: MERGED takes rc 4 (held
+    # `merge-pending:`, finished by the watcher); a definite not-merged answer is a
+    # merge that did not take (return 1); and an answer that cannot be read, after one
+    # retry, ALSO takes rc 4 — the hold is the one state the watcher resolves later
+    # (it completes on MERGED and is silent while the PR is OPEN), whereas return 1
+    # would strand a merge that did land.
+    case "$(pr_merge_state)" in
+      unmerged) return 1;;
+      *) return 4;;
+    esac
+  fi
+  [ "$(pr_merge_state)" = merged ] || return 4
   return 0
 }
 
@@ -795,7 +841,9 @@ $1")")" \
 # merge (route_merge) rather than merging something it cannot name. Reading it
 # earlier does not close the window — the gate's CI read still happens after this —
 # but it makes a moved head a REFUSED MERGE instead of an unnoticed one, which is
-# the difference between a failure and a defect. P9 owns the rest.
+# the difference between a failure and a defect. `route_merge` closes the rest (epic P9):
+# it refuses a head that is not the one the verdict was about, and the merge-watcher
+# flags a merge the operator made at a different head.
 #
 # In fixture mode it comes out of the recorded `pr.json`, so no dry-run case needs
 # a live `gh`.
@@ -1322,6 +1370,23 @@ case "$VERDICT" in
     stash_envelope "$TMP/verdict.json"
     if merge_mode; then
       route_merge; merge_rc=$?
+      # P9, a head that moved after the verdict: NOT a substrate fault. `other: handoff-integrity`
+      # is not swept by the merge-watcher, so an operator's hand merge would leave the card
+      # stuck and its children stranded, with nothing to flag that the merge was unverified.
+      # The card is held `merge-pending:` instead (the verdict is stashed above), naming both
+      # heads; the watcher completes it on a merge and flags the drift. Review is not re-opened.
+      if [ "$merge_rc" = 5 ]; then
+        envelope merge-refused-head-drift "$SUMMARY — NOT merged: $MERGE_REFUSAL" "$TMP/verdict.json" "" 4 \
+          "$(hold_call "$(decision_message merge-pending \
+            "${chunk_title:-this chunk} was verified, and NOT merged: its head moved after the verdict" \
+            "$MERGE_REFUSAL. The verdict does not cover the new head, so merge mode refused to merge it. Review is not re-opened" \
+            "review the new head and merge it, or send the chunk back" \
+            "a merge of the new head lands code the verifier did not review; the merge-watcher completes this card on a merge and flags the head drift" \
+            "merge $PR_URL on GitHub if you accept the new head — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
+
+$EVIDENCE")")" \
+          "$(term_block "merge-pending: $PR_URL head moved after the verdict — nothing was merged; the merge-watcher completes this card on a merge and flags the head drift")"
+      fi
       [ "$merge_rc" = 1 ] \
         && substrate "other: handoff-integrity — the squash merge did not take, so nothing was merged"
       # MERGED, BUT THE CARD IS A SEPARATE QUESTION. `gh pr merge` accepted it, so the
@@ -1334,8 +1399,8 @@ case "$VERDICT" in
       # children were held forever. So the hold is the `on_error` of the completion,
       # and the terminator itself when the merge was not confirmed.
       merged_hold="$(decision_message merge-pending \
-        "${chunk_title:-this chunk} was squash-merged by the verifier, but this card could not be completed" \
-        "\`gh pr merge\` accepted $PR_URL at ${VERIFIED_HEAD:-an unread head}, and then the read-back from GitHub or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
+        "${chunk_title:-this chunk}: merge attempted by the verifier; GitHub did not confirm either way, or this card could not be completed" \
+        "The verifier ran \`gh pr merge\` for $PR_URL at ${VERIFIED_HEAD:-an unread head}. GitHub did not confirm the outcome either way (the merge may have failed or the read-back was unreadable), or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
         "confirm $PR_URL is merged; if it is not, merge it or send it back" \
         "until the card completes, its children stay held" \
         "nothing, if the PR shows MERGED — the merge-watcher completes this card on its next sweep — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
@@ -1351,7 +1416,7 @@ $EVIDENCE")"
       # still starts `merge-pending:` and names the PR, so the watcher finds it.
       envelope merged-held "$SUMMARY — merged, and held for the merge-watcher because GitHub did not confirm it" "$TMP/verdict.json" "" 4 \
         "$(hold_call "$merged_hold")" \
-        "$(term_block "merge-pending: $PR_URL was squash-merged by the verifier, but neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged")"
+        "$(term_block "merge-pending: $PR_URL merge attempted by the verifier; GitHub did not confirm either way, and neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged")"
     fi
     envelope recommend "$SUMMARY" "$TMP/verdict.json" "" 4 \
       "$(hold_call "$(decision_message merge-pending \

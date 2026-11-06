@@ -120,8 +120,8 @@ trap 'rm -rf "$WORK"' EXIT
 board_json() {  # $1=snapshot path
   sqlite3 "$1" <<SQL
 SELECT json_object(
-  'landed', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'pr', pr)), json_array())
-               FROM (SELECT t.id, t.title,
+  'landed', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'pr', pr, 'result', result)), json_array())
+               FROM (SELECT t.id, t.title, t.result,
                             (SELECT json_extract(r.metadata,'\$.pr') FROM task_runs r
                               WHERE r.task_id = t.id AND json_type(r.metadata,'\$.pr') = 'text'
                               ORDER BY r.started_at DESC, r.id DESC LIMIT 1) AS pr
@@ -419,7 +419,10 @@ for BOARD in $BOARDS; do
       . as $b |
       "\nLanded (\(.landed | length))"
         + (if (.landed | length) == 0 then ": nothing" else "" end) + "\n────────────",
-      (.landed[] | "- \(.title) — \(.pr // "no PR recorded") (\(.id))"),
+      # Epic P9: the merge-watcher writes HEAD DRIFT into the result of a card whose PR
+      # was merged at a head the verdict did not approve. It is landed, and it is not verified.
+      (.landed[] | "- \(.title) — \(.pr // "no PR recorded") (\(.id))"
+                   + (if (.result // "") | test("HEAD DRIFT") then " — HEAD DRIFT: merged at a head the verifier did not approve" else "" end)),
       "\nIn flight: "
         + ([ ["running","running"], ["review","in review"], ["ready","ready"], ["todo","waiting on parents"] ]
            as $order | [ $order[] as [$s,$label]
