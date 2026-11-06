@@ -484,7 +484,10 @@ through it.
   it; the failure mode until then is a silent loss of write access mid-run.
 - **The flywheel.** `/retro` has never executed. `retro-metrics.md` has several
   rows, all written by hand after runs rather than by the ceremony.
-- **The Telegram approval flow.**
+- **The Telegram approval flow.** Still unproven. A source read on 2026-11-06
+  (not executed) corrected its premise: the pairing gate is
+  `TELEGRAM_ALLOWED_USERS`, not `telegram.allowed_chats`, which filters group
+  chats only. See GW3 and row S8d in `docs/epic-hands-free.md`.
 - **Provider terms for automated subscription use** — settled for what *works*
   (ADR-0004), never for what is *permitted*.
 
@@ -731,10 +734,13 @@ other than 3. It scored scenario integrity 1 and routed an executable fix.
 ## Environment as of this writing
 
 Tool versions re-read 2026-10-26 (codex, Claude Code, gh, uv); Hermes is held at
-its recorded version.
+its recorded version. Claude Code was re-read on 2026-11-06: workers resolve
+`~/.hermes/node/bin/claude`, 2.1.318, because the gateway's PATH lists it before
+`/opt/homebrew/bin`, which holds a second, stale binary, 2.1.308. The line below
+records the one workers run.
 
 ```
-Hermes 0.21.5 · codex-cli 0.164.0 · Claude Code 2.1.310 · gh 2.103.2
+Hermes 0.21.5 · codex-cli 0.164.0 · Claude Code 2.1.318 · gh 2.103.2
 lefthook 2.1.10 · uv 0.13.5 · copier 9.17.0
 mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
 profiles: forge-orchestrator, forge-codex-lane, forge-verifier,
