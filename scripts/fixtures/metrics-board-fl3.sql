@@ -54,7 +54,8 @@ CREATE TABLE tasks (
     status       TEXT NOT NULL,
     result       TEXT,
     created_at   INTEGER NOT NULL,
-    completed_at INTEGER
+    completed_at INTEGER,
+    body         TEXT
 );
 CREATE TABLE task_runs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -55,6 +55,10 @@
 #               case is a finding, an unplanned probe or an unstartable command
 #               has no verdict; and redglass's own history replayed, read-only,
 #               when a local checkout is present                    (MS2, S5b)
+#   checkpoint/ the milestone checkpoint as a program: every number from a script,
+#               the four outcomes (pass, block, no verdict, cost over), a
+#               rehearsal that writes nothing, and findings classified into a
+#               chunk-card draft, an amendment draft or a block      (MS4, S8)
 #   gate/       repository merge protection and required-check diagnostics,
 #               driven through recorded API response shapes                    (F79)
 #   docs/       the reconciled launch ledger and operator contract: dispositions,
@@ -98,11 +102,11 @@ while [ $# -gt 0 ]; do
     --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe gate docs digest quota manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe checkpoint gate docs digest quota manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -3174,6 +3178,15 @@ probe/a-second-run-has-the-same-verdict  a run leaves no bytecode in its frozen 
 probe/unusable-arguments-are-exit-2      no project, no gate, a chunk id, a slash, an undeclared gate or a timeout outside 1-86400 is exit 2
 probe/redglass-replay-flags-the-fail-open-gates  before CHUNK-15 the probe flags all three fail-open gates, read-only (MS2)
 probe/redglass-replay-clears-the-fixed-tree  after CHUNK-16 every case of the same probe holds
+probe/logs-dir-keeps-full-output          --logs <dir> keeps every case's whole stdout and stderr, however long, where the console shows only a tail (P20)
+probe/post-run-input-change-is-named      a case that rewrote its own frozen input is named by case, after that case, and the outcome stays the last line (P20)
+checkpoint/numbers-are-scripted           every number in the report is read from probe-run.sh, metrics.sh or the gate card, tagged with which, and no model is invoked (MS4)
+checkpoint/outcomes                       probe 0 passes and proceeds, 1 blocks decision-first, 2 is no verdict, cost over blocks; an absent estimate blocks (MS4, decision 6)
+checkpoint/rehearse-writes-nothing        --rehearse on a snapshot of a fixture board, against a hermes stub that fails on any write verb: every outcome, and the held gate stays held (P10(1))
+checkpoint/finding-is-classified          a product defect drafts a chunk card, a probe defect drafts an amendment, an ambiguous finding blocks with no draft; nothing is created (MS2)
+checkpoint/disagreeing-counts-block      metrics.sh's chunk counts and the checkpoint's own differ: no verdict, no probe, nothing completed (fail closed)
+checkpoint/skipped-probe-never-passes     with that check cut out, a probe that did not run is still never a pass and --apply never completes the gate
+metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
 gate/classic-protection-is-a-gate         classic protection carrying both halves is GATED (exit 0)
 gate/required-contexts-are-checked-by-name  a gate missing a named context reports missing=, not gated
@@ -13982,6 +13995,56 @@ PYM
   if [ -z "$detail" ]; then ok "unusable-arguments-are-exit-2"
   else bad "unusable-arguments-are-exit-2" "each must be exit 2, never a verdict:$detail"; fi
 
+  # -- P20 (S8): --logs keeps the whole output; a case that rewrites its own
+  # frozen input is named by case. Neither changes a verdict.
+  local pl="$TMPROOT/probe-logs" lg="$TMPROOT/probe-logs.dir" last_line
+  detail=""
+  _probe_fixture "$pl"
+  # A failing case that prints 30 lines to stdout and ~100 KB to stderr: the
+  # console keeps the last five lines, the logs keep all of it.
+  _probe_mutate "$pl" 'p["cases"][1]["run"] = ["sh", "-c", "i=0; while [ $i -lt 30 ]; do echo line-$i; i=$((i+1)); done; python3 -c \"import sys; sys.stderr.write(\\\"E\\\" * 100000 + \\\"\\\\nlast-err\\\\n\\\")\"; exit 9", "{input}"]' && "$freeze" "$pl" >/dev/null 2>&1
+  rm -rf "$lg"
+  out="$("$runner" "$pl" GATE-M1 --logs "$lg" 2>&1)"; rc=$?
+  [ "$rc" = 1 ] || detail="$detail exit=$rc"
+  [ "$(grep -c '^line-' "$lg/02-a-relabelled-record-is-stopped.stdout" 2>/dev/null)" = 30 ] || detail="$detail stdout-not-whole"
+  [ "$(wc -c < "$lg/02-a-relabelled-record-is-stopped.stderr" 2>/dev/null | tr -d ' ')" -gt 100000 ] 2>/dev/null || detail="$detail stderr-not-whole"
+  grep -Fxq 'last-err' "$lg/02-a-relabelled-record-is-stopped.stderr" 2>/dev/null || detail="$detail stderr-tail-missing"
+  # here-strings, not pipes: the output holds a 100 KB line, and grep -q closing a
+  # pipe early would fail the pipeline under pipefail.
+  grep -Fq 'line-0' <<<"$out" && detail="$detail console-shows-more-than-a-tail"
+  grep -Fq '| line-29' <<<"$out" || detail="$detail console-lost-its-tail"
+  grep -Fxq 'advance 3' "$lg/01-three-records-advance.stdout" 2>/dev/null || detail="$detail passing-case-not-logged"
+  [ "$(tail -n 1 <<<"$out")" = 'probe GATE-M1: FAIL — 1 of 2 cases passed (realistic 1/1, adversarial 0/1); failed: a relabelled record is stopped' ] \
+    || detail="$detail outcome-not-last"
+  # Not into the frozen inputs, and no logs unless asked.
+  out="$("$runner" "$pp" GATE-M1 --logs "$pp/tests/probes/m1/logs" 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && [ ! -e "$pp/tests/probes/m1/logs" ] || detail="$detail logs-inside-the-frozen-inputs(rc=$rc)"
+  out="$("$runner" "$pp" GATE-M1 --logs 2>&1)"; rc=$?
+  [ "$rc" = 2 ] || detail="$detail logs-without-a-dir(rc=$rc)"
+  if [ -z "$detail" ]; then ok "logs-dir-keeps-full-output (30 stdout lines and 100 KB of stderr kept whole while the console shows a tail; a passing case too; the outcome is still the last line; a directory inside tests/probes is refused)"
+  else bad "logs-dir-keeps-full-output" "--logs <dir> must keep every case's whole stdout and stderr, changing no verdict:$detail"; fi
+
+  detail=""
+  local pm="$TMPROOT/probe-mutator"
+  _probe_fixture "$pm"
+  _probe_mutate "$pm" 'p["cases"][0]["run"] = ["sh", "-c", "echo extra >> \"$0/corpus.txt\"; echo advance 3", "{input}"]' && "$freeze" "$pm" >/dev/null 2>&1
+  out="$("$runner" "$pm" GATE-M1 2>&1)"; rc=$?
+  last_line="$(printf '%s\n' "$out" | tail -1)"
+  # The verdict is unchanged: both cases met their expectations, so exit 0.
+  [ "$rc" = 0 ] || detail="$detail verdict-changed(exit=$rc)"
+  printf '%s\n' "$out" | grep -Fxq "NOTE  case 'three records advance' changed its frozen input: tests/probes/m1/corpus.txt" || detail="$detail case-not-named($(printf '%s' "$out" | grep NOTE | head -2 | tr '\n' '|'))"
+  [ "$(printf '%s\n' "$out" | grep -c '^NOTE ')" = 1 ] || detail="$detail named-more-than-once"
+  [ "$last_line" = 'probe GATE-M1: PASS — 2 of 2 cases passed (realistic 1/1, adversarial 1/1); input changed by three records advance' ] \
+    || detail="$detail outcome-not-last($last_line)"
+  # A run that touches nothing names nothing.
+  out="$("$runner" "$pp" GATE-M1 2>&1)"
+  printf '%s\n' "$out" | grep -q '^NOTE ' && detail="$detail named-a-clean-run"
+  # The cause is now named on the run that did it; the next run still has no verdict.
+  out="$("$runner" "$pm" GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | tail -1 | grep -Fq 'tests/probes/m1/corpus.txt differs from its frozen digest' || detail="$detail next-run-not-no-verdict(rc=$rc)"
+  if [ -z "$detail" ]; then ok "post-run-input-change-is-named (the case that appended to its input is named with the path, once, exit 0 as before; a clean run names nothing; the next run is NO VERDICT)"
+  else bad "post-run-input-change-is-named" "a case that changes its frozen input is named by case, after that case, and no verdict moves:$detail"; fi
+
   # -- MS2's done-when: the replay on redglass -------------------------------
   # redglass (wielas/vault) is private and this repo is public, so nothing of
   # it is here. The replay reads a local checkout, read-only, through
@@ -14070,6 +14133,447 @@ PYF
   fi
 }
 wants probe     && run_probe_group
+
+# checkpoint/ — the milestone checkpoint as a program (epic MS4, S8). A held
+# GATE card, its probe and its chunks go in; a report and one of three outcomes
+# come out, and no model is in between. Five facts are turned one at a time on a
+# fixture board (scripts/fixtures/checkpoint-board.sql, in the shape of the
+# Squatfather's M1) and a fixture project whose probe the real acceptance-freeze
+# froze. Everything runs against an isolated HERMES_HOME and a `hermes` stub on
+# PATH: it logs every call and refuses every write verb, so a checkpoint that
+# touched a board would be seen, and a rehearsal that completed a gate is the
+# P10(1) bug class made visible.
+run_checkpoint_group() {
+  group checkpoint
+  local ck="$REPO_ROOT/scripts/checkpoint.sh" freeze="$REPO_ROOT/scripts/acceptance-freeze.sh"
+  local fixsql="$REPO_ROOT/scripts/fixtures/checkpoint-board.sql"
+  local tool
+  for tool in sqlite3 jq python3; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified; do
+        skip "$n" "$tool is not on PATH"
+      done
+      return
+    fi
+  done
+  local root="$TMPROOT/ckpt" out rc detail
+  mkdir -p "$root/bin"
+
+  # The stub. Read verbs succeed with nothing; every verb that writes fails and
+  # says so; HERMES_STUB_ALLOW names a verb a case lets through. Every call is
+  # logged, reads included, so "never called" is checkable.
+  cat > "$root/bin/hermes" <<'CK_STUB'
+#!/bin/sh
+echo "$*" >> "${HERMES_STUB_LOG:?}"
+verb=""; prev=""
+for a in "$@"; do
+  case "$prev" in --board) prev=""; continue;; esac
+  case "$a" in kanban) ;; --board) prev=--board;; -*) ;; *) verb="$a"; break;; esac
+done
+case "$verb" in
+  show|list|ls|stats|runs|log|tail|watch|context|diagnostics|diag|boards|assignees|attachments|notify-list|"") exit 0;;
+esac
+if [ "$verb" = "${HERMES_STUB_ALLOW:-}" ]; then exit 0; fi
+echo "STUB: refusing write verb '$verb'" >&2
+exit 1
+CK_STUB
+  chmod +x "$root/bin/hermes"
+  # git and gh stubs: a write verb is refused and logged in CK_WLOG; git reads
+  # pass through to the real git (probe-run.sh asks which commit it ran on).
+  cat > "$root/bin/git" <<'CK_GITSTUB'
+#!/bin/sh
+verb=""; skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in -C|-c|--git-dir|--work-tree) skip=1;; -*) ;; *) verb="$a"; break;; esac
+done
+case "$verb" in
+  add|commit|push|merge|rebase|reset|checkout|switch|tag|branch|stash|fetch|pull|clean|rm|mv|apply|am|cherry-pick|revert|worktree|config|restore|update-ref|gc|init|clone|remote|submodule)
+    echo "git $*" >> "${CK_WLOG:?}"; echo "STUB: refusing git write verb '$verb'" >&2; exit 1;;
+esac
+exec "${CK_REAL_GIT:?}" "$@"
+CK_GITSTUB
+  cat > "$root/bin/gh" <<'CK_GHSTUB'
+#!/bin/sh
+case "$1 $2" in "auth status"|"pr view"|"pr list"|"pr checks"|"pr diff"|"pr status"|"repo view") exit 0;; esac
+if [ "$1" = api ]; then
+  shift
+  for a in "$@"; do case "$a" in -X|--method|-f|-F|--field|--raw-field|--input) echo "gh api $*" >> "${CK_WLOG:?}"; echo "STUB: refusing gh api write" >&2; exit 1;; esac; done
+  exit 0
+fi
+echo "gh $*" >> "${CK_WLOG:?}"; echo "STUB: refusing gh $1" >&2; exit 1
+CK_GHSTUB
+  chmod +x "$root/bin/git" "$root/bin/gh"
+  local real_git; real_git="$(command -v git)"
+
+  # The product project: one chunk, GATE-M1 and its probe, frozen by the real
+  # acceptance-freeze (the same plan probe/ freezes).
+  _ck_proj() { # $1=project root
+    local p="$1"
+    rm -rf "$p"; mkdir -p "$p/docs/chunks" "$p/tests/features" "$p/tests/probes/m1" "$p/src"
+    cat > "$p/docs/chunks/graph.json" <<'CK_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"claude-interactive","tier":"human","depends_on":[]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1"]}
+]
+CK_GRAPH
+    cat > "$p/docs/chunks/CHUNK-1.md" <<'CK_CHUNK'
+### CHUNK-1: Read records
+- **Goal:** Read a record file and stop on a relabelled record.
+- **Milestone:** M1 · **Depends on:** none
+- **Scenarios:**
+  - Given three records, When the reader runs, Then it advances.
+- **Real sources:** none
+- **Acceptance:** tests/features/chunk_1.feature
+- **Lane:** claude-interactive · **Risk:** low
+CK_CHUNK
+    printf 'Feature: CHUNK-1 acceptance\n\n  Scenario: Read records\n    Given three records\n    When the reader runs\n    Then it advances\n' \
+      > "$p/tests/features/chunk_1.feature"
+    printf '### GATE-M1: Milestone 1\n- **Milestone:** M1\n- **Probe:** tests/probes/gate_m1.json\n- **Estimate:** 1 chunk\n- **Lane:** claude-interactive\n' \
+      > "$p/docs/chunks/GATE-M1.md"
+    cat > "$p/src/reader.py" <<'CK_READER'
+import sys
+
+records = open(sys.argv[1]).read().split()
+foreign = [r for r in records if r == "foreign"]
+if foreign:
+    print("stop: " + foreign[0])
+    sys.exit(3)
+print("advance %d" % len(records))
+CK_READER
+    printf 'a\nb\nc\n' > "$p/tests/probes/m1/corpus.txt"
+    printf 'a\nforeign\nc\n' > "$p/tests/probes/m1/relabelled.txt"
+    cat > "$p/tests/probes/gate_m1.json" <<'CK_PROBE'
+{
+  "probe": "forge.probe.v1",
+  "milestone": "M1",
+  "cases": [
+    {"name": "three records advance", "kind": "realistic", "records": 3,
+     "input": "tests/probes/m1",
+     "run": ["python3", "src/reader.py", "{input}/corpus.txt"],
+     "expect": {"exit": 0, "stdout": "advance 3"}},
+    {"name": "a relabelled record is stopped", "kind": "adversarial",
+     "input": "tests/probes/m1",
+     "run": ["python3", "src/reader.py", "{input}/relabelled.txt"],
+     "expect": {"exit": 3, "stdout": "stop: foreign"}}
+  ]
+}
+CK_PROBE
+    "$freeze" "$p" >"$p.freeze.log" 2>&1
+  }
+  # A project copy with one defect: $2 = sed expression on src/reader.py.
+  _ck_variant() { # $1=name $2=sed expression ('' for none)
+    rm -rf "$root/proj-$1"; cp -R "$root/proj-base" "$root/proj-$1"
+    [ -z "$2" ] || { sed -i.bak "$2" "$root/proj-$1/src/reader.py"; rm -f "$root/proj-$1/src/reader.py.bak"; }
+  }
+  # A board named $1 with one SQL statement ($2, may be '') turned on a copy of the fixture.
+  _ck_board() { # $1=name $2=sql
+    rm -rf "$root/b-$1"; mkdir -p "$root/b-$1/kanban/boards/ck"
+    sqlite3 "$root/b-$1/kanban/boards/ck/kanban.db" < "$fixsql" >/dev/null 2>&1
+    [ -z "$2" ] || sqlite3 "$root/b-$1/kanban/boards/ck/kanban.db" "$2" >/dev/null 2>&1
+  }
+  # Run the checkpoint on board $1 and project $2 in mode $3 (+ extra args), the
+  # stub on PATH and its log reset. Sets out and rc; the log is $root/stub.log.
+  _ck_run() {
+    local b="$1" p="$2" mode="$3"; shift 3
+    : > "$root/stub.log"; : > "$root/wlog.log"
+    out="$(cd / && env HERMES_HOME="$root/b-$b/home" HERMES_KANBAN_HOME="$root/b-$b/kanban" \
+            HERMES_STUB_LOG="$root/stub.log" CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
+            "$ck" "$root/proj-$p" --board ck --gate GATE-M1 "$mode" "$@" 2>&1)"; rc=$?
+  }
+  # The board AND its WAL sidecars: a write that lands in the -wal changes no byte of the .db.
+  _ck_hash_dir() { # $1=boards/ck directory
+    ( cd "$1" && for f in kanban.db kanban.db-wal kanban.db-shm; do [ -f "$f" ] && { printf '%s ' "$f"; shasum -a 256 "$f" | cut -d' ' -f1; }; done ) | shasum -a 256 | cut -d' ' -f1
+  }
+  _ck_hash() { _ck_hash_dir "$root/b-$1/kanban/boards/ck"; }
+  # A WAL board is never opened mode=ro, nor in place: copy, then read the copy.
+  _ck_q() { # $1=board $2=sql
+    local c="$root/q-$1"; rm -rf "$c"; mkdir -p "$c"
+    cp "$root/b-$1/kanban/boards/ck/kanban.db" "$c/k.db"
+    for sfx in -wal -shm; do [ -f "$root/b-$1/kanban/boards/ck/kanban.db$sfx" ] && cp "$root/b-$1/kanban/boards/ck/kanban.db$sfx" "$c/k.db$sfx"; done
+    sqlite3 "$c/k.db" "$2"
+  }
+
+  if ! _ck_proj "$root/proj-base"; then
+    for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified; do
+      bad "$n" "the fixture plan did not freeze: $(tail -3 "$root/proj-base.freeze.log")"
+    done
+    return
+  fi
+  _ck_board std ''
+  _ck_variant pass ''
+
+  # -- numbers-are-scripted -------------------------------------------------
+  # The same checkpoint on two boards whose facts differ: every number moves
+  # with the board, so none of them is written into the script or phrased by a
+  # model. Each line carries the script it was read from.
+  detail=""
+  _ck_run std pass --rehearse
+  local o1="$out" rc1=$rc
+  _ck_board other "UPDATE tasks SET body = replace(body, '5 chunks', '7 chunks') WHERE id = 't_g1';
+    INSERT INTO tasks (id, title, status, created_at) VALUES ('t_f3', 'follow-up: a third', 'triage', 1785200800);
+    INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_c7', 'CHUNK-7: Another M2 chunk', '- **Milestone:** M3', 'todo', 1785200900);
+    INSERT INTO task_links (parent_id, child_id) VALUES ('t_g1', 't_c7');"
+  _ck_run other pass --rehearse
+  local o2="$out" rc2=$rc
+  [ "$rc1" = 0 ] && [ "$rc2" = 0 ] || detail="$detail rc($rc1,$rc2)"
+  printf '%s\n' "$o1" | grep -Fxq '  [probe-run.sh]  exit 0 — probe GATE-M1: PASS — 2 of 2 cases passed (realistic 1/1, adversarial 1/1)' || detail="$detail probe-line"
+  printf '%s\n' "$o1" | grep -Fxq '  [metrics.sh]    cost: 5 chunk(s) against an estimate of 5 chunk(s)' || detail="$detail cost-line"
+  printf '%s\n' "$o1" | grep -Fxq '  [metrics.sh]    5 of 5 chunk(s) done' || detail="$detail done-line"
+  printf '%s\n' "$o1" | grep -Fxq '  [gate card]     requirements delivered: 5 of 6 named in Delivers' || detail="$detail delivered-line"
+  printf '%s\n' "$o1" | grep -Fxq '                  unserved: FR-9 (no chunk of this milestone serves it)' || detail="$detail unserved"
+  printf '%s\n' "$o1" | grep -Fxq '                  laid for later milestones: FR-1, FR-5, FR-7' || detail="$detail laid"
+  printf '%s\n' "$o1" | grep -Fxq '  [gate card]     follow-ups waiting in triage: 2' || detail="$detail followups"
+  printf '%s\n' "$o1" | grep -Fxq '  [gate card]     next milestone: M2, 1 chunk(s) held until the gate is done' || detail="$detail next"
+  printf '%s\n' "$o2" | grep -Fxq '  [metrics.sh]    cost: 5 chunk(s) against an estimate of 7 chunk(s)' || detail="$detail cost-moves($(printf '%s' "$o2" | grep 'cost:'))"
+  printf '%s\n' "$o2" | grep -Fxq '  [gate card]     follow-ups waiting in triage: 3' || detail="$detail followups-move"
+  printf '%s\n' "$o2" | grep -Fxq '  [gate card]     next milestone: M2, M3, 2 chunk(s) held until the gate is done' || detail="$detail next-moves($(printf '%s' "$o2" | grep 'next milestone'))"
+  # Every number line names one of the three sources, and only those.
+  local tags
+  tags="$(printf '%s\n' "$o1" | grep -o '^  \[[^]]*\]' | sort -u | tr -d ' ' | paste -sd, -)"
+  [ "$tags" = '[gatecard],[metrics.sh],[probe-run.sh]' ] || detail="$detail tags($tags)"
+  # The program itself invokes no model and no network: its only external
+  # commands are the three scripts, sqlite3, jq and python3, and the one board
+  # write inside board_write.
+  local code
+  code="$(grep -v '^[[:space:]]*#' "$ck")"
+  printf '%s\n' "$code" | grep -Eq '(^|[^A-Za-z_-])(claude|codex|openai|anthropic|curl|wget)([^A-Za-z_]|$)|(^|[ (])gh ' && detail="$detail invokes-a-model-or-the-network"
+  [ "$(printf '%s\n' "$code" | grep -cE '^[[:space:]]*hermes kanban')" = 1 ] || detail="$detail more-than-one-hermes-call"
+  printf '%s\n' "$code" | grep -q '"\$HERE/metrics.sh"' && printf '%s\n' "$code" | grep -q '"\$HERE/probe-run.sh"' || detail="$detail sources-not-called"
+  if [ -z "$detail" ]; then ok "numbers-are-scripted (probe, cost, delivered, follow-ups and next milestone read from probe-run.sh, metrics.sh and the gate card, and they move with the board)"
+  else bad "numbers-are-scripted" "every number in the report must be read from a script and tagged with it:$detail"; fi
+
+  # metrics.sh's own part: the gate's chunks against its estimate, and the two
+  # ways an estimate can be missing named rather than read as zero.
+  CURRENT_GROUP=metrics
+  detail=""
+  local mj
+  mj="$(HERMES_HOME="$root/b-std/home" HERMES_KANBAN_HOME="$root/b-std/kanban" "$REPO_ROOT/scripts/metrics.sh" ck --json 2>/dev/null)"
+  printf '%s' "$mj" | jq -e '.milestones | length == 1 and .[0].gate == "GATE-M1" and .[0].unit == "chunks"
+      and .[0].actual == 5 and .[0].done == 5 and .[0].estimate == 5
+      and .[0].estimate_status == "ok" and .[0].over == false' >/dev/null 2>&1 || detail="$detail ok($(printf '%s' "$mj" | jq -c '.milestones' 2>&1 | head -c 300))"
+  _ck_board m-over "UPDATE tasks SET body = replace(body, '5 chunks', '4 chunks') WHERE id = 't_g1';"
+  mj="$(HERMES_HOME="$root/b-m-over/home" HERMES_KANBAN_HOME="$root/b-m-over/kanban" "$REPO_ROOT/scripts/metrics.sh" ck --json 2>/dev/null)"
+  printf '%s' "$mj" | jq -e '.milestones[0].estimate == 4 and .milestones[0].over == true' >/dev/null 2>&1 || detail="$detail over"
+  _ck_board m-abs "UPDATE tasks SET body = replace(body, '- **Estimate:** 5 chunks', '') WHERE id = 't_g1';"
+  mj="$(HERMES_HOME="$root/b-m-abs/home" HERMES_KANBAN_HOME="$root/b-m-abs/kanban" "$REPO_ROOT/scripts/metrics.sh" ck --json 2>/dev/null)"
+  printf '%s' "$mj" | jq -e '.milestones[0].estimate == null and .milestones[0].estimate_status == "absent" and .milestones[0].over == null' >/dev/null 2>&1 || detail="$detail absent"
+  _ck_board m-bad "UPDATE tasks SET body = replace(body, '5 chunks', 'five chunks') WHERE id = 't_g1';"
+  mj="$(HERMES_HOME="$root/b-m-bad/home" HERMES_KANBAN_HOME="$root/b-m-bad/kanban" "$REPO_ROOT/scripts/metrics.sh" ck --json 2>/dev/null)"
+  printf '%s' "$mj" | jq -e '.milestones[0].estimate == null and .milestones[0].estimate_status == "malformed" and .milestones[0].estimate_raw == "five chunks"' >/dev/null 2>&1 || detail="$detail malformed"
+  _ck_board m-arch "UPDATE tasks SET status = 'archived' WHERE id = 't_c5';"
+  mj="$(HERMES_HOME="$root/b-m-arch/home" HERMES_KANBAN_HOME="$root/b-m-arch/kanban" "$REPO_ROOT/scripts/metrics.sh" ck --json 2>/dev/null)"
+  printf '%s' "$mj" | jq -e '.milestones[0].actual == 4 and .milestones[0].archived == 1' >/dev/null 2>&1 || detail="$detail archived-counted"
+  if [ -z "$detail" ]; then ok "milestone-cost-vs-estimate (5 of 5 chunks; 5 against 4 is over; an absent and a malformed estimate are named, never zero; an archived chunk is not a cost)"
+  else bad "milestone-cost-vs-estimate" "a gate's chunks must be compared with its '<n> chunks' estimate, and a missing one named:$detail"; fi
+  CURRENT_GROUP=checkpoint
+
+  # -- outcomes -------------------------------------------------------------
+  detail=""
+  # 0: the probe holds and the cost is within the estimate: it passes and proceeds.
+  [ "$rc1" = 0 ] && printf '%s\n' "$o1" | grep -Fxq "checkpoint: GATE-M1 passes — the probe holds and the milestone is within its estimate, so it proceeds on its own (decision 6)" \
+    && printf '%s\n' "$o1" | grep -Fq 'would run: hermes kanban --board ck complete t_g1 --result checkpoint pass: probe GATE-M1: PASS' \
+    || detail="$detail pass(rc=$rc1)"
+  # 1: a finding blocks, decision-first, with the three options and a Reply.
+  _ck_variant find 's/if foreign:/if False:/'
+  _ck_run std find --rehearse
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | sed -n '3p' | grep -Fq "checkpoint: GATE-M1's probe found a failing case: a relabelled record is stopped" \
+    && printf '%s\n' "$out" | grep -q '^What it means: ' && printf '%s\n' "$out" | grep -q '^Decision needed: ' \
+    && printf '%s\n' "$out" | grep -q '^Risk: ' && printf '%s\n' "$out" | grep -q '^Reply: ' || detail="$detail finding(rc=$rc)"
+  printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`accept`' && printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`redirect <text>`' \
+    && printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`park`' || detail="$detail options"
+  [ "$(printf '%s\n' "$out" | grep -n '^Decision needed:' | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n '^Numbers (' | head -1 | cut -d: -f1)" ] \
+    || detail="$detail not-decision-first"
+  printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' && detail="$detail finding-reads-as-a-pass"
+  # 2: no verdict is never a pass. A frozen probe input that changed, and an
+  # unfinished milestone, both end at exit 2.
+  _ck_variant tamper ''; echo '{}' >> "$root/proj-tamper/tests/probes/m1/corpus.txt"
+  _ck_run std tamper --rehearse
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'NO VERDICT: the probe has no verdict' && ! printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' \
+    && printf '%s\n' "$out" | grep -Fq '[probe-run.sh]  exit 2 — ' || detail="$detail no-verdict(rc=$rc)"
+  _ck_board unfinished "UPDATE tasks SET status = 'review' WHERE id = 't_c5';"
+  _ck_run unfinished pass --rehearse
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'NO VERDICT: the milestone is not finished: CHUNK-5 is review' \
+    && printf '%s\n' "$out" | grep -Fq '[probe-run.sh]  not run' || detail="$detail unfinished(rc=$rc)"
+  # Cost over the estimate blocks even though the probe holds.
+  _ck_board over "UPDATE tasks SET body = replace(body, '5 chunks', '4 chunks') WHERE id = 't_g1';"
+  _ck_run over pass --rehearse
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq "checkpoint: GATE-M1 took 5 chunks against an estimate of 4" \
+    && printf '%s\n' "$out" | grep -q '^Decision needed: ' && ! printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' || detail="$detail cost-over(rc=$rc)"
+  # The absent estimate: gate cards made before PL2 carry none. Designed, not
+  # left to fall out of a default: it BLOCKS, because a pass that skipped the
+  # cost check would be a hands-free pass on something unmeasured. A malformed
+  # estimate is the same case.
+  _ck_board absent "UPDATE tasks SET body = replace(body, '- **Estimate:** 5 chunks', '') WHERE id = 't_g1';"
+  _ck_run absent pass --rehearse
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq "has no usable estimate, so its cost cannot be compared" \
+    && printf '%s\n' "$out" | grep -Fq 'against NO estimate' && ! printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' || detail="$detail absent-estimate(rc=$rc)"
+  _ck_board malformed "UPDATE tasks SET body = replace(body, '5 chunks', 'about five') WHERE id = 't_g1';"
+  _ck_run malformed pass --rehearse
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq "that is not '<n> chunks' (about five)" || detail="$detail malformed-estimate(rc=$rc)"
+  # A finding AND an overrun: the finding leads, the overrun is named too.
+  _ck_run over find --rehearse
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq "GATE-M1's probe found a failing case" && printf '%s\n' "$out" | grep -Fxq 'Also blocking: cost-over' || detail="$detail both(rc=$rc)"
+  # A mode is required; the two are exclusive; a held gate is the only one --apply completes.
+  out="$(cd / && env HERMES_HOME="$root/b-std/home" HERMES_KANBAN_HOME="$root/b-std/kanban" "$ck" "$root/proj-pass" --board ck --gate GATE-M1 2>&1)"; rc=$?
+  [ "$rc" = 2 ] || detail="$detail mode-required(rc=$rc)"
+  out="$(cd / && env HERMES_HOME="$root/b-std/home" HERMES_KANBAN_HOME="$root/b-std/kanban" "$ck" "$root/proj-pass" --board ck --gate GATE-M1 --rehearse --apply 2>&1)"; rc=$?
+  [ "$rc" = 2 ] || detail="$detail modes-exclusive(rc=$rc)"
+  if [ -z "$detail" ]; then ok "outcomes (probe 0 passes and proceeds, 1 blocks decision-first with accept/redirect/park, 2 is NO VERDICT and an unfinished milestone too, cost over blocks, an absent or malformed estimate blocks)"
+  else bad "outcomes" "exit 0 pass, 1 block, 2 no verdict, and the absent estimate designed:$detail"; fi
+
+  # -- rehearse-writes-nothing ----------------------------------------------
+  # The P10(1) bug class: a --dry-run that promised to touch nothing and made its
+  # transition before checking the flag. Every outcome runs in --rehearse on a
+  # cp-snapshot of the fixture board against a stub that refuses every write
+  # verb; the stub is never called, the source board is byte-identical, and the
+  # held gate is still held. One --apply case proves the stub IS on PATH and IS
+  # reached by a real write, or "never called" would mean nothing.
+  detail=""
+  local case_ b pj want snapdb h0 h1 st n_calls
+  for case_ in "pass|std|pass|0" "find|std|find|1" "tamper|std|tamper|2" "over|over|pass|1" "absent|absent|pass|1" "unfinished|unfinished|pass|2" "malformed|malformed|pass|1"; do
+    IFS='|' read -r case_ b pj want <<EOF_CASE
+$case_
+EOF_CASE
+    # the cp-snapshot of the fixture board this case runs on
+    rm -rf "$root/b-snap"; mkdir -p "$root/b-snap"; cp -R "$root/b-$b/kanban" "$root/b-snap/kanban"
+    h0="$(_ck_hash_dir "$root/b-snap/kanban/boards/ck")"
+    : > "$root/stub.log"; : > "$root/wlog.log"
+    out="$(cd / && env HERMES_HOME="$root/b-snap/home" HERMES_KANBAN_HOME="$root/b-snap/kanban" \
+            HERMES_STUB_LOG="$root/stub.log" CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
+            "$ck" "$root/proj-$pj" --board ck --gate GATE-M1 --rehearse 2>&1)"; rc=$?
+    h1="$(_ck_hash_dir "$root/b-snap/kanban/boards/ck")"
+    n_calls="$(grep -c . "$root/stub.log")"
+    [ ! -s "$root/wlog.log" ] || detail="$detail $case_:git-or-gh-write($(head -1 "$root/wlog.log"))"
+    [ "$rc" = "$want" ] || detail="$detail $case_:rc=$rc"
+    [ "$n_calls" = 0 ] || detail="$detail $case_:hermes-called($(head -1 "$root/stub.log"))"
+    [ "$h0" = "$h1" ] || detail="$detail $case_:board-bytes-changed"
+    rm -rf "$root/q-snap"; mkdir -p "$root/q-snap"; cp "$root/b-snap/kanban/boards/ck/kanban.db" "$root/q-snap/k.db"
+    st="$(sqlite3 "$root/q-snap/k.db" "SELECT status FROM tasks WHERE id='t_g1'")"
+    [ "$st" = blocked ] || detail="$detail $case_:gate-is-$st"
+    printf '%s\n' "$out" | grep -Fq 'rehearsal: nothing was written to the board' || detail="$detail $case_:no-closing-line"
+  done
+  # The positive controls: the git and gh stubs are on PATH and refuse a write, and
+  # --apply on a pass reaches the hermes stub with exactly one complete.
+  : > "$root/wlog.log"
+  env CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" git -C "$root" commit -m x >/dev/null 2>&1; rc=$?
+  env CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" gh pr merge 1 >/dev/null 2>&1
+  [ "$rc" = 1 ] && [ "$(grep -c . "$root/wlog.log")" = 2 ] || detail="$detail git-gh-stubs-not-on-path"
+  : > "$root/wlog.log"
+  _ck_run std pass --apply
+  if [ "$rc" = 2 ] && [ "$(grep -c 'kanban --board ck complete t_g1 --result checkpoint pass: ' "$root/stub.log")" = 1 ]; then :; else
+    detail="$detail stub-not-reached(rc=$rc log=$(tr '\n' '|' < "$root/stub.log"))"; fi
+  : > "$root/stub.log"
+  out="$(cd / && env HERMES_HOME="$root/b-std/home" HERMES_KANBAN_HOME="$root/b-std/kanban" \
+          HERMES_STUB_LOG="$root/stub.log" HERMES_STUB_ALLOW=complete PATH="$root/bin:$PATH" \
+          "$ck" "$root/proj-pass" --board ck --gate GATE-M1 --apply 2>&1)"; rc=$?
+  [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Fxq 'completed t_g1' \
+    && [ "$(grep -c . "$root/stub.log")" = 1 ] || detail="$detail apply-pass(rc=$rc)"
+  # --apply on a block or no verdict writes nothing either: a held gate is not blocked again.
+  _ck_run std find --apply
+  [ "$rc" = 1 ] && [ ! -s "$root/stub.log" ] || detail="$detail apply-block-wrote($(tr '\n' '|' < "$root/stub.log"))"
+  # --apply refuses a gate that is not held.
+  _ck_board done "UPDATE tasks SET status = 'done' WHERE id = 't_g1';"
+  _ck_run done pass --apply
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'is done, not blocked (held)' && [ ! -s "$root/stub.log" ] || detail="$detail apply-on-done(rc=$rc)"
+  if [ -z "$detail" ]; then ok "rehearse-writes-nothing (7 outcomes on a cp-snapshot: the write-refusing hermes stub never called, board bytes identical, GATE-M1 still blocked; --apply reaches the stub once, only on a pass)"
+  else bad "rehearse-writes-nothing" "--rehearse must write nothing, on any outcome:$detail"; fi
+
+  # -- finding-is-classified ------------------------------------------------
+  detail=""
+  # A product defect: fail-open (an adversarial input accepted) -> a chunk-card DRAFT.
+  _ck_run std find --rehearse
+  printf '%s\n' "$out" | grep -Fq '    PRODUCT  a relabelled record is stopped — it accepted an input' \
+    && printf '%s\n' "$out" | grep -Fxq 'DRAFT chunk card — not created; nothing was written to the board:' \
+    && printf '%s\n' "$out" | grep -Fxq "### CHUNK-7: Make GATE-M1's probe case hold: a relabelled record is stopped" \
+    && printf '%s\n' "$out" | grep -Fq '  - Given the adversarial input tests/probes/m1, When `python3 src/reader.py {input}/relabelled.txt` runs' \
+    && ! printf '%s\n' "$out" | grep -q 'DRAFT amendment' && [ "$rc" = 1 ] || detail="$detail product(rc=$rc)"
+  [ ! -s "$root/stub.log" ] || detail="$detail product-wrote"
+  # A crash is a product defect too.
+  _ck_variant crash 's/^foreign = .*/foreign = [1\/0]/'
+  _ck_run std crash --rehearse
+  printf '%s\n' "$out" | grep -Fq '    PRODUCT  three records advance — it crashed with a traceback' && [ "$rc" = 1 ] || detail="$detail crash(rc=$rc)"
+  # A probe defect: the product says the expected thing in other letters -> an amendment DRAFT.
+  _ck_variant wording 's/print("advance %d"/print("Advance  %d"/'
+  _ck_run std wording --rehearse
+  printf '%s\n' "$out" | grep -Fq "    PROBE  three records advance — the product printed the expected text with different case or spacing ('Advance  3')" \
+    && printf '%s\n' "$out" | grep -Fxq 'DRAFT amendment to tests/probes/gate_m1.json — not applied:' \
+    && printf '%s\n' "$out" | grep -Fxq -- "- proposed: expect stdout 'Advance  3' instead" \
+    && ! printf '%s\n' "$out" | grep -q 'DRAFT chunk card' && [ "$rc" = 1 ] || detail="$detail probe(rc=$rc)"
+  # A probe defect needs the WHOLE expected text: "advance 3" is not found in
+  # "Advance 30", so that miss is not an over-literal probe.
+  _ck_variant prefix 's/print("advance %d"/print("Advance %d0"/'
+  _ck_run std prefix --rehearse
+  printf '%s\n' "$out" | grep -Fq '    AMBIGUOUS  three records advance' && ! printf '%s\n' "$out" | grep -q '    PROBE  ' \
+    && ! printf '%s\n' "$out" | grep -q 'DRAFT amendment' && [ "$rc" = 1 ] || detail="$detail probe-substring(rc=$rc)"
+  # An ambiguous finding: a wrong output with the right exit and no sign of which side is wrong.
+  # It blocks, says it cannot classify, and offers no draft of either kind.
+  _ck_variant ambiguous 's/print("advance %d"/print("moved %d"/'
+  _ck_run std ambiguous --rehearse
+  printf '%s\n' "$out" | grep -Fq "found a failing case the checkpoint cannot classify: three records advance" \
+    && printf '%s\n' "$out" | grep -Fq '    AMBIGUOUS  three records advance' \
+    && ! printf '%s\n' "$out" | grep -q 'DRAFT' && printf '%s\n' "$out" | grep -q '^Decision needed: say whether it is a product defect or a probe defect' \
+    && [ "$rc" = 1 ] || detail="$detail ambiguous(rc=$rc)"
+  # Drafts are text: the board is the same after as before.
+  _ck_board classify ''
+  h0="$(_ck_hash classify)"
+  for pj in find wording ambiguous; do _ck_run classify "$pj" --rehearse; done
+  [ "$h0" = "$(_ck_hash classify)" ] && [ "$(_ck_q classify 'SELECT COUNT(*) FROM tasks')" = 9 ] || detail="$detail board-changed"
+  if [ -z "$detail" ]; then ok "finding-is-classified (fail-open and a crash are PRODUCT with a chunk-card draft; wording is PROBE with an amendment draft; an unexplained miss blocks as AMBIGUOUS with no draft; nothing is created)"
+  else bad "finding-is-classified" "a product defect drafts a chunk card, a probe defect an amendment, an ambiguous finding blocks:$detail"; fi
+
+  # -- fail closed ------------------------------------------------------------
+  # metrics.sh reads the board through its own snapshot and the checkpoint through
+  # another, so the two can see a different board. SKEWED stands for that: a copy of
+  # the checkpoint beside a metrics.sh that reports one chunk fewer done than the
+  # board has. Two defences, tested apart. (b) the checkpoint counts the gate's
+  # chunks itself and refuses to judge two different boards. (a) with that check cut
+  # out of a copy, the probe is skipped (done != actual), and a skipped probe is
+  # still never a pass: pass is set only by a probe that exited 0.
+  local sk="$root/scripts-skew" sk2="$root/scripts-skew-nocheck" f_
+  for d_ in "$sk" "$sk2"; do
+    rm -rf "$d_"; mkdir -p "$d_"
+    for f_ in checkpoint.sh decision-message.sh board-snapshot.sh probe-run.sh forge_probe.py; do cp "$REPO_ROOT/scripts/$f_" "$d_/$f_"; done
+    printf '#!/bin/sh\n"%s/scripts/metrics.sh" "$@" | jq -c ".milestones |= map(.done -= 1)"\n' "$REPO_ROOT" > "$d_/metrics.sh"
+    chmod +x "$d_/metrics.sh"
+  done
+  grep -v '# consistency-check' "$REPO_ROOT/scripts/checkpoint.sh" > "$sk2/checkpoint.sh"; chmod +x "$sk2/checkpoint.sh"
+  _ck_skew() { # $1=script dir $2=mode ; extra env HERMES_STUB_ALLOW from the caller
+    : > "$root/stub.log"; : > "$root/wlog.log"
+    out="$(cd / && env HERMES_HOME="$root/b-std/home" HERMES_KANBAN_HOME="$root/b-std/kanban" \
+            HERMES_STUB_LOG="$root/stub.log" HERMES_STUB_ALLOW=complete CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
+            "$1/checkpoint.sh" "$root/proj-pass" --board ck --gate GATE-M1 "$2" 2>&1)"; rc=$?
+  }
+  detail=""
+  # (b) the two counts disagree: no verdict (exit 2), never a pass, nothing completed.
+  _ck_skew "$sk" --apply
+  [ "$rc" = 2 ] && grep -Fq 'metrics.sh counts 4 of 5 chunk(s) done but this checkpoint' <<<"$out" \
+    && grep -Fq 'so the two reads saw different boards' <<<"$out" && ! grep -q '^checkpoint: GATE-M1 passes' <<<"$out" \
+    && [ ! -s "$root/stub.log" ] || detail="$detail disagree-apply(rc=$rc)"
+  _ck_skew "$sk" --rehearse
+  [ "$rc" = 2 ] && ! grep -q '^checkpoint: GATE-M1 passes' <<<"$out" || detail="$detail disagree-rehearse(rc=$rc)"
+  # the real script, unskewed, still passes: the check is not a blanket refusal
+  _ck_run std pass --rehearse
+  [ "$rc" = 0 ] || detail="$detail unskewed-no-longer-passes(rc=$rc)"
+  if [ -z "$detail" ]; then ok "disagreeing-counts-block (metrics.sh 4 of 5 done against this checkpoint's own 5 of 5: exit 2, no probe, nothing completed, with --apply too)"
+  else bad "disagreeing-counts-block" "two reads of the board that disagree must not be judged:$detail"; fi
+
+  detail=""
+  cmp -s "$sk2/checkpoint.sh" "$REPO_ROOT/scripts/checkpoint.sh" && detail="$detail consistency-check-not-found-to-cut"
+  # (a) the probe never ran, and --apply is allowed `complete` by the stub: it must not be called.
+  _ck_skew "$sk2" --apply
+  [ "$rc" = 2 ] && grep -Fq 'NO VERDICT: the probe has no verdict — it did not run' <<<"$out" \
+    && grep -Fq '[probe-run.sh]  not run' <<<"$out" && ! grep -q '^checkpoint: GATE-M1 passes' <<<"$out" \
+    && ! grep -q '^completed ' <<<"$out" && [ ! -s "$root/stub.log" ] || detail="$detail skipped-probe-passed-or-completed(rc=$rc log=$(tr '\n' '|' < "$root/stub.log"))"
+  rm -rf "$root/q-sk"; mkdir -p "$root/q-sk"; cp "$root/b-std/kanban/boards/ck/kanban.db" "$root/q-sk/k.db"
+  [ "$(sqlite3 "$root/q-sk/k.db" "SELECT status FROM tasks WHERE id='t_g1'")" = blocked ] || detail="$detail gate-not-held"
+  # an unfinished milestone never reaches the probe either, and never completes
+  _ck_run unfinished pass --apply
+  [ "$rc" = 2 ] && [ ! -s "$root/stub.log" ] || detail="$detail unfinished-apply(rc=$rc)"
+  if [ -z "$detail" ]; then ok "skipped-probe-never-passes (a probe that did not run is no verdict, never a pass, and --apply never reaches complete)"
+  else bad "skipped-probe-never-passes" "pass requires a probe that exited 0:$detail"; fi
+}
+wants checkpoint && run_checkpoint_group
 
 # ---------------------------------------------------------------------------
 # gate/ — the merge gate, asked as a program.
