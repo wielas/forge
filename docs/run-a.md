@@ -449,6 +449,55 @@ probe has run, and seven digests have been judged. Then:
 
 *Filled only from pasted output. Nothing below is written before it happens.*
 
+### How the sections below were filled
+
+*Written for the results PR of 2026-11-06 (epic S7). Everything inside a fence is
+pasted from a file by a script. Everything outside a fence is either a navigation
+sentence, a **Reading** (what the pasted lines show, with no figure recomputed),
+or a **Judgement** (a ruling or opinion, with its source named). A judgement is
+never written as output.*
+
+- **Sources.** All of them are on the operator's machine, outside this
+  repository: `$E` = `~/forge-evidence/run-a/end-of-m1/`, `$R` =
+  `~/forge-evidence/run-a/2026-11-05-digest-receipts/`, `$S` =
+  `~/forge-evidence/run-a/2026-11-04-snapshot/forge-s7-evidence-2026-11-04/`.
+  Each fence is headed by the file it was read from.
+- **Alterations, all of them.** Trailing whitespace was stripped from line
+  ends (the repository's `git diff --check` forbids it). The Telegram chat id
+  in the delivery log lines is written `telegram:…`, because this repository is
+  public. A cut is marked `[… n lines trimmed …]`, with `n` printed by the
+  script. The board prints a verifier's reason as a Python dict with `\n`
+  escapes; a hold or reason is shown with those escapes read back as line
+  breaks, and nothing else changed.
+- **Product source is not pasted.** `wielas/forge` is public and Squatfather is private.
+  Where the board or the scorer quoted product code, the line is cut to its file and line
+  and marked `[private product code omitted; see Squatfather PR #n at <sha>]`; the sha is the
+  PR head named in `10-ci-summary.txt` and `10b` (the lane's last commit for CHUNK-2, the
+  reviewed head for CHUNK-5). Names, SHAs, card titles and paths are kept.
+- **Hashes.** The manifests of `$E`, `$R` and the 2026-11-04 snapshot were
+  re-checked with `shasum -a 256 -c` on 2026-11-06, at the time of this PR, and
+  every listed file matched. Five files in `$E` are not in its manifest because
+  they were written after it (the owner's probe, the gate reading after it, the
+  sweep, the wrapper restore, and the wrapper copy). Their hashes at the time of
+  this PR:
+
+```
+0d3fc4e8f23638a3da24b257df71ade7b74eb413c72c83bf6c25a6caa8b9b4c2  04-gate-m1-probe.txt
+827e130447166b7dcc8c756e58ca0b964c2c43d20df2f7b4b8ee4acfc97c992f  05-gate-after-probe.txt
+756719c09ac366df277808ac5b7019b54cb7003c35735b18d6a116e2a24a0413  12-worktree-sweep-apply.txt
+ff7a423ea0f13ed18a88c9512673a94b2d381f36b682c807ff671334f62928a0  13-wrapper-restore.txt
+d65a9e3938970e11b610fb5b3c1dbc4b7f2ff1c64c91f1c855c0e4a23f8cb47c  forge-digest.sh.before-restore
+```
+
+- **Who ran what.** `$E/NOTES.md` records that steps 0 to 3, 6 to 10 and 11 (the
+  dry run only) were an agent's read-only capture and that steps 4, 5, 12, 13 and
+  14 were the owner's. The probe (04), the gate reading after it (05), the sweep apply
+  (12) and the wrapper restore (13) are therefore the owner's runs.
+- **A file that does not exist.** The brief for this section named a `07b`
+  metadata file. `$E` holds `07-metadata-frozen.txt` only, and that is what is
+  pasted. The later validator reading (a separate, prospective one) is in the
+  recovery record below, not here.
+
 ### Launch record
 
 #### Attempt 1 (halted)
@@ -1115,34 +1164,1705 @@ $ diff <(sqlite3 "$DB" "select content from messages where id=5462" | jq -r '.ou
 identical
 ```
 
+#### Attempt 2 — the launch record as written
+
+`$S/launch-record.txt`, the copy of `$P/.forge/run-a-launch.txt` plus the
+commission lines (`RUN_START` is identical in `$E/01-runtime-and-product.txt`):
+
+```
+RUN_START=2026-10-30T18:53:38Z
+FORGE_SHA=0c69368c96f633f685aac22069d038838af23847
+PRODUCT_SHA=b66be28f53b72851be78daacec15e88b32db93e8
+BOARD=squatfather-run-a2
+Hermes Agent v0.21.5 (2026.9.24) · upstream 9b904dcc · local 1a3bee0e (+1 carried commit)
+codex-cli 0.164.0
+2.1.310 (Claude Code)
+gh version 2.103.2 (2026-10-23)
+uv 0.13.5 (Homebrew 2026-10-22 aarch64-apple-darwin)
+/Users/goonlab/dev/the-squatfather/.forge/commission-20261030T175636Z.4VL1jM.md
+overall: PASS
+posture: UNGATED (merge gate unavailable on this plan: wielas/Squatfather)
+```
+
 ### Root checkpoint
-*(not yet run)*
+
+`$S/root-checkpoint.txt`, taken with only CHUNK-1 on the board. It includes the
+tool versions of the checkpoint.
+
+
+```
+profile=forge-codex-lane schema=forge.chunk.v1 valid=1
+profile=forge-verifier schema=forge.judge.v1 valid=1
+missing producer=forge-prejudge: no post-cutoff completed or review_requested run
+valid=3 invalid=0 unjudged=0 ignored=0
+metadata-live exit=1
+./scripts/metrics.sh squatfather-run-a2
+forge metrics — board squatfather-run-a2   period (board start) .. (now)
+
+north star — what the epic is judged on (docs/epic-hands-free.md); 1 chunk cards, 1 with a recorded merge
+  merged without the operator  0.00 (0/1)
+  operator actions per merged chunk  1.00 (1 = 0 board touches + 1 merges, over 1 merged)
+  PR open -> merge  median 1.79 h · max 1.79 h over 1
+  cards per chunk  1.00 (1 cards / 1 chunks)
+  human-implemented chunks  0 of 1
+  method: operator touches (below) plus one per merge the operator made; judge sessions and GitHub-only actions are not on the board and are not counted; PR open -> merge is first review_requested event to the completed event, on merged chunk cards — a board proxy: the merge-watcher completes an operator merge on its next sweep
+  not yet measurable: defects the milestone probe catches before the operator does — no probe exists until MS2
+  not yet measurable: architect estimate vs actual cost per milestone — the estimate rides each GATE card since PL2, and the comparison arrives with the checkpoint (MS4)
+
+tier-1 gate — stage 1, a program (ADR-0009); blocks cost zero model tokens and are NOT bounces
+  block rate  0.00 (0/1 gate runs)
+  by check    nothing blocked
+
+bounce rate — a chunk counts as bounced if ANY verdict against it bounced
+  tier 1  0.00 (0/1 chunk cards)   from 0/1 verdicts   [model stage only; gate blocks are the number above]
+
+mean judge score, dimensions 1–3 (range 0–3)
+  tier 1  2.67 over 1 verdicts
+  all     2.67 over 1 verdicts
+  verdicts: approve-with-nits 1
+
+reason class distribution — leading token of the blocked reason; legacy forge.block.v1 envelopes observed: 0
+  merge-pending ×1
+
+chunk envelope conformance — 1 completed chunk runs in period, 1 chunk cards on the board
+  flat, $.schema == "forge.chunk.v1"      1   <- the documented shape
+  nested under $."forge.chunk.v1"         0
+  neither                                  0
+
+implementer model — which model WROTE THE DIFF, off the chunk envelope's codex_model (F22). This is not the driver below: that is the cheap Hermes agent, never Codex
+  1 completed chunk runs   rollout-proven 1 · requested-only 0 · no source marker 0 · no model at all 0
+  gpt-5.6-luna xhigh ×1   source rollout
+
+driver usage — completed chunk runs joined 1/1 (1.00); 0 unjudged; 1 unique session(s)
+  calls 6 · input 168037 · output 2918 · cache read 12766 · cache write 0 · reasoning 2221
+  estimated cost $0.0036635576 across 1 joined session(s)
+  actual cost    n/a — not reported
+  session forge-codex-lane/20261030_195351_067b21, runs 1: z-ai/glm-5.3-flash via openrouter · estimated · 1 model row(s)
+
+operator touches — 0 = 0 comments + 0 unblocks
+  method: comments by an author that never ran as a profile on this board, except the merge-watcher's FORGE-WATCHER-NOTIFIED markers, plus every unblocked event (the event records no actor)
+metrics exit=0
+--- tool versions
+codex-cli 0.164.0
+2.1.310 (Claude Code)
+uv 0.13.5 (Homebrew 2026-10-22 aarch64-apple-darwin)
+```
+
+**Judgement (source: the recovery record below, P39).** The `exit=1` is the
+obsolete `forge-prejudge` producer, reported missing. The owner allowed that one
+exception for the root and the end-of-M1 readings. It is not a pass.
 
 ### Tool versions
-*(not yet run — the versions at launch, then one line per move: date, tool,
-old → new, and the next card it touched; at the root checkpoint and at the end
-of M1, `codex --version; claude --version; uv --version` pasted)*
+
+At launch and at the root checkpoint: the pasted lines above (Codex 0.164.0,
+Claude Code 2.1.310, uv 0.13.5). The first movement and the end of M1 follow.
+
+`$S/interim-versions.txt`, 2026-11-04 (the board was already at its end state):
+
+```
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+codex-cli 0.164.0
+2.1.318 (Claude Code)
+uv 0.13.5 (Homebrew 2026-10-22 aarch64-apple-darwin)
+```
+
+`$E/09-versions.txt`, end of M1, 2026-11-06:
+
+```
+--- claude
+/Users/goonlab/.hermes/node/bin/claude
+claude is /Users/goonlab/.hermes/node/bin/claude
+claude is /opt/homebrew/bin/claude
+claude is /opt/homebrew/bin/claude
+/Users/goonlab/.hermes/node/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+--- codex
+/opt/homebrew/bin/codex
+codex is /opt/homebrew/bin/codex
+codex is /opt/homebrew/bin/codex
+/opt/homebrew/Caskroom/codex/0.164.0/bin/codex
+--- uv
+/opt/homebrew/bin/uv
+uv is /opt/homebrew/bin/uv
+uv is /opt/homebrew/bin/uv
+/opt/homebrew/Cellar/uv/0.13.5/bin/uv
+--- hermes
+/Users/goonlab/.local/bin/hermes
+hermes is /Users/goonlab/.local/bin/hermes
+/Users/goonlab/.local/bin/hermes
+--- gh
+/opt/homebrew/bin/gh
+gh is /opt/homebrew/bin/gh
+gh is /opt/homebrew/bin/gh
+/opt/homebrew/Cellar/gh/2.103.2/bin/gh
+--- versions
+2.1.318 (Claude Code)
+codex-cli 0.164.0
+uv 0.13.5 (Homebrew 2026-10-22 aarch64-apple-darwin)
+Hermes Agent v0.21.5 (2026.9.24) · upstream 9b904dcc · local 1a3bee0e (+1 carried commit)
+Install directory: /Users/goonlab/.hermes/hermes-agent
+gh version 2.103.2 (2026-10-23)
+--- gateway claude (the scorer's binary)
+2.1.318 (Claude Code)
+/Users/goonlab/.hermes/node/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+--- launch/root record for comparison
+```
+
+`$E/NOTES.md`, the capture agent's own note about this file (a note, not command
+output):
+
+```
+- Step 9: the "launch/root record" sed prints nothing because $P/.forge/run-a-launch.txt holds only
+  RUN_START/FORGE_SHA/PRODUCT_SHA/BOARD. The comparison lines are in the snapshot launch-record.txt.
+  Extra read-only command (not in the sheet): /opt/homebrew/bin/claude --version = 2.1.308.
+```
+
+**Reading.** Claude Code moved from 2.1.310 (launch, root checkpoint) to 2.1.318 on
+the gateway's path (`~/.hermes/node/bin/claude`); a second binary on the machine,
+`/opt/homebrew/bin/claude`, reports 2.1.308. **Not evidenced:** the date of the
+move, and which verifier runs or interactive sessions each version served. The
+recovery record below says the same; a version change alone is not a stop.
 
 ### Per chunk
-*(not yet run — one entry per chunk: each verifier outcome with its hold or reasons, the mutation verdict, the merge, and any disagreement)*
+
+Every verifier outcome below is a recommendation or a bounce; the merge is the
+operator's. Three outputs cover all five chunks, so they are pasted once.
+
+The CI conclusion at the head GitHub merged, from `gh pr view` (`$E/10-ci-summary.txt`):
+
+```
+=================== PR #4
+head=5c9b3c5d77ab2c237e0b048be8512b549de2cf79 merge=fa8c911938ffd581935a55f4533ec8d310dc9de5 state=MERGED mergedAt=2026-10-30T20:43:55Z
+  branch-name: COMPLETED SUCCESS
+  check: COMPLETED SUCCESS
+=================== PR #5
+head=690b54185657e131a0740048bfa5365b3ed6bd0f merge=7be05b384e0839655d8177984f39a7013e113b86 state=MERGED mergedAt=2026-10-31T07:09:01Z
+  branch-name: COMPLETED SUCCESS
+  check: COMPLETED SUCCESS
+=================== PR #6
+head=cb8948ac426190cba741bc26850e06dc1c994752 merge=e8d741ea8189efd89a4a52307f670e6b89f90999 state=MERGED mergedAt=2026-10-31T06:47:45Z
+  branch-name: COMPLETED SUCCESS
+  check: COMPLETED SUCCESS
+=================== PR #7
+head=815b9e15c61406706cb8e1a331d0cf7c967826e3 merge=6af969e6fe4c23f16df0d65443f73d543364d7a6 state=MERGED mergedAt=2026-10-31T08:25:46Z
+  branch-name: COMPLETED SUCCESS
+  check: COMPLETED SUCCESS
+=================== PR #9
+head=2dfaf68f82b03370a6c188a47dce492889405c6e merge=031485221da425e3bc01f80c8914b5e2b5e98d17 state=MERGED mergedAt=2026-11-02T11:27:40Z
+  branch-name: COMPLETED SUCCESS
+  check: COMPLETED SUCCESS
+```
+
+The PR commits behind two of those heads (`$E/10b-pr-commits-and-reviewed-head.txt`):
+
+```
+--- PR #5 commits
+1b59a2c76a218370913a1e890c043ba2fa86c693 2026-10-31T06:20:58Z feat(chunk-2): vendor Garmin exercise catalogue
+ffe7194faedfc6c2a7826f004420aa8d6d85eee5 2026-10-31T06:21:00Z test(chunk-2): cover catalogue acceptance scenarios
+f9bd7e9e37c4968e0a6f8abfd07a1398a6f0b619 2026-10-31T06:21:02Z docs(chunk-2): record catalogue muscle coverage
+4c52a664809270ea2c83334ecbf4b4b45b8b2648 2026-10-31T06:35:13Z docs(chunk-2): document catalogue refresh command
+690b54185657e131a0740048bfa5365b3ed6bd0f 2026-10-31T07:08:24Z Merge main into CHUNK-2: keep both CHUNK-2 and CHUNK-3 decision-log e…
+--- PR #9 commits
+7791c0f22796d3a01b55d81f64d01f5fe87d5638 2026-11-02T09:35:54Z test(CHUNK-5): add failing scenarios
+fa17645be53d28614d27c3a87db4aac787c7435a 2026-11-02T09:37:53Z feat(CHUNK-5): build allowlisted payloads and guard them
+82e1d699404de32139eab4e5630062112ab8478c 2026-11-02T09:37:53Z feat(CHUNK-5): route model calls through one guarded, audited seam
+91a3969519302447e7fefbc5104cf55608908f3a 2026-11-02T09:37:53Z feat(CHUNK-5): add a host-logging CONNECT egress proxy
+93532b23616b2ccf94f06fe21bb57a0d433d7b17 2026-11-02T09:39:21Z test(CHUNK-5): cover guard rules, the HTTPS adapter and the egress pr…
+5575acab8d2888a9e81dd55a0f8d6c9840321eae 2026-11-02T09:43:47Z docs(CHUNK-5): record OpenRouter over stdlib HTTPS in ADR-0008
+e7878215b015a40ef7ac4646b99d77b3202eb563 2026-11-02T09:47:24Z docs(CHUNK-5): log decisions and live model latency
+f877e7fae4c7ad3ce1efc24b75453392f53dc0e5 2026-11-02T09:51:08Z docs(CHUNK-5): record the Anthropic pin as not yet set; Vertex served…
+c45b3462f703f62e30e23299b2da8fae98683c6a 2026-11-02T10:13:56Z docs(CHUNK-5): reconcile architecture, feasibility and agent notes wi…
+990bbe3bc8c3923b9471e90efe55f2a58b66ceee 2026-11-02T10:23:37Z docs(CHUNK-5): amend NFR-3 to enforced ZDR without a pinned upstream …
+0ec8c80886a4c4b1233d0557d9e2a270a8ebc340 2026-11-02T10:23:54Z docs(CHUNK-5): note ADR-0008 also supersedes ADR-0007's pin control
+2dfaf68f82b03370a6c188a47dce492889405c6e 2026-11-02T10:58:48Z fix(CHUNK-5): address judge nits: guard checks keys and stray contain…
+--- check-runs at CHUNK-5 reviewed head 0ec8c808
+check completed success
+branch-name completed success
+```
+
+**Reading.** CI is `COMPLETED SUCCESS` for both checks at the head each PR was merged
+at. The head the verifier *reviewed* is recorded for CHUNK-5 only (`0ec8c808`, from the
+board). For CHUNK-1, CHUNK-3 and CHUNK-4 no file in the pack records the reviewed
+head, so whether it equals the merged head is **not evidenced** (the CI completion times in `10-pr-4.json`, `10-pr-6.json` and `10-pr-7.json` are
+before each hold once the board's local time is converted to UTC, which suggests the same
+head; it is an inference, not evidence).
+For CHUNK-2 and CHUNK-5 the merged head is *not* the reviewed head; see below.
+
+The per-card ledger, the protocol's loop, in full (`$E/08-ledger.tsv`):
+
+```
+t_23926299	CHUNK-1: Store owner history in a migrated SQLite file	done	forge-verifier	created>claimed>spawned>heartbeat>heartbeat>heartbeat>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>blocked>completed
+t_fe9b343b	CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment	done	forge-verifier	created>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>blocked>assigned>unblocked>review_reopened>commented>claimed>spawned>heartbeat>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>blocked>completed
+t_ebfc4fed	CHUNK-3: Summarise the week and diff plans	done	forge-verifier	created>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>blocked>completed
+t_7fa4389a	CHUNK-4: Build the baseline plan and validate plans	done	forge-verifier	created>dependency_wait>promoted>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>changes_requested>claimed>spawned>heartbeat>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>blocked>completed
+t_e964f95f	CHUNK-5: Guard every model payload behind one audited seam	done	forge-verifier	created>commented>blocked>assigned>linked>linked>assigned>unblocked>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>blocked>completed
+t_9c0b278e	GATE-M1: Milestone 1 — the offline core plans a week and guards every payload	blocked	-	created>commented>blocked>assigned>linked>linked>linked>linked>linked
+t_586f672d	CHUNK-6: Log in once and pull the week from Garmin	todo	forge-codex-lane	created>dependency_wait
+t_f1a1c7b9	CHUNK-7: Push approved plans to the Garmin calendar idempotently	todo	forge-codex-lane	created>dependency_wait
+t_9d4d32bc	CHUNK-8: Draw up the shortlist and adjust plans through the coach	todo	forge-codex-lane	created>dependency_wait
+t_e6ddf640	GATE-M2: Milestone 2 — Garmin pull, idempotent push and the coach flows	blocked	-	created>commented>blocked>assigned>linked>linked>linked
+t_3d22d120	CHUNK-9: Run the catch-up as a state machine with an approval gate	todo	forge-codex-lane	created>dependency_wait
+t_3a5cc722	CHUNK-10: Drive the catch-up from the terminal	todo	forge-codex-lane	created>dependency_wait
+t_7af4caeb	GATE-M3: Milestone 3 — the weekly catch-up runs end to end	blocked	-	created>commented>blocked>assigned>linked>linked
+```
+
+#### CHUNK-1 — `t_23926299` — PR #4
+
+`[2026-10-30 20:03] [run 2] blocked` (`08-cards-full.txt`, card `t_23926299`; the board prints the reason as a Python dict with `\n` escapes, shown here with the escapes read back as line breaks)
+
+```
+merge-pending: CHUNK-1: Store owner history in a migrated SQLite file is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, the mutation probe found 29 changed line(s) no test observes (report-only, listed below), and the scorer reached approve — 2 finding(s) (derived; the scorer asserted approve-with-nits). Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://github.com/wielas/Squatfather/pull/4 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_23926299 "<reason>" --board squatfather-run-a2`
+
+implementer model: gpt-5.6-luna xhigh — source: rollout (Codex own session log; evidence)
+lane envelope: stored copy equals the one the lane validated
+gate: clear — warnings: size-budget
+merged tree: make check is green on chunk/1-store-owner-history-in-a-migrated-sqlite-a2 merged with main (b66be28f53b72851be78daacec15e88b32db93e8), and was green on chunk/1-store-owner-history-in-a-migrated-sqlite-a2 alone first
+mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 29 of 135 probed changed line(s) are observed by no test: every mutation left the suite green (147 mutants run in 30s)
+  - src/the_squatfather/domain.py:12 [private product code omitted; see Squatfather PR #4 at 5c9b3c5]
+  - src/the_squatfather/domain.py:23 [private product code omitted; see Squatfather PR #4 at 5c9b3c5]
+  - src/the_squatfather/domain.py:24 [private product code omitted; see Squatfather PR #4 at 5c9b3c5]
+[… 7 lines trimmed …]
+  - …and 19 more
+verdict: approve — 2 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/2/3/3/3/2
+spot-check: docs/decision-log.md:9-11, the new 2026-10-03 CHUNK-1 entry. It says the PR re-sorted the probe runners' imports, but 5c9b3c5 reverted that and `git diff main...HEAD -- tests/probes` is empty. It also sits at the top of an oldest-first, append-only log. Strip it before merge, because the append-only rule means a later card can only add a correction, not remove it.
+```
+
+```
+Runs (3):
+  #1   review_requested @forge-codex-lane  205s  2026-10-30 19:53
+        → CHUNK-1: PR https://github.com/wielas/Squatfather/pull/4 — make check green, blast radius clean, codex gpt-5.6-luna. Watch: 6 files, 998+/0- lines.
+  #2   blocked      @forge-verifier  326s  2026-10-30 19:57
+        → merge-pending: CHUNK-1: Store owner history in a migrated SQLite file is verified and NOT merged — the verifier may only recommend
+  #3   completed    @forge-verifier  0s  2026-10-30 21:44
+        → merged: https://github.com/wielas/Squatfather/pull/4 as fa8c911938ff (completed by merge-watcher)
+```
+
+**Reading.** One recommendation (run 2), no bounce, merged by the operator and completed by
+the merge-watcher; `gate: clear — warnings: size-budget`.
+**Disclosure (judgement; source: recovery record, 2026-11-02).** "CHUNK-1 reused
+attempt-1 commits, so its lane time is contaminated." Its lane time is therefore not a
+clean reading of the flow. The board shows one lane run (run 1) before the review.
+
+
+#### CHUNK-2 — `t_fe9b343b` — PR #5
+
+First recommendation (run 9), which is the one drill D-1 acted on:
+
+`[2026-10-31 07:26] [run 9] blocked` (`08-cards-full.txt`, card `t_fe9b343b`; the board prints the reason as a Python dict with `\n` escapes, shown here with the escapes read back as line breaks)
+
+```
+merge-pending: CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, the mutation probe found 6 changed line(s) no test observes (report-only, listed below), and the scorer reached approve — 1 finding(s) (derived; the scorer asserted approve-with-nits). Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://github.com/wielas/Squatfather/pull/5 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_fe9b343b "<reason>" --board squatfather-run-a2`
+
+implementer model: gpt-5.6-luna xhigh — source: rollout (Codex own session log; evidence)
+lane envelope: stored copy equals the one the lane validated
+gate: clear — no warnings
+merged tree: make check is green on chunk/2-vendor-the-garmin-exercise-catalogue-with-a2 merged with main (fa8c911938ffd581935a55f4533ec8d310dc9de5), and was green on chunk/2-vendor-the-garmin-exercise-catalogue-with-a2 alone first
+mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 6 of 74 probed changed line(s) are observed by no test: every mutation left the suite green (84 mutants run in 27s)
+  - scripts/refresh_catalogue.py:14 [private product code omitted; see Squatfather PR #5 at 4c52a66]
+  - scripts/refresh_catalogue.py:51 [private product code omitted; see Squatfather PR #5 at 4c52a66]
+  - scripts/refresh_catalogue.py:54 [private product code omitted; see Squatfather PR #5 at 4c52a66]
+[… 3 lines trimmed …]
+verdict: approve — 1 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/3/2/3/3/3
+spot-check: tests/steps/test_chunk_2.py:24-29: scenario 1 counts the 1475 entries with primary muscles via [private product code omitted; see Squatfather PR #5 at 4c52a66] instead of counting directly, because Catalogue has no public iteration. The count is correct only because every equipment tag in catalogue.json is one of the 14 EQUIPMENT_TAGS keys, which holds today since both taggers use the same names. This is indirect, not weaker than the contract. Also, its 'When it is loaded' step doesn't load anything; the Given step does.
+```
+
+Second recommendation (run 13), after the lane's re-entry:
+
+`[2026-10-31 07:39] [run 13] blocked` (`08-cards-full.txt`, card `t_fe9b343b`; the board prints the reason as a Python dict with `\n` escapes, shown here with the escapes read back as line breaks)
+
+```
+merge-pending: CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, the mutation probe did not run (report-only, see below), and the scorer reached approve — 3 finding(s) (derived; the scorer asserted approve-with-nits). Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://github.com/wielas/Squatfather/pull/5 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_fe9b343b "<reason>" --board squatfather-run-a2`
+
+implementer model: gpt-5.6-luna xhigh — source: rollout (Codex own session log; evidence)
+lane envelope: stored copy equals the one the lane validated
+gate: clear — no warnings
+merged tree: make check is green on chunk/2-vendor-the-garmin-exercise-catalogue-with-a2 merged with main (fa8c911938ffd581935a55f4533ec8d310dc9de5), and was green on chunk/2-vendor-the-garmin-exercise-catalogue-with-a2 alone first
+mutation probe: DID NOT RUN (report-only, so this does not block) —
+verdict: approve — 3 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/2/2/3/3/3
+spot-check: Compare scripts/refresh_catalogue.py:19-34 (EQUIPMENT_PATTERNS) with src/the_squatfather/catalogue/__init__.py:12-27 (EQUIPMENT_TAGS). The two pattern tables are maintained separately, and no test ties the package's public equipment_tags() to the tags baked into catalogue.json.
+```
+
+```
+Runs (5):
+  #8   review_requested @forge-codex-lane  210s  2026-10-31 07:17
+        → CHUNK-2: PR https://github.com/wielas/Squatfather/pull/5 — make check green, blast radius clean, codex gpt-5.6-luna. Watch: 5 files, 1916+/0- lines.
+  #9   blocked      @forge-verifier  273s  2026-10-31 07:21
+        → merge-pending: CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment is verified and NOT merged — the verifier may only recommend
+  #12  review_requested @forge-codex-lane  35s  2026-10-31 07:34
+        → CHUNK-2 (after review): PR https://github.com/wielas/Squatfather/pull/5 — make check green, blast radius clean, codex gpt-5.6-luna. Watch: 5 files, 1920+/0- lin
+  #13  blocked      @forge-verifier  219s  2026-10-31 07:35
+        → merge-pending: CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment is verified and NOT merged — the verifier may only recommend
+  #15  completed    @forge-verifier  0s  2026-10-31 08:11
+        → merged: https://github.com/wielas/Squatfather/pull/5 as 7be05b384e08 (completed by merge-watcher)
+```
+
+**Reading.** Two recommendations. The first was met by the pre-registered D-1 bounce
+(its events are pasted under D-1). The second said `mutation probe: DID NOT RUN`.
+The operator then merged. The PR was merged at head `690b541`, which is the commit
+`Merge main into CHUNK-2: keep both CHUNK-2 and CHUNK-3 decision-log e…` (above), made
+after the lane's last commit `4c52a66`.
+**Disclosures (judgement; sources: recovery record 2026-11-02; sweep output below).**
+- "CHUNK-2 required an operator conflict resolution after its reviewed head." The
+  merge commit is that resolution; the verifier did not review the merged head.
+  What the conflict was is recorded in the commit message only as the decision-log
+  entries of CHUNK-2 and CHUNK-3.
+- The worktree `t_fe9b343b` was **kept**, not removed, by the end-of-run sweep
+  (output under *End of M1*). It sits at `4c52a66`, not at the merged head.
+  Its disposition is left to the owner.
+
+
+#### CHUNK-3 — `t_ebfc4fed` — PR #6
+
+`[2026-10-31 07:34] [run 11] blocked` (`08-cards-full.txt`, card `t_ebfc4fed`; the board prints the reason as a Python dict with `\n` escapes, shown here with the escapes read back as line breaks)
+
+```
+merge-pending: CHUNK-3: Summarise the week and diff plans is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, the mutation probe found 39 changed line(s) no test observes (report-only, listed below), and the scorer reached approve — 1 finding(s) (derived; the scorer asserted approve-with-nits). Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://github.com/wielas/Squatfather/pull/6 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_ebfc4fed "<reason>" --board squatfather-run-a2`
+
+implementer model: gpt-5.6-luna xhigh — source: rollout (Codex own session log; evidence)
+lane envelope: stored copy equals the one the lane validated
+gate: clear — warnings: size-budget
+merged tree: make check is green on chunk/3-summarise-the-week-and-diff-plans-a2 merged with main (fa8c911938ffd581935a55f4533ec8d310dc9de5), and was green on chunk/3-summarise-the-week-and-diff-plans-a2 alone first
+mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 39 of 127 probed changed line(s) are observed by no test: every mutation left the suite green (157 mutants run in 34s)
+  - src/the_squatfather/domain.py:144 [private product code omitted; see Squatfather PR #6 at cb8948a]
+  - src/the_squatfather/rules/__init__.py:6 [private product code omitted; see Squatfather PR #6 at cb8948a]
+  - src/the_squatfather/rules/diff.py:13 [private product code omitted; see Squatfather PR #6 at cb8948a]
+[… 7 lines trimmed …]
+  - …and 29 more
+verdict: approve — 1 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/2/3/3/3/3
+spot-check: tests/steps/test_chunk_3.py:32-50 (`_probe_state`): it builds the probe window from raw sets and ignores [private product code omitted; see Squatfather PR #6 at cb8948a], so the summary is computed from non-effective input (the squat 106 kg watch error shows up as a PB in line 3).
+```
+
+```
+Runs (3):
+  #10  review_requested @forge-codex-lane  201s  2026-10-31 07:26
+        → CHUNK-3: PR https://github.com/wielas/Squatfather/pull/6 — make check green, blast radius clean, codex gpt-5.6-luna. Watch: 6 files, 863+/2- lines.
+  #11  blocked      @forge-verifier  232s  2026-10-31 07:30
+        → merge-pending: CHUNK-3: Summarise the week and diff plans is verified and NOT merged — the verifier may only recommend
+  #14  completed    @forge-verifier  0s  2026-10-31 07:49
+        → merged: https://github.com/wielas/Squatfather/pull/6 as e8d741ea8189 (completed by merge-watcher)
+```
+
+**Reading.** One recommendation (run 11), no bounce, merged by the operator.
+
+
+#### CHUNK-4 — `t_7fa4389a` — PR #7
+
+The verifier's first outcome was its own bounce (`changes_requested`, run 17), in full:
+
+`[2026-10-31 08:20] [run 17] changes_requested` (`08-cards-full.txt`, card `t_7fa4389a`; the board prints the reason as a Python dict with `\n` escapes, shown here with the escapes read back as line breaks)
+
+```
+https://github.com/wielas/Squatfather/pull/7
+
+implementer model: gpt-5.6-luna xhigh — source: rollout (Codex own session log; evidence) printf '\n%s' lane envelope: stored copy equals the one the lane validated;; esac)
+scenario_integrity
+
+- **scenario_integrity** (block) — tests/steps/test_chunk_4.py:117 [private product code omitted; see Squatfather PR #7 at 815b9e1] The finding says the squash scenario cannot show that one-offs matter: the fixture's constraints (tests/probes/m1/history.json:262-275) already leave too few candidate days, so the run count at src/the_squatfather/rules/schedule.py:38-39 would be the same without them, and the assertion at tests/steps/test_chunk_4.py:141 passes either way.
+  - action: [private product code omitted; see Squatfather PR #7 at 815b9e1] The action asks for the scenario's setup to be replaced (tests/steps/test_chunk_4.py:114-118), its assertions strengthened (from line 141), a line added to docs/decision-log.md, and a check that the scenario fails when the one-off subtraction at src/the_squatfather/rules/schedule.py:38 is removed.
+```
+
+Then, after the lane re-entered (run 18), the recommendation (run 19):
+
+`[2026-10-31 08:26] [run 19] blocked` (`08-cards-full.txt`, card `t_7fa4389a`; the board prints the reason as a Python dict with `\n` escapes, shown here with the escapes read back as line breaks)
+
+```
+merge-pending: CHUNK-4: Build the baseline plan and validate plans is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, the mutation probe found 51 changed line(s) no test observes (report-only, listed below), and the scorer reached approve — 5 finding(s) (derived; the scorer asserted approve-with-nits). Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://github.com/wielas/Squatfather/pull/7 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_7fa4389a "<reason>" --board squatfather-run-a2`
+
+implementer model: gpt-5.6-luna xhigh — source: rollout (Codex own session log; evidence)
+lane envelope: stored copy equals the one the lane validated
+gate: clear — warnings: size-budget
+merged tree: make check is green on chunk/4-build-the-baseline-plan-and-validate-plans-a2 merged with main (7be05b384e0839655d8177984f39a7013e113b86), and was green on chunk/4-build-the-baseline-plan-and-validate-plans-a2 alone first
+mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 51 of 109 probed changed line(s) are observed by no test: every mutation left the suite green (120 mutants run in 46s)
+  - src/the_squatfather/rules/baseline.py:26 [private product code omitted; see Squatfather PR #7 at 815b9e1]
+  - src/the_squatfather/rules/baseline.py:27 [private product code omitted; see Squatfather PR #7 at 815b9e1]
+  - src/the_squatfather/rules/baseline.py:32 [private product code omitted; see Squatfather PR #7 at 815b9e1]
+[… 7 lines trimmed …]
+  - …and 41 more
+verdict: approve — 5 finding(s) (derived; the scorer asserted approve-with-nits) — scores 2/2/2/3/3/3
+spot-check: tests/steps/test_chunk_4.py:117. The squash scenario replaces the frozen fixture's away-day constraints with a single Thursday one-off. Under the fixture's constraints, scarcity alone would yield one run, so the replacement is needed for the scenario to test one-offs at all. It is logged in docs/decision-log.md. Confirm that 'the probe profile' may drop the fixture's constraints.
+```
+
+```
+Runs (5):
+  #16  review_requested @forge-codex-lane  247s  2026-10-31 08:11
+        → CHUNK-4: PR https://github.com/wielas/Squatfather/pull/7 — make check green, blast radius clean, codex gpt-5.6-luna. Watch: 6 files, 656+/0- lines.
+  #17  changes_requested @forge-verifier  231s  2026-10-31 08:16
+        → https://github.com/wielas/Squatfather/pull/7
+  #18  review_requested @forge-codex-lane  58s  2026-10-31 08:20
+        → CHUNK-4 (after review): PR https://github.com/wielas/Squatfather/pull/7 — make check green, blast radius clean, codex gpt-5.6-luna. Watch: 6 files, 660+/0- line
+  #19  blocked      @forge-verifier  271s  2026-10-31 08:21
+        → merge-pending: CHUNK-4: Build the baseline plan and validate plans is verified and NOT merged — the verifier may only recommend
+  #20  completed    @forge-verifier  0s  2026-10-31 09:28
+        → merged: https://github.com/wielas/Squatfather/pull/7 as 6af969e6fe4c (completed by merge-watcher)
+```
+
+**Reading.** This is the only `changes_requested` in the ledger, and it is the
+*verifier's*, not the operator's. It names `scenario_integrity` at
+`tests/steps/test_chunk_4.py:117`. The operator then merged the recommendation.
+**Reading, beside the metrics block (see *End of M1*).** `make metrics` reports
+`bounce rate ... tier 1  0.00 (0/5 chunk cards)   from 0/5 verdicts` while this
+ledger line contains `changes_requested`. The reason is a measurement gap, explained
+under *End of M1*; the block is pasted as printed and is not corrected.
+
+
+#### CHUNK-5 — `t_e964f95f` — PR #9 — the human chunk
+
+`[2026-11-02 11:33] [run 22] blocked` (`08-cards-full.txt`, card `t_e964f95f`; the board prints the reason as a Python dict with `\n` escapes, shown here with the escapes read back as line breaks)
+
+```
+merge-pending: CHUNK-5: Guard every model payload behind one audited seam is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, the mutation probe found 31 changed line(s) no test observes (report-only, listed below), and the scorer reached approve — 2 finding(s) (derived; the scorer asserted approve-with-nits). Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://github.com/wielas/Squatfather/pull/9 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_e964f95f "<reason>" --board squatfather-run-a2`
+
+implementer model: NOT RECORDED — no completed run on this chunk card names the model that wrote this diff (F22)
+gate: clear — warnings: touches
+merged tree: make check is green on chunk/5-guard-every-model-payload-behind-one-audited-a2 merged with main (1763c261bdccd7a1a12555b5ed6bd3c541969059), and was green on chunk/5-guard-every-model-payload-behind-one-audited-a2 alone first
+mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 31 of 103 probed changed line(s) are observed by no test: every mutation left the suite green (103 mutants run in 412s; budget ended with 158 line(s) not fully probed)
+  - scripts/egress_proxy.py:23 [private product code omitted; see Squatfather PR #9 at 0ec8c80]
+  - scripts/egress_proxy.py:27 [private product code omitted; see Squatfather PR #9 at 0ec8c80]
+  - scripts/egress_proxy.py:28 [private product code omitted; see Squatfather PR #9 at 0ec8c80]
+[… 7 lines trimmed …]
+  - …and 21 more
+verdict: approve — 2 finding(s) (derived; the scorer asserted approve-with-nits) — scores 3/3/3/2/3/2
+spot-check: docs/REQUIREMENTS.md NFR-3 hunk, together with the last two docs/decision-log.md entries. The chunk branch changed a requirement after scenario 5 ran without meeting the old wording. Confirm the owner actually made that decision.
+```
+
+```
+Runs (4):
+  #4   blocked      @forge-operator-handoff  0s  2026-10-31 07:17
+        → interactive: this chunk is yours to implement; no lane will pick it up
+  #21  review_requested @forge-operator-handoff  0s  2026-11-02 11:24
+        → Guarded, audited model seam with OpenRouter stdlib adapter landed (PR #9); watch the NFR-3 amendment (no upstream pin, ZDR enforced) made in-branch by owner dec
+  #22  blocked      @forge-verifier  492s  2026-11-02 11:25
+        → merge-pending: CHUNK-5: Guard every model payload behind one audited seam is verified and NOT merged — the verifier may only recommend
+  #23  completed    @forge-verifier  0s  2026-11-02 12:30
+        → merged: https://github.com/wielas/Squatfather/pull/9 as 031485221da4 (completed by merge-watcher)
+```
+
+The change made to the PR after that recommendation (`$S/chunk5-post-verdict-diffstat.txt`):
+
+```
+ docs/decision-log.md               | 13 ++++++--
+ src/the_squatfather/coach/guard.py | 48 ++++++++++++++++++++++-----
+ src/the_squatfather/coach/seam.py  |  4 +--
+ tests/steps/test_chunk_5.py        | 66 +++++++++++++++++++++++++++++++++++++-
+ 4 files changed, 118 insertions(+), 13 deletions(-)
+```
+
+The verifier's completion record for the card (run 23 metadata, `$S/chunk5-runs.json`; re-indented JSON of the stored values; the `evidence` and `action` text of each finding quotes product source and is not pasted):
+
+```
+{
+  "verdict": "approve-with-nits",
+  "scores": {
+    "spec_fidelity": 3,
+    "scenario_integrity": 3,
+    "architectural_conformance": 3,
+    "scope_discipline": 2,
+    "debt_honesty": 3,
+    "doc_reconciliation": 2
+  },
+  "findings": [
+    {
+      "dimension": "scope_discipline",
+      "severity": "nit",
+      "evidence": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]",
+      "action": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]"
+    },
+    {
+      "dimension": "doc_reconciliation",
+      "severity": "nit",
+      "evidence": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]",
+      "action": "[private product code omitted; see Squatfather PR #9 at 0ec8c80]"
+    }
+  ],
+  "nits_as_cards": [
+    "Remove stale 'pin'/'no-fallback' wording from HttpsModel docstring (seam.py)",
+    "Operator: confirm owner sign-off on NFR-3 pinned-upstream removal made in CHUNK-5 branch"
+  ]
+}
+```
+
+**Reading.** The recommendation (run 22, 2 November 11:33 board time) covers the head
+the verifier reviewed. The PR commits above (`$E/10b`) show that the commit
+`2dfaf68` ("fix(CHUNK-5): address judge nits: guard checks keys and stray contain…") was
+committed after it, and the PR was merged at `2dfaf68`, not at `0ec8c80`. The preserved
+card events show no later verifier review. CI on `2dfaf68`: both checks `COMPLETED SUCCESS`
+(`10-ci-summary.txt`). The change includes four lines in `src/the_squatfather/coach/seam.py`
+(lines 117 to 124 of the post-change file, the `HttpsModel` docstring): a wording change that
+answers the verifier's second finding (`doc_reconciliation`, above). The rest is guard code,
+tests and the decision log (diffstat above). [private product code omitted; see Squatfather PR #9
+at 2dfaf68]
+**Disclosures (judgement; sources: the recovery record, entries of 2026-11-04 and
+2026-11-05, and the owner's answers there).**
+- **The verdict covered `0ec8c80`; `2dfaf68` was merged.** The original recommendation is
+  not evidence that the board verifier reviewed the changed head.
+- **Authorization.** Asked whether they contemporaneously authorized merging `2dfaf68`
+  after the recommendation covered `0ec8c80`, the owner answered "uncertain / cannot
+  recall" (2026-11-05). It is recorded as an open historical authorization gap, not as
+  authorization.
+- **Present-day disposition.** The owner accepted the retrospective technical review
+  (which found no concrete blocker in the post-verdict diff) plus the green exact-head CI
+  as the code's present-day disposition. The retrospective is not the original verifier
+  review, and the acceptance does not make the gap a contemporaneous approval.
+- The implementer of this chunk was the operator (`claude-interactive`); the hold says
+  `implementer model: NOT RECORDED` (F22), and no live-provider run is evidenced at the
+  merged head.
+
+
+#### The mutation probe beside the operator
+
+The protocol's row (*What is measured*): for every recommended PR, the hold's mutation
+verdict next to what the operator did. The verdict cells are the hold's own
+`mutation probe:` line, verbatim (decoded as above). The last column is read from the
+ledger events above.
+
+| Card, hold | Hold's mutation probe line | What the operator did |
+|---|---|---|
+| CHUNK-1, run 2 | `mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 29 of 135 probed changed line(s) are observed by no test: every mutation left the suite green (147 mutants run in 30s)` | merged |
+| CHUNK-2, run 9 | `mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 6 of 74 probed changed line(s) are observed by no test: every mutation left the suite green (84 mutants run in 27s)` | disagreed: the D-1 drill (excluded) |
+| CHUNK-2, run 13 | `mutation probe: DID NOT RUN (report-only, so this does not block) —` | merged, at a head the verifier did not review |
+| CHUNK-3, run 11 | `mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 39 of 127 probed changed line(s) are observed by no test: every mutation left the suite green (157 mutants run in 34s)` | merged |
+| CHUNK-4, run 19 | `mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 51 of 109 probed changed line(s) are observed by no test: every mutation left the suite green (120 mutants run in 46s)` | merged |
+| CHUNK-5, run 22 | `mutation probe: REPORT-ONLY, would bounce under FORGE_MUTATION_PROBE_BOUNCE=1 — 31 of 103 probed changed line(s) are observed by no test: every mutation left the suite green (103 mutants run in 412s; budget ended with 158 line(s) not fully probed)` | merged, at a head the verifier did not review |
+
+**Judgement (source: `docs/run-a.md`, *What is measured*, and the owner ruling below).**
+The protocol asks the operator to decide the probe's switch (`FORGE_MUTATION_PROBE_BOUNCE`)
+and its precision from this row, at M1's checkpoint.
+**Owner ruling, 2026-11-06 (verbatim choice: "Keep reporting-only").**
+`FORGE_MUTATION_PROBE_BOUNCE` stays unset. Precision is measured in Run B (shadow) and
+decided at the M2 checkpoint. The operator's own judgement of each PR, beyond merge or
+bounce, is not recorded. The row is a list, as the protocol says it is. No precision figure
+is computed here.
+
 
 ### S-1
-*(not yet run)*
+
+**No output exists to paste.** The recovery record (2026-11-02) states that the original
+seeded handoff "has no located seed tag, SHA, drill artifact, or scorer outcome", and the
+end-of-M1 capture adds none. The one thing the board does show about CHUNK-5 is its
+ledger line, which has one `review_requested`, one verifier claim, one hold and no
+`changes_requested`:
+
+```
+t_e964f95f	CHUNK-5: Guard every model payload behind one audited seam	done	forge-verifier	created>commented>blocked>assigned>linked>linked>assigned>unblocked>review_requested>claimed>spawned>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>heartbeat>blocked>completed
+```
+
+**Judgement (sources: recovery record 2026-11-02; owner decision 2026-11-05).**
+- S-1 is **not evidenced and is not credited** as caught. The ordinary CHUNK-5 approval is
+  not an S-1 verdict, and neither is the retrospective review.
+- On 2026-11-05 the owner chose to continue toward S7 closeout with the original S-1
+  explicitly uncredited. "No supplemental exercise was approved and none is run."
+- Under the protocol (*S-1* procedure step 7, and flip clause 1) only a `changes_requested`
+  whose reasons name the seed counts. There is none.
+
 
 ### D-1
-*(not yet run)*
+
+The card events of CHUNK-2 around the drill (`$E/08-cards-full.txt`, lines as printed),
+the comment the drill left, and the lane's re-entry:
+
+```
+Comments (1):
+  [2026-10-31 07:28] default: CHANGES REQUESTED: Add a module docstring to scripts/refresh_catalogue.py that names its source file and the command that regenerates catalogue.json.
+
+  [2026-10-31 07:28] assigned {'assignee': 'forge-operator-handoff', 'from': 'forge-verifier'}
+  [2026-10-31 07:28] unblocked {'status': 'review', 'resume_status': 'review'}
+  [2026-10-31 07:28] review_reopened {'status': 'ready', 'implementer': 'forge-codex-lane'}
+  [2026-10-31 07:28] commented {'author': 'default', 'len': 149}
+  [2026-10-31 07:34] [run 12] claimed {'lock': 'Goons-Mac-mini.local:66324', 'expires': 1793429394, 'run_id': 12}
+  [2026-10-31 07:35] [run 12] review_requested {'summary': 'CHUNK-2 (after review): PR https://github.com/wielas/Squatfather/pull/5 — make check green, blast radius clean, codex gpt-5.6-luna. Watch: 5 files, 1920+/0- lines.', 'implementer': 'forge-codex-lane', 'reviewer': 'forge-verifier'}
+```
+
+The pre-registered drill text it is compared with is in this file under *D-1* (the reason
+the operator passed to `bounce.sh` is identical to the comment above).
+
+**Reading.** In the events the park is `assigned` to `forge-operator-handoff`, then
+`unblocked`, then `review_reopened`, with no `claimed` between `unblocked` and
+`review_reopened`; the lane's `claimed` (run 12) and its `review_requested` for the same
+PR #5 follow. That is clauses 2 and 3 of the drill, as printed by the board.
+**Not in the evidence pack:** the `bounce.sh` console output (clause 1, "back with
+forge-codex-lane") and the Codex rollout check. They are in the product's ignored
+`.forge/run-a-attempt-2-run/` and were not read for this PR.
+**Judgement (source: recovery record, 2026-11-02).** "D-1's three clauses were recorded as
+met, including the lane's re-entry and handoff on the same card. The resumed Codex rollout
+recorded both writable roots and `approval_policy=never`, with no denial or escalation."
+D-1 is excluded from flip clause 2 by pre-registration.
+
 
 ### Digests
-*(not yet run — seven lines, each with its delivered digest)*
+
+GW2: seven consecutive morning digests, 31 October to 6 November, one line each. The line
+is the owner's. The delivered text is pasted beside it, and the delivery receipt is the
+gateway log's `message_id`.
+
+Delivery log lines (`$R/digest-delivery-lines.txt`; `message_id=693` is 30 October, outside
+the window):
+
+```
+2026-10-30 09:00:22,336 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=693
+2026-10-31 09:00:23,133 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=694
+2026-11-01 15:09:31,992 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=696
+2026-11-02 09:00:31,785 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=697
+2026-11-03 09:00:32,423 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=698
+2026-11-04 09:00:32,952 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=699
+2026-11-05 09:00:33,443 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=700
+2026-11-06 09:00:34,082 INFO cron.scheduler: Job 'af671104c260': delivered to telegram:… via live adapter thread=- message_id=701
+```
+
+The receipts table (`$R/receipts-table.md`):
+
+```
+# forge-digest delivery receipts, 31 Oct to 5 Nov 2026
+
+Job: forge-digest (id af671104c260), schedule `0 9 * * *`, delivery to telegram:….
+Sources: agent.log / agent.log.1 "delivered to telegram" lines (see digest-delivery-lines.txt); header date read from the copied run output in digest-outputs/.
+
+| Delivery date | Delivery timestamp (log) | Telegram message_id | Digest header date | Status |
+|---|---|---|---|---|
+| 31 Oct 2026 | 2026-10-31 09:00:23 | 694 | Forge digest — 2026-10-30 | delivered |
+| 1 Nov 2026 | 2026-11-01 15:09:31 | 696 | Forge digest — 2026-10-31 | delivered (off-schedule, 15:09 run) |
+| 2 Nov 2026 | 2026-11-02 09:00:31 | 697 | Forge digest — 2026-11-01 | delivered |
+| 3 Nov 2026 | 2026-11-03 09:00:32 | 698 | Forge digest — 2026-11-02 | delivered |
+| 4 Nov 2026 | 2026-11-04 09:00:32 | 699 | Forge digest — 2026-11-03 | delivered |
+| 5 Nov 2026 | 2026-11-05 09:00:33 | 700 | Forge digest — 2026-11-04 | delivered |
+| 6 Nov 2026 | 2026-11-06 09:00:34 | 701 | Forge digest — 2026-11-05 | delivered |
+
+Notes:
+- No day is MISSING: every delivery date has a message_id in agent.log.
+- Header dates lag the delivery date by one day on every row (each digest reports the previous day). This is consistent across all six runs, not a single error.
+- No 09:00 run occurred on 1 Nov; the 1 Nov delivery at 15:09 is likely the scheduler catch-up (catch_up_occurrences modified 2026-11-01 15:09; cause not confirmed).
+- message_id 695 falls between the 31 Oct and 1 Nov deliveries and is not attributed to this job in the logs.
+- Run output files carry no message_id; the message_id column comes only from the log.
+```
+
+**Judgement (sources are named per row).** The seven lines. The *counts* column is read
+from the delivered text itself, not from the owner.
+
+| Delivered | message_id | Counts as printed (landed / in flight / waiting) | Owner's recorded judgement | Provenance caveat |
+|---|---|---|---|---|
+| 31 Oct 09:00:23 | 694 | 1 / 5 / 2 | "Yes, nothing missing" (`2026-11-04-snapshot/forge-s7-evidence-decision-table-2026-11-04.md`, a working record) | Judged late and non-blind, after an operator summary; retained only by the owner's ruling of 1 Nov |
+| 1 Nov 15:09:31 | 696 | 3 / 5 / 1 | "Yes, nothing missing" (decision table) | Delivered off-schedule (no 09:00 run that day; cause not confirmed). Judged late and non-blind, after a summary; retained only by the 1 Nov ruling |
+| 2 Nov 09:00:31 | 697 | 0 / 5 / 1 | Owner "saw and approved" it in the 2 Nov recovery chat, "without yet replying to it" (recovery record). **Recorded as yes by owner ruling of 2026-11-06** | Read phone-only before any board: owner affirmation of 4 Nov |
+| 3 Nov 09:00:32 | 698 | 1 / 5 / 1 | Owner "found their contents acceptable", reported 4 Nov (recovery record). **Recorded as yes by owner ruling of 2026-11-06**; with a request for clearer separate lines for landed work, waiting work, the decision and risk, and no job-management footer | Phone-only before any board: owner affirmation of 4 Nov |
+| 4 Nov 09:00:32 | 699 | 0 / 5 / 1 | Same entry as 3 Nov: "contents acceptable". **Recorded as yes by owner ruling of 2026-11-06** | Phone-only before any board: owner affirmation of 4 Nov |
+| 5 Nov 09:00:33 | 700 | 0 / 5 / 1 | **yes** (`gw2-lines-2026-11-05-06.md`), with the owner's note, verbatim: "The "What it means" part of the digest should be a bit longer and clearer. I'm also missing a "What to do" or "How to progress" part of the digest." | Owner, 6 Nov: "I read them before looking at the board." Phone-only was **not restated** for this day |
+| 6 Nov 09:00:34 | 701 | 0 / 5 / 1 | **yes**, "nothing stated" as wrong or missing (`gw2-lines-2026-11-05-06.md`) | Same: read before the board; phone-only not restated |
+
+**Owner ruling, 2026-11-06, on 2 to 4 November (verbatim):** "Yes, they were yes." The
+three lines are recorded as yes under this ruling; before it they stood in the recovery record
+as an approval (2 Nov) and "acceptable" (3 and 4 Nov), not as yes/no lines.
+
+The owner's 4 November affirmation, verbatim (recovery record): "yes, I read the phone only
+- board is hard to reach remotely". The 6 November statement, verbatim
+(`gw2-lines-2026-11-05-06.md`): "The digests from 5th and 6th landed and are validated. Yes. I
+read them before looking at the board."
+
+The seven delivered texts follow, each a verbatim copy of the cron job's saved output
+(`$R/digest-outputs/`). The header date of each digest is the day before its delivery.
+
+
+**31 Oct, message_id 694** — `$R/digest-outputs/2026-10-31_09-00-22.md`
+
+```
+# Cron Job: forge-digest
+
+**Job ID:** af671104c260
+**Run Time:** 2026-10-31 09:00:22
+**Mode:** no_agent (script)
+
+---
+
+Forge digest — 2026-10-30
+
+== squatfather-run-a2 ==
+Landed (1)
+- CHUNK-1: Store owner history in a migrated SQLite file — https://github.com/wielas/Squatfather/pull/4 (t_23926299)
+In flight: 5 waiting on parents
+Waiting on you (2)
+
+— t_7fa4389a · CHUNK-4: Build the baseline plan and validate plans
+merge-pending: CHUNK-4: Build the baseline plan and validate plans is verified and NOT merged — the verifier may only recommend
+
+What it means: the deterministic gate is clear, `make check` is green on this branch merged with main, the mutation probe found 51 changed line(s) no test observes (report-only, listed below), and the scorer reached approve — 5 finding(s) (derived; the scorer asserted approve-with-nits). Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)
+Decision needed: merge the PR, or send it back
+Risk: nothing is merged and this card's children stay held until it is
+Reply: merge https://github.com/wielas/Squatfather/pull/7 on GitHub — the merge-watcher completes this card — or `~/.forge/repo/scripts/bounce.sh t_7fa4389a "<reason>" --board squatfather-run-a2`
+
+— t_e964f95f · CHUNK-5: Guard every model payload behind one audited seam
+interactive: this chunk is yours to implement; no lane will pick it up
+
+What it means: the roadmap routed it to a human (Lane: claude-interactive); its children and its milestone gate wait until its PR is merged
+Decision needed: implement it now, or re-plan it for a lane
+Risk: nothing is built until you start it, and nothing merges before the verifier has reviewed it
+Reply: `/start-chunk <its CHUNK id>` in the product checkout; `/end-chunk` hands it to the verifier
+
+Spend: driver actual n/a · estimated $0.0036635576 — 1/1 runs joined. Codex quota is not metered here.
+```
+
+**1 Nov, message_id 696** — `$R/digest-outputs/2026-11-01_15-09-31.md`
+
+```
+# Cron Job: forge-digest
+
+**Job ID:** af671104c260
+**Run Time:** 2026-11-01 15:09:31
+**Mode:** no_agent (script)
+
+---
+
+Forge digest — 2026-10-31
+
+== squatfather-run-a2 ==
+Landed (3)
+- CHUNK-3: Summarise the week and diff plans — https://github.com/wielas/Squatfather/pull/6 (t_ebfc4fed)
+- CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment — https://github.com/wielas/Squatfather/pull/5 (t_fe9b343b)
+- CHUNK-4: Build the baseline plan and validate plans — https://github.com/wielas/Squatfather/pull/7 (t_7fa4389a)
+In flight: 5 waiting on parents
+Waiting on you (1)
+
+— t_e964f95f · CHUNK-5: Guard every model payload behind one audited seam
+interactive: this chunk is yours to implement; no lane will pick it up
+
+What it means: the roadmap routed it to a human (Lane: claude-interactive); its children and its milestone gate wait until its PR is merged
+Decision needed: implement it now, or re-plan it for a lane
+Risk: nothing is built until you start it, and nothing merges before the verifier has reviewed it
+Reply: `/start-chunk <its CHUNK id>` in the product checkout; `/end-chunk` hands it to the verifier
+
+Spend: driver actual n/a · estimated $0.015423851200000002 — 5/5 runs joined. Codex quota is not metered here.
+```
+
+**2 Nov, message_id 697** — `$R/digest-outputs/2026-11-02_09-00-31.md`
+
+```
+# Cron Job: forge-digest
+
+**Job ID:** af671104c260
+**Run Time:** 2026-11-02 09:00:31
+**Mode:** no_agent (script)
+
+---
+
+Forge digest — 2026-11-01
+
+== squatfather-run-a2 ==
+Landed (0): nothing
+In flight: 5 waiting on parents
+Waiting on you (1)
+
+— t_e964f95f · CHUNK-5: Guard every model payload behind one audited seam
+interactive: this chunk is yours to implement; no lane will pick it up
+
+What it means: the roadmap routed it to a human (Lane: claude-interactive); its children and its milestone gate wait until its PR is merged
+Decision needed: implement it now, or re-plan it for a lane
+Risk: nothing is built until you start it, and nothing merges before the verifier has reviewed it
+Reply: `/start-chunk <its CHUNK id>` in the product checkout; `/end-chunk` hands it to the verifier
+
+Spend: no metered driver runs on the day
+```
+
+**3 Nov, message_id 698** — `$R/digest-outputs/2026-11-03_09-00-32.md`
+
+```
+# Cron Job: forge-digest
+
+**Job ID:** af671104c260
+**Run Time:** 2026-11-03 09:00:32
+**Mode:** no_agent (script)
+
+---
+
+Forge digest — 2026-11-02
+
+== squatfather-run-a2 ==
+Landed (1)
+- CHUNK-5: Guard every model payload behind one audited seam — https://github.com/wielas/Squatfather/pull/9 (t_e964f95f)
+In flight: 5 waiting on parents
+Waiting on you (1)
+
+— t_9c0b278e · GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Spend: driver actual n/a · estimated n/a — 0/1 runs joined. Codex quota is not metered here.
+```
+
+**4 Nov, message_id 699** — `$R/digest-outputs/2026-11-04_09-00-32.md`
+
+```
+# Cron Job: forge-digest
+
+**Job ID:** af671104c260
+**Run Time:** 2026-11-04 09:00:32
+**Mode:** no_agent (script)
+
+---
+
+Forge digest — 2026-11-03
+
+== squatfather-run-a2 ==
+Landed (0): nothing
+In flight: 5 waiting on parents
+Waiting on you (1)
+
+— t_9c0b278e · GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Spend: no metered driver runs on the day
+```
+
+**5 Nov, message_id 700** — `$R/digest-outputs/2026-11-05_09-00-33.md`
+
+```
+# Cron Job: forge-digest
+
+**Job ID:** af671104c260
+**Run Time:** 2026-11-05 09:00:33
+**Mode:** no_agent (script)
+
+---
+
+Forge digest — 2026-11-04
+
+== squatfather-run-a2 ==
+Landed (0): nothing
+In flight: 5 waiting on parents
+Waiting on you (1)
+
+— t_9c0b278e · GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Spend: no metered driver runs on the day
+```
+
+**6 Nov, message_id 701** — `$R/digest-outputs/2026-11-06_09-00-33.md`
+
+```
+# Cron Job: forge-digest
+
+**Job ID:** af671104c260
+**Run Time:** 2026-11-06 09:00:33
+**Mode:** no_agent (script)
+
+---
+
+Forge digest — 2026-11-05
+
+== squatfather-run-a2 ==
+Landed (0): nothing
+In flight: 5 waiting on parents
+Waiting on you (1)
+
+— t_9c0b278e · GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Spend: no metered driver runs on the day
+```
+
+**Judgement: GW2's done-when, "seven digests delivered and all seven lines say yes".**
+**Met — 2–4 Nov by owner ruling of 2026-11-06.** The provenance caveats stay.
+- **Seven deliveries: evidenced.** Seven `message_id`s (694, 696 to 701), each from the
+  gateway log's "delivered to telegram" line.
+- **Seven yes lines.** 31 Oct, 1 Nov, 5 Nov and 6 Nov are plain yes lines. 2, 3 and 4 Nov are
+  yes by the owner ruling above. No source records a "no" for any day.
+- **Provenance.** The protocol prescribes phone only, before any board. 31 Oct and
+  1 Nov were late and non-blind and are retained by the owner's 1 November ruling. 2 to 4 Nov
+  were read phone-only before the board, on the owner's affirmation of 4 November (not an
+  observed timing). 5 and 6 Nov were read before the board; phone-only was not restated.
+- **The 5 November line is a yes with a stated deficiency.** The protocol's
+  parking-lot rule is for "no" lines. The note was acted on in the source by #100
+  ("Digest: clearer 'What it means' and a new 'What to do' section"); that formatter is not
+  deployed, and the delivered 5 and 6 November texts above predate it.
+
 
 ### GATE-M1 probe
-*(not yet run)*
+
+The protocol's probe command (*What is measured*) is `git -C "$P" switch main && git -C
+"$P" pull --ff-only && ~/.forge/repo/scripts/probe-run.sh "$P" GATE-M1; echo "probe exit=$?"`.
+The owner ran it on 2026-11-06 (`$E/04-gate-m1-probe.txt`). Its first part fast-forwarded
+the product checkout from `1220838` to `f0fd89f`:
+
+```
+Already on 'main'
+Your branch is behind 'origin/main' by 1 commit, and can be fast-forwarded.
+  (use "git pull" to update your local branch)
+Updating 1220838..f0fd89f
+Fast-forward
+ docs/ARCHITECTURE.md                               |  39 +-
+ docs/REQUIREMENTS.md                               |  13 +-
+ docs/ROADMAP.md                                    |  13 +-
+ ...idempotent-push-via-ledger-tag-and-reconcile.md |  11 +
+ docs/chunks/CHUNK-10.md                            |   2 +-
+ docs/chunks/CHUNK-11.md                            |  21 +
+ docs/chunks/CHUNK-12.md                            |  24 +
+ docs/chunks/CHUNK-13.md                            |  23 +
+ docs/chunks/CHUNK-6.md                             |   8 +-
+ docs/chunks/CHUNK-7.md                             |  20 +-
+ docs/chunks/CHUNK-9.md                             |  12 +-
+ docs/chunks/GATE-M3.md                             |   2 +-
+ docs/chunks/contract-freeze.json                   |  13 +-
+ docs/chunks/graph.json                             | 148 +++-
+ docs/decision-log.md                               |  15 +
+ docs/feasibility.md                                |  10 +-
+ docs/post-spike-rollout.md                         |  26 +
+ docs/research/baseline-2026-11-02/README.md        |  18 +
+ docs/research/baseline-2026-11-02/m1-probes.txt    |   5 +
+ docs/research/baseline-2026-11-02/make-check.txt   |  58 ++
+ tests/features/chunk_11.feature                    |  26 +
+ tests/features/chunk_12.feature                    |  32 +
+ tests/features/chunk_13.feature                    |  32 +
+ tests/probes/gate_m3.json                          |  51 ++
+ tests/probes/m3/README.md                          |  15 +
+ tests/probes/m3/cli_safety.py                      |  78 +++
+ tests/probes/m3/history_safety.py                  | 144 ++++
+ tests/probes/m3/safety.json                        | 751 +++++++++++++++++++++
+ tests/probes/m3/safety.py                          | 124 ++++
+ 29 files changed, 1684 insertions(+), 50 deletions(-)
+ create mode 100644 docs/chunks/CHUNK-11.md
+ create mode 100644 docs/chunks/CHUNK-12.md
+ create mode 100644 docs/chunks/CHUNK-13.md
+ create mode 100644 docs/post-spike-rollout.md
+ create mode 100644 docs/research/baseline-2026-11-02/README.md
+ create mode 100644 docs/research/baseline-2026-11-02/m1-probes.txt
+ create mode 100644 docs/research/baseline-2026-11-02/make-check.txt
+ create mode 100644 tests/features/chunk_11.feature
+ create mode 100644 tests/features/chunk_12.feature
+ create mode 100644 tests/features/chunk_13.feature
+ create mode 100644 tests/probes/m3/cli_safety.py
+ create mode 100644 tests/probes/m3/history_safety.py
+ create mode 100644 tests/probes/m3/safety.json
+ create mode 100644 tests/probes/m3/safety.py
+TESTED_SHA=f0fd89f92ffb2c5ecccc1f5c8c074b2fbb24a44d
+probe GATE-M1: tests/probes/gate_m1.json (5 cases, frozen) at f0fd89f
+PASS  previous-week-summary-counts-planned-and-unplanned (realistic, 77 records)
+PASS  baseline-plan-progresses-validates-and-passes-guard (realistic, 77 records)
+PASS  guard-rejects-email-in-note (adversarial)
+PASS  guard-rejects-raw-garmin-key (adversarial)
+PASS  validator-flags-session-on-away-day (adversarial)
+probe GATE-M1: PASS — 5 of 5 cases passed (realistic 2/2, adversarial 3/3) at f0fd89f
+probe exit=0
+```
+
+The gate card after the probe (`$E/05-gate-after-probe.txt`). **`GATE-M1` was not
+completed; it is still `blocked`:**
+
+```
+Task t_9c0b278e: GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+  status:    blocked
+  assignee:  -
+  workspace: scratch
+  max-retries: 2 (default)
+  created:   2026-10-31 07:17 by user
+
+  Diagnostics (1):
+    ⚠ [warning] Task has been blocked for 147h
+       data: blocked_at=1793427439 | age_hours=147.4
+       → Add a comment / unblock the task
+  parents:   t_23926299, t_7fa4389a, t_e964f95f, t_ebfc4fed, t_fe9b343b
+  children:  t_586f672d, t_9d4d32bc
+
+Body:
+### GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+- **Milestone:** M1
+- **Delivers:** FR-8, FR-18, NFR-2, NFR-3, NFR-6. It also lays the offline rules that FR-1, FR-5, FR-6, FR-7, FR-9, FR-10, FR-11, FR-12 and FR-14 finish in M2 or M3.
+- **Probe:** tests/probes/gate_m1.json
+- **Estimate:** 5 chunks
+- **Lane:** claude-interactive
+- **Hold:** complete this gate only when both of these hold:
+  1. Every probe case passes.
+  2. The gated Garmin live spike has passed (ADR-0003, `spikes/garmin-live/README.md`). That means one owner-run `widget+cffi` login on 2026-10-02 or later; the reads and one `SQF-SPIKE` workout, run by a subagent; and the owner's check of one set edited on the watch (the watch-side row of `docs/feasibility.md`).
+
+  Then, before M2 starts, land one planning commit that:
+  - records the real verdicts in `docs/feasibility.md`;
+  - adds the anonymised raw response shapes to `spikes/garmin-live/README.md`;
+  - amends CHUNK-6 and CHUNK-7 (contract, feature and freeze together) if those shapes or issue #444 require it.
+
+  A second 429 means going back to `/scope`, not passing this gate.
+- **Run:** each case's `run` from the repo root, with `{input}` replaced by `tests/probes/m1`; compare the exit code and look for the stdout substring.
+
+Latest summary:
+milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Comments (1):
+  [2026-10-31 07:17] default: BLOCKED: milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Events (9):
+  [2026-10-31 07:17] created {'assignee': 'forge-operator-handoff', 'status': 'ready', 'parents': [], 'creator_task_id': None, 'tenant': None, 'workspace_kind': 'scratch', 'workspace_path': None, 'branch_name': None, 'project_id': None, 'skills': None, 'goal_mode': None, 'model_override': None, 'provider_override': None}
+  [2026-10-31 07:17] commented {'author': 'default', 'len': 684}
+  [2026-10-31 07:17] [run 5] blocked {'reason': 'milestone-gate: GATE-M1 holds milestone M1\'s successors until you complete it\n\nWhat it means: every chunk that depends on this gate waits, by the board\'s own parent rule, until the gate is done\nDecision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh \'/Users/goonlab/dev/the-squatfather\' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide\nRisk: completing it early starts the next milestone on work nobody has probed\nReply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner\'s last line>"`', 'kind': 'needs_input', 'recurrences': 1, 'source_status': 'ready'}
+  [2026-10-31 07:17] assigned {'assignee': None, 'from': 'forge-operator-handoff'}
+  [2026-10-31 07:17] linked {'parent': 't_23926299', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_fe9b343b', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_ebfc4fed', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_7fa4389a', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_e964f95f', 'child': 't_9c0b278e'}
+
+Runs (1):
+  #5   blocked      @forge-operator-handoff  0s  2026-10-31 07:17
+        → milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+Board: squatfather-run-a2 (7 other boards — `hermes kanban boards list`)
+
+✓ t_23926299  done      forge-verifier        CHUNK-1: Store owner history in a migrated SQLite file
+✓ t_fe9b343b  done      forge-verifier        CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment
+✓ t_ebfc4fed  done      forge-verifier        CHUNK-3: Summarise the week and diff plans
+✓ t_7fa4389a  done      forge-verifier        CHUNK-4: Build the baseline plan and validate plans
+✓ t_e964f95f  done      forge-verifier        CHUNK-5: Guard every model payload behind one audited seam
+⊘ t_9c0b278e  blocked   (unassigned)          GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+◻ t_586f672d  todo      forge-codex-lane      CHUNK-6: Log in once and pull the week from Garmin
+◻ t_f1a1c7b9  todo      forge-codex-lane      CHUNK-7: Push approved plans to the Garmin calendar idempotently
+◻ t_9d4d32bc  todo      forge-codex-lane      CHUNK-8: Draw up the shortlist and adjust plans through the coach
+⊘ t_e6ddf640  blocked   (unassigned)          GATE-M2: Milestone 2 — Garmin pull, idempotent push and the coach flows
+◻ t_3d22d120  todo      forge-codex-lane      CHUNK-9: Run the catch-up as a state machine with an approval gate
+◻ t_3a5cc722  todo      forge-codex-lane      CHUNK-10: Drive the catch-up from the terminal
+⊘ t_7af4caeb  blocked   (unassigned)          GATE-M3: Milestone 3 — the weekly catch-up runs end to end
+```
+
+The earlier recorded run. `$E/03-original-probe-output.txt` (pasted whole) was captured by
+the agent run: it fetched `origin/main` and then displayed the files the product's planning
+slice retained under `docs/research/baseline-2026-11-02/`, which record the 2 November run at
+`12208388` (`make check`, and the same five probe cases):
+
+```
+From github.com:wielas/Squatfather
+ * branch            main       -> FETCH_HEAD
+   1220838..f0fd89f  main       -> origin/main
+origin/main = f0fd89f92ffb2c5ecccc1f5c8c074b2fbb24a44d 2026-11-04T11:45:31+01:00 plan: preserve confirmed training history after Garmin pulls (#11)
+=== docs/research/baseline-2026-11-02/README.md
+# Offline baseline evidence — 2026-11-02
+
+The clean original checkout at `12208388bc4399b7784f0f3dd99bc97888c5b416`
+was checked from 14:46:15 to 14:46:24 UTC; before and after status was clean.
+`make-check.txt` is the captured console output with home-directory path prefixes redacted; counts, times, status and exit are unchanged. The raw log remains local at `/tmp/sqf-baseline-check.txt`. Exit 0: 80 passed, 1 live
+source skipped, 91.61% coverage, and `FORGE CHECK: GREEN`.
+
+`make check` ran with `SQUATFATHER_LIVE` and `OPENROUTER_API_KEY` unset,
+`UV_OFFLINE=1`, `UV_NO_SYNC=1`, `PYTHONDONTWRITEBYTECODE=1`, and uv,
+pytest and coverage caches in `/tmp`. Approved local loopback and a temporary
+project-local catalogue output were needed by the tests. No dependencies were
+installed and no live source was called. The suite blocks external sockets and
+uses local stub servers for model transport.
+
+The five separate `tests/probes/gate_m1.json` cases ran with uv offline and
+no sync under the existing environment. `m1-probes.txt` records each case's
+expected exit and substring check, all passing. Probe run completed at
+14:46:28 UTC; status remained clean.
+=== docs/research/baseline-2026-11-02/make-check.txt
+2026-11-02T14:46:15Z
+12208388bc4399b7784f0f3dd99bc97888c5b416
+## main...origin/main
+uv run ruff format --check --no-cache .
+68 files already formatted
+uv run ruff check --no-cache .
+All checks passed!
+uv run pytest
+........................................s............................... [ 88%]
+.----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 60640)
+........                                                                [100%]
+=============================== warnings summary ===============================
+tests/steps/test_chunk_1.py: 5 warnings
+tests/steps/test_chunk_2.py: 5 warnings
+tests/steps/test_chunk_3.py: 5 warnings
+tests/steps/test_chunk_4.py: 5 warnings
+tests/steps/test_chunk_5.py: 4 warnings
+tests/steps/test_smoke.py: 2 warnings
+  <home>/dev/the-squatfather/.venv/lib/python3.12/site-packages/pytest_bdd/compat.py:28: PytestRemovedIn10Warning: Passing nodeid to _register_fixture is deprecated. Pass node instead for fixture scoping.
+    request._fixturemanager._register_fixture(
+
+tests/steps/test_chunk_1.py: 5 warnings
+tests/steps/test_chunk_2.py: 5 warnings
+tests/steps/test_chunk_3.py: 5 warnings
+tests/steps/test_chunk_4.py: 5 warnings
+tests/steps/test_chunk_5.py: 4 warnings
+tests/steps/test_smoke.py: 2 warnings
+  <home>/dev/the-squatfather/.venv/lib/python3.12/site-packages/_pytest/fixtures.py:1986: PytestRemovedIn10Warning: Passing baseid to FixtureDef is deprecated. Pass node instead for fixture scoping.
+    fixture_def = FixtureDef(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.12.13-final-0 _______________
+
+Name                                        Stmts   Miss Branch BrPart  Cover   Missing
+---------------------------------------------------------------------------------------
+src/the_squatfather/__init__.py                 1      0      0      0   100%
+src/the_squatfather/catalogue/__init__.py      46      1      2      1    96%   94
+src/the_squatfather/coach/__init__.py           0      0      0      0   100%
+src/the_squatfather/coach/guard.py            110      1     42      1    99%   239
+src/the_squatfather/coach/seam.py              96      0     10      0   100%
+src/the_squatfather/domain.py                 113      1      2      1    98%   40
+src/the_squatfather/rules/__init__.py           3      0      0      0   100%
+src/the_squatfather/rules/baseline.py          32      0     12      1    98%   26->25
+src/the_squatfather/rules/diff.py              82      6     46      6    91%   13, 15, 54-63, 140, 149->116, 218
+src/the_squatfather/rules/progression.py       24      7      8      3    62%   25-28, 41-46, 49
+src/the_squatfather/rules/schedule.py          27      0      2      1    97%   42->47
+src/the_squatfather/rules/summary.py           84      4     36      5    92%   46-47, 62->60, 82, 86->80, 92
+src/the_squatfather/rules/validate.py          97     20     48      4    75%   46-56, 66-74, 121, 186
+src/the_squatfather/store/__init__.py         162      9     36      8    91%   30, 48, 51, 71->73, 104, 109-111, 185, 201->exit, 248
+---------------------------------------------------------------------------------------
+TOTAL                                         877     49    244     31    92%
+Required test coverage of 85% reached. Total coverage: 91.61%
+80 passed, 1 skipped, 52 warnings in 8.68s
+FORGE CHECK: GREEN
+2026-11-02T14:46:24Z
+## main...origin/main
+=== docs/research/baseline-2026-11-02/m1-probes.txt
+previous-week-summary-counts-planned-and-unplanned PASS exit 0
+baseline-plan-progresses-validates-and-passes-guard PASS exit 0
+guard-rejects-email-in-note PASS exit 3
+guard-rejects-raw-garmin-key PASS exit 3
+validator-flags-session-on-away-day PASS exit 3
+```
+
+**Reading.**
+- The probe passed: `probe GATE-M1: PASS — 5 of 5 cases passed (realistic 2/2, adversarial
+  3/3) at f0fd89f`, `probe exit=0`. It found no defect.
+- **The tested SHA differs from the 2 November baseline.** `TESTED_SHA=f0fd89f...` here;
+  the 2 November check ran on `12208388bc4399b7784f0f3dd99bc97888c5b416` (the second
+  paste). The basis for treating the two as the same code, and nothing more than this:
+  the fast-forward `1220838..f0fd89f` in the first paste lists 29 files, and none is
+  under `src/` or `tests/probes/m1`, and `tests/probes/gate_m1.json` is not among them;
+  the probe says `(5 cases, frozen)`.
+- The 2 November baseline in the second paste is a read-back of the retained files after
+  the planning PR landed. It is not an end-of-M1 run and not a substitute for the one
+  above.
+- The Garmin live spike's verdict, which `GATE-M1`'s hold also requires, is **not
+  evidenced** in any file read (a product condition, outside the flip criterion).
+
+**Judgement (sources: the protocol, *Stop rules*; owner decision 2026-11-04).**
+`GATE-M1` stays held through S8 and is considered for completion in S9 (run B), not here.
+
 
 ### End of M1 — north star and ledger
-*(not yet run)*
+
+The rows of *What is measured*, in order. Environment of the capture
+(`$E/00-env.txt`, `$E/01-runtime-and-product.txt`):
+
+```
+B=squatfather-run-a2 RUN_START=2026-10-30T18:53:38Z
+
+--- runtime
+/Users/goonlab/dev/forge-runtime
+0c69368c96f633f685aac22069d038838af23847
+--- product BEFORE
+main
+12208388bc4399b7784f0f3dd99bc97888c5b416
+--- launch record
+RUN_START=2026-10-30T18:53:38Z
+FORGE_SHA=0c69368c96f633f685aac22069d038838af23847
+PRODUCT_SHA=b66be28f53b72851be78daacec15e88b32db93e8
+BOARD=squatfather-run-a2
+Hermes Agent v0.21.5 (2026.9.24) · upstream 9b904dcc · local 1a3bee0e (+1 carried commit)
+codex-cli 0.164.0
+2.1.310 (Claude Code)
+gh version 2.103.2 (2026-10-23)
+uv 0.13.5 (Homebrew 2026-10-22 aarch64-apple-darwin)
+/Users/goonlab/dev/the-squatfather/.forge/commission-20261030T175636Z.4VL1jM.md
+overall: PASS
+posture: UNGATED (merge gate unavailable on this plan: wielas/Squatfather)
+```
+
+**North-star block**, `make metrics`, raw (`$E/06-metrics.txt`):
+
+```
+./scripts/metrics.sh squatfather-run-a2
+forge metrics — board squatfather-run-a2   period (board start) .. (now)
+
+north star — what the epic is judged on (docs/epic-hands-free.md); 5 chunk cards, 5 with a recorded merge
+  merged without the operator  0.00 (0/5)
+  operator actions per merged chunk  2.40 (12 = 7 board touches + 5 merges, over 5 merged)
+  PR open -> merge  median 1.10 h · max 1.79 h over 5
+  cards per chunk  2.60 (13 cards / 5 chunks)
+  human-implemented chunks  1 of 5
+  method: operator touches (below) plus one per merge the operator made; judge sessions and GitHub-only actions are not on the board and are not counted; PR open -> merge is first review_requested event to the completed event, on merged chunk cards — a board proxy: the merge-watcher completes an operator merge on its next sweep
+  not yet measurable: defects the milestone probe catches before the operator does — no probe exists until MS2
+  not yet measurable: architect estimate vs actual cost per milestone — the estimate rides each GATE card since PL2, and the comparison arrives with the checkpoint (MS4)
+
+tier-1 gate — stage 1, a program (ADR-0009); blocks cost zero model tokens and are NOT bounces
+  block rate  0.00 (0/5 gate runs)
+  by check    nothing blocked
+
+bounce rate — a chunk counts as bounced if ANY verdict against it bounced
+  tier 1  0.00 (0/5 chunk cards)   from 0/5 verdicts   [model stage only; gate blocks are the number above]
+
+mean judge score, dimensions 1–3 (range 0–3)
+  tier 1  2.53 over 5 verdicts
+  all     2.53 over 5 verdicts
+  verdicts: approve-with-nits 5
+
+reason class distribution — leading token of the blocked reason; legacy forge.block.v1 envelopes observed: 0
+  merge-pending ×6
+  milestone-gate ×3   (not in the documented vocabulary)
+  interactive ×1   (not in the documented vocabulary)
+
+chunk envelope conformance — 7 completed chunk runs in period, 5 chunk cards on the board
+  flat, $.schema == "forge.chunk.v1"      7   <- the documented shape
+  nested under $."forge.chunk.v1"         0
+  neither                                  0
+
+implementer model — which model WROTE THE DIFF, off the chunk envelope's codex_model (F22). This is not the driver below: that is the cheap Hermes agent, never Codex
+  7 completed chunk runs   rollout-proven 6 · requested-only 0 · no source marker 0 · no model at all 1
+  gpt-5.6-luna xhigh ×6   source rollout
+
+driver usage — completed chunk runs joined 6/7 (0.86); 1 unjudged; 6 unique session(s)
+  calls 37 · input 395575 · output 6942 · cache read 625566 · cache write 0 · reasoning 2365
+  estimated cost $0.0190874088 across 6 joined session(s)
+  actual cost    n/a — not reported
+  session forge-codex-lane/20261030_195351_067b21, runs 1: z-ai/glm-5.3-flash via openrouter · estimated · 1 model row(s)
+  session forge-codex-lane/20261031_071752_64af98, runs 8: z-ai/glm-5.3-flash via openrouter · estimated · 1 model row(s)
+  session forge-codex-lane/20261031_072653_4f0ec2, runs 10: z-ai/glm-5.3-flash via openrouter · estimated · 1 model row(s)
+  session forge-codex-lane/20261031_073454_ec4ba9, runs 12: z-ai/glm-5.3-flash via openrouter · estimated · 1 model row(s)
+  session forge-codex-lane/20261031_081158_49f087, runs 16: z-ai/glm-5.3-flash via openrouter · estimated · 1 model row(s)
+  session forge-codex-lane/20261031_082059_f5be79, runs 18: z-ai/glm-5.3-flash via openrouter · estimated · 1 model row(s)
+
+operator touches — 7 = 5 comments + 2 unblocks
+  method: comments by an author that never ran as a profile on this board, except the merge-watcher's FORGE-WATCHER-NOTIFIED markers, plus every unblocked event (the event records no actor)
+metrics exit=0
+```
+
+**Readings, named beside the block as the protocol requires. No figure is adjusted or
+recomputed.**
+- D-1 and S-1 appear in the block only as operator actions. From the ledger events: of the
+  7 operator touches (5 comments and 2 unblocks), the CHUNK-2 `commented` and `unblocked`
+  at 07:28 are D-1. Four comments are the `BLOCKED:` hold comments written at 07:17 on 31 Oct,
+  when the board was bootstrapped (CHUNK-5, `GATE-M1`, `GATE-M2`, `GATE-M3`, author
+  `default`), and the remaining unblock is CHUNK-5's hand-off on 2 Nov. S-1 left no event.
+- `merged without the operator  0.00 (0/5)` is the design of recommend-only.
+- **Why the block undercounts verifier bounces — a Reading of the frozen runtime's scripts,
+  read-only in `~/dev/forge-runtime` at `0c69368`.** `scripts/metrics.sh` (lines 430 to 441,
+  and 469) counts only `task_runs` rows whose metadata schema is `forge.judge.v1` and sums
+  those whose `verdict` is `bounce`. `scripts/prejudge-review.sh` (lines 569 to 624) records
+  that `kanban_request_changes` and `kanban_block` carry no metadata: a verdict's envelope is
+  written to one host file per board and card (replaced with `mv -f` each time) and only the
+  merge-watcher's `completed` run carries it. So the five counted verdicts are each card's
+  **final** `approve-with-nits`. CHUNK-4's run 17 `changes_requested` and the D-1 drill leave
+  no metadata row. The block's `bounce rate  0.00 (0/5 chunk cards)` is therefore not a count
+  of verifier bounces: the metric undercounts them. This is a measurement gap, not a Run A
+  result. The block above is unaltered.
+- Estimate against actual: `GATE-M1` says `Estimate: 5 chunks` (`02-board-before-probe.txt`
+  below); the block says `5 chunk cards, 5 with a recorded merge`. The block reports no
+  bounce rounds, subject to the point above.
+
+**Producer contract**, `./scripts/metadata-live.sh "$B" --since "$RUN_START"`
+(`$E/07-metadata-frozen.txt`). **This is the frozen reading and it is a failure.**
+
+```
+RUN_START=2026-10-30T18:53:38Z
+Installed 6 packages in 7ms
+invalid task=t_e964f95f run=4 reason="interactive: this chunk is yours to implement; no lane will pick it up\n\nWhat it means: the roadmap routed it to a human (Lane: claude-interactive); its children and its milestone gate wait until its PR is merged\nDecision needed: implement it now, or re-plan it for a lane\nRisk: nothing is built until you start it, and nothing merges before the verifier has reviewed it\nReply: `/start-chunk <its CHUNK id>` in the product checkout; `/end-chunk` hands it to the verifier": blocked reason does not match blocked_reason_pattern
+invalid task=t_9c0b278e run=5 reason="milestone-gate: GATE-M1 holds milestone M1's successors until you complete it\n\nWhat it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done\nDecision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done \u2014 exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide\nRisk: completing it early starts the next milestone on work nobody has probed\nReply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result \"<the runner's last line>\"`": blocked reason does not match blocked_reason_pattern
+invalid task=t_e6ddf640 run=6 reason="milestone-gate: GATE-M2 holds milestone M2's successors until you complete it\n\nWhat it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done\nDecision needed: once every chunk of M2 is merged, run its probe (tests/probes/gate_m2.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M2` and decide whether M2 is done \u2014 exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide\nRisk: completing it early starts the next milestone on work nobody has probed\nReply: `hermes kanban --board squatfather-run-a2 complete t_e6ddf640 --result \"<the runner's last line>\"`": blocked reason does not match blocked_reason_pattern
+invalid task=t_7af4caeb run=7 reason="milestone-gate: GATE-M3 holds milestone M3's successors until you complete it\n\nWhat it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done\nDecision needed: once every chunk of M3 is merged, run its probe (tests/probes/gate_m3.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M3` and decide whether M3 is done \u2014 exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide\nRisk: completing it early starts the next milestone on work nobody has probed\nReply: `hermes kanban --board squatfather-run-a2 complete t_7af4caeb --result \"<the runner's last line>\"`": blocked reason does not match blocked_reason_pattern
+profile=forge-codex-lane schema=forge.chunk.v1 valid=6
+profile=forge-verifier schema=forge.judge.v1 valid=5
+missing producer=forge-prejudge: no post-cutoff completed or review_requested run
+valid=17 invalid=4 unjudged=0 ignored=0
+metadata-live exit=1
+```
+
+**Judgement (sources: recovery record; owner decisions of 2026-11-04).** The exit 1
+triggers the stop rule "`metadata-live` exiting 1 or 2". The four invalid rows are the
+bootstrap's own operator holds of 31 October (`interactive:` and three `milestone-gate:`),
+which the frozen `blocked_reason_pattern` rejects. The missing `forge-prejudge` is the P39
+exception. On 4 November the owner answered "Approve the bounded historical exception"
+for those four holds: it permits closeout while the frozen `valid=17 invalid=4 unjudged=0`
+stays recorded as the historical failure. It is not a pass and not a wider exemption. The
+later prospective repair (#98, now merged) is a separate reading and does not
+rewrite this one.
+
+**Board before the probe**, the next milestone's holds (`$E/02-board-before-probe.txt`):
+
+```
+Board: squatfather-run-a2 (7 other boards — `hermes kanban boards list`)
+
+✓ t_23926299  done      forge-verifier        CHUNK-1: Store owner history in a migrated SQLite file
+✓ t_fe9b343b  done      forge-verifier        CHUNK-2: Vendor the Garmin exercise catalogue with muscles and equipment
+✓ t_ebfc4fed  done      forge-verifier        CHUNK-3: Summarise the week and diff plans
+✓ t_7fa4389a  done      forge-verifier        CHUNK-4: Build the baseline plan and validate plans
+✓ t_e964f95f  done      forge-verifier        CHUNK-5: Guard every model payload behind one audited seam
+⊘ t_9c0b278e  blocked   (unassigned)          GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+◻ t_586f672d  todo      forge-codex-lane      CHUNK-6: Log in once and pull the week from Garmin
+◻ t_f1a1c7b9  todo      forge-codex-lane      CHUNK-7: Push approved plans to the Garmin calendar idempotently
+◻ t_9d4d32bc  todo      forge-codex-lane      CHUNK-8: Draw up the shortlist and adjust plans through the coach
+⊘ t_e6ddf640  blocked   (unassigned)          GATE-M2: Milestone 2 — Garmin pull, idempotent push and the coach flows
+◻ t_3d22d120  todo      forge-codex-lane      CHUNK-9: Run the catch-up as a state machine with an approval gate
+◻ t_3a5cc722  todo      forge-codex-lane      CHUNK-10: Drive the catch-up from the terminal
+⊘ t_7af4caeb  blocked   (unassigned)          GATE-M3: Milestone 3 — the weekly catch-up runs end to end
+--- GATE-M1 t_9c0b278e
+Task t_9c0b278e: GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+  status:    blocked
+  assignee:  -
+  workspace: scratch
+  max-retries: 2 (default)
+  created:   2026-10-31 07:17 by user
+
+  Diagnostics (1):
+    ⚠ [warning] Task has been blocked for 146h
+       data: blocked_at=1793427439 | age_hours=146.5
+       → Add a comment / unblock the task
+  parents:   t_23926299, t_7fa4389a, t_e964f95f, t_ebfc4fed, t_fe9b343b
+  children:  t_586f672d, t_9d4d32bc
+
+Body:
+### GATE-M1: Milestone 1 — the offline core plans a week and guards every payload
+- **Milestone:** M1
+- **Delivers:** FR-8, FR-18, NFR-2, NFR-3, NFR-6. It also lays the offline rules that FR-1, FR-5, FR-6, FR-7, FR-9, FR-10, FR-11, FR-12 and FR-14 finish in M2 or M3.
+- **Probe:** tests/probes/gate_m1.json
+- **Estimate:** 5 chunks
+- **Lane:** claude-interactive
+- **Hold:** complete this gate only when both of these hold:
+  1. Every probe case passes.
+  2. The gated Garmin live spike has passed (ADR-0003, `spikes/garmin-live/README.md`). That means one owner-run `widget+cffi` login on 2026-10-02 or later; the reads and one `SQF-SPIKE` workout, run by a subagent; and the owner's check of one set edited on the watch (the watch-side row of `docs/feasibility.md`).
+
+  Then, before M2 starts, land one planning commit that:
+  - records the real verdicts in `docs/feasibility.md`;
+  - adds the anonymised raw response shapes to `spikes/garmin-live/README.md`;
+  - amends CHUNK-6 and CHUNK-7 (contract, feature and freeze together) if those shapes or issue #444 require it.
+
+  A second 429 means going back to `/scope`, not passing this gate.
+- **Run:** each case's `run` from the repo root, with `{input}` replaced by `tests/probes/m1`; compare the exit code and look for the stdout substring.
+
+Latest summary:
+milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Comments (1):
+  [2026-10-31 07:17] default: BLOCKED: milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+
+What it means: every chunk that depends on this gate waits, by the board's own parent rule, until the gate is done
+Decision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh '/Users/goonlab/dev/the-squatfather' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide
+Risk: completing it early starts the next milestone on work nobody has probed
+Reply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner's last line>"`
+
+Events (9):
+  [2026-10-31 07:17] created {'assignee': 'forge-operator-handoff', 'status': 'ready', 'parents': [], 'creator_task_id': None, 'tenant': None, 'workspace_kind': 'scratch', 'workspace_path': None, 'branch_name': None, 'project_id': None, 'skills': None, 'goal_mode': None, 'model_override': None, 'provider_override': None}
+  [2026-10-31 07:17] commented {'author': 'default', 'len': 684}
+  [2026-10-31 07:17] [run 5] blocked {'reason': 'milestone-gate: GATE-M1 holds milestone M1\'s successors until you complete it\n\nWhat it means: every chunk that depends on this gate waits, by the board\'s own parent rule, until the gate is done\nDecision needed: once every chunk of M1 is merged, run its probe (tests/probes/gate_m1.json) with `~/.forge/repo/scripts/probe-run.sh \'/Users/goonlab/dev/the-squatfather\' GATE-M1` and decide whether M1 is done — exit 0 passes, 1 is a finding, 2 is no verdict; until then there is nothing to decide\nRisk: completing it early starts the next milestone on work nobody has probed\nReply: `hermes kanban --board squatfather-run-a2 complete t_9c0b278e --result "<the runner\'s last line>"`', 'kind': 'needs_input', 'recurrences': 1, 'source_status': 'ready'}
+  [2026-10-31 07:17] assigned {'assignee': None, 'from': 'forge-operator-handoff'}
+  [2026-10-31 07:17] linked {'parent': 't_23926299', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_fe9b343b', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_ebfc4fed', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_7fa4389a', 'child': 't_9c0b278e'}
+  [2026-10-31 07:17] linked {'parent': 't_e964f95f', 'child': 't_9c0b278e'}
+
+Runs (1):
+  #5   blocked      @forge-operator-handoff  0s  2026-10-31 07:17
+        → milestone-gate: GATE-M1 holds milestone M1's successors until you complete it
+```
+
+**Reading.** CHUNK-6 and CHUNK-8 are `todo` (and CHUNK-7, CHUNK-9, CHUNK-10); the three
+gates are `blocked`.
+
+**Per-card ledger:** pasted under *Per chunk*, in full.
+
+**Every `PARK-COMMENT`, and the Garmin grep** (`$E/08-ledger-greps.txt`, whose first two
+lines are the two greps' headers; the remainder is card text matched by the word
+`Garmin`, which is the product's subject, not a spike verdict):
+
+`$E/08-ledger-greps.txt, lines 1-2`
+
+```
+--- PARK-COMMENT lines
+--- Garmin lines
+[… 91 lines trimmed …]
+```
+
+**Reading.** The `PARK-COMMENT` grep matched nothing. The Garmin live spike's verdict is
+**not evidenced**.
+
+**Worktree sweep, dry run** (`$E/11-worktree-sweep-dry.txt`), read before applying:
+
+```
+./scripts/worktree-sweep.sh "/Users/goonlab/dev/the-squatfather"
+worktree-sweep: /Users/goonlab/dev/the-squatfather
+  bound to:  /Users/goonlab/dev/the-squatfather/.worktrees/
+  mode:      dry-run (pass APPLY=1 to act)
+
+  REFUSE  /Users/goonlab/dev/the-squatfather
+          outside /Users/goonlab/dev/the-squatfather/.worktrees/ — this command does not reach here
+  REFUSE  /private/tmp/claude-503/-Users-goonlab-dev-forge--claude-worktrees-youthful-lehmann-7dc537/d4033191-9489-4275-8b81-76a8e7c282f4/scratchpad/sqf-plan-openrouter
+          outside /Users/goonlab/dev/the-squatfather/.worktrees/ — this command does not reach here
+  REFUSE  /private/tmp/codex-sqf-post-spike-plan
+          outside /Users/goonlab/dev/the-squatfather/.worktrees/ — this command does not reach here
+  WOULD   /Users/goonlab/dev/the-squatfather/.worktrees/t_7fa4389a  [chunk/4-build-the-baseline-plan-and-validate-plans-a2]
+          clean, PR merged — 'git worktree remove' then 'git branch -d chunk/4-build-the-baseline-plan-and-validate-plans-a2'
+  WOULD   /Users/goonlab/dev/the-squatfather/.worktrees/t_ebfc4fed  [chunk/3-summarise-the-week-and-diff-plans-a2]
+          clean, PR merged — 'git worktree remove' then 'git branch -d chunk/3-summarise-the-week-and-diff-plans-a2'
+  KEEP    /Users/goonlab/dev/the-squatfather/.worktrees/t_fe9b343b  [chunk/2-vendor-the-garmin-exercise-catalogue-with-a2]
+          a PR on this branch NAME was merged, but at a different commit than
+          4c52a664809270ea2c83334ecbf4b4b45b8b2648 — this branch has moved since, so the work here is unmerged
+
+  2 would be removed · 1 kept · 3 refused (outside the bound)
+  re-run with APPLY=1 to act
+sweep(dry) exit=0
+```
+
+**Worktree sweep, apply** (`$E/12-worktree-sweep-apply.txt`, the owner's run):
+
+```
+./scripts/worktree-sweep.sh "/Users/goonlab/dev/the-squatfather" --apply
+worktree-sweep: /Users/goonlab/dev/the-squatfather
+  bound to:  /Users/goonlab/dev/the-squatfather/.worktrees/
+  mode:      APPLY — worktrees will be removed
+
+  REFUSE  /Users/goonlab/dev/the-squatfather
+          outside /Users/goonlab/dev/the-squatfather/.worktrees/ — this command does not reach here
+  REFUSE  /private/tmp/claude-503/-Users-goonlab-dev-forge--claude-worktrees-youthful-lehmann-7dc537/d4033191-9489-4275-8b81-76a8e7c282f4/scratchpad/sqf-plan-openrouter
+          outside /Users/goonlab/dev/the-squatfather/.worktrees/ — this command does not reach here
+  REFUSE  /private/tmp/codex-sqf-post-spike-plan
+          outside /Users/goonlab/dev/the-squatfather/.worktrees/ — this command does not reach here
+  REMOVED /Users/goonlab/dev/the-squatfather/.worktrees/t_7fa4389a  [chunk/4-build-the-baseline-plan-and-validate-plans-a2]
+          branch deleted
+  REMOVED /Users/goonlab/dev/the-squatfather/.worktrees/t_ebfc4fed  [chunk/3-summarise-the-week-and-diff-plans-a2]
+          branch deleted
+  KEEP    /Users/goonlab/dev/the-squatfather/.worktrees/t_fe9b343b  [chunk/2-vendor-the-garmin-exercise-catalogue-with-a2]
+          a PR on this branch NAME was merged, but at a different commit than
+          4c52a664809270ea2c83334ecbf4b4b45b8b2648 — this branch has moved since, so the work here is unmerged
+
+  2 removed · 1 kept · 3 refused (outside the bound)
+sweep(apply) exit=0
+/Users/goonlab/dev/the-squatfather                                                                                                                             f0fd89f [main]
+/private/tmp/claude-503/-Users-goonlab-dev-forge--claude-worktrees-youthful-lehmann-7dc537/d4033191-9489-4275-8b81-76a8e7c282f4/scratchpad/sqf-plan-openrouter 3bbb169 [chunk/plan-openrouter] prunable
+/private/tmp/codex-sqf-post-spike-plan                                                                                                                         f9f304d [chunk/plan-post-spike]
+/Users/goonlab/dev/the-squatfather/.worktrees/t_fe9b343b                                                                                                       4c52a66 [chunk/2-vendor-the-garmin-exercise-catalogue-with-a2]
+  chunk/1-store-owner-history-in-a-migrated-sqlite-a2
++ chunk/2-vendor-the-garmin-exercise-catalogue-with-a2
+  chunk/5-guard-every-model-payload-behind-one-audited-a2
+  chunk/plan-gate-m1
++ chunk/plan-openrouter
++ chunk/plan-post-spike
+* main
+```
+
+**Reading.** Two worktrees (CHUNK-3, CHUNK-4) were removed with their branches, one
+(CHUNK-2's `t_fe9b343b`) was kept, three were refused as outside the bound. The kept one
+is the CHUNK-2 worktree discussed under *Per chunk*.
+
+**Digest wrapper restored** (`$E/13-wrapper-restore.txt`, the owner's run):
+
+```
+--- before
+exec bash "$HOME/.forge/repo/scripts/digest.sh" --board squatfather-run-a2 "$@"
+--- after
+exec bash "$HOME/.forge/repo/scripts/digest.sh" "$@"
+digest exit=0
+0
+```
 
 ### Flip verdict
-*(not yet run — clause by clause, each with the evidence above it names)*
+
+*Judgement throughout, with sources. The definitions are pasted from this file; the
+evidence is the pasted output above.*
+
+**Owner rulings recorded 2026-11-06.** Three rulings were given in a working session on
+2026-11-06. **No owner ruling is left outstanding.**
+1. **GW2, 2 to 4 November (verbatim: "Yes, they were yes.").** The three lines are recorded as
+   yes. GW2's done-when is met on that basis, with the provenance caveats (under *Digests*).
+2. **Flip clause 2 (verbatim choice: "CHUNK-5 counts, CHUNK-2 not").** A substantive operator
+   code change to a recommended head counts as a bounce. CHUNK-5 was recommended at `0ec8c80`
+   and merged at `2dfaf68` with substantive changes, so it counts. CHUNK-2's `690b541` is a
+   conflict-only merge of `main` and does not count. Under this ruling clause 2 is **not met**.
+   The reading is the owner's, made after the run; it is not the pre-registered wording.
+3. **FL5's probe switch (verbatim choice: "Keep reporting-only").** See *Per chunk*.
+
+The overall outcome is the same on any reading, because clause 1 alone leaves the criterion
+unmet.
+
+#### Clause 1 — "the verifier bounced every seeded defect"
+
+The criterion, pasted from this file (lines 378 to 383), and this run's reading of the
+clause (lines 387 to 391):
+
+```
+> **Flip criterion (run A → run B).** Merge authority moves to the verifier only
+> if, over milestone 1: the verifier bounced every seeded defect; the operator
+> bounced no PR the verifier recommended (each disagreement is triaged, fixed in
+> FL5 and replayed); and every defect the milestone probe found was one
+> per-chunk verification could not have seen. Otherwise milestone 2 runs in
+> shadow too.
+```
+
+```
+1. **"Bounced every seeded defect."** There is one seeded defect, S-1. It is
+   bounced only by a `changes_requested` whose reasons name it. A hold whose
+   mutation verdict says it *would* bounce does not count (the operator's
+   decision). Those verdicts are recorded for the operator's decision on the
+   probe's switch at M1's checkpoint.
+```
+
+
+**Evidence.** The seeded defect is S-1 only. There is no seed tag, no SHA, no drill artifact
+and no scorer outcome for it (see *S-1*). The ledger has no `changes_requested` on CHUNK-5.
+The mutation probe's "would bounce" on CHUNK-5's hold (31 of 103 lines unobserved) does not
+count by the clause's own text.
+
+**Assessment: not established.** S-1 is uncredited and has no seed evidence, so there is no
+bounce that names it. The owner's decision of 2026-11-05 records the same.
+
+#### Clause 2 — "the operator bounced no PR the verifier recommended"
+
+The clause's reading (lines 392 to 395), and the operator's loop sentence that defines
+the disagree path (lines 193 to 197):
+
+```
+2. **"Bounced no PR the verifier recommended."** D-1 and S-1's handling are
+   excluded, being declared here. Any other `bounce.sh` on a recommended PR
+   fails this clause until it is triaged into the parking lot, fixed in FL5 and
+   replayed.
+```
+
+```
+  - **Disagree** with
+    `~/.forge/repo/scripts/bounce.sh <card> "<reason>" --board "$B"`. Write
+    the reason as an instruction the implementer can act on. Except D-1 and
+    S-1 below, every disagreement is a finding against the flip criterion:
+    record it in *Results* when it happens.
+```
+
+
+**Evidence: every verifier recommendation against the ledger and events.** All lines are
+from the pasted ledger and holds.
+
+| Card | Recommendation(s) | Events after, on the board | `bounce.sh` / disagreement |
+|---|---|---|---|
+| CHUNK-1 | run 2 | `completed` by the merge-watcher | none |
+| CHUNK-2 | run 9, run 13 | after run 9: `assigned`(to `forge-operator-handoff`), `unblocked`, `review_reopened`, `commented` = the D-1 drill; after run 13: `completed` | one, **the D-1 drill: excluded** |
+| CHUNK-3 | run 11 | `completed` | none |
+| CHUNK-4 | run 19 (run 17 was the verifier's own `changes_requested`) | `completed` | none by the operator |
+| CHUNK-5 | run 22 | `completed`; no `assigned`/`unblocked`/`review_reopened` after the hold | none on the board. **The PR head changed after the hold** |
+
+The only `review_reopened` in the whole ledger is CHUNK-2's, at 07:28 on 31 October, with the
+drill's pre-registered text. CHUNK-5's `assigned` and `unblocked` of 2 November 11:24 come
+before its `review_requested`: that is the interactive hand-off, not a disagreement. The
+board does not carry GitHub-only actions (the metrics method says so), so a review comment
+or a hand edit on GitHub would not appear; the pack holds no GitHub review records, and the
+retrospective reports none for PR #9.
+
+**Two readings, labelled.**
+
+*(a) The pre-registered wording.* Clause 2's reading (lines 392 to 395) says: "Any other
+`bounce.sh` on a recommended PR fails this clause until it is triaged into the parking lot,
+fixed in FL5 and replayed." The operator's loop (lines 193 to 197) names `bounce.sh` as the
+disagree path. No non-excluded `bounce.sh` is evidenced in the board ledger (the D-1 drill is
+excluded). **On the frozen wording alone, clause 2 is established, on board-only evidence**
+(the board carries no GitHub-only actions; see above).
+
+*(b) The owner's ruling, 2026-11-06 (verbatim choice: "CHUNK-5 counts, CHUNK-2 not").* A
+substantive operator code change to a recommended head counts as a bounce. The facts it
+rests on:
+- CHUNK-5 `2dfaf68` was committed after the hold and changed guard code, tests and the
+  decision log (`chunk5-post-verdict-diffstat.txt`, above). Its commit message says it
+  addresses "judge nits"; the product's decision log attributes six fixes to a separate
+  subagent review, and the `seam.py` change answers the verifier's own second finding. The
+  implementer of CHUNK-5 is the operator (`human-implemented chunks  1 of 5`). The verdict
+  covered `0ec8c80`; `2dfaf68` was merged.
+- CHUNK-2 `690b541` is a merge of `main` into the branch, a conflict resolution, with no
+  change of substance recorded. It does not count.
+
+No triage into the parking lot, FL5 fix or replay of CHUNK-5's bounce is recorded in any
+source read for this PR.
+
+**Assessment under the owner's ruling: NOT met** (CHUNK-5 counts as an operator bounce of a
+recommended PR). On the frozen wording alone it is established.
+
+**Separate finding, independent of how clause 2 is read.** Two PRs were merged at heads the
+verifier had not reviewed: CHUNK-2 at `690b541` and CHUNK-5 at `2dfaf68`. The recommend-only
+flow does not stop a merge at a changed head. S8b's head-drift flag (#101) addresses it in
+source and is not deployed.
+
+#### Clause 3 — "every defect the milestone probe found was one per-chunk verification could not have seen"
+
+The clause's reading (lines 396 to 398):
+
+```
+3. **"Every defect the milestone probe found."** The probe's exit 1 names
+   cases. For each, the operator records whether the merged PRs' verification
+   could have seen it, and why. Exit 2 is no verdict, not a pass.
+```
+
+
+**Evidence.** The probe's output is pasted under *GATE-M1 probe*: `PASS — 5 of 5 cases`,
+`probe exit=0`. The probe's exit 1 would have named cases; it named none, so the operator
+had no case to record visibility for.
+
+**Assessment: established only vacuously — the probe found 0 defects, so there is no
+defect for the clause to be false of.** That is all it means. It is **not** evidence that
+per-chunk verification is sufficient, and not evidence that the probe could find one: the
+same five cases passed on 2 November at `12208388` and again at `f0fd89f`, and the
+fast-forward between them lists no file under `src/`. Exit 0 is a pass, not an absence of
+unknown defects.
+
+#### Overall
+
+**The flip criterion is NOT met.** Clause 1 is not established, clause 2 is not met under the
+owner's ruling (established on the frozen wording alone), clause 3 holds only vacuously. Clause
+1 alone is enough. The protocol's text is "Otherwise milestone 2 runs in shadow
+too" (lines 382 to 383). **Run B runs in shadow.**
+
+The separate prerequisites for merge mode, P9 and P10(4) to (5) (lines 401 and 402), were
+closed in source by S8b (#101, merged as `c8c6b04`). **They are not deployed**: the runtime
+is still at `0c69368`. Both conditions would be needed before `FORGE_VERIFIER_MERGE=1`:
+the flip criterion met, **and** the closed P9 and P10 deployed. Neither holds today. This
+record changes no switch, completes no gate and gives the verifier no merge authority.
 
 ## Amendments
 
@@ -4089,3 +5809,48 @@ Nothing recorded here completes S7, releases a gate, deploys the runtime, or
 changes merge authority. Run A and S7 remain open, `GATE-M1` stays held and the
 runtime undeployed; the checkpoint is rehearsed against held M1 in S8, and gate
 completion is considered in S9 only after its prerequisites.
+
+### 2026-11-06 — S7 closed; the Results are filled
+
+This entry records the results PR. It is not an amendment to the protocol frozen at
+`RUN_START`. It supersedes, by dated addition, the earlier statements that S7 "remains
+open" and the list headed "What remains for S7" above; those are left as written.
+
+- **What was done from that list.**
+  - The 5 and 6 November GW2 lines were given by the owner on 2026-11-06
+    (`gw2-lines-2026-11-05-06.md`): yes and yes, the 5 November one with a content note.
+    Pasted under *Results › Digests*, with the seven delivered texts and receipts.
+  - The end-of-M1 measurements were captured read-only on 2026-11-06 and are pasted under
+    *Results › End of M1*; the frozen metadata reading stays `valid=17 invalid=4
+    unjudged=0`, exit 1.
+  - The owner ran the GATE-M1 probe: 5 of 5, exit 0, at `f0fd89f`. `GATE-M1` is still
+    `blocked`.
+  - The owner ran the worktree sweep (2 removed, 1 kept, 3 refused) and restored the digest
+    wrapper.
+  - The flip verdict is recorded clause by clause under *Results › Flip verdict*.
+- **The owner's statement on 6 November, verbatim:** "The digests from 5th and 6th landed
+  and are validated. Yes. I read them before looking at the board." Phone-only reading was
+  not restated for those two days.
+- **Outcome.** The flip criterion is **not met**; run B runs in shadow. Clause 1 is not
+  established (S-1 uncredited). Clause 2 is **not met under the owner's ruling of 2026-11-06**
+  ("CHUNK-5 counts, CHUNK-2 not"); on the frozen wording alone it is established on
+  board-only evidence. Clause 3 holds only vacuously (the probe found nothing). Two PRs
+  (CHUNK-2, CHUNK-5) merged at heads the verifier had not reviewed, recorded as a separate
+  finding. GW2's done-when is **met — 2–4 Nov by owner ruling of 2026-11-06** ("Yes, they were
+  yes."), with the provenance caveats under *Results › Digests*. FL5's probe switch: owner
+  ruling of 2026-11-06, "Keep reporting-only"; `FORGE_MUTATION_PROBE_BOUNCE` stays unset,
+  and precision is measured in run B (shadow) and decided at the M2 checkpoint. **No owner
+  ruling is outstanding.**
+- **Next operator step, not done here: deploy what main now carries.** The runtime
+  checkout is still at `0c69368c96f633f685aac22069d038838af23847`, Run A's `FORGE_SHA`.
+  From the operator's shell: `git -C ~/dev/forge-runtime pull --ff-only`, then `make
+  preflight`. Rollback is to `0c69368`. The pull carries #97 to #102, which are source-only
+  until then: #97 (the S7 recovery record and the digest readability change), #98 (the metadata validator accepts the operator's bootstrap holds), #99 (the interim
+  evidence and the owner decisions of 4 to 5 November), #100 (the digest's clearer "What it
+  means" and new "What to do"), #101 (S8b, P9 and P10(4) to (5)
+  closed in source) and #102 (S8, the checkpoint core). **#98 changes future metadata
+  readings:** on the same board the validator would stop rejecting the four bootstrap holds,
+  so a reading taken after the deploy is not comparable to the frozen `valid=17 invalid=4`
+  one, which stays the Run A record. Neither the deploy, nor `GATE-M1`'s completion (S9), nor
+  `FORGE_VERIFIER_MERGE=1` follows from this entry; merge mode needs the flip criterion met
+  **and** the deployed P9 and P10 closures.

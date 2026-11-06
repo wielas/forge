@@ -1,5 +1,15 @@
 # Forge — current state
 
+**S7 closeout, 2026-11-06:** Run A is closed (epic S7, "met in part"). `docs/run-a.md`'s
+*Results* paste the evidence. **Not proven:** the flip criterion is *not met* (S-1 is uncredited;
+clause 2 is not met under the owner's ruling of 2026-11-06, "CHUNK-5 counts, CHUNK-2 not"; clause 3
+holds only vacuously), so **run B runs in shadow**. No owner ruling is outstanding.
+**Proven (by the probe, not by the flip):** the M1 probe passed 5 of 5 at `f0fd89f`; `GATE-M1`
+is still held. **Next, for the operator:** deploy what main carries (#97 to #102) with `git -C
+~/dev/forge-runtime pull --ff-only`, then `make preflight`; rollback is `0c69368`. #98 changes
+future metadata readings. P9 and P10(4) to (5) are closed in source (S8b) but not deployed.
+The recovery note below is the 2 November text, left as written.
+
 **Recovery note, 2026-11-02:** Run A's D-1 and resumed Codex approval pin
 have live evidence. The original S-1 is not evidenced or credited, the digest
 window and S7 closeout remain open, and no flip to merge mode follows from the
@@ -327,6 +337,11 @@ met only in part: `bounce.sh` provably parks on the non-spawnable sentinel befor
 it unblocks, and a real `hermes kanban dispatch` pass runs in that window, but in
 an isolated `HERMES_HOME` nothing is spawnable, and the control without the park
 ends in the same place — so the race itself is untested until run A.
+*Run A's drill D-1 then ran it on a live board (CHUNK-2, 2026-10-31): the card events show the
+park, `unblocked`, `review_reopened` with no `claimed` between them, and the lane re-entered
+on the same PR. Per the owner's record all three clauses are met; the `bounce.sh` console output
+is not in the evidence pack. The tick landing inside the window remains improbable, not
+observed.*
 Since epic S6c (P21), a human-tier chunk handed off from outside a worker can be
 bounced too. `lane-handoff.sh` gives an unassigned card the non-spawnable
 `forge-operator-handoff` first, so the kernel records an implementer. A bounce
@@ -355,7 +370,10 @@ through it.
 
   So it ships **reporting**: its verdict is on every hold, and it bounces only
   under `FORGE_MUTATION_PROBE_BOUNCE=1`. What that does NOT prove:
-  - Its precision on a live run. Run A measures it from the holds.
+  - Its precision on a live run. Run A produced the holds (29 of 135, 6 of 74, not run,
+    39 of 127, 51 of 109 and 31 of 103 lines unobserved, every PR merged) and no precision
+    was computed. **Owner ruling, 2026-11-06: "Keep reporting-only"**; the switch stays unset,
+    and precision is measured in run B (shadow) and decided at the M2 checkpoint.
   - That it fits the verifier's 1800 s terminal timeout on every PR. The default
     budget is 420 s; the longest replay, JobApp C21, used 300 s of it.
   - Anything for a non-Python product.
@@ -370,11 +388,18 @@ through it.
   interactive half also runs on the installed kernel, through the opt-in
   `bootstrap/real-hermes-interactive-chunk-waits-for-its-parents`. What that
   does NOT prove:
-  - No live post-FL3 board exists yet, so no real run has been measured by
-    these numbers.
+  - ~~No live post-FL3 board exists yet~~ Run A's board `squatfather-run-a2` is the first
+    (`docs/run-a.md`, *Results*). **`make metrics` undercounts verifier bounces:** its bounce rate
+    reads 0/5 beside a `changes_requested` on CHUNK-4, because only each card's final verdict
+    reaches a run's metadata (`metrics.sh` counts `forge.judge.v1` rows; `kanban_request_changes`
+    carries none).
   - PR open → merge is a board proxy, not GitHub's timestamps.
-  - The digest has never been delivered by `hermes cron --no-agent`. Its
-    done-when — a week of digests read from a phone — rides run A.
+  - ~~The digest has never been delivered by `hermes cron --no-agent`.~~ It was, seven times
+    (31 October to 6 November, Telegram `message_id` 694 and 696 to 701). Its done-when — a
+    week of digests read from a phone — is **met: 2 to 4 November by owner ruling of 2026-11-06**
+    ("Yes, they were yes."). Provenance caveats: 31 October and 1 November were late and
+    non-blind, retained by the 1 November ruling; read-before-board rests on the owner's word
+    for 2 to 6 November.
 - **Planning with milestones and gates, live (epic S5; PL1–PL4, MS1, MS2's
   declaration).** `scripts/plan-check.sh` executes what `/scope` and
   `/architect` promise:
@@ -393,11 +418,11 @@ through it.
   runs it on the installed kernel in an isolated `HERMES_HOME`: a held gate
   keeps the next milestone `todo` after its own milestone is done, and
   completing it from `blocked` releases it. What that does NOT prove:
-  - One project has been planned with these skills, and none has run. In S6
+  - One project has been planned with these skills, and until run A none had run. In S6
     (2026-10-01) The Squatfather was planned to 3 milestones and 10 chunks, and
     `plan-check`, `roadmap-check` and `acceptance-freeze` all read CLEAR on it
-    (`docs/epic-hands-free.md`, row S6). Whether the plan holds up under a
-    lane is run A's question.
+    (`docs/epic-hands-free.md`, row S6). Run A ran milestone 1 of it: five chunks merged on
+    green CI and the milestone probe passed 5 of 5. Whether it holds beyond that is not shown.
   - No profile runs a gate card yet, so the operator runs its probe, with the
     command the card names (S5b, next entry).
   - No tier but `strong` and `human` has an implementer (EN1).
