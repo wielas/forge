@@ -121,8 +121,15 @@ PROFILES=(
   "forge-codex-lane|Implements one chunk contract by driving codex exec in a git worktree, verifies make check, opens the PR.|terminal,file,kanban,memory,skills"
   "forge-verifier|Verifies one chunk PR on its own card: deterministic gate, make check on the merged tree, then recommend or request changes. Never edits code, never creates cards.|terminal,kanban,memory,skills"
   "forge-digest|Reads the forge boards and sends one short daily status message. Read-only.|kanban,memory"
-  "forge-overseer|Judges milestone gates, exceptions and triage by running three scripts. Gate-only: never implements, reviews or runs a chunk.|terminal,kanban,memory,skills"
+  "forge-overseer|Judges milestone gates, exceptions and triage by running three scripts. Gate-only: never implements, reviews or runs a chunk.|terminal,memory,skills"
 )
+# forge-overseer carries NO `kanban` toolset, deliberately (decision 13, 2026-11-09). Hermes registers
+# kanban_* for a dispatcher-spawned worker, "else the profile toolset decides" (tools/kanban_tools.py
+# check_fn), and the overseer is never dispatched: an operator or the gateway invokes it, unfenced. With the
+# toolset it would hold in-process kanban_create / _comment / _complete / _unblock, outside the fence a
+# worker's terminal sits behind. It reads the board through scripts/triage.sh and checkpoint.sh in its
+# terminal (the `hermes kanban` CLI, not a tool), and those programs, which an operator applies, write it.
+# Asserted by verify overseer/profile-has-no-kanban-toolset and, on the host, by the preflight.
 
 # Keys this script owns end to end. Every one is written by write_config and
 # then verified by verify_config — if you add a key to the template, add it

@@ -3202,7 +3202,8 @@ checkpoint/completion-is-read-back         a complete that exits 0 while the gat
 checkpoint/rehearse-hash-sees-the-wal     two copies of a WAL board one write apart: same kanban.db bytes, different hashes; a db-only hash is blind (#102 minor c)
 overseer/pin-is-sourced                   FORGE_PIN_OVERSEER and its provider are plain assignments in model-pins.sh; the bootstrap composes both and names neither (MS3)
 overseer/soul-is-gate-only                the SOUL forbids per-chunk work, names exactly the three gate programs through ~/.forge/repo, only rehearses, is never spawned on a card (MS3, decision 13)
-overseer/bootstrap-creates-the-profile    profiles-bootstrap.sh into a scratch HERMES_HOME: forge-overseer reads back its pin and provider, no file tools, no hook
+overseer/bootstrap-creates-the-profile    profiles-bootstrap.sh into a scratch HERMES_HOME: forge-overseer reads back its pin and provider, no file tools, no kanban toolset, no hook
+overseer/profile-has-no-kanban-toolset    the overseer runs unfenced and its LLM never writes the board (decision 13), so the config the bootstrap writes for it has a terminal and no kanban toolset (nor hermes-cli, which carries kanban_*) while the other four keep theirs; the preflight FAILs a deployed profile that names kanban or has no explicit list
 overseer/no-chunk-card-is-ever-assigned   the guard, the bootstrap and a live-board audit refuse a chunk card, or any live card, a gate included, on the overseer; nothing else assigns to it (MS3, decision 13)
 overseer/guard-compares-names-as-hermes-does  FORGE-OVERSEER and ' forge-overseer' are the overseer in the guard's lane, graph and board entry points, as Hermes trims and lowercases (MS3)
 overseer/usage-recorded-per-invocation    metrics.sh reads the overseer's own sessions per invocation, windowed; a missing state.db is unavailable, never zero (MS3)
@@ -14848,7 +14849,7 @@ run_overseer_group() {
   local tool n detail
   for tool in sqlite3 jq python3; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      for n in pin-is-sourced soul-is-gate-only bootstrap-creates-the-profile no-chunk-card-is-ever-assigned guard-compares-names-as-hermes-does usage-recorded-per-invocation preflight-asks-the-guard; do
+      for n in pin-is-sourced soul-is-gate-only bootstrap-creates-the-profile profile-has-no-kanban-toolset no-chunk-card-is-ever-assigned guard-compares-names-as-hermes-does usage-recorded-per-invocation preflight-asks-the-guard; do
         skip "$n" "$tool is not on PATH"
       done
       return
@@ -14962,7 +14963,8 @@ run_overseer_group() {
     got="$(HERMES_HOME="$bh" hermes -p forge-overseer config get hooks.pre_tool_call 2>/dev/null)"
     [ -z "$got" ] || detail="$detail carries-a-driver-call-hook"
     got="$(HERMES_HOME="$bh" hermes -p forge-overseer config get toolsets 2>/dev/null | tr '\n' ' ')"
-    printf '%s' "$got" | grep -q 'terminal' && printf '%s' "$got" | grep -q 'kanban' && ! printf '%s' "$got" | grep -q 'file' || detail="$detail toolsets='$got'"
+    # terminal runs the three programs; no file tools; and, since decision 13, no kanban toolset (profile-has-no-kanban-toolset)
+    printf '%s' "$got" | grep -q 'terminal' && ! printf '%s' "$got" | grep -q 'kanban' && ! printf '%s' "$got" | grep -q 'file' || detail="$detail toolsets='$got'"
     got="$(HERMES_HOME="$bh" hermes -p forge-overseer config get skills.disabled 2>/dev/null | tr '\n' ' ')"
     for n in forge-lane roadmap start-chunk; do printf '%s' "$got" | grep -q -- "- $n" || detail="$detail skill-$n-not-disabled"; done
     cmp -s "$soul" "$bh/profiles/forge-overseer/SOUL.md" || detail="$detail soul-not-installed"
@@ -14977,9 +14979,80 @@ run_overseer_group() {
       bout="$(HERMES_HOME="$root/boot-mut/home" bash "$mut/hermes/profiles-bootstrap.sh" 2>&1)"; brc=$?
       { [ "$brc" != 0 ] && printf '%s' "$bout" | grep -Fq 'FAIL model.provider'; } || detail="$detail a-provider-written-wrongly-read-back-clean(rc=$brc)"
     fi
-    if [ -z "$detail" ]; then ok "bootstrap-creates-the-profile (profiles-bootstrap.sh into a scratch HERMES_HOME: forge-overseer reads back the pinned model and provider, terminal and kanban but no file tools, every skill disabled, no driver-call hook, the shipped SOUL; the digest profile did not inherit the provider; a provider written wrongly FATALs on readback)"
+    if [ -z "$detail" ]; then ok "bootstrap-creates-the-profile (profiles-bootstrap.sh into a scratch HERMES_HOME: forge-overseer reads back the pinned model and provider, a terminal but no file tools and no kanban toolset, every skill disabled, no driver-call hook, the shipped SOUL; the digest profile did not inherit the provider; a provider written wrongly FATALs on readback)"
     else bad "bootstrap-creates-the-profile" "the bootstrap must create forge-overseer on the pin and read it back:$detail"; fi
   fi
+
+  # -- profile-has-no-kanban-toolset --------------------------------------------------------------
+  # Decision 13 (2026-11-09): the overseer is never a dispatched worker and its LLM never writes the board.
+  # Hermes registers kanban_* for a dispatcher-spawned worker and otherwise lets the PROFILE'S toolset decide
+  # (tools/kanban_tools.py, check_fn), so a `kanban` toolset on a profile that an operator or the gateway
+  # invokes, unfenced, is in-process kanban_create / _comment / _complete / _unblock with nothing to
+  # constrain them (#105 review). The SOUL says it calls no kanban tool; this is the config that makes it so.
+  # Asserted on the dry run, which is the config the bootstrap would write and needs no Hermes; the live
+  # read-back of a real scratch profile is in bootstrap-creates-the-profile, and the deployed profile is
+  # the preflight's (a profile not yet created is the preflight's WARN, not a pass).
+  detail=""
+  _ov_toolsets() { # $1=dry-run text $2=profile -> its toolsets, space-separated, on stdout
+    printf '%s\n' "$1" | awk -v p="$2" '
+      $0 == "── " p { on = 1; next }
+      on && /^── / { exit }
+      on && /^ *toolsets:/ { t = 1; next }
+      on && t && /^ *- / { sub(/^ *- /, ""); printf "%s ", $0; next }
+      on && t { exit }'
+  }
+  _ov_tools_diag() { # $1=dry-run text -> diagnostic on stdout, empty when clean
+    local d="" ts p
+    ts="$(_ov_toolsets "$1" forge-overseer)"
+    [ -n "$ts" ] || d="$d overseer-toolsets-not-found(the-check-is-blind)"
+    case " $ts " in *" kanban "*) d="$d overseer-carries-kanban($ts)";; esac
+    case " $ts " in *" terminal "*) ;; *) [ -z "$ts" ] || d="$d overseer-has-no-terminal($ts)";; esac
+    # a platform toolset (hermes-cli, which is also what a profile with no `toolsets` key reads back as) resolves to every kanban_* tool
+    case " $ts " in *" hermes-"*|*" all "*) d="$d overseer-on-a-composite-toolset($ts)";; esac
+    # per profile, not everywhere: the lane, the verifier, the orchestrator and the digest finish or read cards through it
+    for p in forge-orchestrator forge-codex-lane forge-verifier forge-digest; do
+      case " $(_ov_toolsets "$1" "$p") " in *" kanban "*) ;; *) d="$d $p-lost-kanban";; esac
+    done
+    printf '%s' "$d"
+  }
+  detail="$(_ov_tools_diag "$dry")"
+  [ -n "$(_ov_tools_diag "")" ] || detail="$detail diag-passes-empty-input"
+  # the preflight reads the deployed profile's toolsets whole, FAILs on kanban, and FAILs on a list that
+  # is not explicit (a profile with no `toolsets` key reads back as hermes-cli, which carries kanban_*)
+  _ov_pf_diag() { # $1=preflight text -> diagnostic on stdout, empty when clean
+    local d="" c; c="$(printf '%s\n' "$1" | grep -v '^[[:space:]]*#')"
+    grep -Fq 'hermes -p "$prof" config get toolsets' <<<"$c" || d="$d does-not-read-the-toolsets"
+    grep -Fq 'carries the kanban toolset' <<<"$c" || d="$d does-not-fail-on-kanban"
+    grep -Fq 'hermes-[a-z-]+|all' <<<"$c" || d="$d does-not-refuse-a-platform-toolset"
+    grep -Fq "'(^|[^A-Za-z0-9_-])terminal(" <<<"$c" || d="$d does-not-require-a-terminal"
+    printf '%s' "$d"
+  }
+  [ -z "$(_ov_pf_diag "$(cat "$REPO_ROOT/scripts/preflight.sh")")" ] || detail="$detail preflight($(_ov_pf_diag "$(cat "$REPO_ROOT/scripts/preflight.sh")"))"
+  # mutants: kanban put back on the overseer; kanban taken off the digest; the overseer's block cut so nothing is read
+  _ov_tools_mut() { # $1=label $2=sed program -> 0 with the mutant's diagnostic in $mut_diag, 1 (and a note) when the text is not there to change
+    sed "$2" "$bootstrap" > "$mut/hermes/profiles-bootstrap.sh"
+    if cmp -s "$mut/hermes/profiles-bootstrap.sh" "$bootstrap"; then detail="$detail mutant-$1-not-found-to-change"; return 1; fi
+    mut_diag="$(_ov_tools_diag "$(_ov_dry "$mut/hermes/profiles-bootstrap.sh")")"
+  }
+  local mut_diag
+  _ov_tools_mut kanban-on-the-overseer '/^  "forge-overseer|/s/|terminal,memory,skills"$/|terminal,kanban,memory,skills"/' \
+    && { case "$mut_diag" in *overseer-carries-kanban*) ;; *) detail="$detail mutant-kanban-on-the-overseer-was-not-seen";; esac; }
+  _ov_tools_mut kanban-first-on-the-overseer '/^  "forge-overseer|/s/|terminal,memory,skills"$/|kanban,terminal,memory,skills"/' \
+    && { case "$mut_diag" in *overseer-carries-kanban*) ;; *) detail="$detail mutant-kanban-first-was-not-seen";; esac; }
+  _ov_tools_mut digest-without-kanban '/^  "forge-digest|/s/|kanban,memory"$/|memory"/' \
+    && { case "$mut_diag" in *forge-digest-lost-kanban*) ;; *) detail="$detail mutant-digest-without-kanban-was-not-seen";; esac; }
+  _ov_tools_mut overseer-without-terminal '/^  "forge-overseer|/s/|terminal,memory,skills"$/|memory,skills"/' \
+    && { case "$mut_diag" in *overseer-has-no-terminal*) ;; *) detail="$detail mutant-overseer-without-terminal-was-not-seen";; esac; }
+  _ov_tools_mut overseer-on-hermes-cli '/^  "forge-overseer|/s/|terminal,memory,skills"$/|hermes-cli"/' \
+    && { case "$mut_diag" in *overseer-on-a-composite-toolset*) ;; *) detail="$detail mutant-overseer-on-hermes-cli-was-not-seen";; esac; }
+  # the preflight without the kanban fail, and without the explicit-list fail
+  local pf_mut
+  pf_mut="$(sed 's/carries the kanban toolset/carries nothing/' "$REPO_ROOT/scripts/preflight.sh")"
+  [ "$pf_mut" != "$(cat "$REPO_ROOT/scripts/preflight.sh")" ] && [ -n "$(_ov_pf_diag "$pf_mut")" ] || detail="$detail mutant-preflight-without-the-kanban-fail-was-not-seen"
+  pf_mut="$(sed 's/hermes-\[a-z-\]+|all/hermes-nothing/' "$REPO_ROOT/scripts/preflight.sh")"
+  [ "$pf_mut" != "$(cat "$REPO_ROOT/scripts/preflight.sh")" ] && [ -n "$(_ov_pf_diag "$pf_mut")" ] || detail="$detail mutant-preflight-without-the-platform-toolset-fail-was-not-seen"
+  if [ -z "$detail" ]; then ok "profile-has-no-kanban-toolset (the config the bootstrap writes for forge-overseer carries a terminal and no kanban toolset, while the orchestrator, lane, verifier and digest keep theirs; the preflight reads the deployed profile's toolsets whole and FAILs on kanban or on a list that is not explicit, since an unset one reads back as hermes-cli, which carries every kanban tool; kanban put back on the overseer, first or last, the overseer on hermes-cli, kanban taken off the digest, the overseer's terminal taken away and the preflight's two FAILs cut each turn it red)"
+  else bad "profile-has-no-kanban-toolset" "forge-overseer is never a dispatched worker and its LLM never writes the board (decision 13), so its profile must carry no kanban toolset:$detail"; fi
 
   # -- no-chunk-card-is-ever-assigned ----------------------------------------------------------
   detail=""

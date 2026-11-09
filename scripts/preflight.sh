@@ -592,6 +592,22 @@ else
         else
           fail "$prof: model/provider '$v' is not the pin '$_ov_pin' — run ./hermes/profiles-bootstrap.sh"
         fi
+        # Decision 13: the overseer is never dispatched and its LLM never writes the board, so its profile
+        # carries NO `kanban` toolset (an unfenced session with it would hold in-process kanban_create /
+        # _comment / _complete / _unblock). Read WHOLE: pcfg keeps one line. The list must also be the
+        # bootstrap's own, with a terminal in it: a profile with no `toolsets` key reads back as
+        # `hermes-cli` (measured, 0.21.5), which resolves to every kanban_* tool, so "does not name kanban"
+        # alone would PASS the profile that has the most. A profile not yet created never gets here (it is
+        # not on disk); section 6 warns that it is missing.
+        v="$(hermes -p "$prof" config get toolsets 2>/dev/null)"
+        if printf '%s\n' "$v" | grep -Eq '(^|[^A-Za-z0-9_-])kanban([^A-Za-z0-9_-]|$)'; then
+          fail "$prof: carries the kanban toolset — an unfenced overseer would hold in-process kanban_create/_comment/_complete/_unblock (decision 13); run ./hermes/profiles-bootstrap.sh"
+        elif printf '%s\n' "$v" | grep -Eq '(^|[^A-Za-z0-9_-])(hermes-[a-z-]+|all)([^A-Za-z0-9_-]|$)' \
+             || ! printf '%s\n' "$v" | grep -Eq '(^|[^A-Za-z0-9_-])terminal([^A-Za-z0-9_-]|$)'; then
+          fail "$prof: toolsets '$(printf '%s' "$v" | tr '\n' ' ')' are not the bootstrap's explicit list — none, or a platform toolset such as hermes-cli, carries every kanban_* tool (decision 13); run ./hermes/profiles-bootstrap.sh"
+        else
+          pass "$prof: no kanban toolset (decision 13): $(printf '%s' "$v" | tr '\n' ' ')"
+        fi
         info "$prof: whether '${_ov_pin% *}' answers on this account is NOT checked by inspection — run ./scripts/preflight.sh --probe (one call), or: hermes -p forge-overseer -z \"reply with exactly: OK\""
       fi
     done
