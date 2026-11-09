@@ -3200,14 +3200,19 @@ checkpoint/passes-only-after-complete     --apply against a kernel that refuses 
 checkpoint/gate-moved-before-complete-is-no-verdict  a gate that moved while the probe ran is no verdict and complete is never called over it (#102 minor b)
 checkpoint/rehearse-hash-sees-the-wal     two copies of a WAL board one write apart: same kanban.db bytes, different hashes; a db-only hash is blind (#102 minor c)
 overseer/pin-is-sourced                   FORGE_PIN_OVERSEER and its provider are plain assignments in model-pins.sh; the bootstrap composes both and names neither (MS3)
-overseer/soul-is-gate-only                the SOUL forbids per-chunk work and names exactly the three gate programs through ~/.forge/repo (MS3, ADR-0010)
+overseer/soul-is-gate-only                the SOUL forbids per-chunk work, names exactly the three gate programs through ~/.forge/repo, only rehearses, is never spawned on a card (MS3, decision 13)
 overseer/bootstrap-creates-the-profile    profiles-bootstrap.sh into a scratch HERMES_HOME: forge-overseer reads back its pin and provider, no file tools, no hook
-overseer/no-chunk-card-is-ever-assigned   the guard, the bootstrap and a live-board audit refuse a chunk card on the overseer; nothing else assigns to it (MS3)
+overseer/no-chunk-card-is-ever-assigned   the guard, the bootstrap and a live-board audit refuse a chunk card, or any live card, a gate included, on the overseer; nothing else assigns to it (MS3, decision 13)
+overseer/guard-compares-names-as-hermes-does  FORGE-OVERSEER and ' forge-overseer' are the overseer in the guard's lane, graph and board entry points, as Hermes trims and lowercases (MS3)
 overseer/usage-recorded-per-invocation    metrics.sh reads the overseer's own sessions per invocation, windowed; a missing state.db is unavailable, never zero (MS3)
 overseer/preflight-asks-the-guard         the preflight audits every board, lists the profile, reads the pin, and keeps the model probe behind --probe
 triage/fixture-is-anonymised              15 triage cards in the real schema, every title, body, comment and id synthetic; a pasted real-looking value is refused (P8)
 triage/exits-are-audited                  close, fold and promote: an audit comment naming action, actor and reason, then archive; no model verb; every call with --board (MS5)
 triage/plan-empties-triage                a 15-decision plan on the anonymised board takes triage from 15 to 0; a short plan fails; a bad line refuses the whole plan (MS5)
+triage/gate-and-parent-cards-are-refused  no exit archives, promotes or folds a gate card (any spelling, or a milestone-gate block) or the parent of a live card, and a refusal writes nothing (MS5)
+triage/promote-assignee-is-normalised     promote --assignee refuses forge-overseer however it is cased or spaced, as Hermes normalises an assignee (MS3)
+triage/apply-needs-an-explicit-actor      --apply with no --actor exits 2 and writes nothing; a rehearsal needs no name (MS5)
+triage/promote-and-fold-arguments-are-safe  a title that starts with '-' follows '--' and survives the promote; a fold into a done or archived card is refused (MS5)
 triage/kernel-exits-need-no-model         the installed Hermes in an isolated HERMES_HOME: promote refuses a triage card, and comment + archive + create empty the board (P8)
 triage/triage-calls-always-carry-board    every hermes kanban call in triage.sh carries --board and none is specify, decompose, promote or a model
 triage/amendment-is-atomic                the contract, its freeze and the decision log change together or not at all, each install step failed for real (MS5)
@@ -14798,7 +14803,7 @@ run_overseer_group() {
   local tool n detail
   for tool in sqlite3 jq python3; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      for n in pin-is-sourced soul-is-gate-only bootstrap-creates-the-profile no-chunk-card-is-ever-assigned usage-recorded-per-invocation preflight-asks-the-guard; do
+      for n in pin-is-sourced soul-is-gate-only bootstrap-creates-the-profile no-chunk-card-is-ever-assigned guard-compares-names-as-hermes-does usage-recorded-per-invocation preflight-asks-the-guard; do
         skip "$n" "$tool is not on PATH"
       done
       return
@@ -14854,7 +14859,16 @@ run_overseer_group() {
     [ -f "$f" ] || { printf ' no-soul'; return; }
     grep -Fq 'No chunk card is ever yours' "$f" || d="$d no-prohibition-of-chunk-work"
     grep -Eq 'implement, review, merge, bounce or' "$f" || d="$d does-not-list-what-it-never-does"
-    grep -Fq -- '--rehearse' "$f" && grep -Fq 'unless the message that invoked you says' "$f" || d="$d no-rehearse-first-rule"
+    # Decision 13 (2026-11-09): the overseer proposes and never writes the board, and is never a dispatched
+    # worker. So it rehearses, never applies (the old "unless the message that invoked you says --apply" is
+    # gone), is never "spawned on a card", and calls no kanban tool (#105 review, finding 4).
+    grep -Fq -- '--rehearse' "$f" || d="$d no-rehearse-rule"
+    grep -Fq 'Never `--apply`' "$f" || d="$d no-never-apply-rule"
+    ! grep -Fq 'unless the message that invoked you says' "$f" || d="$d apply-when-a-message-says-so"
+    [ -z "$(grep -F -e '--apply' "$f" | grep -Ev 'Never|do not run')" ] || d="$d a-line-permits-apply"
+    grep -Fq 'You are never spawned on a card' "$f" || d="$d does-not-say-it-is-never-spawned"
+    ! grep -Fq 'If you were spawned' "$f" || d="$d describes-being-spawned-on-a-card"
+    [ -z "$(grep -F 'kanban_' "$f" | grep -Fv 'neither')" ] || d="$d calls-a-kanban-tool"
     grep -Fq 'gate-misrouted:' "$f" || d="$d no-misrouted-exit-for-a-chunk-card"
     progs="$(grep -o '~/.forge/repo/scripts/[A-Za-z0-9._-]*' "$f" | sort -u)"
     for p in checkpoint.sh triage.sh amend-contract.sh; do
@@ -14874,9 +14888,16 @@ run_overseer_group() {
   # mutants: drop the prohibition; add a per-chunk program
   grep -v 'No chunk card is ever yours' "$soul" > "$root/soul-mut1.md"
   { cat "$soul"; printf '%s\n' '- Hand a chunk to the lane with `~/.forge/repo/scripts/lane.sh`.'; } > "$root/soul-mut2.md"
+  # the old wording: apply on a message's say-so, and a card to finish
+  { grep -v 'Never `--apply`' "$soul"; printf '%s\n' '- **Rehearse first.** Use `--rehearse` unless the message that invoked you says `--apply`.'; } > "$root/soul-mut3.md"
+  { cat "$soul"; printf '%s\n' 'If you were spawned on a card, finish with `kanban_complete(summary=...)` or `kanban_block(reason=...)`.'; } > "$root/soul-mut4.md"
+  { cat "$soul"; printf '%s\n' 'If the operator asks, run it with `--apply` yourself.'; } > "$root/soul-mut5.md"
   [ -n "$(_ov_soul_diag "$root/soul-mut1.md")" ] || detail="$detail mutant-without-the-prohibition-was-not-seen"
   [ -n "$(_ov_soul_diag "$root/soul-mut2.md")" ] || detail="$detail mutant-with-a-per-chunk-program-was-not-seen"
-  if [ -z "$detail" ]; then ok "soul-is-gate-only (the SOUL forbids per-chunk work, names exactly the three gate programs via ~/.forge/repo, each of which exists, rehearses first and sends a chunk card to gate-misrouted; a SOUL without the prohibition, or with lane.sh, is seen)"
+  [ -n "$(_ov_soul_diag "$root/soul-mut3.md")" ] || detail="$detail mutant-that-applies-on-a-message-was-not-seen"
+  [ -n "$(_ov_soul_diag "$root/soul-mut4.md")" ] || detail="$detail mutant-spawned-on-a-card-was-not-seen"
+  [ -n "$(_ov_soul_diag "$root/soul-mut5.md")" ] || detail="$detail mutant-that-permits-apply-was-not-seen"
+  if [ -z "$detail" ]; then ok "soul-is-gate-only (the SOUL forbids per-chunk work, names exactly the three gate programs via ~/.forge/repo, each of which exists, only rehearses and never applies, is never spawned on a card, calls no kanban tool and answers a chunk card with gate-misrouted; a SOUL without the prohibition, with lane.sh, that applies on a message's say-so, that is spawned on a card or that permits --apply is seen)"
   else bad "soul-is-gate-only" "hermes/profiles/forge-overseer.SOUL.md must be identity that forbids chunk work and names the gate programs:$detail"; fi
 
   # -- bootstrap-creates-the-profile (the installed Hermes, an isolated HERMES_HOME) -----------
@@ -14944,6 +14965,12 @@ run_overseer_group() {
   _ov_board ran "INSERT INTO task_runs (task_id, profile) VALUES ('t_c1', 'forge-overseer');"
   _ov_board shaped "INSERT INTO tasks (id, title, assignee, status, skills) VALUES ('t_x1', 'renamed card', 'forge-overseer', 'ready', '[\"forge-lane\"]');"
   _ov_board gate "UPDATE tasks SET assignee='forge-overseer' WHERE id='t_g1';"
+  _ov_board plain "INSERT INTO tasks (id, title, assignee, status) VALUES ('t_p1', 'follow-up: neither a chunk nor a gate', 'forge-overseer', 'todo');"
+  _ov_board fin "UPDATE tasks SET assignee='forge-overseer', status='done' WHERE id='t_g1';"
+  _ov_board arch "UPDATE tasks SET assignee='forge-overseer', status='archived' WHERE id='t_g1';"
+  _ov_board upper "UPDATE tasks SET assignee='FORGE-OVERSEER', status='ready' WHERE id='t_c1';"
+  _ov_board spaced "UPDATE tasks SET assignee=' Forge-Overseer ' WHERE id='t_g1';"
+  _ov_board runcase "INSERT INTO task_runs (task_id, profile) VALUES ('t_c1', ' FORGE-overseer');"
   printf 'not a database' > "$root/bd-junk.db"
   local bh0 bh1
   bh0="$(shasum -a 256 "$root/bd-assigned/kanban.db" | cut -d' ' -f1)"
@@ -14951,7 +14978,12 @@ run_overseer_group() {
   out="$("$guard" board "$root/bd-assigned/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_c2'; } || detail="$detail board-assigned-chunk(rc=$rc)"
   out="$("$guard" board "$root/bd-ran/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_c1'; } || detail="$detail board-run-under-the-overseer(rc=$rc)"
   out="$("$guard" board "$root/bd-shaped/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_x1'; } || detail="$detail board-chunk-shaped-by-skill(rc=$rc)"
-  "$guard" board "$root/bd-gate/kanban.db" >/dev/null 2>&1 || detail="$detail board-a-gate-is-not-a-chunk-flagged"
+  # Decision 13: the overseer is never a dispatched worker, so ANY card that is not finished and is assigned
+  # to it is a violation, a gate included (#105 review, finding 3). This used to assert the opposite.
+  out="$("$guard" board "$root/bd-gate/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_g1'; } || detail="$detail board-a-gate-on-the-overseer-not-flagged(rc=$rc)"
+  out="$("$guard" board "$root/bd-plain/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_p1'; } || detail="$detail board-a-plain-card-on-the-overseer-not-flagged(rc=$rc)"
+  "$guard" board "$root/bd-fin/kanban.db" >/dev/null 2>&1 || detail="$detail board-a-done-card-flagged"
+  "$guard" board "$root/bd-arch/kanban.db" >/dev/null 2>&1 || detail="$detail board-an-archived-card-flagged"
   "$guard" board "$root/bd-junk.db" >/dev/null 2>&1; [ $? = 2 ] || detail="$detail board-unreadable-not-2"
   "$guard" board "$root/bd-nothing.db" >/dev/null 2>&1; [ $? = 2 ] || detail="$detail board-missing-not-2"
   bh1="$(shasum -a 256 "$root/bd-assigned/kanban.db" | cut -d' ' -f1)"
@@ -14989,9 +15021,19 @@ OV_STUB
   local gm="$root/mut-guard"
   rm -rf "$gm"; mkdir -p "$gm"
   cp "$REPO_ROOT/scripts/board-snapshot.sh" "$gm/board-snapshot.sh"
-  sed "s/AND (t.assignee = '\$OVERSEER'/AND (0/" "$guard" > "$gm/overseer-guard.sh"; chmod +x "$gm/overseer-guard.sh"
-  if cmp -s "$gm/overseer-guard.sh" "$guard"; then detail="$detail mutant-assignee-clause-not-found-to-cut"
-  else "$gm/overseer-guard.sh" board "$root/bd-assigned/kanban.db" >/dev/null 2>&1 && : || detail="$detail mutant-guard-without-the-assignee-still-caught-it"; fi
+  _ov_mutate() { # $1=text to replace (first occurrence) $2=its replacement -> the guard so changed, on stdout
+    python3 -c 'import sys; sys.stdout.write(open(sys.argv[1]).read().replace(sys.argv[2], sys.argv[3], 1))' "$guard" "$1" "$2"
+  }
+  _ov_mut() { # $1=label $2=old $3=new -> $gm/overseer-guard.sh is the mutant; 1 (and a note) when the text is not there to change
+    _ov_mutate "$2" "$3" > "$gm/overseer-guard.sh"; chmod +x "$gm/overseer-guard.sh"
+    if cmp -s "$gm/overseer-guard.sh" "$guard"; then detail="$detail mutant-$1-not-found-to-cut"; return 1; fi
+    return 0
+  }
+  _ov_blind() { "$gm/overseer-guard.sh" board "$root/bd-$2/kanban.db" >/dev/null 2>&1 || detail="$detail mutant-$1-still-flagged-$2"; }   # the mutant must call this board clean
+  _ov_leaks() { "$gm/overseer-guard.sh" board "$root/bd-$2/kanban.db" >/dev/null 2>&1 && detail="$detail mutant-$1-did-not-flag-$2"; }  # the mutant must flag this clean board
+  _ov_mut assignee-clause 'lower(trim(t.assignee, $WSQL))' 'NULL' && { _ov_blind no-assignee-clause assigned; _ov_blind no-assignee-clause plain; }
+  _ov_mut live-branch "OR (\$ASG AND t.status NOT IN ('done', 'archived'))" '' && { _ov_blind chunk-shaped-only gate; _ov_blind chunk-shaped-only plain; }
+  _ov_mut terminal-states "t.status NOT IN ('done', 'archived')" '1' && { _ov_leaks done-counted-live fin; _ov_leaks archived-counted-live arch; }
   rm -rf "$root/mut-bs"; mkdir -p "$root/mut-bs/hermes" "$root/mut-bs/scripts"
   cp "$REPO_ROOT/scripts/decision-message.sh" "$REPO_ROOT/scripts/overseer-guard.sh" "$root/mut-bs/scripts/"
   grep -v 'overseer-guard.sh' "$REPO_ROOT/hermes/board-bootstrap.sh" > "$root/mut-bs/hermes/board-bootstrap.sh"; chmod +x "$root/mut-bs/hermes/board-bootstrap.sh"
@@ -15000,8 +15042,36 @@ OV_STUB
     _ov_bs "$root/g-chunk.json" '' "$root/mut-bs/hermes/board-bootstrap.sh"
     [ -s "$root/bs/log" ] || detail="$detail mutant-bootstrap-without-the-guard-still-refused"
   fi
-  if [ -z "$detail" ]; then ok "no-chunk-card-is-ever-assigned (the guard refuses the overseer as a lane, a graph that routes a chunk or a gate to it, and a live board whose chunk-shaped card is assigned to it or has a run under it; the bootstrap refuses both routes before it asks Hermes anything; $scanned programs and SOULs name no assignment to it; a guard without the assignee clause and a bootstrap without the guard each turn it red)"
+  if [ -z "$detail" ]; then ok "no-chunk-card-is-ever-assigned (the guard refuses the overseer as a lane, a graph that routes a chunk or a gate to it, and a live board on which any card that is not done or archived is assigned to it, a gate included, or a chunk-shaped card is assigned to it or has a run under it; a done or archived card is not flagged; the bootstrap refuses both routes before it asks Hermes anything; $scanned programs and SOULs name no assignment to it; a guard without the assignee clause or the live-card branch, one that counts finished cards, and a bootstrap without the guard each turn it red)"
   else bad "no-chunk-card-is-ever-assigned" "no chunk card may be the overseer's, at any place a card gets an assignee:$detail"; fi
+
+  # -- guard-compares-names-as-hermes-does ---------------------------------------------------------
+  # Hermes trims and lowercases an assignee (hermes_cli/profiles.py:246-260; kanban_db.py:1285), so a card
+  # assigned `FORGE-OVERSEER` or ` forge-overseer` is the overseer's. The guard compared names exactly at
+  # all three of its entry points (#105 review, finding 2); triage's promote is asserted in triage/.
+  detail=""
+  printf '[{"id":"CHUNK-1","lane":"forge-codex-lane"},{"id":"CHUNK-2","lane":"FORGE-OVERSEER"}]' > "$root/g-upper.json"
+  printf '[{"id":"CHUNK-1","lane":"forge-codex-lane"},{"id":"GATE-M1","lane":"  forge-overseer\\t"}]' > "$root/g-space.json"
+  for n in FORGE-OVERSEER " forge-overseer" "Forge-Overseer" "forge-overseer " "$(printf '\tforge-overseer\n')" "$(printf '\nForge-OVERSEER')"; do
+    "$guard" lane "$n" >/dev/null 2>&1; rc=$?; [ "$rc" = 1 ] || detail="$detail lane-[$n](rc=$rc)"
+  done
+  "$guard" lane Forge-Codex-Lane >/dev/null 2>&1 && "$guard" lane " claude-interactive " >/dev/null 2>&1 && "$guard" lane overseer >/dev/null 2>&1 || detail="$detail lane-refused-a-real-or-similar-name"
+  out="$("$guard" graph "$root/g-upper.json" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 'CHUNK-2'; } || detail="$detail graph-upper(rc=$rc)"
+  out="$("$guard" graph "$root/g-space.json" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 'GATE-M1'; } || detail="$detail graph-spaced(rc=$rc)"
+  out="$("$guard" board "$root/bd-upper/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_c1'; } || detail="$detail board-upper(rc=$rc)"
+  out="$("$guard" board "$root/bd-spaced/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_g1'; } || detail="$detail board-spaced(rc=$rc)"
+  out="$("$guard" board "$root/bd-runcase/kanban.db" 2>&1)"; rc=$?; { [ "$rc" = 1 ] && printf '%s' "$out" | grep -Fq 't_c1'; } || detail="$detail board-run-under-a-cased-profile(rc=$rc)"
+  # mutants: each comparison made exact again turns its leg red
+  _ov_mut lane-exact '[ "$(norm "$2")" = "$OVERSEER" ]' '[ "$2" = "$OVERSEER" ]' \
+    && { "$gm/overseer-guard.sh" lane FORGE-OVERSEER >/dev/null 2>&1 || detail="$detail mutant-lane-exact-still-refused"; }
+  _ov_mut graph-no-lowercase ' | ascii_downcase' '' \
+    && { "$gm/overseer-guard.sh" graph "$root/g-upper.json" >/dev/null 2>&1 || detail="$detail mutant-graph-without-lowercase-still-refused"; }
+  _ov_mut graph-no-trim ' | gsub("^\\s+|\\s+$"; "")' '' \
+    && { "$gm/overseer-guard.sh" graph "$root/g-space.json" >/dev/null 2>&1 || detail="$detail mutant-graph-without-trim-still-refused"; }
+  _ov_mut board-assignee-exact 'lower(trim(t.assignee, $WSQL))' 't.assignee' && { _ov_blind assignee-exact upper; _ov_blind assignee-exact spaced; }
+  _ov_mut board-run-exact 'lower(trim(r.profile, $WSQL))' 'r.profile' && _ov_blind run-exact runcase
+  if [ -z "$detail" ]; then ok "guard-compares-names-as-hermes-does (FORGE-OVERSEER, ' forge-overseer', 'Forge-Overseer', a tab or newline around the name: refused as a lane, as a graph's lane, as a card's assignee and as the profile of a run; a real lane and 'overseer' are not; each of the five comparisons made exact again is seen)"
+  else bad "guard-compares-names-as-hermes-does" "the guard must compare an assignee as Hermes does, trimmed and lowercased, at all three entry points:$detail"; fi
 
   # -- usage-recorded-per-invocation -------------------------------------------------------------
   detail=""
@@ -15111,7 +15181,7 @@ run_triage_group() {
   local tool n
   for tool in sqlite3 jq python3 shasum; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      for n in fixture-is-anonymised exits-are-audited plan-empties-triage kernel-exits-need-no-model amendment-is-atomic amendment-touches-only-the-contract triage-calls-always-carry-board; do
+      for n in fixture-is-anonymised exits-are-audited plan-empties-triage gate-and-parent-cards-are-refused promote-assignee-is-normalised apply-needs-an-explicit-actor promote-and-fold-arguments-are-safe kernel-exits-need-no-model amendment-is-atomic amendment-touches-only-the-contract triage-calls-always-carry-board; do
         skip "$n" "$tool is not on PATH"
       done
       return
@@ -15159,7 +15229,28 @@ elif verb == "archive":
         db.execute("UPDATE tasks SET status='archived', completed_at=? WHERE id=?", (now, tid))
     db.commit(); print("Archived " + " ".join(rest))
 else:
-    title = rest[0]
+    # argparse, as far as `create` goes: a known option takes its value, `--` ends the options, any
+    # other token that starts with '-' is an error, and the one positional is the title. So a title
+    # such as `-x` or `--help` reaches the board only when it follows `--`.
+    known = ("--body", "--body-file", "--assignee", "--parent", "--created-by", "--idempotency-key")
+    title, i, opts_done = None, 0, False
+    while i < len(rest):
+        a = rest[i]
+        if not opts_done and a == "--":
+            opts_done = True
+        elif not opts_done and a == "--json":
+            pass
+        elif not opts_done and a in known:
+            i += 1
+        elif not opts_done and a.startswith("-") and len(a) > 1:
+            sys.stderr.write("STUB: unrecognized arguments: %s\n" % a); sys.exit(2)
+        elif title is None:
+            title = a
+        else:
+            sys.stderr.write("STUB: unrecognized arguments: %s\n" % a); sys.exit(2)
+        i += 1
+    if title is None:
+        sys.stderr.write("STUB: the following arguments are required: title\n"); sys.exit(2)
     body = sys.stdin.read() if opt("--body-file") == "-" else (opt("--body") or "")
     key = opt("--idempotency-key")
     parents = opt("--parent", True)
@@ -15190,7 +15281,11 @@ TR_STUB
       $2" >/dev/null 2>&1
   }
   _tr_run() { # $1=board name, rest = triage.sh arguments. Sets out and rc.
-    local b="$1"; shift
+    local b="$1" a has_actor=0 has_apply=0; shift
+    for a in "$@"; do case "$a" in --actor) has_actor=1;; --apply) has_apply=1;; esac; done
+    # An --apply must name its actor (review fix 6: there is no default for a write), so the harness
+    # names one unless a case is about its absence (TR_NOACTOR=1).
+    if [ "$has_apply" = 1 ] && [ "$has_actor" = 0 ] && [ -z "${TR_NOACTOR:-}" ]; then set -- "$@" --actor forge-overseer; fi
     : > "$root/stub.log"
     out="$(cd / && env HERMES_HOME="$root/b-$b/home" HERMES_KANBAN_HOME="$root/b-$b/kanban" \
             STUB_DB="$root/b-$b/kanban/boards/tr/kanban.db" STUB_LOG="$root/stub.log" STUB_FAIL_VERB="${TR_FAIL:-}" \
@@ -15224,7 +15319,7 @@ TR_STUB
     bad="$(sqlite3 -json "$db" "SELECT id, title, COALESCE(body,'') AS body FROM tasks" | jq -r '
         .[] | select(
           ((.title | test("^(CARD\\?: )?Synthetic follow-up [0-9]{2}: topic [A-O]$")) | not)
-          or ((.body | test("^(Raised by the reviewer of PR #[0-9]+ \\(CHUNK-[0-9]+\\)\\. )?(This synthetic card stands in for a real follow-up; the text carries no project content\\. ?)+$")) | not))
+          or ((.body | test("^(Raised by the reviewer of PR #99[0-9]{2} \\(CHUNK-9[0-9]{2}\\)\\. )?(This synthetic card stands in for a real follow-up; the text carries no project content\\. ?)+$")) | not))
         | .id' | head -3 | tr '\n' ',')"; [ -z "$bad" ] || d="$d unsynthetic-text($bad)"
     bad="$(sqlite3 -json "$db" "SELECT task_id, body FROM task_comments" | jq -r '
         .[] | select((.body | test("^Synthetic reviewer note on t_tr[0-9]{2}: no project content\\.$")) | not) | .task_id' | head -3 | tr '\n' ',')"; [ -z "$bad" ] || d="$d unsynthetic-comment($bad)"
@@ -15237,20 +15332,26 @@ TR_STUB
   _tr_board anon ''
   # the two live cards the test added are not the fixture's
   sqlite3 "$root/b-anon/kanban/boards/tr/kanban.db" "DELETE FROM task_links; DELETE FROM tasks WHERE id LIKE 't_live%';"
-  detail="$(_tr_shape_diag "$root/b-anon/kanban/boards/tr/kanban.db")"
+  # Every query below reads a COPY of the board (the suite's own rule: a WAL board is never opened in place).
+  local adb="$root/anon-copy.db"
+  rm -f "$adb" "$adb-wal" "$adb-shm"; cp "$root/b-anon/kanban/boards/tr/kanban.db" "$adb"
+  for n in -wal -shm; do [ -f "$root/b-anon/kanban/boards/tr/kanban.db$n" ] && cp "$root/b-anon/kanban/boards/tr/kanban.db$n" "$adb$n"; done
+  detail="$(_tr_shape_diag "$adb")"
   # the control: a path, a URL and a real-looking id pasted into a copy must each be refused
   local mdb="$root/shape-mutant.db" mut_detail=""
   for n in "UPDATE tasks SET body = 'see src/example_module.py and https://example.org/x' WHERE id='t_tr04';" \
            "UPDATE tasks SET title = 'CARD?: Unsynthetic mutant label' WHERE id='t_tr01';" \
            "UPDATE task_comments SET body = 'a real note' WHERE id = (SELECT MIN(id) FROM task_comments);" \
            "UPDATE tasks SET id = 't_00000000' WHERE id='t_tr02';" \
-           "INSERT INTO kanban_notify_subs (task_id, platform, chat_id, created_at) VALUES ('t_tr01', 'telegram', '1', 1);"; do
-    rm -f "$mdb" "$mdb-wal" "$mdb-shm"; cp "$root/b-anon/kanban/boards/tr/kanban.db" "$mdb"
+           "INSERT INTO kanban_notify_subs (task_id, platform, chat_id, created_at) VALUES ('t_tr01', 'telegram', '1', 1);" \
+           "UPDATE tasks SET body = replace(body, 'PR #9908', 'PR #908') WHERE id='t_tr08';" \
+           "UPDATE tasks SET body = replace(body, '(CHUNK-908)', '(CHUNK-48)') WHERE id='t_tr08';"; do
+    rm -f "$mdb" "$mdb-wal" "$mdb-shm"; cp "$adb" "$mdb"
     sqlite3 "$mdb" "$n" >/dev/null 2>&1
     [ -n "$(_tr_shape_diag "$mdb")" ] || mut_detail="$mut_detail not-refused($n)"
   done
   [ -z "$mut_detail" ] || detail="$detail mutants:$mut_detail"
-  if [ -z "$detail" ]; then ok "fixture-is-anonymised (15 triage cards in the real schema; every title, body, comment and id is synthetic; no notification subscription, run, link or attachment; a pasted path, URL, real-looking id or comment is refused)"
+  if [ -z "$detail" ]; then ok "fixture-is-anonymised (15 triage cards in the real schema; every title, body, comment and id is synthetic, the PR and chunk numbers in the 99xx and 9xx ranges no project has reached; no notification subscription, run, link or attachment; a pasted path, URL, real-looking id, PR or chunk number or comment is refused)"
   else bad "fixture-is-anonymised" "scripts/fixtures/triage-board.sql must carry real shapes and no original text:$detail"; fi
 
   # -- exits-are-audited ----------------------------------------------------------
@@ -15406,22 +15507,190 @@ TR_PLAN
   if [ -z "$detail" ]; then ok "plan-empties-triage (a 15-decision plan on the anonymised board, rehearsed then applied: triage 15 to 0, all 15 originals archived with an audit comment, 5 promoted; a short plan fails; a bad or duplicate line refuses the whole plan before a write)"
   else bad "plan-empties-triage" "a covering plan must empty triage and a short one must fail:$detail"; fi
 
+  # -- gate-and-parent-cards-are-refused ----------------------------------------------------------
+  # A GATE card can land in `triage` (a block repeated in the same kind routes a card there:
+  # BLOCK_RECURRENCE_LIMIT=2, kanban_db.py:3325), and archiving it, or the parent of any live card,
+  # releases every card behind it (kanban_db.py:2159, 3916). So no triage exit may touch one, however
+  # the title is written, and a refusal writes nothing: no comment, no create, not a byte of the board
+  # (#105 review, blocking finding 1). Each cell below is paired with a mutant that removes its guard.
+  detail=""
+  local gsql gcard gh0 gx gm gv
+  cat > "$root/gate.sql" <<'TR_GSQL'
+INSERT INTO tasks (id, title, body, status, created_at) VALUES
+  ('t_gt01', 'GATE-M1: milestone one', 'gate body', 'triage', 1790400001),
+  ('t_gt02', '   gate-m2: spaced and lowercase', 'gate body', 'triage', 1790400002),
+  ('t_gt03', 'CARD?: GATE-M3 follow-up', 'gate body', 'triage', 1790400003),
+  ('t_gt04', 'Held for a milestone', 'gate body', 'triage', 1790400004),
+  ('t_gt05', 'CARD?:   Gate-M5: marker, spaces and mixed case', 'gate body', 'triage', 1790400005),
+  ('t_pa01', 'A plain parent', 'parent body', 'triage', 1790400006),
+  ('t_pa02', 'A plain parent of an archived card', 'parent body', 'triage', 1790400007),
+  ('t_ch01', 'CHUNK-7: a live child', 'child body', 'todo', 1790400008),
+  ('t_ch02', 'CHUNK-6: an archived child', 'child body', 'archived', 1790400009),
+  ('t_gw01', 'Gateway timeout follow-up', 'not a gate', 'triage', 1790400010);
+INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+  ('t_gt04', 'blocked', '{"reason": "milestone-gate: GATE-M4 holds milestone M4 until you complete it"}', 1790400004);
+INSERT INTO task_links (parent_id, child_id) VALUES ('t_pa01', 't_ch01'), ('t_pa02', 't_ch02');
+TR_GSQL
+  gsql="$(cat "$root/gate.sql")"
+  _tr_refused() { # $1=label $2=a fragment of the diagnostic; reads rc, out, gh0 and board gp
+    { [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq -- "$2" && [ ! -s "$root/stub.log" ] && [ "$gh0" = "$(_tr_hash gp)" ]; } \
+      || detail="$detail $1(rc=$rc:$(printf '%s' "$out" | head -1 | cut -c1-100))"
+  }
+  _tr_board gp "$gsql"; gh0="$(_tr_hash gp)"
+  for gcard in t_gt01 t_gt02 t_gt03 t_gt04 t_gt05; do
+    _tr_run gp close --board tr --card "$gcard" --reason r --apply;                  _tr_refused "close-$gcard" 'is a milestone gate'
+    _tr_run gp fold --board tr --card "$gcard" --into t_live2 --reason r --apply;    _tr_refused "fold-$gcard" 'is a milestone gate'
+    _tr_run gp promote --board tr --card "$gcard" --reason r --apply;                _tr_refused "promote-$gcard" 'is a milestone gate'
+  done
+  _tr_run gp close --board tr --card t_pa01 --reason r --apply;                      _tr_refused "close-parent" 'parent of live card'
+  _tr_run gp fold --board tr --card t_pa01 --into t_live2 --reason r --apply;        _tr_refused "fold-parent" 'parent of live card'
+  _tr_run gp promote --board tr --card t_pa01 --reason r --apply;                    _tr_refused "promote-parent" 'parent of live card'
+  _tr_run gp close --board tr --card t_gt01 --reason r --rehearse;                   _tr_refused "rehearse-gate" 'is a milestone gate'
+  printf 'close|t_tr01||fine\nclose|t_gt02||a gate\n' > "$root/plan-gate.txt"
+  _tr_run gp plan --board tr --file "$root/plan-gate.txt" --apply;                   _tr_refused "plan-with-a-gate" 'is a milestone gate'
+  printf 'close|t_tr01||fine\nfold|t_pa01|t_live2|a parent\n' > "$root/plan-parent.txt"
+  _tr_run gp plan --board tr --file "$root/plan-parent.txt" --apply;                 _tr_refused "plan-with-a-parent" 'parent of live card'
+  # the controls: a card that merely starts with "gate", and a parent whose only child is archived, are
+  # ordinary triage cards, so the guards are not blanket refusals
+  _tr_run gp close --board tr --card t_gw01 --reason r --apply
+  { [ "$rc" = 0 ] && [ "$(_tr_q gp "SELECT status FROM tasks WHERE id='t_gw01'")" = archived ]; } || detail="$detail control-gateway-card-refused(rc=$rc)"
+  _tr_run gp close --board tr --card t_pa02 --reason r --apply
+  { [ "$rc" = 0 ] && [ "$(_tr_q gp "SELECT status FROM tasks WHERE id='t_pa02'")" = archived ]; } || detail="$detail control-archived-child-refused(rc=$rc)"
+  # mutants: each guard, and each step that normalises the title, removed in turn; the victim must be accepted
+  for gm in "gate-guard|t_gt01" "gate-lower|t_gt01" "gate-trim|t_gt02" "gate-strip|t_gt03" "gate-event|t_gt04" "parent-guard|t_pa01"; do
+    gv="${gm#*|}"; gm="${gm%|*}"
+    grep -v "# $gm\$" "$tr" > "$mdir/triage.sh"
+    if cmp -s "$mdir/triage.sh" "$tr"; then detail="$detail mutant-$gm-not-found-to-cut"
+    else
+      _tr_board mu "$gsql"; TR_SCRIPT="$mdir/triage.sh" _tr_run mu close --board tr --card "$gv" --reason r --apply
+      { [ "$rc" = 0 ] && [ "$(_tr_q mu "SELECT status FROM tasks WHERE id='$gv'")" = archived ]; } || detail="$detail mutant-$gm-still-refused-$gv(rc=$rc)"
+    fi
+  done
+  if [ -z "$detail" ]; then ok "gate-and-parent-cards-are-refused (close, fold and promote, with --apply, on a plan line and in a rehearsal, refuse GATE-M1, '   gate-m2', 'CARD?: GATE-M3', 'CARD?:   Gate-M5' and a card whose block reason is milestone-gate, and refuse a plain card with a live child, each with a diagnostic and not a byte written; a 'Gateway' card and a parent of an archived card close normally; cutting the gate guard, the lowercase, the trim, the marker strip, the block-reason read or the parent guard each lets its victim through)"
+  else bad "gate-and-parent-cards-are-refused" "no triage exit may archive, promote or fold a gate card or the parent of a live card, and a refusal writes nothing:$detail"; fi
+
+  # -- promote-assignee-is-normalised -------------------------------------------------------------
+  # Hermes trims and lowercases an assignee (hermes_cli/profiles.py:246-260; kanban_db.py:1285), so
+  # FORGE-OVERSEER and ' forge-overseer' are the overseer to the dispatcher. A guard that compares the
+  # name exactly lets them through (#105 review, finding 2).
+  detail=""
+  _tr_board an ''; h0="$(_tr_hash an)"
+  for gx in forge-overseer FORGE-OVERSEER " forge-overseer" "Forge-Overseer" "forge-overseer " "$(printf '\tforge-overseer')" "  FORGE-Overseer  "; do
+    _tr_run an promote --board tr --card t_tr01 --assignee "$gx" --reason r --apply
+    { [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'the overseer takes no chunk' && [ ! -s "$root/stub.log" ] && [ "$h0" = "$(_tr_hash an)" ]; } \
+      || detail="$detail promote-to-[$gx](rc=$rc:$(printf '%s' "$out" | head -1 | cut -c1-80))"
+  done
+  _tr_run an promote --board tr --card t_tr01 --assignee forge-codex-lane --reason r --rehearse
+  { [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Fq -- '--assignee forge-codex-lane'; } || detail="$detail control-a-real-lane-refused(rc=$rc)"
+  cp "$tr" "$mdir/triage.sh"
+  sed 's|^norm() {.*$|norm() { printf "%s" "$1"; }|' "$REPO_ROOT/scripts/overseer-guard.sh" > "$mdir/overseer-guard.sh"; chmod +x "$mdir/overseer-guard.sh"
+  if cmp -s "$mdir/overseer-guard.sh" "$REPO_ROOT/scripts/overseer-guard.sh"; then detail="$detail mutant-guard-norm-not-found-to-cut"
+  else
+    _tr_board mu ''; TR_SCRIPT="$mdir/triage.sh" _tr_run mu promote --board tr --card t_tr01 --assignee FORGE-OVERSEER --reason r --apply
+    [ "$rc" = 0 ] || detail="$detail mutant-guard-without-normalisation-still-refused(rc=$rc)"
+  fi
+  cp "$REPO_ROOT/scripts/overseer-guard.sh" "$mdir/overseer-guard.sh"
+  if [ -z "$detail" ]; then ok "promote-assignee-is-normalised (promote --assignee refuses forge-overseer however it is cased or spaced, with the overseer diagnostic and not a byte written; a real lane is not refused; a guard that compares names exactly lets FORGE-OVERSEER through)"
+  else bad "promote-assignee-is-normalised" "promote must refuse the overseer under every spelling Hermes treats as the same profile:$detail"; fi
+
+  # -- apply-needs-an-explicit-actor --------------------------------------------------------------
+  # The actor was defaulted to forge-overseer even for an operator's --apply, and metrics.sh does not
+  # count a forge-overseer comment as an operator touch, so the operator's own write vanished from the
+  # touch count (#105 review, finding 6). A write now says who made it; a rehearsal needs no name.
+  detail=""
+  _tr_board ac ''; h0="$(_tr_hash ac)"
+  _tr_noactor() { # $1=label; reads rc, out, h0 and board ac
+    { [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq -- '--apply needs an explicit --actor' && [ ! -s "$root/stub.log" ] && [ "$h0" = "$(_tr_hash ac)" ]; } \
+      || detail="$detail $1(rc=$rc:$(printf '%s' "$out" | head -1 | cut -c1-80))"
+  }
+  TR_NOACTOR=1 _tr_run ac close --board tr --card t_tr01 --reason r --apply;                                  _tr_noactor close
+  TR_NOACTOR=1 _tr_run ac fold --board tr --card t_tr02 --into t_live2 --reason r --apply;                    _tr_noactor fold
+  TR_NOACTOR=1 _tr_run ac promote --board tr --card t_tr03 --reason r --apply;                                _tr_noactor promote
+  TR_NOACTOR=1 _tr_run ac plan --board tr --file "$root/plan-all.txt" --apply;                                _tr_noactor plan
+  _tr_run ac close --board tr --card t_tr01 --reason r --rehearse
+  { [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Fq -- '--author forge-overseer' && [ "$h0" = "$(_tr_hash ac)" ]; } || detail="$detail rehearse-needs-no-actor(rc=$rc)"
+  _tr_run ac close --board tr --card t_tr01 --reason r --actor operator --apply
+  { [ "$rc" = 0 ] && [ "$(_tr_q ac "SELECT author FROM task_comments WHERE task_id='t_tr01' ORDER BY id DESC LIMIT 1")" = operator ]; } || detail="$detail control-explicit-actor(rc=$rc)"
+  sed 's|^\[ -n "\$ACTOR" \] .*# actor-required$|ACTOR="${ACTOR:-forge-overseer}"|' "$tr" > "$mdir/triage.sh"
+  if cmp -s "$mdir/triage.sh" "$tr"; then detail="$detail mutant-actor-required-not-found-to-cut"
+  else
+    _tr_board mu ''; TR_SCRIPT="$mdir/triage.sh" TR_NOACTOR=1 _tr_run mu close --board tr --card t_tr01 --reason r --apply
+    [ "$rc" = 0 ] || detail="$detail mutant-with-the-default-actor-still-refused(rc=$rc)"
+  fi
+  if [ -z "$detail" ]; then ok "apply-needs-an-explicit-actor (close, fold, promote and plan with --apply and no --actor exit 2 with a diagnostic and not a byte written; a rehearsal needs none; an explicit actor is the comment's author; restoring the forge-overseer default is seen)"
+  else bad "apply-needs-an-explicit-actor" "a write to the board must say who made it:$detail"; fi
+
+  # -- promote-and-fold-arguments-are-safe ---------------------------------------------------------
+  # (a) A title that starts with '-' was passed to `hermes kanban create` as a bare argument, where
+  # argparse reads it as an option. It now follows `--`; the stub parses like argparse, so a promote
+  # without it fails here, where Hermes may not be installed. (b) A fold target that is `done` was
+  # taken as live: the content went to a card nobody reads (#105 review, finding 7).
+  detail=""
+  cat > "$root/dash.sql" <<'TR_DSQL'
+INSERT INTO tasks (id, title, body, status, created_at) VALUES
+  ('t_op01', '-x', 'dash body one', 'triage', 1790500001),
+  ('t_op02', '--help', 'dash body two', 'triage', 1790500002),
+  ('t_op03', 'CARD?: --body', 'dash body three', 'triage', 1790500003),
+  ('t_op04', 'An ordinary card', 'ordinary body', 'triage', 1790500004),
+  ('t_dn01', 'CHUNK-5: a finished card', 'done body', 'done', 1790500005),
+  ('t_ar01', 'CHUNK-4: an archived card', 'archived body', 'archived', 1790500006);
+TR_DSQL
+  _tr_board op "$(cat "$root/dash.sql")"; h0="$(_tr_hash op)"
+  _tr_run op fold --board tr --card t_op04 --into t_dn01 --reason r --apply
+  { [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'is done' && [ ! -s "$root/stub.log" ] && [ "$h0" = "$(_tr_hash op)" ]; } || detail="$detail fold-into-done(rc=$rc:$(printf '%s' "$out" | head -1 | cut -c1-80))"
+  _tr_run op fold --board tr --card t_op04 --into t_ar01 --reason r --apply
+  { [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'is archived' && [ "$h0" = "$(_tr_hash op)" ]; } || detail="$detail fold-into-archived(rc=$rc)"
+  for gx in "t_op01|-x" "t_op02|--help" "t_op03|--body"; do
+    gcard="${gx%%|*}"
+    _tr_run op promote --board tr --card "$gcard" --reason r --rehearse
+    { [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Fq -- "--json -- '${gx#*|}'" && [ ! -s "$root/stub.log" ]; } || detail="$detail rehearse-shows-no-separator-${gx#*|}(rc=$rc)"
+    _tr_run op promote --board tr --card "$gcard" --reason r --apply
+    newid="$(_tr_q op "SELECT id FROM tasks WHERE idempotency_key='triage-promote-tr-$gcard'")"
+    { [ "$rc" = 0 ] && [ -n "$newid" ] && [ "$(_tr_q op "SELECT title FROM tasks WHERE id='$newid'")" = "${gx#*|}" ] \
+        && [ "$(_tr_q op "SELECT status FROM tasks WHERE id='$gcard'")" = archived ]; } \
+      || detail="$detail promote-title-[${gx#*|}](rc=$rc:$(printf '%s' "$out" | head -1 | cut -c1-80))"
+    grep -Fq -- " -- ${gx#*|}" "$root/stub.log" || detail="$detail create-carried-no-separator-${gx#*|}"
+  done
+  _tr_run op fold --board tr --card t_op04 --into t_live2 --reason r --apply
+  { [ "$rc" = 0 ] && [ "$(_tr_q op "SELECT status FROM tasks WHERE id='t_op04'")" = archived ]; } || detail="$detail control-fold-into-a-live-card(rc=$rc)"
+  # mutants: the separator removed (the stub, like argparse, then rejects '-x'); `done` counted as live
+  sed 's| -- "\$title"| "$title"|' "$tr" > "$mdir/triage.sh"
+  if cmp -s "$mdir/triage.sh" "$tr"; then detail="$detail mutant-separator-not-found-to-cut"
+  else
+    _tr_board mu "$(cat "$root/dash.sql")"; TR_SCRIPT="$mdir/triage.sh" _tr_run mu promote --board tr --card t_op01 --reason r --apply
+    { [ "$rc" != 0 ] && [ "$(_tr_q mu "SELECT status FROM tasks WHERE id='t_op01'")" = triage ]; } || detail="$detail mutant-without-the-separator-still-promoted(rc=$rc)"
+  fi
+  sed 's/archived|triage|done)/archived|triage)/' "$tr" > "$mdir/triage.sh"
+  if cmp -s "$mdir/triage.sh" "$tr"; then detail="$detail mutant-done-target-not-found-to-cut"
+  else
+    _tr_board mu "$(cat "$root/dash.sql")"; TR_SCRIPT="$mdir/triage.sh" _tr_run mu fold --board tr --card t_op04 --into t_dn01 --reason r --apply
+    [ "$rc" = 0 ] || detail="$detail mutant-done-as-live-still-refused(rc=$rc)"
+  fi
+  if [ -z "$detail" ]; then ok "promote-and-fold-arguments-are-safe (a card titled '-x', '--help' or 'CARD?: --body' is promoted with its title intact because it follows '--', in the rehearsal's command line too; a fold into a done or an archived card is refused, into a live one is not; a create without the separator and a done target taken as live are each seen)"
+  else bad "promote-and-fold-arguments-are-safe" "a title must never be read as an option, and a fold must land on a live card:$detail"; fi
+
   # -- kernel-exits-need-no-model (the real kernel; P8) ----------------------------------
   if ! command -v hermes >/dev/null 2>&1; then
     skip "kernel-exits-need-no-model" "hermes not installed — the stateful stub above is the only board this host has"
   else
     detail=""
     local kh="$TMPROOT/triage-kernel" kdb
+    # A dispatched worker's (and a cron job's) environment carries HERMES_KANBAN_HOME and
+    # HERMES_KANBAN_BOARD, and both outrank HERMES_HOME. This case must not follow them onto a real
+    # board (review fix 8), so it is run with both poisoned and strips both from every call it makes.
+    local kenv=(env -u HERMES_KANBAN_HOME -u HERMES_KANBAN_BOARD HERMES_HOME="$kh")
+    local k_hs="${HERMES_KANBAN_HOME+set}" k_hv="${HERMES_KANBAN_HOME-}" k_bs="${HERMES_KANBAN_BOARD+set}" k_bv="${HERMES_KANBAN_BOARD-}"
+    export HERMES_KANBAN_HOME="$root/ambient-kanban-home" HERMES_KANBAN_BOARD=ambient-board
     rm -rf "$kh"; mkdir -p "$kh"
     kdb="$kh/kanban/boards/tr/kanban.db"
     mkdir -p "$(dirname "$kdb")"
     sqlite3 "$kdb" < "$fixsql" >/dev/null 2>&1
     # The kernel reads the fixture as its own board.
-    n="$(HERMES_HOME="$kh" hermes kanban --board tr list --status triage --json 2>/dev/null | jq 'length' 2>/dev/null)"
+    n="$("${kenv[@]}" hermes kanban --board tr list --status triage --json 2>/dev/null | jq 'length' 2>/dev/null)"
     [ "$n" = 15 ] || detail="$detail kernel-does-not-read-the-fixture(count=$n)"
     # P8, executed on the installed kernel: promote refuses a triage card. This is why promote
     # here is a re-create, not the CLI verb.
-    out="$(HERMES_HOME="$kh" hermes kanban --board tr promote t_tr01 2>&1)"; rc=$?
+    out="$("${kenv[@]}" hermes kanban --board tr promote t_tr01 2>&1)"; rc=$?
     { [ "$rc" != 0 ] && printf '%s' "$out" | grep -Fq "promote only applies to 'todo' or 'blocked'"; } || detail="$detail kernel-promote-no-longer-refuses-triage(rc=$rc: $(printf '%s' "$out" | head -1))"
     cat > "$root/plan-kernel.txt" <<'TR_KPLAN'
 close|t_tr01||duplicate
@@ -15440,7 +15709,7 @@ promote|t_tr13||real
 promote|t_tr14||real
 promote|t_tr15||real
 TR_KPLAN
-    out="$(cd / && HERMES_HOME="$kh" "$tr" plan --board tr --file "$root/plan-kernel.txt" --apply 2>&1)"; rc=$?
+    out="$(cd / && "${kenv[@]}" "$tr" plan --board tr --file "$root/plan-kernel.txt" --actor forge-overseer --apply 2>&1)"; rc=$?
     [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Fq 'board tr is empty (was 15)' || detail="$detail real-kernel-plan(rc=$rc:$(printf '%s' "$out" | tail -2 | tr '\n' ' '))"
     rm -rf "$root/q-kernel"; mkdir -p "$root/q-kernel"; cp "$kdb" "$root/q-kernel/k.db"
     for n in -wal -shm; do [ -f "$kdb$n" ] && cp "$kdb$n" "$root/q-kernel/k.db$n"; done
@@ -15449,7 +15718,19 @@ TR_KPLAN
       && [ "$(sqlite3 "$root/q-kernel/k.db" "SELECT COUNT(*) FROM tasks WHERE status IN ('ready','todo') AND assignee IS NULL")" = 8 ] \
       && [ "$(sqlite3 "$root/q-kernel/k.db" "SELECT COUNT(*) FROM task_comments WHERE author='forge-overseer' AND body LIKE 'triage % by forge-overseer: %'")" = 15 ] \
       || detail="$detail real-kernel-board(triage=$(sqlite3 "$root/q-kernel/k.db" "SELECT status || ':' || COUNT(*) FROM tasks GROUP BY status" | tr '\n' ' '))"
-    if [ -z "$detail" ]; then ok "kernel-exits-need-no-model (the installed Hermes, in an isolated HERMES_HOME: promote refuses a triage card; close and promote by comment + archive + create empty the 15-card board with no auxiliary model; the promoted cards land unassigned)"
+    # A title that Hermes's own parser would read as an option survives the promote (review fix 7), and
+    # the ambient board variables never reached a real board (fix 8): nothing was created under them.
+    sqlite3 "$kdb" "INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_trdash', '--help', 'dash body', 'triage', 1790600000);" >/dev/null 2>&1
+    out="$(cd / && "${kenv[@]}" "$tr" promote --board tr --card t_trdash --reason r --actor forge-overseer --apply 2>&1)"; rc=$?
+    rm -rf "$root/q-kernel"; mkdir -p "$root/q-kernel"; cp "$kdb" "$root/q-kernel/k.db"
+    for n in -wal -shm; do [ -f "$kdb$n" ] && cp "$kdb$n" "$root/q-kernel/k.db$n"; done
+    { [ "$rc" = 0 ] && [ "$(sqlite3 "$root/q-kernel/k.db" "SELECT COUNT(*) FROM tasks WHERE title='--help' AND status IN ('ready','todo')")" = 1 ] \
+        && [ "$(sqlite3 "$root/q-kernel/k.db" "SELECT status FROM tasks WHERE id='t_trdash'")" = archived ]; } \
+      || detail="$detail real-kernel-dash-title(rc=$rc:$(printf '%s' "$out" | tail -1 | cut -c1-120))"
+    [ ! -e "$HERMES_KANBAN_HOME" ] || detail="$detail the-ambient-kanban-home-was-written"
+    if [ -n "$k_hs" ]; then export HERMES_KANBAN_HOME="$k_hv"; else unset HERMES_KANBAN_HOME; fi
+    if [ -n "$k_bs" ]; then export HERMES_KANBAN_BOARD="$k_bv"; else unset HERMES_KANBAN_BOARD; fi
+    if [ -z "$detail" ]; then ok "kernel-exits-need-no-model (the installed Hermes, in an isolated HERMES_HOME with HERMES_KANBAN_HOME and HERMES_KANBAN_BOARD poisoned in the caller's environment and stripped from every call: promote refuses a triage card; close and promote by comment + archive + create empty the 15-card board with no auxiliary model; the promoted cards land unassigned; a card titled --help is promoted with its title intact)"
     else bad "kernel-exits-need-no-model" "the plan must empty the anonymised board on the real kernel without specify or decompose:$detail"; fi
   fi
 

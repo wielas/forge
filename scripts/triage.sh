@@ -28,7 +28,19 @@
 # land on whatever board is "current" (the trap preflight section 8 warns of).
 # Comments are authored as the actor. metrics.sh does not count a comment by
 # forge-overseer as an operator touch (it is a machine); the operator's own are
-# touches, as they always were.
+# touches, as they always were. So --apply has NO default actor: it must be named
+# with --actor, or the operator's own write would be counted as a machine's.
+#
+# TWO KINDS OF CARD ARE NEVER AN EXIT, whatever the title looks like (a block
+# repeated in one kind routes a card to `triage`, kanban_db.py:3325, so a held
+# gate can be there; archiving it, or any parent of a live card, releases the
+# cards behind it, kanban_db.py:2159, 3916):
+#   - a milestone gate: a title that, trimmed, lowercased and stripped of a
+#     leading "CARD?: ", starts with "gate-", or a card whose block reason
+#     starts "milestone-gate:". A gate is completed by the checkpoint or the
+#     operator.
+#   - a parent of any card that is not archived.
+# A refusal says why, exits 1, and writes nothing, not even a comment.
 #
 # MODES, one of which is required, as in scripts/checkpoint.sh:
 #   --rehearse   writes nothing; prints the calls --apply would make.
@@ -49,12 +61,13 @@
 #
 # Usage:
 #   ./scripts/triage.sh list    --board <slug>
-#   ./scripts/triage.sh close   --board <slug> --card <id> --reason <text> [--actor <name>] (--rehearse|--apply)
-#   ./scripts/triage.sh fold    --board <slug> --card <id> --into <id> --reason <text> [--actor <name>] (--rehearse|--apply)
-#   ./scripts/triage.sh promote --board <slug> --card <id> --reason <text> [--assignee <profile>] [--actor <name>] (--rehearse|--apply)
-#   ./scripts/triage.sh plan    --board <slug> --file <plan> [--actor <name>] (--rehearse|--apply)
+#   ./scripts/triage.sh close   --board <slug> --card <id> --reason <text> (--rehearse | --apply --actor <name>)
+#   ./scripts/triage.sh fold    --board <slug> --card <id> --into <id> --reason <text> (--rehearse | --apply --actor <name>)
+#   ./scripts/triage.sh promote --board <slug> --card <id> --reason <text> [--assignee <profile>] (--rehearse | --apply --actor <name>)
+#   ./scripts/triage.sh plan    --board <slug> --file <plan> (--rehearse | --apply --actor <name>)
 # Exit: 0 done (for plan: triage is empty), 1 refused or failed or triage not
-#       empty, 2 usage or the board could not be read.
+#       empty, 2 usage (including --apply with no --actor) or the board could
+#       not be read.
 # =============================================================================
 set -uo pipefail
 
@@ -76,7 +89,7 @@ case "$ACTION" in
   *) usagetext >&2; exit 2;;
 esac
 
-BOARD=""; CARD=""; INTO=""; REASON=""; ASSIGNEE=""; ACTOR="forge-overseer"; MODE=""; PLAN=""
+BOARD=""; CARD=""; INTO=""; REASON=""; ASSIGNEE=""; ACTOR=""; MODE=""; PLAN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --board)    [ $# -ge 2 ] || { echo "triage: --board needs a slug" >&2; exit 2; }; BOARD="$2"; shift 2;;
@@ -101,6 +114,7 @@ board_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 card_re='^t_[A-Za-z0-9]+$'
 name_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 [ -n "$BOARD" ] && [[ $BOARD =~ $board_re ]] || { echo "triage: --board <slug> is required" >&2; exit 2; }
+[ -n "$ACTOR" ] || { [ "$MODE" != apply ] || { echo "triage: --apply needs an explicit --actor <name>: a write to the board says who made it, and an operator's own name is counted as a touch where forge-overseer is not" >&2; exit 2; }; ACTOR=forge-overseer; } # actor-required
 [[ $ACTOR =~ $name_re ]] || { echo "triage: '$ACTOR' is not an actor name" >&2; exit 2; }
 if [ "$ACTION" != list ] && [ -z "$MODE" ]; then
   echo "triage: say --rehearse (writes nothing) or --apply (changes the board)" >&2; exit 2
@@ -146,6 +160,17 @@ parents_of() { # $1=snapshot $2=card -> parent ids, one per line, archived ones 
                  WHERE l.child_id = '$2' AND p.status <> 'archived' ORDER BY l.parent_id;" 2>/dev/null
 }
 triage_count() { sqlite3 "$1" "SELECT COUNT(*) FROM tasks WHERE status = 'triage';" 2>/dev/null; }
+gate_reasons() { # $1=snapshot $2=card -> how many of its `blocked` events carry a milestone-gate reason (a query that fails counts as 1: refuse)
+  sqlite3 "$1" "SELECT COUNT(*) FROM task_events
+                 WHERE task_id = '$2' AND kind = 'blocked' AND json_valid(payload)
+                   AND lower(trim(COALESCE(json_extract(payload, '\$.reason'), ''))) LIKE 'milestone-gate:%';" 2>/dev/null || echo 1
+}
+live_children() { # $1=snapshot $2=card -> the ids of its children that are not archived, comma-joined ('?' when the query fails: refuse)
+  local r
+  r="$(sqlite3 "$1" "SELECT group_concat(id, ',') FROM (SELECT t.id FROM task_links l JOIN tasks t ON t.id = l.child_id
+                      WHERE l.parent_id = '$2' AND t.status <> 'archived' ORDER BY t.id);" 2>/dev/null)" || { printf '?'; return 0; }
+  printf '%s' "$r"
+}
 
 if [ "$ACTION" = list ]; then
   S="$(snapshot)" || exit 2
@@ -157,13 +182,22 @@ fi
 
 # validate_one <snapshot> <action> <card> <into-or-assignee> <reason> -> 0 ok, else the refusal on stdout
 validate_one() {
-  local s="$1" act="$2" card="$3" arg="$4" reason="$5" cj st tgt tj tst
+  local s="$1" act="$2" card="$3" arg="$4" reason="$5" cj st tgt tj tst title g kids
   [[ $card =~ $card_re ]] || { echo "'$card' is not a card id"; return 1; }
   [ -n "$(one_line "$reason")" ] || { echo "$card: every action needs a reason"; return 1; }
   cj="$(card_json "$s" "$card")"
   [ -n "$cj" ] || { echo "$card: no such card on board $BOARD"; return 1; }
   st="$(printf '%s' "$cj" | jq -r '.status')"
   [ "$st" = triage ] || { echo "$card: is $st, not triage; triage exits only handle triage cards"; return 1; }
+  # Two kinds of card are never an exit (see the header). Every verb passes here, and so does every plan line.
+  title="$(printf '%s' "$cj" | jq -r '.title')"
+  g="$title"
+  g="$(printf '%s' "$g" | tr '[:upper:]' '[:lower:]')" # gate-lower
+  g="$(printf '%s' "$g" | sed -E 's/^[[:space:]]+//')" # gate-trim
+  g="$(printf '%s' "$g" | sed -E 's/^(card[?]:[[:space:]]*)+//')" # gate-strip
+  case "$g" in gate-*) echo "$card: is a milestone gate (title '$(one_line "$title")'); a gate is completed by the checkpoint or the operator and is no triage exit"; return 1;; esac # gate-guard
+  [ "$(gate_reasons "$s" "$card")" = 0 ] || { echo "$card: is a milestone gate (it was blocked with a milestone-gate reason); a gate is completed by the checkpoint or the operator and is no triage exit"; return 1; } # gate-event
+  kids="$(live_children "$s" "$card")"; [ -z "$kids" ] || { echo "$card: is the parent of live card(s) $kids; archiving it would release them (kanban_db.py:2159), so it is no triage exit"; return 1; } # parent-guard
   case "$act" in
     close) return 0;;
     fold)
@@ -173,12 +207,14 @@ validate_one() {
       tj="$(card_json "$s" "$tgt")"
       [ -n "$tj" ] || { echo "$card: fold target $tgt does not exist on board $BOARD"; return 1; }
       tst="$(printf '%s' "$tj" | jq -r '.status')"
-      case "$tst" in archived|triage) echo "$card: fold target $tgt is $tst; fold into a live card"; return 1;; esac
+      case "$tst" in archived|triage|done) echo "$card: fold target $tgt is $tst; fold into a live card"; return 1;; esac
       return 0;;
     promote)
       if [ -n "$arg" ]; then
+        # The guard first, on the name as given: Hermes trims and lowercases an assignee, so
+        # " forge-overseer" and "FORGE-OVERSEER" are the overseer, and the guard says so.
+        "$HERE/overseer-guard.sh" lane "$arg" >/dev/null || { echo "$card: --assignee '$arg' is refused: the overseer takes no chunk (MS3)"; return 1; }
         [[ $arg =~ $name_re ]] || { echo "$card: '$arg' is not a profile name"; return 1; }
-        "$HERE/overseer-guard.sh" lane "$arg" >/dev/null || { echo "$card: --assignee $arg is refused: the overseer takes no chunk (MS3)"; return 1; }
       fi
       return 0;;
     *) echo "$card: unknown action '$act' (close, fold or promote)"; return 1;;
@@ -206,16 +242,18 @@ $body" --author "$ACTOR" || return 1
       parents="$(parents_of "$s" "$card")"
       for p in $parents; do args+=(--parent "$p"); done
       [ -z "$arg" ] || args+=(--assignee "$arg")
-      title="${title#CARD?: }"
+      title="${title#CARD[?]: }"
+      # The title comes last, after `--`: a title that starts with '-' ("-x", "--help") would be read
+      # as an option by Hermes's parser if it were a bare argument.
       if [ "$MODE" = apply ]; then
-        newjson="$(printf '%s' "$body" | hermes kanban --board "$BOARD" create "$title" --body-file - \
+        newjson="$(printf '%s' "$body" | hermes kanban --board "$BOARD" create --body-file - \
                      --created-by "$ACTOR" --idempotency-key "triage-promote-$BOARD-$card" \
-                     ${args[@]+"${args[@]}"} --json 2>"$WORK/create.err")" \
+                     ${args[@]+"${args[@]}"} --json -- "$title" 2>"$WORK/create.err")" \
           || { echo "triage: creating the promoted card for $card failed: $(tail -n 1 "$WORK/create.err")" >&2; return 1; }
         newid="$(printf '%s' "$newjson" | jq -r '.id // empty' 2>/dev/null)"
         [ -n "$newid" ] || { echo "triage: create printed no card id for $card; the original is left in triage" >&2; return 1; }
       else
-        echo "would run: hermes kanban --board $BOARD create '$title' --body-file - --created-by $ACTOR --idempotency-key triage-promote-$BOARD-$card ${args[*]:-} --json   (rehearsal: not run)"
+        echo "would run: hermes kanban --board $BOARD create --body-file - --created-by $ACTOR --idempotency-key triage-promote-$BOARD-$card ${args[*]:-} --json -- '$title'   (rehearsal: not run)"
         newid="<new card>"
       fi
       board_write comment "$card" "triage promote by $ACTOR: $reason; promoted as $newid" --author "$ACTOR" || return 1

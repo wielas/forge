@@ -826,14 +826,15 @@ if [ "$HAVE_HERMES" = 1 ]; then
   fi
 fi
 
-# MS3 (S8c): no chunk card is ever the overseer's. Asked of every board that exists, through the
+# MS3 (S8c): no live card is ever the overseer's: no chunk (MS3), and, since decision 13, no gate or
+# any other card either, because it is never a dispatched worker. Asked of every board that exists, through the
 # guard (scripts/overseer-guard.sh), which reads a snapshot copy of each board and never opens it
 # mode=ro. Boards are the per-board databases under kanban/boards/; the top-level kanban.db is the
 # stale legacy artifact the default board no longer uses (scripts/metrics.sh says why).
 if ! command -v sqlite3 >/dev/null 2>&1; then
-  warn "sqlite3 is not on PATH — cannot ask whether any board holds a chunk card for forge-overseer (MS3)"
+  warn "sqlite3 is not on PATH — cannot ask whether any board holds a card for forge-overseer (MS3)"
 elif [ ! -x "$PF_OV_REPO/scripts/overseer-guard.sh" ]; then
-  fail "scripts/overseer-guard.sh is missing or not executable, so nothing asks whether the overseer holds a chunk card (MS3)"
+  fail "scripts/overseer-guard.sh is missing or not executable, so nothing asks whether the overseer holds a card (MS3)"
 else
   _ov_root="${HERMES_HOME:-$HOME/.hermes}"; _ov_n=0; _ov_bad=""; _ov_unread=""
   for _ov_db in "$_ov_root"/kanban/boards/*/kanban.db; do
@@ -847,13 +848,13 @@ else
     esac
   done
   if [ -n "$_ov_bad" ]; then
-    fail "chunk card(s) are held by forge-overseer on board(s):$_ov_bad — it is gate-only; reassign them (MS3)"
+    fail "card(s) are held by forge-overseer on board(s):$_ov_bad — it is gate-only and never a dispatched worker; reassign them (MS3, decision 13)"
   elif [ -n "$_ov_unread" ]; then
     warn "could not read board(s):$_ov_unread — a board that was not read has not passed the overseer audit (MS3)"
   elif [ "$_ov_n" = 0 ]; then
-    warn "no board database found under $_ov_root/kanban/boards — nothing to audit for chunk cards held by forge-overseer (MS3)"
+    warn "no board database found under $_ov_root/kanban/boards — nothing to audit for cards held by forge-overseer (MS3)"
   else
-    pass "no chunk card is held by forge-overseer on $_ov_n board(s) (MS3)"
+    pass "no card is held by forge-overseer on $_ov_n board(s) (MS3)"
   fi
 fi
 
