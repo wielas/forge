@@ -36,9 +36,16 @@
 # gate can be there; archiving it, or any parent of a live card, releases the
 # cards behind it, kanban_db.py:2159, 3916):
 #   - a milestone gate: a title that, trimmed, lowercased and stripped of a
-#     leading "CARD?: ", starts with "gate-", or a card whose block reason
-#     starts "milestone-gate:". A gate is completed by the checkpoint or the
-#     operator.
+#     leading "CARD?: ", starts with "gate-", or a card with a `blocked` or
+#     `block_loop_detected` event whose reason starts "milestone-gate:" (the
+#     second is the event a card carries when the block loop is what sent it to
+#     triage). Nothing here can finish a gate that is IN triage: the kernel's
+#     complete takes only running, ready, blocked or review cards (complete_task),
+#     unblock only blocked or scheduled ones (unblock_task), and the checkpoint
+#     needs the gate blocked. So leaving triage is an operator decision, and the
+#     one kernel route out is `hermes kanban specify <card>` (specify_triage_task:
+#     an auxiliary model rewrites the card, which lands in todo), which this
+#     script never runs.
 #   - a parent of any card that is not archived.
 # A refusal says why, exits 1, and writes nothing, not even a comment.
 #
@@ -160,10 +167,13 @@ parents_of() { # $1=snapshot $2=card -> parent ids, one per line, archived ones 
                  WHERE l.child_id = '$2' AND p.status <> 'archived' ORDER BY l.parent_id;" 2>/dev/null
 }
 triage_count() { sqlite3 "$1" "SELECT COUNT(*) FROM tasks WHERE status = 'triage';" 2>/dev/null; }
-gate_reasons() { # $1=snapshot $2=card -> how many of its `blocked` events carry a milestone-gate reason (a query that fails counts as 1: refuse)
+gate_reasons() { # $1=snapshot $2=card -> how many of its `blocked` and `block_loop_detected` events carry a milestone-gate reason (a query that fails counts as 1: refuse)
   sqlite3 "$1" "SELECT COUNT(*) FROM task_events
-                 WHERE task_id = '$2' AND kind = 'blocked' AND json_valid(payload)
+                 WHERE task_id = '$2' AND kind IN ('blocked', 'block_loop_detected') AND json_valid(payload)
                    AND lower(trim(COALESCE(json_extract(payload, '\$.reason'), ''))) LIKE 'milestone-gate:%';" 2>/dev/null || echo 1
+}
+gate_note() { # $1=card -> why a gate in triage is left alone, and the one way out
+  echo "Triage will not touch it. A gate in triage cannot be completed or unblocked (the kernel completes only running, ready, blocked or review cards and unblocks only blocked or scheduled ones; the checkpoint needs it blocked), so leaving triage is an operator decision. The kernel's one route out is 'hermes kanban --board <board> specify $1' (an auxiliary model rewrites the card and it lands in todo); this script never runs it."
 }
 live_children() { # $1=snapshot $2=card -> the ids of its children that are not archived, comma-joined ('?' when the query fails: refuse)
   local r
@@ -195,8 +205,8 @@ validate_one() {
   g="$(printf '%s' "$g" | tr '[:upper:]' '[:lower:]')" # gate-lower
   g="${g#"${g%%[![:space:]]*}"}" # gate-trim
   while [ "${g#card[?]:}" != "$g" ]; do g="${g#card[?]:}"; g="${g#"${g%%[![:space:]]*}"}"; done # gate-strip
-  case "$g" in gate-*) echo "$card: is a milestone gate (title '$(one_line "$title")'); a gate is completed by the checkpoint or the operator and is no triage exit"; return 1;; esac # gate-guard
-  [ "$(gate_reasons "$s" "$card")" = 0 ] || { echo "$card: is a milestone gate (it was blocked with a milestone-gate reason); a gate is completed by the checkpoint or the operator and is no triage exit"; return 1; } # gate-event
+  case "$g" in gate-*) echo "$card: its title begins 'gate-' (title '$(one_line "$title")'), so it is treated as a milestone gate. $(gate_note "$card")"; return 1;; esac # gate-guard
+  [ "$(gate_reasons "$s" "$card")" = 0 ] || { echo "$card: it was blocked with a milestone-gate reason, so it is a milestone gate. $(gate_note "$card")"; return 1; } # gate-event
   kids="$(live_children "$s" "$card")"; [ -z "$kids" ] || { echo "$card: is the parent of live card(s) $kids; archiving it would release them (kanban_db.py:2159), so it is no triage exit"; return 1; } # parent-guard
   case "$act" in
     close) return 0;;

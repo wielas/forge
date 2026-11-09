@@ -3199,6 +3199,7 @@ checkpoint/skipped-probe-never-passes     with that check cut out, a probe that 
 checkpoint/passes-only-after-complete     --apply against a kernel that refuses complete says 'did NOT pass', never 'passes'; a checkpoint that ignores the refusal is seen (#102 minor a)
 checkpoint/gate-moved-before-complete-is-no-verdict  a gate that moved while the probe ran is no verdict and complete is never called over it (#102 minor b)
 checkpoint/completion-is-read-back         a complete that exits 0 while the gate is not done is no pass: the gate is read again from a fresh snapshot and must read done (#105)
+checkpoint/unreadable-readback-is-unverified  a complete that exits 0 followed by a read-back that cannot read the board is neither a pass nor 'did NOT pass': one retry, then exit 2 with 'completion unverified', no passes line and no completed line (#105 re-check)
 checkpoint/rehearse-hash-sees-the-wal     two copies of a WAL board one write apart: same kanban.db bytes, different hashes; a db-only hash is blind (#102 minor c)
 overseer/pin-is-sourced                   FORGE_PIN_OVERSEER and its provider are plain assignments in model-pins.sh; the bootstrap composes both and names neither (MS3)
 overseer/soul-is-gate-only                the SOUL forbids per-chunk work, names exactly the three gate programs through ~/.forge/repo, only rehearses, is never spawned on a card (MS3, decision 13)
@@ -14245,7 +14246,7 @@ run_checkpoint_group() {
   local tool
   for tool in sqlite3 jq python3; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified passes-only-after-complete gate-moved-before-complete-is-no-verdict completion-is-read-back rehearse-hash-sees-the-wal; do
+      for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified passes-only-after-complete gate-moved-before-complete-is-no-verdict completion-is-read-back unreadable-readback-is-unverified rehearse-hash-sees-the-wal; do
         skip "$n" "$tool is not on PATH"
       done
       return
@@ -14791,6 +14792,57 @@ CK_MV
   fi
   if [ -z "$detail" ]; then ok "completion-is-read-back (--apply against a kernel whose complete exits 0 and does nothing: exit 2, 'did NOT pass', the gate still blocked, no 'passes' line and no 'completed' line; against one that completes, the gate reads done and it passes; a checkpoint without the read-back says passes over the lying kernel)"
   else bad "completion-is-read-back" "'passes' may be said only once a fresh read of the board shows the gate done:$detail"; fi
+
+  # (e) the read-back itself cannot read the board (#105 re-check, finding 4). "The gate is not done" and "the
+  # board could not be read" are different facts: the first is a failed pass, the second is unknown, and the
+  # message must not say "did NOT pass" over an unknown. The snapshot is tried once more; if it still fails the
+  # run exits 2 with "completion unverified", and says neither "passes" nor "completed". A wrapper around
+  # board-snapshot.sh fails only the read-back's snapshots (the ones into a board-after directory).
+  detail=""
+  _ck_scripts_copy "$root/scripts-uv"
+  cat > "$root/scripts-uv/board-snapshot.sh" <<CK_UV
+#!/bin/sh
+case "\$2" in
+  *board-after*)
+    n=\$(cat "\${CK_SNAP_COUNT:-/dev/null}" 2>/dev/null); n=\$((\${n:-0} + 1)); [ -z "\${CK_SNAP_COUNT:-}" ] || echo "\$n" > "\$CK_SNAP_COUNT"
+    if [ "\$n" -le "\${CK_SNAP_FAILS:-0}" ]; then echo "board-snapshot stub: injected failure \$n" >&2; exit 1; fi;;
+esac
+exec "$REPO_ROOT/scripts/board-snapshot.sh" "\$@"
+CK_UV
+  chmod +x "$root/scripts-uv/board-snapshot.sh"
+  # the snapshot never reads: unverified, exit 2, two tries, no pass, no "did NOT pass"
+  _ck_board uv ''; : > "$root/uv.count"
+  CK_ALLOW=complete CK_BOARD=uv CK_SNAP_FAILS=99 CK_SNAP_COUNT="$root/uv.count" _ck_apply_with "$root/scripts-uv"
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'completion is unverified — check the card t_g1' \
+    && ! printf '%s\n' "$out" | grep -Fq 'did NOT pass' && ! printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' \
+    && ! printf '%s\n' "$out" | grep -q '^completed ' && [ "$(cat "$root/uv.count")" = 2 ] \
+    || detail="$detail unreadable-readback-not-unverified(rc=$rc tries=$(cat "$root/uv.count") $(printf '%s' "$out" | head -3 | tr '\n' '|'))"
+  # one failure only: the retry reads the board, the gate reads done, and it passes
+  _ck_board uv2 ''; : > "$root/uv2.count"
+  CK_ALLOW=complete CK_BOARD=uv2 CK_SNAP_FAILS=1 CK_SNAP_COUNT="$root/uv2.count" _ck_apply_with "$root/scripts-uv"
+  { [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' && printf '%s\n' "$out" | grep -Fxq 'completed t_g1' && [ "$(cat "$root/uv2.count")" = 2 ]; } \
+    || detail="$detail retry-did-not-recover(rc=$rc tries=$(cat "$root/uv2.count"))"
+  # the control: a read that works and finds the gate not done is still "did NOT pass", not "unverified"
+  _ck_board uv3 ''
+  CK_ALLOW=complete CK_NOOP=1 CK_BOARD=uv3 _ck_apply_with "$root/scripts-uv"
+  { [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'GATE-M1 did NOT pass' && ! printf '%s\n' "$out" | grep -Fq 'unverified'; } || detail="$detail control-readable-not-done-changed(rc=$rc)"
+  # mutants: (1) the unverified guard cut, and the unreadable board is "did NOT pass" again; (2) no retry, and one failure is unverified
+  grep -v '# complete-unverified' "$REPO_ROOT/scripts/checkpoint.sh" > "$root/scripts-uv/checkpoint.sh"; chmod +x "$root/scripts-uv/checkpoint.sh"
+  if cmp -s "$root/scripts-uv/checkpoint.sh" "$REPO_ROOT/scripts/checkpoint.sh"; then detail="$detail mutant-unverified-guard-not-found-to-cut"
+  else
+    _ck_board uv4 ''; : > "$root/uv4.count"
+    CK_ALLOW=complete CK_BOARD=uv4 CK_SNAP_FAILS=99 CK_SNAP_COUNT="$root/uv4.count" _ck_apply_with "$root/scripts-uv"
+    { printf '%s\n' "$out" | grep -Fq 'did NOT pass' && ! printf '%s\n' "$out" | grep -Fq 'completion is unverified'; } || detail="$detail mutant-without-the-unverified-guard-was-not-seen(rc=$rc)"
+  fi
+  sed 's/for try in 1 2; do/for try in 1; do/' "$REPO_ROOT/scripts/checkpoint.sh" > "$root/scripts-uv/checkpoint.sh"; chmod +x "$root/scripts-uv/checkpoint.sh"
+  if cmp -s "$root/scripts-uv/checkpoint.sh" "$REPO_ROOT/scripts/checkpoint.sh"; then detail="$detail mutant-retry-not-found-to-cut"
+  else
+    _ck_board uv5 ''; : > "$root/uv5.count"
+    CK_ALLOW=complete CK_BOARD=uv5 CK_SNAP_FAILS=1 CK_SNAP_COUNT="$root/uv5.count" _ck_apply_with "$root/scripts-uv"
+    { [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'completion is unverified'; } || detail="$detail mutant-without-the-retry-was-not-seen(rc=$rc)"
+  fi
+  if [ -z "$detail" ]; then ok "unreadable-readback-is-unverified (--apply where complete exits 0 and the read-back snapshot cannot be taken: tried twice, exit 2, 'completion is unverified — check the card', no 'did NOT pass', no 'passes' line and no 'completed' line; one failed snapshot is recovered by the retry and passes; a readable board that shows the gate not done is still 'did NOT pass'; without the guard it says 'did NOT pass' over an unknown, and without the retry one failure is unverified)"
+  else bad "unreadable-readback-is-unverified" "a read-back that cannot read the board is unverified, not a failed pass and never a pass:$detail"; fi
 
   # (c) the rehearsal's hash must see the WAL. A write that lands in the -wal changes no byte of
   # kanban.db, so a hash of the database file alone calls a changed board unchanged. Two copies of
@@ -15644,9 +15696,11 @@ INSERT INTO tasks (id, title, body, status, created_at) VALUES
   ('t_pa02', 'A plain parent of an archived card', 'parent body', 'triage', 1790400007),
   ('t_ch01', 'CHUNK-7: a live child', 'child body', 'todo', 1790400008),
   ('t_ch02', 'CHUNK-6: an archived child', 'child body', 'archived', 1790400009),
-  ('t_gw01', 'Gateway timeout follow-up', 'not a gate', 'triage', 1790400010);
+  ('t_gw01', 'Gateway timeout follow-up', 'not a gate', 'triage', 1790400010),
+  ('t_gt06', 'Re: planning notes for the sixth milestone', 'gate body', 'triage', 1790400011);
 INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
-  ('t_gt04', 'blocked', '{"reason": "milestone-gate: GATE-M4 holds milestone M4 until you complete it"}', 1790400004);
+  ('t_gt04', 'blocked', '{"reason": "milestone-gate: GATE-M4 holds milestone M4 until you complete it"}', 1790400004),
+  ('t_gt06', 'block_loop_detected', '{"reason": "milestone-gate: GATE-M6 holds milestone M6 until you complete it", "kind": "needs_input", "recurrences": 2, "limit": 2}', 1790400011);
 INSERT INTO task_links (parent_id, child_id) VALUES ('t_pa01', 't_ch01'), ('t_pa02', 't_ch02');
 TR_GSQL
   gsql="$(cat "$root/gate.sql")"
@@ -15655,17 +15709,23 @@ TR_GSQL
       || detail="$detail $1(rc=$rc:$(printf '%s' "$out" | head -1 | cut -c1-100))"
   }
   _tr_board gp "$gsql"; gh0="$(_tr_hash gp)"
-  for gcard in t_gt01 t_gt02 t_gt03 t_gt04 t_gt05; do
-    _tr_run gp close --board tr --card "$gcard" --reason r --apply;                  _tr_refused "close-$gcard" 'is a milestone gate'
-    _tr_run gp fold --board tr --card "$gcard" --into t_live2 --reason r --apply;    _tr_refused "fold-$gcard" 'is a milestone gate'
-    _tr_run gp promote --board tr --card "$gcard" --reason r --apply;                _tr_refused "promote-$gcard" 'is a milestone gate'
+  for gcard in t_gt01 t_gt02 t_gt03 t_gt04 t_gt05 t_gt06; do
+    # a title that begins gate- says so; a card held by a milestone-gate block says that instead (#105 re-check, finding 3)
+    case "$gcard" in t_gt04|t_gt06) gv="blocked with a milestone-gate reason";; *) gv="its title begins 'gate-'";; esac
+    _tr_run gp close --board tr --card "$gcard" --reason r --apply;                  _tr_refused "close-$gcard" "$gv"
+    # the diagnostic does not claim the checkpoint or the operator completes a gate in triage (they cannot: finding 1),
+    # and it names the one kernel route out for this very card
+    { printf '%s\n' "$out" | grep -Fq "leaving triage is an operator decision" && printf '%s\n' "$out" | grep -Fq "specify $gcard" \
+        && ! printf '%s\n' "$out" | grep -Fq 'is completed by the checkpoint'; } || detail="$detail diagnostic-$gcard($(printf '%s' "$out" | head -1 | cut -c1-80))"
+    _tr_run gp fold --board tr --card "$gcard" --into t_live2 --reason r --apply;    _tr_refused "fold-$gcard" "$gv"
+    _tr_run gp promote --board tr --card "$gcard" --reason r --apply;                _tr_refused "promote-$gcard" "$gv"
   done
   _tr_run gp close --board tr --card t_pa01 --reason r --apply;                      _tr_refused "close-parent" 'parent of live card'
   _tr_run gp fold --board tr --card t_pa01 --into t_live2 --reason r --apply;        _tr_refused "fold-parent" 'parent of live card'
   _tr_run gp promote --board tr --card t_pa01 --reason r --apply;                    _tr_refused "promote-parent" 'parent of live card'
-  _tr_run gp close --board tr --card t_gt01 --reason r --rehearse;                   _tr_refused "rehearse-gate" 'is a milestone gate'
+  _tr_run gp close --board tr --card t_gt01 --reason r --rehearse;                   _tr_refused "rehearse-gate" "its title begins 'gate-'"
   printf 'close|t_tr01||fine\nclose|t_gt02||a gate\n' > "$root/plan-gate.txt"
-  _tr_run gp plan --board tr --file "$root/plan-gate.txt" --apply;                   _tr_refused "plan-with-a-gate" 'is a milestone gate'
+  _tr_run gp plan --board tr --file "$root/plan-gate.txt" --apply;                   _tr_refused "plan-with-a-gate" "its title begins 'gate-'"
   printf 'close|t_tr01||fine\nfold|t_pa01|t_live2|a parent\n' > "$root/plan-parent.txt"
   _tr_run gp plan --board tr --file "$root/plan-parent.txt" --apply;                 _tr_refused "plan-with-a-parent" 'parent of live card'
   # the controls: a card that merely starts with "gate", and a parent whose only child is archived, are
@@ -15684,7 +15744,14 @@ TR_GSQL
       { [ "$rc" = 0 ] && [ "$(_tr_q mu "SELECT status FROM tasks WHERE id='$gv'")" = archived ]; } || detail="$detail mutant-$gm-still-refused-$gv(rc=$rc)"
     fi
   done
-  if [ -z "$detail" ]; then ok "gate-and-parent-cards-are-refused (close, fold and promote, with --apply, on a plan line and in a rehearsal, refuse GATE-M1, '   gate-m2', 'CARD?: GATE-M3', 'CARD?:   Gate-M5' and a card whose block reason is milestone-gate, and refuse a plain card with a live child, each with a diagnostic and not a byte written; a 'Gateway' card and a parent of an archived card close normally; cutting the gate guard, the lowercase, the trim, the marker strip, the block-reason read or the parent guard each lets its victim through)"
+  # mutant: the event read goes back to `blocked` alone, and a card whose only gate signal is a block_loop_detected event is archived
+  sed "s/kind IN ('blocked', 'block_loop_detected')/kind = 'blocked'/" "$tr" > "$mdir/triage.sh"
+  if cmp -s "$mdir/triage.sh" "$tr"; then detail="$detail mutant-blocked-only-not-found-to-change"
+  else
+    _tr_board mu "$gsql"; TR_SCRIPT="$mdir/triage.sh" _tr_run mu close --board tr --card t_gt06 --reason r --apply
+    { [ "$rc" = 0 ] && [ "$(_tr_q mu "SELECT status FROM tasks WHERE id='t_gt06'")" = archived ]; } || detail="$detail mutant-blocked-only-still-refused-t_gt06(rc=$rc)"
+  fi
+  if [ -z "$detail" ]; then ok "gate-and-parent-cards-are-refused (close, fold and promote, with --apply, on a plan line and in a rehearsal, refuse GATE-M1, '   gate-m2', 'CARD?: GATE-M3', 'CARD?:   Gate-M5' and a card whose block reason is milestone-gate, on a blocked event or a block_loop_detected one, and refuse a plain card with a live child, each with a diagnostic and not a byte written; a 'Gateway' card and a parent of an archived card close normally; cutting the gate guard, the lowercase, the trim, the marker strip, the block-reason read or the parent guard each lets its victim through)"
   else bad "gate-and-parent-cards-are-refused" "no triage exit may archive, promote or fold a gate card or the parent of a live card, and a refusal writes nothing:$detail"; fi
 
   # -- promote-assignee-is-normalised -------------------------------------------------------------

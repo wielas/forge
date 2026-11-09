@@ -451,6 +451,18 @@ say_numbers() {
   fi
 }
 
+# read_gate_back: read the gate card's status from a fresh snapshot into DONE_STATUS. Succeeds only when the
+# board was actually read (a gate that is gone reads as the empty string, which is a read); two tries, because a
+# snapshot is a copy of a board that Hermes may be writing. Fails when neither try read the board.
+read_gate_back() {
+  local try snap
+  for try in 1 2; do
+    snap="$("$HERE/board-snapshot.sh" "$DB" "$WORK/board-after$try" 2>/dev/null)" && [ -n "$snap" ] || continue
+    DONE_STATUS="$(sqlite3 "$snap" "SELECT status FROM tasks WHERE id = '$GCARD';" 2>/dev/null)" && return 0
+  done
+  return 1
+}
+
 reply_text() {
   printf '%s' "\`accept\` completes the gate as it is: \`hermes kanban --board $BOARD complete $GCARD --result \"accepted: <why>\"\`; \`redirect <text>\` says what to change, and the run waits; \`park\` leaves the gate held and the run stopped. Today only \`accept\` has a command; the others are decisions you make by editing the plan or doing nothing."
 }
@@ -474,10 +486,11 @@ case "$OUTCOME" in
       [ "$COMPLETE_RC" = 0 ] || { echo "checkpoint: completing $GCARD failed — $GATE did NOT pass and the gate is still held: $COMPLETE_OUT" >&2; exit 2; } # complete-checked
       # (#105 review, finding 5) A zero exit is the kernel's word; the board is the evidence. Read the gate
       # once more, from a fresh snapshot (a copy, never mode=ro: a Hermes board is WAL), and say "passes"
-      # only if it reads done.
-      DONE_SNAP="$("$HERE/board-snapshot.sh" "$DB" "$WORK/board-after" 2>/dev/null)" || DONE_SNAP="" # complete-readback
-      DONE_STATUS=""; [ -z "$DONE_SNAP" ] || DONE_STATUS="$(sqlite3 "$DONE_SNAP" "SELECT status FROM tasks WHERE id = '$GCARD';" 2>/dev/null)" # complete-readback
-      [ "$DONE_STATUS" = done ] || { echo "checkpoint: completing $GCARD reported success, but a fresh read of the board reads the gate as '${DONE_STATUS:-unreadable}', not done — $GATE did NOT pass: $COMPLETE_OUT" >&2; exit 2; } # complete-readback
+      # only if it reads done. A read that itself fails is not "the gate is not done": it is unknown, so it is
+      # tried once more and, if it still fails, reported as unverified, with no pass and no success line.
+      DONE_STATUS=""
+      read_gate_back || { echo "checkpoint: completing $GCARD reported success, but the board could not be read back (tried twice), so completion is unverified — check the card $GCARD: it may or may not be done, and no pass is recorded" >&2; exit 2; } # complete-unverified
+      [ "$DONE_STATUS" = done ] || { echo "checkpoint: completing $GCARD reported success, but a fresh read of the board reads the gate as '${DONE_STATUS:-gone}', not done — $GATE did NOT pass: $COMPLETE_OUT" >&2; exit 2; } # complete-readback
     fi
     echo "checkpoint: $GATE passes — the probe holds and the milestone is within its estimate, so it proceeds on its own (decision 6)"
     echo
