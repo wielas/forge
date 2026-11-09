@@ -15374,10 +15374,10 @@ TR_STUB
                             OR COALESCE(idempotency_key,'') <> '' OR COALESCE(last_failure_error,'') <> ''")"; [ "$bad" = 0 ] || d="$d free-text-column-set"
     printf '%s' "$d"
   }
-  _tr_board anon ''
-  # the two live cards the test added are not the fixture's
-  sqlite3 "$root/b-anon/kanban/boards/tr/kanban.db" "DELETE FROM task_links; DELETE FROM tasks WHERE id LIKE 't_live%';"
-  # Every query below reads a COPY of the board (the suite's own rule: a WAL board is never opened in place).
+  # The fixture and nothing else (no live cards or links to delete afterwards), and every query below
+  # reads a COPY of it: the suite's own rule is that a WAL board is never opened in place.
+  rm -rf "$root/b-anon"; mkdir -p "$root/b-anon/kanban/boards/tr"
+  sqlite3 "$root/b-anon/kanban/boards/tr/kanban.db" < "$fixsql" >/dev/null 2>&1
   local adb="$root/anon-copy.db"
   rm -f "$adb" "$adb-wal" "$adb-shm"; cp "$root/b-anon/kanban/boards/tr/kanban.db" "$adb"
   for n in -wal -shm; do [ -f "$root/b-anon/kanban/boards/tr/kanban.db$n" ] && cp "$root/b-anon/kanban/boards/tr/kanban.db$n" "$adb$n"; done

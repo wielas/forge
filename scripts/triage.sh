@@ -51,7 +51,7 @@
 # The board is read from a snapshot copy (never mode=ro: it is WAL).
 #
 # A PLAN is the unit of "empty":
-#   triage.sh plan --board <slug> --file <plan> (--rehearse|--apply)
+#   triage.sh plan --board <slug> --file <plan> (--rehearse | --apply --actor <name>)
 # Each line is  action|card|into-or-assignee|reason  (the reason may contain
 # '|'; a '#' line is a comment). The whole plan is validated against the
 # snapshot before the first write (every card in triage, a fold target live and
@@ -193,8 +193,8 @@ validate_one() {
   title="$(printf '%s' "$cj" | jq -r '.title')"
   g="$title"
   g="$(printf '%s' "$g" | tr '[:upper:]' '[:lower:]')" # gate-lower
-  g="$(printf '%s' "$g" | sed -E 's/^[[:space:]]+//')" # gate-trim
-  g="$(printf '%s' "$g" | sed -E 's/^(card[?]:[[:space:]]*)+//')" # gate-strip
+  g="${g#"${g%%[![:space:]]*}"}" # gate-trim
+  while [ "${g#card[?]:}" != "$g" ]; do g="${g#card[?]:}"; g="${g#"${g%%[![:space:]]*}"}"; done # gate-strip
   case "$g" in gate-*) echo "$card: is a milestone gate (title '$(one_line "$title")'); a gate is completed by the checkpoint or the operator and is no triage exit"; return 1;; esac # gate-guard
   [ "$(gate_reasons "$s" "$card")" = 0 ] || { echo "$card: is a milestone gate (it was blocked with a milestone-gate reason); a gate is completed by the checkpoint or the operator and is no triage exit"; return 1; } # gate-event
   kids="$(live_children "$s" "$card")"; [ -z "$kids" ] || { echo "$card: is the parent of live card(s) $kids; archiving it would release them (kanban_db.py:2159), so it is no triage exit"; return 1; } # parent-guard
