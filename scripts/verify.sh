@@ -3198,6 +3198,7 @@ checkpoint/disagreeing-counts-block      metrics.sh's chunk counts and the check
 checkpoint/skipped-probe-never-passes     with that check cut out, a probe that did not run is still never a pass and --apply never completes the gate
 checkpoint/passes-only-after-complete     --apply against a kernel that refuses complete says 'did NOT pass', never 'passes'; a checkpoint that ignores the refusal is seen (#102 minor a)
 checkpoint/gate-moved-before-complete-is-no-verdict  a gate that moved while the probe ran is no verdict and complete is never called over it (#102 minor b)
+checkpoint/completion-is-read-back         a complete that exits 0 while the gate is not done is no pass: the gate is read again from a fresh snapshot and must read done (#105)
 checkpoint/rehearse-hash-sees-the-wal     two copies of a WAL board one write apart: same kanban.db bytes, different hashes; a db-only hash is blind (#102 minor c)
 overseer/pin-is-sourced                   FORGE_PIN_OVERSEER and its provider are plain assignments in model-pins.sh; the bootstrap composes both and names neither (MS3)
 overseer/soul-is-gate-only                the SOUL forbids per-chunk work, names exactly the three gate programs through ~/.forge/repo, only rehearses, is never spawned on a card (MS3, decision 13)
@@ -14243,7 +14244,7 @@ run_checkpoint_group() {
   local tool
   for tool in sqlite3 jq python3; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified passes-only-after-complete gate-moved-before-complete-is-no-verdict rehearse-hash-sees-the-wal; do
+      for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified passes-only-after-complete gate-moved-before-complete-is-no-verdict completion-is-read-back rehearse-hash-sees-the-wal; do
         skip "$n" "$tool is not on PATH"
       done
       return
@@ -14254,19 +14255,32 @@ run_checkpoint_group() {
 
   # The stub. Read verbs succeed with nothing; every verb that writes fails and
   # says so; HERMES_STUB_ALLOW names a verb a case lets through. Every call is
-  # logged, reads included, so "never called" is checkable.
+  # logged, reads included, so "never called" is checkable. An allowed `complete`
+  # does what the kernel does, and marks the card done on the board the call names
+  # (--board, under HERMES_KANBAN_HOME), so the checkpoint can read the gate back;
+  # HERMES_STUB_COMPLETE_NOOP=1 is a kernel that reports success and does nothing.
   cat > "$root/bin/hermes" <<'CK_STUB'
 #!/bin/sh
 echo "$*" >> "${HERMES_STUB_LOG:?}"
-verb=""; prev=""
+verb=""; prev=""; board=""; id=""
 for a in "$@"; do
-  case "$prev" in --board) prev=""; continue;; esac
-  case "$a" in kanban) ;; --board) prev=--board;; -*) ;; *) verb="$a"; break;; esac
+  if [ "$prev" = --board ]; then board="$a"; prev=""; continue; fi
+  case "$a" in
+    kanban) ;;
+    --board) prev=--board;;
+    -*) ;;
+    *) if [ -z "$verb" ]; then verb="$a"; elif [ -z "$id" ]; then id="$a"; fi;;
+  esac
 done
 case "$verb" in
   show|list|ls|stats|runs|log|tail|watch|context|diagnostics|diag|boards|assignees|attachments|notify-list|"") exit 0;;
 esac
-if [ "$verb" = "${HERMES_STUB_ALLOW:-}" ]; then exit 0; fi
+if [ "$verb" = "${HERMES_STUB_ALLOW:-}" ]; then
+  if [ "$verb" = complete ] && [ -z "${HERMES_STUB_COMPLETE_NOOP:-}" ]; then
+    sqlite3 "${HERMES_KANBAN_HOME:?}/boards/$board/kanban.db" "UPDATE tasks SET status='done' WHERE id='$id';" || exit 1
+  fi
+  exit 0
+fi
 echo "STUB: refusing write verb '$verb'" >&2
 exit 1
 CK_STUB
@@ -14557,7 +14571,8 @@ EOF_CASE
   if [ "$rc" = 2 ] && [ "$(grep -c 'kanban --board ck complete t_g1 --result checkpoint pass: ' "$root/stub.log")" = 1 ]; then :; else
     detail="$detail stub-not-reached(rc=$rc log=$(tr '\n' '|' < "$root/stub.log"))"; fi
   : > "$root/stub.log"
-  out="$(cd / && env HERMES_HOME="$root/b-std/home" HERMES_KANBAN_HOME="$root/b-std/kanban" \
+  _ck_board ap1 ''   # the stub's complete really completes, so this --apply gets a board of its own
+  out="$(cd / && env HERMES_HOME="$root/b-ap1/home" HERMES_KANBAN_HOME="$root/b-ap1/kanban" \
           HERMES_STUB_LOG="$root/stub.log" HERMES_STUB_ALLOW=complete PATH="$root/bin:$PATH" \
           "$ck" "$root/proj-pass" --board ck --gate GATE-M1 --apply 2>&1)"; rc=$?
   [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Fxq 'completed t_g1' \
@@ -14678,10 +14693,12 @@ EOF_CASE
     printf '#!/bin/sh\nexec "%s/scripts/probe-run.sh" "$@"\n' "$REPO_ROOT" > "$1/probe-run.sh"
     chmod +x "$1/metrics.sh" "$1/probe-run.sh" "$1/checkpoint.sh"
   }
-  _ck_apply_with() { # $1=scripts dir, extra env from the caller; board std, project pass, complete allowed unless CK_NOALLOW
+  _ck_apply_with() { # $1=scripts dir, extra env from the caller; project pass; board CK_BOARD, or a fresh one (an allowed complete completes it); CK_ALLOW names the verb the stub lets through; CK_NOOP=1 makes it a no-op
+    local b_="${CK_BOARD:-}"
+    if [ -z "$b_" ]; then b_=apw; _ck_board apw ''; fi
     : > "$root/stub.log"; : > "$root/wlog.log"
-    out="$(cd / && env HERMES_HOME="$root/b-${CK_BOARD:-std}/home" HERMES_KANBAN_HOME="$root/b-${CK_BOARD:-std}/kanban" \
-            HERMES_STUB_LOG="$root/stub.log" ${CK_ALLOW:+HERMES_STUB_ALLOW=$CK_ALLOW} CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
+    out="$(cd / && env HERMES_HOME="$root/b-$b_/home" HERMES_KANBAN_HOME="$root/b-$b_/kanban" \
+            HERMES_STUB_LOG="$root/stub.log" ${CK_ALLOW:+HERMES_STUB_ALLOW=$CK_ALLOW} ${CK_NOOP:+HERMES_STUB_COMPLETE_NOOP=1} CK_WLOG="$root/wlog.log" CK_REAL_GIT="$real_git" PATH="$root/bin:$PATH" \
             "$1/checkpoint.sh" "$root/proj-pass" --board ck --gate GATE-M1 --apply 2>&1)"; rc=$?
   }
 
@@ -14701,9 +14718,10 @@ EOF_CASE
   # the rehearsal still states the verdict on the numbers, once
   _ck_run std pass --rehearse
   [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^checkpoint: GATE-M1 passes')" = 1 ] || detail="$detail rehearsal-verdict(rc=$rc)"
-  # mutant: the failure of `complete` ignored -> "passes", exit 0, though nothing was completed
+  # mutant: the failure of `complete` ignored -> "passes", exit 0, though nothing was completed. The read-back
+  # of the gate (completion-is-read-back below) would catch this one too, so both guards are cut.
   _ck_scripts_copy "$root/scripts-a"
-  grep -v '# complete-checked' "$REPO_ROOT/scripts/checkpoint.sh" > "$root/scripts-a/checkpoint.sh"; chmod +x "$root/scripts-a/checkpoint.sh"
+  grep -v -e '# complete-checked' -e '# complete-readback' "$REPO_ROOT/scripts/checkpoint.sh" > "$root/scripts-a/checkpoint.sh"; chmod +x "$root/scripts-a/checkpoint.sh"
   if cmp -s "$root/scripts-a/checkpoint.sh" "$REPO_ROOT/scripts/checkpoint.sh"; then detail="$detail mutant-complete-check-not-found-to-cut"
   else
     CK_ALLOW="" _ck_apply_with "$root/scripts-a"
@@ -14745,6 +14763,33 @@ CK_MV
   fi
   if [ -z "$detail" ]; then ok "gate-moved-before-complete-is-no-verdict (a gate completed or reopened while the probe ran: exit 2, 'moved while the checkpoint ran', complete never called; the same run with the gate still held passes; without the re-read the moved gate is completed over)"
   else bad "gate-moved-before-complete-is-no-verdict" "the gate's status must be read again immediately before complete:$detail"; fi
+
+  # (d) `complete` exits 0 and the gate is not done (#105 review, finding 5). The exit code is the kernel's
+  # word; the board is the evidence. The gate is read again from a fresh snapshot, and "passes" is said only if
+  # it reads done. The stub's complete really completes unless it is made a no-op, so the control is the pass.
+  detail=""
+  _ck_board nr ''
+  CK_ALLOW=complete CK_NOOP=1 CK_BOARD=nr _ck_apply_with "$REPO_ROOT/scripts"
+  [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'GATE-M1 did NOT pass' && printf '%s\n' "$out" | grep -Fq "reads the gate as 'blocked', not done" \
+    && ! printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' && ! printf '%s\n' "$out" | grep -q '^completed ' \
+    && [ "$(grep -c ' complete t_g1' "$root/stub.log")" = 1 ] \
+    && [ "$(_ck_q nr "SELECT status FROM tasks WHERE id='t_g1'")" = blocked ] \
+    || detail="$detail lying-complete-read-as-a-pass(rc=$rc: $(printf '%s' "$out" | head -3 | tr '\n' '|'))"
+  _ck_board rb ''
+  CK_ALLOW=complete CK_BOARD=rb _ck_apply_with "$REPO_ROOT/scripts"
+  { [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' && printf '%s\n' "$out" | grep -Fxq 'completed t_g1' \
+      && [ "$(_ck_q rb "SELECT status FROM tasks WHERE id='t_g1'")" = done ]; } || detail="$detail control-honest-complete-did-not-pass(rc=$rc)"
+  # mutant: the read-back cut out, and the same lying kernel says passes
+  _ck_scripts_copy "$root/scripts-rb"
+  grep -v '# complete-readback' "$REPO_ROOT/scripts/checkpoint.sh" > "$root/scripts-rb/checkpoint.sh"; chmod +x "$root/scripts-rb/checkpoint.sh"
+  if cmp -s "$root/scripts-rb/checkpoint.sh" "$REPO_ROOT/scripts/checkpoint.sh"; then detail="$detail mutant-readback-not-found-to-cut"
+  else
+    _ck_board nr2 ''
+    CK_ALLOW=complete CK_NOOP=1 CK_BOARD=nr2 _ck_apply_with "$root/scripts-rb"
+    { [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes'; } || detail="$detail mutant-without-the-readback-did-not-say-passes(rc=$rc)"
+  fi
+  if [ -z "$detail" ]; then ok "completion-is-read-back (--apply against a kernel whose complete exits 0 and does nothing: exit 2, 'did NOT pass', the gate still blocked, no 'passes' line and no 'completed' line; against one that completes, the gate reads done and it passes; a checkpoint without the read-back says passes over the lying kernel)"
+  else bad "completion-is-read-back" "'passes' may be said only once a fresh read of the board shows the gate done:$detail"; fi
 
   # (c) the rehearsal's hash must see the WAL. A write that lands in the -wal changes no byte of
   # kanban.db, so a hash of the database file alone calls a changed board unchanged. Two copies of

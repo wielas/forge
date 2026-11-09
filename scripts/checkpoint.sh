@@ -53,6 +53,9 @@
 #               with what --apply WOULD have done. This is the only mode a held
 #               gate may be rehearsed with; --apply is refused beside it.
 #   --apply     the one write there is: on a pass, `complete` on the gate card.
+#               `complete` exiting 0 is not enough: the gate is read again from a
+#               fresh snapshot and must read `done`, or this exits 2 and says the
+#               gate did NOT pass.
 #               On a block the gate is already held by the bootstrap, and
 #               blocking it again would trip the kernel's recurrence limit into
 #               `triage`, so a block writes nothing and only prints the message.
@@ -469,6 +472,12 @@ case "$OUTCOME" in
       [ "$NOW_STATUS" = blocked ] || no_verdict "$GATE ($GCARD) moved while the checkpoint ran: it is now '${NOW_STATUS:-gone}', not blocked (held); nothing was completed" # gate-reread
       COMPLETE_OUT="$(board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST" 2>&1)"; COMPLETE_RC=$?
       [ "$COMPLETE_RC" = 0 ] || { echo "checkpoint: completing $GCARD failed — $GATE did NOT pass and the gate is still held: $COMPLETE_OUT" >&2; exit 2; } # complete-checked
+      # (#105 review, finding 5) A zero exit is the kernel's word; the board is the evidence. Read the gate
+      # once more, from a fresh snapshot (a copy, never mode=ro: a Hermes board is WAL), and say "passes"
+      # only if it reads done.
+      DONE_SNAP="$("$HERE/board-snapshot.sh" "$DB" "$WORK/board-after" 2>/dev/null)" || DONE_SNAP="" # complete-readback
+      DONE_STATUS=""; [ -z "$DONE_SNAP" ] || DONE_STATUS="$(sqlite3 "$DONE_SNAP" "SELECT status FROM tasks WHERE id = '$GCARD';" 2>/dev/null)" # complete-readback
+      [ "$DONE_STATUS" = done ] || { echo "checkpoint: completing $GCARD reported success, but a fresh read of the board reads the gate as '${DONE_STATUS:-unreadable}', not done — $GATE did NOT pass: $COMPLETE_OUT" >&2; exit 2; } # complete-readback
     fi
     echo "checkpoint: $GATE passes — the probe holds and the milestone is within its estimate, so it proceeds on its own (decision 6)"
     echo
