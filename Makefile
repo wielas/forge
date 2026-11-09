@@ -1,7 +1,7 @@
 # forge repo-level commands
 .PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check plan-check commission
 
-verify:                        ## execute this repo's own claims (see scripts/verify.sh)
+verify:                        ## execute this repo's own claims; SUITES="cli config ... probe checkpoint overseer triage gate docs digest quota manifest" narrows (scripts/verify.sh --help)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
 
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
@@ -126,6 +126,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/merge-watcher.sh scripts/bounce.sh \
 	  scripts/decision-message.sh scripts/digest.sh scripts/plan-check.sh \
 	  scripts/probe-run.sh scripts/checkpoint.sh scripts/forge-state.sh scripts/driver-call-hook.sh \
+	  scripts/overseer-guard.sh scripts/triage.sh scripts/amend-contract.sh \
 	  scripts/claude-token.sh \
   scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by

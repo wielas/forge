@@ -352,8 +352,9 @@ for case in cases:
                 f"- expects today: {then}",
                 f"- finding: {case['reason']}",
                 f"- proposed: expect stdout {proposed!r} instead",
-                "- to apply: edit the probe, re-run acceptance-freeze (the frozen digest changes), and record a",
-                "  decision entry. A probe is a frozen plan, so this is a contract amendment."])})
+                "- to apply: ~/.forge/repo/scripts/amend-contract.sh <project> --id " + gate + " --set " + rel + "=<edited probe> --reason <why> --rehearse,",
+                "  then --apply. It re-freezes through acceptance-freeze and records the decision entry, or changes nothing.",
+                "  A probe is a frozen plan, so this is a contract amendment."])})
 
 classes = sorted({c["class"] for c in cases})
 if not cases:
@@ -454,18 +455,33 @@ reply_text() {
 printf 'checkpoint %s — %s\n\n' "$GATE" "$mode_line"
 case "$OUTCOME" in
   pass)
+    # "passes" is said only once the gate is really complete. It used to be printed first, so a
+    # `complete` the kernel refused still left "passes" in the log and in the operator's notification
+    # (#102 minor a). In a rehearsal nothing is completed, so the line is the verdict on the numbers.
+    COMPLETE_OUT=""
+    if [ "$MODE" = apply ]; then
+      # (#102 minor b) The gate was read at the top of this run, before the probe, which can take
+      # minutes. Read it again immediately before writing: a gate that is no longer held (completed
+      # by hand, reopened, archived) is no verdict, and nothing is completed over it.
+      NOW_SNAP="$("$HERE/board-snapshot.sh" "$DB" "$WORK/board-recheck")" && [ -n "$NOW_SNAP" ] \
+        || no_verdict "$GATE ($GCARD) could not be read again just before completing it, so nothing was completed"
+      NOW_STATUS="$(sqlite3 "$NOW_SNAP" "SELECT status FROM tasks WHERE id = '$GCARD';" 2>/dev/null)" # gate-reread
+      [ "$NOW_STATUS" = blocked ] || no_verdict "$GATE ($GCARD) moved while the checkpoint ran: it is now '${NOW_STATUS:-gone}', not blocked (held); nothing was completed" # gate-reread
+      COMPLETE_OUT="$(board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST" 2>&1)"; COMPLETE_RC=$?
+      [ "$COMPLETE_RC" = 0 ] || { echo "checkpoint: completing $GCARD failed — $GATE did NOT pass and the gate is still held: $COMPLETE_OUT" >&2; exit 2; } # complete-checked
+    fi
     echo "checkpoint: $GATE passes — the probe holds and the milestone is within its estimate, so it proceeds on its own (decision 6)"
     echo
     say_numbers
     echo
     if [ "$MODE" = rehearse ]; then
       echo "On --apply this would complete the gate, which releases the next milestone:"
+      board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST"
+      echo "rehearsal: nothing was written to the board"
+    else
+      [ -z "$COMPLETE_OUT" ] || printf '%s\n' "$COMPLETE_OUT"
+      echo "completed $GCARD"
     fi
-    board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST" || {
-      echo "checkpoint: completing $GCARD failed; the gate is still held" >&2
-      exit 2; }
-    [ "$MODE" = apply ] && echo "completed $GCARD"
-    [ "$MODE" = rehearse ] && echo "rehearsal: nothing was written to the board"
     exit 0;;
   no-verdict)
     if [ -n "$NOT_DONE" ]; then why="the milestone is not finished: $NOT_DONE"

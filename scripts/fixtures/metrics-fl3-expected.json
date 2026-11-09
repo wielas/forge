@@ -41,6 +41,12 @@
       "defects the milestone probe catches before the operator does — no probe exists until MS2"
     ]
   },
+  "gate_completions": {
+    "total": 0,
+    "by_checkpoint": 0,
+    "by_operator": 0,
+    "method": "GATE cards with status done and a completed_at in the period; \"checkpoint\" means the result begins \"checkpoint pass:\" (scripts/checkpoint.sh --apply), every other completion is counted as the operator's. A separate row: it is in neither the operator touches nor the merges above (P14)"
+  },
   "chunk_cards": 4,
   "verdicts": {
     "total": 3,
@@ -152,5 +158,14 @@
     "unblocks": 1,
     "touches": 2,
     "method": "comments by an author that never ran as a profile on this board, except the merge-watcher's FORGE-WATCHER-NOTIFIED markers, plus every unblocked event (the event records no actor)"
+  },
+  "overseer_usage": {
+    "profile": "forge-overseer",
+    "available": false,
+    "reason": "no state.db for forge-overseer: the profile was not created, or it never ran",
+    "invocations": null,
+    "totals": null,
+    "cost": null,
+    "sessions": []
   }
 }

@@ -123,6 +123,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../scripts/decision-message.sh
 . "$HERE/../scripts/decision-message.sh"
 
+# MS3 (S8c): forge-overseer is gate-only. No card this script creates may be routed to it, by the
+# environment (FORGE_LANE_ASSIGNEE) or by the graph (validate_graph below); both are refused before
+# Hermes is asked anything. The rule is one program (scripts/overseer-guard.sh), also called by the
+# preflight's audit of a live board and by triage's promote.
+"$HERE/../scripts/overseer-guard.sh" lane "$LANE_ASSIGNEE" >&2 || exit 1
+
 validate_graph() { # $1=graph; sets ROOT_ID
   local graph="$1" roots root_count missing ids seen total progress id deps dep ready
 
@@ -142,6 +148,8 @@ validate_graph() { # $1=graph; sets ROOT_ID
     echo "FATAL: $graph has invalid or duplicate ids/dependencies" >&2
     return 1
   fi
+
+  "$HERE/../scripts/overseer-guard.sh" graph "$graph" >&2 || return 1
 
   missing="$(jq -r '
       [.[].id] as $ids

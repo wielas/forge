@@ -348,6 +348,54 @@ driver_usage_json() { # $1=base JSON carrying private _driver_runs
         }'
 }
 
+# The overseer's usage, per invocation (epic MS3, S8c). The overseer is not a board worker, so
+# there is no worker_session_id on a board run to join: its sessions are read straight from its
+# own profile's Hermes `sessions` table, through a snapshot like every other WAL database here,
+# windowed by the session's own started_at. An invocation is a session with no parent (a
+# compression or delegation child belongs to the invocation that spawned it, and its tokens are
+# its own row). A profile with no state.db, or one that cannot be read, is `available: false`
+# with the reason, never a row of zeros: a quota nobody recorded is not a quota of zero.
+overseer_usage_json() {
+  local state="$HERMES_ROOT/profiles/forge-overseer/state.db" snap rows err="$SNAPDIR/overseer.err" reason
+  unavailable() { jq -n --arg reason "$1" '{profile: "forge-overseer", available: false, reason: $reason,
+                                            invocations: null, totals: null, cost: null, sessions: []}'; }
+  [ -f "$state" ] || { unavailable "no state.db for forge-overseer: the profile was not created, or it never ran"; return 0; }
+  snap="$("$HERE/board-snapshot.sh" "$state" "$SNAPDIR/overseer-state" 2>"$err")" && [ -n "$snap" ] \
+    || { unavailable "the forge-overseer state.db could not be snapshotted ($(tail -n 1 "$err"))"; return 0; }
+  rows="$(sqlite3 "$snap" "
+    SELECT COALESCE(json_group_array(json(j)), json_array()) FROM (
+      SELECT json_object(
+        'id', s.id, 'source', s.source, 'parent_session_id', s.parent_session_id,
+        'started_at', s.started_at, 'ended_at', s.ended_at,
+        'model', s.model, 'provider', s.billing_provider,
+        'api_calls', COALESCE(s.api_call_count, 0),
+        'input_tokens', COALESCE(s.input_tokens, 0), 'output_tokens', COALESCE(s.output_tokens, 0),
+        'cache_read_tokens', COALESCE(s.cache_read_tokens, 0), 'cache_write_tokens', COALESCE(s.cache_write_tokens, 0),
+        'reasoning_tokens', COALESCE(s.reasoning_tokens, 0),
+        'estimated_cost_usd', s.estimated_cost_usd,
+        'actual_cost_usd', CASE WHEN lower(COALESCE(s.cost_status, '')) LIKE 'actual%' THEN s.actual_cost_usd ELSE NULL END,
+        'cost_status', s.cost_status) AS j
+        FROM sessions s
+       WHERE s.started_at >= $SINCE_E AND s.started_at < $UNTIL_E
+       ORDER BY s.started_at, s.id);" 2>"$err")" \
+    || { unavailable "the forge-overseer sessions table could not be read ($(tail -n 1 "$err"))"; return 0; }
+  printf '%s' "$rows" | jq -e 'type == "array"' >/dev/null 2>&1 \
+    || { unavailable "the forge-overseer sessions query returned no JSON"; return 0; }
+  jq -n --argjson sessions "$rows" '
+    {profile: "forge-overseer", available: true, reason: null,
+     invocations: ([$sessions[] | select(.parent_session_id == null)] | length),
+     totals: {api_calls: ([$sessions[].api_calls] | add // 0),
+              input_tokens: ([$sessions[].input_tokens] | add // 0),
+              output_tokens: ([$sessions[].output_tokens] | add // 0),
+              cache_read_tokens: ([$sessions[].cache_read_tokens] | add // 0),
+              cache_write_tokens: ([$sessions[].cache_write_tokens] | add // 0),
+              reasoning_tokens: ([$sessions[].reasoning_tokens] | add // 0)},
+     cost: {estimated_usd: ([$sessions[].estimated_cost_usd | select(. != null)] | if length == 0 then null else add end),
+            actual_usd: ([$sessions[].actual_cost_usd | select(. != null)] | if length == 0 then null else add end)},
+     sessions: $sessions,
+     method: "the forge-overseer profile'"'"'s own Hermes sessions table (started_at in the period); an invocation is a session with no parent"}'
+}
+
 # The query is assembled into a file rather than a variable: macOS ships bash
 # 3.2, whose parser mishandles a here-document nested inside `$(...)` and dies
 # with "unexpected EOF" on a script that is in fact balanced.
@@ -607,6 +655,7 @@ rc AS (
 ops AS (
   SELECT (SELECT COUNT(*) FROM task_comments
            WHERE author NOT IN (SELECT DISTINCT profile FROM task_runs WHERE profile IS NOT NULL)
+             AND author <> 'forge-overseer'
              AND body NOT LIKE 'FORGE-WATCHER-NOTIFIED%'
              AND created_at >= :since AND created_at < :until) AS comments,
          (SELECT COUNT(*) FROM task_events WHERE kind = 'unblocked'
@@ -697,6 +746,20 @@ gt AS (
            WHERE l.child_id = t.id AND p.status = 'archived') AS archived
     FROM tasks t WHERE t.title LIKE 'GATE-%'
 ),
+-- ===========================================================================
+-- Gate completions (epic P14, S8c; owner decision 2026-11-06). The `complete`
+-- that releases a milestone is neither a board touch nor a merge, so the north
+-- star's "operator actions per merged chunk" never carried it. It is counted
+-- HERE, as its own row, and that figure is unchanged by it: a gate done by the
+-- checkpoint (`--result "checkpoint pass: ..."`, scripts/checkpoint.sh --apply)
+-- is a machine's act, and a gate completed any other way (`accepted: <why>`, or
+-- by hand) is the operator's. Neither is added to touches, merges or the total.
+-- ===========================================================================
+gcm AS (
+  SELECT t.id, COALESCE(t.result, '') AS result FROM tasks t
+   WHERE t.title LIKE 'GATE-%' AND t.status = 'done'
+     AND t.completed_at >= :since AND t.completed_at < :until
+),
 ns AS (
   SELECT (SELECT COUNT(*) FROM ns_chunks) AS chunks,
          (SELECT COUNT(*) FROM mc WHERE merger IS NOT NULL) AS merged,
@@ -743,6 +806,13 @@ SELECT json_object(
      'not_yet_measurable', json_array(
         'defects the milestone probe catches before the operator does — no probe exists until MS2'))
      FROM ns),
+  'gate_completions', (SELECT json_object(
+     'total', COUNT(*),
+     'by_checkpoint', COALESCE(SUM(result LIKE 'checkpoint pass:%'), 0),
+     'by_operator', COALESCE(SUM(NOT (result LIKE 'checkpoint pass:%')), 0),
+     'method', 'GATE cards with status done and a completed_at in the period; "checkpoint" means the result begins '
+            || '"checkpoint pass:" (scripts/checkpoint.sh --apply), every other completion is counted as the operator''s. '
+            || 'A separate row: it is in neither the operator touches nor the merges above (P14)') FROM gcm),
   '_gates', (SELECT COALESCE(json_group_array(json_object(
                'card', id, 'title', title, 'status', status, 'body', body,
                'chunks', chunks, 'done', done, 'archived', archived)), json_array())
@@ -857,10 +927,14 @@ JSON="$(printf '%s' "$JSON" | jq '
         estimate_raw: $raw,
         over: (if $est == null then null else $g.chunks > $est end) }]
   | del(._gates)')"
-JSON="$(printf '%s' "$JSON" | jq --argjson driver "$DRIVER_JSON" '
+OVERSEER_JSON="$(overseer_usage_json)" || {
+  echo "overseer usage assembly failed for board $BOARD" >&2
+  exit 2
+}
+JSON="$(printf '%s' "$JSON" | jq --argjson driver "$DRIVER_JSON" --argjson overseer "$OVERSEER_JSON" '
   . as $base
   | del(._driver_runs, .operator)
-  + {driver_usage: $driver, operator: $base.operator}')"
+  + {driver_usage: $driver, operator: $base.operator, overseer_usage: $overseer}')"
 
 render() { printf '%s' "$1" | jq -r "$2"; }
 
@@ -939,6 +1013,9 @@ text)
        "  method: \($n.operator_actions.method); PR open -> merge is \($n.pr_open_to_merge_hours.method)",
        ($n.not_yet_measurable[] | "  not yet measurable: \(.)")),
     "",
+    "gate completions — gate cards done in the period; a SEPARATE row, in neither the operator touches nor the merges above (P14)",
+    "  \(.gate_completions.total) = \(.gate_completions.by_checkpoint) by the checkpoint + \(.gate_completions.by_operator) by the operator",
+    "",
     "tier-1 gate — stage 1, a program (ADR-0009); blocks cost zero model tokens and are NOT bounces",
     (if .gate.runs == 0 then "  no forge.gate.v1 results in period"
      else "  block rate  \(.gate.block_rate) (\(.gate.blocked)/\(.gate.runs) gate runs)"
@@ -1001,6 +1078,17 @@ text)
               + ([.runs[].run_id | tostring] | join(","))
               + ": \(.model) via \(.provider // "unknown") · \(.cost_status // "cost status missing") · \(.models | length) model row(s)"]
            | join("\n")) end),
+    "",
+    (.overseer_usage as $o
+     | if $o.available | not then "overseer usage — n/a: \($o.reason)"
+       else "overseer usage — \($o.invocations) invocation(s), \($o.sessions | length) session(s) in period",
+            "  calls \($o.totals.api_calls) · input \($o.totals.input_tokens) · output \($o.totals.output_tokens) · cache read \($o.totals.cache_read_tokens) · cache write \($o.totals.cache_write_tokens) · reasoning \($o.totals.reasoning_tokens)",
+            "  estimated cost " + (if $o.cost.estimated_usd == null then "n/a" else "$\($o.cost.estimated_usd)" end)
+              + " · actual cost " + (if $o.cost.actual_usd == null then "n/a — not reported" else "$\($o.cost.actual_usd)" end),
+            ($o.sessions[] | "  session \(.id) (" + (if .parent_session_id == null then "invocation" else "child of \(.parent_session_id)" end)
+              + "): \(.model // "unknown") via \(.provider // "unknown") · in \(.input_tokens) out \(.output_tokens) · "
+              + (if .actual_cost_usd != null then "actual $\(.actual_cost_usd)" elif .estimated_cost_usd != null then "estimated $\(.estimated_cost_usd)" else "cost n/a" end))
+       end),
     "",
     "operator touches — \(.operator.touches) = \(.operator.comments) comments + \(.operator.unblocks) unblocks",
     "  method: \(.operator.method)"';;
