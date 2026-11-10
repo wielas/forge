@@ -16198,7 +16198,14 @@ GW_GH
   _gw_hash() {
     ( cd "$1/home/kanban/boards/ck" && for f in kanban.db kanban.db-wal kanban.db-shm; do [ -f "$f" ] && { printf '%s ' "$f"; shasum -a 256 "$f" | cut -d' ' -f1; }; done ) | shasum -a 256 | cut -d' ' -f1
   }
-  _gw_status() { sqlite3 "$1/home/kanban/boards/ck/kanban.db" "SELECT status FROM tasks WHERE id='t_g1'"; }
+  # The gate's status, read from a COPY of the board and its sidecars: opening the live file would itself change the
+  # WAL and -shm and so the hash a case compares, and a Hermes board is never read in place.
+  _gw_status() {
+    local d="$root/q-status" b="$1/home/kanban/boards/ck" x
+    rm -rf "$d"; mkdir -p "$d"; cp "$b/kanban.db" "$d/k.db"
+    for x in -wal -shm; do [ -f "$b/kanban.db$x" ] && cp "$b/kanban.db$x" "$d/k.db$x"; done
+    sqlite3 "$d/k.db" "SELECT status FROM tasks WHERE id='t_g1'"
+  }
   _gw_session() { # message-id -> the JSON the gateway would bind
     jq -nc --arg p "${GW_PLATFORM-telegram}" --arg t "${GW_CHATTYPE-dm}" --arg u "${GW_USER-424242}" --arg c "${GW_CHAT-424242}" --arg m "$1" \
       '{HERMES_SESSION_PLATFORM:$p, HERMES_SESSION_CHAT_TYPE:$t, HERMES_SESSION_USER_ID:$u, HERMES_SESSION_CHAT_ID:$c, HERMES_SESSION_MESSAGE_ID:$m}'
@@ -16262,6 +16269,7 @@ GW_MUT
         [ -e "$f" ] && cp "$f" "$m/scripts/"
       done
       mkdir -p "$m/scripts/fixtures"; cp "$REPO_ROOT"/scripts/fixtures/*.py "$m/scripts/fixtures/" 2>/dev/null
+      ln -s "$REPO_ROOT/rubrics" "$m/rubrics"      # metrics.sh reads $HERE/../rubrics/run-metadata-contract.json
       _gw_mut "$m/scripts/$file" "$old" "$new" || { gwd="$gwd mutant($label)-did-not-apply"; return 0; }
       GW_REPO="$m"
     fi
@@ -16271,6 +16279,7 @@ GW_MUT
     if [ -n "$gwd" ]; then
       if [ -z "$want" ]; then rc=0; else case "$gwd" in *"$want"*) rc=0;; esac; fi
     fi
+    [ "$rc" = 0 ] || [ -z "${GW_DEBUG:-}" ] || echo "NOT CAUGHT: mutant $label; the check said: $gwd (wanted: ${want:-anything})" >&2
     gwd="$keep"; GW_PLUG=""; GW_REPO=""
     return "$rc"
   }
@@ -16538,7 +16547,7 @@ GW_MALFORMED
       [ "$(_gw_hash "$W")" != "$h0" ] || gwd="$gwd $v-changed-nothing($(_gw_reply))"
       case "$v" in
         accept) grep -q '^hermes WRITE complete kanban --board ck complete t_g1 --result accepted: because$' "$W/wlog.log" || gwd="$gwd accept-write($(head -1 "$W/wlog.log"))"
-                [ "$(sqlite3 "$W/home/kanban/boards/ck/kanban.db" "SELECT status FROM tasks WHERE id='t_g1'")" = done ] || gwd="$gwd accept-did-not-complete";;
+                [ "$(_gw_status "$W")" = done ] || gwd="$gwd accept-did-not-complete";;
         redirect) grep -q '^hermes WRITE comment kanban --board ck comment --author operator t_g1 redirect: tighten the first case$' "$W/wlog.log" || gwd="$gwd redirect-write($(head -1 "$W/wlog.log"))";;
         park) grep -q '^hermes WRITE comment kanban --board ck comment --author operator t_g1 parked: because$' "$W/wlog.log" || gwd="$gwd park-write($(head -1 "$W/wlog.log"))";;
       esac
@@ -17288,7 +17297,7 @@ GW_PROBE
               GW_STUB_ALLOW="${GW_ALLOW:-}" PATH="$root/bin:$PATH" bash "$2/scripts/checkpoint-cron.sh" 2>"$1/cron.err")"; crc=$?
   }
   _gw_armit() { # world project mode [extra flag] -> the real checkpoint-arm.sh
-    ( cd / && env FORGE_STATE_ROOT="$1/state" bash "$REPO_ROOT/scripts/checkpoint-arm.sh" arm --board ck --gate GATE-M1 --project "$2" --mode "$3" ${4:+"$4"} ) >"$1/arm.out" 2>&1
+    ( cd / && env FORGE_STATE_ROOT="$1/state" bash "${GW_REPO:-$REPO_ROOT}/scripts/checkpoint-arm.sh" arm --board ck --gate GATE-M1 --project "$2" --mode "$3" ${4:+"$4"} ) >"$1/arm.out" 2>&1
   }
   _gw_runs() { wc -l < "$1/runs.log" | tr -d ' '; }
   local cron_ok=1
@@ -17410,6 +17419,11 @@ GW_PROBE
     _gw_s "$W" gate-park.sh --board ck --gate GATE-M1 --text "not now" --apply
     [ "$grc" = 0 ] || gwd="$gwd park-got-rc$grc($gout)"
     _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$(_gw_runs "$cr")" = 2 ] && [ "$crc" = 0 ] || gwd="$gwd after-a-park(runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 100))"
+    # The decision is a wall of its own: an arming file put back by hand (not through checkpoint-arm.sh, which
+    # starts the gate over) must not bring the cron back for a hold that was decided.
+    ( cd "$root/proj-b-live" && echo "# later" >> NOTES.md && git add NOTES.md && git -c user.email=gw@forge -c user.name=gw commit -qm "after the park" ) >/dev/null 2>&1
+    printf 'mode=rehearse\nproject=%s\n' "$root/proj-b-live" > "$W/state/checkpoint/armed/ck--GATE-M1"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$(_gw_runs "$cr")" = 2 ] && [ "$crc" = 0 ] || gwd="$gwd after-a-park-and-a-hand-written-arming(runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 100))"
     _gw_armit "$W" "$root/proj-b-live" rehearse
     _gw_tick "$W" "$cr"; [ -n "$cout" ] && [ "$(_gw_runs "$cr")" = 3 ] && [ "$crc" = 0 ] || gwd="$gwd after-arming-again(runs=$(_gw_runs "$cr"),rc=$crc)"
     # World C: an unfinished milestone, and a gate that is not held, are silent forever.
