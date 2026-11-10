@@ -129,6 +129,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/overseer-guard.sh scripts/triage.sh scripts/amend-contract.sh \
 	  scripts/claude-token.sh \
 	  scripts/gate-reply.sh scripts/gate-accept.sh scripts/gate-redirect.sh scripts/gate-park.sh \
+	  scripts/checkpoint-cron.sh scripts/checkpoint-arm.sh \
   scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which

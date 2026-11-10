@@ -221,7 +221,10 @@ def _reply_for(status: str, rc: Optional[int], out: str, err: str) -> str:
     if rc == 1:
         return out if out.startswith("refused:") else f"refused: {out or 'no reason given'}"
     if rc == 2:
-        return out if out.startswith("failed:") else f"failed: {out or err.splitlines()[-1] if err else 'no reason given'}"
+        if out.startswith("failed:"):
+            return out
+        reason = out or (err.splitlines()[-1] if err else "no reason given")
+        return f"failed: {reason}"
     if rc == 3:
         return out or "unconfirmed: the write was made but could not be confirmed; check the card."
     return f"outcome unknown: the script ended abnormally (exit {rc}). Check the card before sending anything again."

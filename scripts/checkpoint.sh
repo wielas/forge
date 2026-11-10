@@ -464,7 +464,7 @@ read_gate_back() {
 }
 
 reply_text() {
-  printf '%s' "\`accept\` completes the gate as it is: \`hermes kanban --board $BOARD complete $GCARD --result \"accepted: <why>\"\`; \`redirect <text>\` says what to change, and the run waits; \`park\` leaves the gate held and the run stopped. Today only \`accept\` has a command; the others are decisions you make by editing the plan or doing nothing."
+  printf '%s' "send \`/accept $BOARD $GATE [why]\` to complete the gate as it is, \`/redirect $BOARD $GATE <text>\` to record what to change (the gate stays held and the run waits), or \`/park $BOARD $GATE [why]\` to leave it held and stop; each as its own message from your paired Telegram chat (if the bot is busy, send /stop first). /accept completes only a gate that was armed apply."
 }
 
 printf 'checkpoint %s — %s\n\n' "$GATE" "$mode_line"

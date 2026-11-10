@@ -88,33 +88,51 @@ gr_validate_text() {
   [ "$clean" = "$text" ] || gr_refuse "the text has control characters"
 }
 
-# gr_load_gate <board> <gate>: sets GR_CARD, GR_STATUS, GR_HOLD, GR_DB, GR_WORK (a scratch directory; the
-# caller's EXIT trap removes it). Refuses an unknown board, no card or several for the gate, and a gate
-# that is not `blocked`.
-gr_load_gate() {
+# gr_try_load_gate <board> <gate>: reads the gate WITHOUT exiting; for a caller that has other gates to look
+# at (scripts/checkpoint-cron.sh). Returns 0 and sets GR_CARD, GR_STATUS, GR_HOLD, GR_DB, GR_SNAP (the
+# snapshot read) when the gate is exactly one card and `blocked` with a recorded block event. Otherwise
+# returns 1 (a refusal: GR_WHY says why) or 2 (the host could not read: GR_WHY says what). GR_WORK is a
+# scratch directory the caller removes.
+gr_try_load_gate() {
   local board="$1" gate="$2" rows n snap
   local hroot="${HERMES_HOME:-$HOME/.hermes}"
   local kroot="${HERMES_KANBAN_HOME:-$hroot/kanban}"
+  GR_WHY=""; GR_CARD=""; GR_STATUS=""; GR_HOLD=""
   if [ "$board" = default ]; then GR_DB="$hroot/kanban.db"; else GR_DB="$kroot/boards/$board/kanban.db"; fi
-  [ -f "$GR_DB" ] || gr_refuse "there is no board named '$board'"
-  GR_WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-gate-reply.XXXXXX")" || gr_fail "cannot make a scratch directory"
-  snap="$("$GR_HERE/board-snapshot.sh" "$GR_DB" "$GR_WORK/read1" 2>/dev/null)" && [ -n "$snap" ] \
-    || gr_fail "board '$board' could not be read, so nothing was decided"
+  [ -f "$GR_DB" ] || { GR_WHY="there is no board named '$board'"; return 1; }
+  if [ -z "${GR_WORK:-}" ] || [ ! -d "$GR_WORK" ]; then
+    GR_WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-gate-reply.XXXXXX")" || { GR_WHY="cannot make a scratch directory"; return 2; }
+  fi
+  GR_READS=$(( ${GR_READS:-0} + 1 ))
+  snap="$("$GR_HERE/board-snapshot.sh" "$GR_DB" "$GR_WORK/read$GR_READS" 2>/dev/null)" && [ -n "$snap" ] \
+    || { GR_WHY="board '$board' could not be read, so nothing was decided"; return 2; }
+  GR_SNAP="$snap"
   rows="$(sqlite3 "$snap" "SELECT json_object('card', id, 'status', status)
             FROM tasks WHERE substr(title, 1, length('$gate') + 1) = '$gate:' OR title = '$gate';" 2>/dev/null)" \
-    || gr_fail "board '$board' could not be queried"
+    || { GR_WHY="board '$board' could not be queried"; return 2; }
   n="$(printf '%s\n' "$rows" | grep -c .)"
   case "$n" in
     1) ;;
-    0) gr_refuse "board '$board' has no card for $gate";;
-    *) gr_refuse "board '$board' has more than one card for $gate";;
+    0) GR_WHY="board '$board' has no card for $gate"; return 1;;
+    *) GR_WHY="board '$board' has more than one card for $gate"; return 1;;
   esac
   GR_CARD="$(printf '%s' "$rows" | jq -r '.card')"
   GR_STATUS="$(printf '%s' "$rows" | jq -r '.status')"
-  [ "$GR_STATUS" = blocked ] || gr_refuse "$gate ($GR_CARD) is $GR_STATUS, not blocked; there is no hold to decide"
+  [ "$GR_STATUS" = blocked ] || { GR_WHY="$gate ($GR_CARD) is $GR_STATUS, not blocked; there is no hold to decide"; return 1; }
   GR_HOLD="$(sqlite3 "$snap" "SELECT COALESCE(MAX(id), 0) FROM task_events WHERE task_id = '$GR_CARD' AND kind = 'blocked';" 2>/dev/null)" \
-    || gr_fail "the events of $GR_CARD could not be read"
-  case "$GR_HOLD" in ''|*[!0-9]*|0) gr_refuse "$gate ($GR_CARD) is blocked but has no recorded block event, so it has no hold to decide";; esac
+    || { GR_WHY="the events of $GR_CARD could not be read"; return 2; }
+  case "$GR_HOLD" in ''|*[!0-9]*|0) GR_WHY="$gate ($GR_CARD) is blocked but has no recorded block event, so it has no hold to decide"; return 1;; esac
+  return 0
+}
+
+# gr_load_gate <board> <gate>: the same, for a verb: it refuses (exit 1) or fails (exit 2) on the spot.
+gr_load_gate() {
+  gr_try_load_gate "$1" "$2"
+  case $? in
+    0) return 0;;
+    1) gr_refuse "$GR_WHY";;
+    *) gr_fail "$GR_WHY";;
+  esac
 }
 
 # gr_read_armed <board> <gate>: sets GR_ARM_MODE and GR_ARM_PROJECT; succeeds only for a well-formed file.
