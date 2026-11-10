@@ -14,6 +14,9 @@
 #            gate, which releases the next milestone. Arming starts a gate fresh: the host's records of an
 #            earlier report, decision or probe for it are cleared.
 #   disarm   remove the file. The cron stops looking.
+#   still-armed  exit 0 iff the gate is armed in --mode (well-formed) and no decision was recorded for --hold. Prints
+#            nothing. checkpoint.sh calls it immediately before it completes a gate (--before-complete), so a /park or a
+#            disarm that lands while the probe runs wins.
 #   list     every armed gate, its mode and project. A file that is not exactly two well-formed lines is
 #            listed as MALFORMED and counts as NOT armed everywhere (exit 1).
 #
@@ -23,8 +26,9 @@
 #   scripts/checkpoint-arm.sh arm --board <board> --gate GATE-<m> --project <abs-dir> --mode rehearse
 #   scripts/checkpoint-arm.sh arm --board <board> --gate GATE-<m> --project <abs-dir> --mode apply --confirm-release
 #   scripts/checkpoint-arm.sh disarm --board <board> --gate GATE-<m>
+#   scripts/checkpoint-arm.sh still-armed --board <board> --gate GATE-<m> --mode rehearse|apply --hold <n>
 #   scripts/checkpoint-arm.sh list
-# Exit: 0 done, 1 a malformed file in `list`, 2 usage or the host cannot do it.
+# Exit: 0 done (still-armed: yes), 1 a malformed file in `list` (still-armed: no), 2 usage or the host cannot do it.
 # =============================================================================
 set -uo pipefail
 
@@ -36,13 +40,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)" || { ech
 die() { echo "checkpoint-arm: $*" >&2; exit 2; }
 
 CMD="${1:-}"; [ $# -eq 0 ] || shift
-BOARD=""; GATE=""; PROJECT=""; MODE=""; CONFIRM=0
+BOARD=""; GATE=""; PROJECT=""; MODE=""; CONFIRM=0; HOLD=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --board)   [ $# -ge 2 ] || die "--board needs a board name"; BOARD="$2"; shift 2;;
     --gate)    [ $# -ge 2 ] || die "--gate needs a gate id"; GATE="$2"; shift 2;;
     --project) [ $# -ge 2 ] || die "--project needs a directory"; PROJECT="$2"; shift 2;;
     --mode)    [ $# -ge 2 ] || die "--mode needs rehearse or apply"; MODE="$2"; shift 2;;
+    --hold)    [ $# -ge 2 ] || die "--hold needs a number"; HOLD="$2"; shift 2;;
     --confirm-release) CONFIRM=1; shift;;
     -h|--help) gr_help; exit 0;;
     *) die "unknown argument '$1'";;
@@ -78,6 +83,13 @@ case "$CMD" in
     else
       echo "armed rehearse: $GATE on board $BOARD (project $PROJECT). Nothing is completed."
     fi
+    exit 0;;
+  still-armed)
+    [ -n "$BOARD" ] && [ -n "$GATE" ] && [ -n "$MODE" ] || die "still-armed needs --board, --gate and --mode"
+    [[ $BOARD =~ $GR_BOARD_RE ]] && [[ $BOARD != *--* ]] && [[ $GATE =~ $GR_GATE_RE ]] || exit 1
+    case "$HOLD" in ''|*[!0-9]*) exit 1;; esac
+    gr_read_armed "$BOARD" "$GATE" && [ "$GR_ARM_MODE" = "$MODE" ] || exit 1
+    if jq -e --argjson h "$HOLD" '.hold == $h' "$STATE/decided/$(gr_key "$BOARD" "$GATE").json" >/dev/null 2>&1; then exit 1; fi
     exit 0;;
   list)
     BAD=0; N=0

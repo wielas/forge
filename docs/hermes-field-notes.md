@@ -688,20 +688,42 @@ plugin's `pre_tool_call` hook blocks `terminal`, `execute_code` and `process_man
 `kanban` with a verb outside the read list (list, show, runs, log, tail, stats, context, `boards list`) or
 names the board file, every `kanban_*` tool but `kanban_show`, `kanban_list` and `kanban_attachments`, the file
 tools aimed at forge's state, the runtime, and Hermes' scripts, plugins, profiles, config, cron and board
-files, and `cronjob_manage` with a script. It only fires in a messaging session that is not a kanban worker
+files (a relative path is placed where Hermes' own resolver, `tools.file_tools_paths._resolve_path_for_task`, puts it
+against the task's workspace, or refused when Hermes cannot say; a symlink is followed), and every
+`cronjob_manage` call but a listing. It only fires in a messaging session that is not a kanban worker
 (`HERMES_KANBAN_TASK` unset). It is a text match: `sqlite3` on a path built in pieces, `python -c` with a
-string assembled at run time, and a sub-process defeat it. **The only literal "never" is that the Telegram agent
-has no shell:** `hermes tools disable --platform telegram terminal code_execution` (owner decision 3,
-2026-11-09), which also removes `process_manage`, the other tool of the `terminal` toolset. *Executed:*
-`gateway/telegram-toolset-edit-removes-the-shell` runs that command on a copy of the live shape and asks
-Hermes' own resolver (`_get_platform_tools`, `resolve_toolset`) what is left; a grep of the YAML would pass
-`platform_toolsets.telegram: [hermes-telegram]`, which holds all three tools without naming one. The command
-also adds `known_builtin_toolsets` and `known_plugin_toolsets` keys to `config.yaml`: Hermes' own
-bookkeeping, not part of the edit.
-What is left after it, and is not closed: `computer_use` (it drives any app, a terminal included; dormant while
-`cua-driver` is absent, and `make preflight` WARNs if both hold), any MCP server that gives a shell, and a
-model that finds a route the file and cron checks do not name. `delegate_task` is not one: a child gets the
-parent's toolsets and never `cronjob_manage` or `kanban` (`tools/delegate_tool_toolsets.py`).
+string assembled at run time, a backslash-newline splitting the word `kanban`, and a sub-process defeat it.
+**What takes those routes away is the toolset, and it is `terminal`, `code_execution` AND `cronjob`:**
+`hermes tools disable --platform telegram terminal code_execution cronjob` (owner decision 3, 2026-11-09, and the
+review of S8d: the first draft left `cronjob`, and `cronjob_tools.py` `_action_create` does not limit a job's
+toolsets, so a chat turn could create a prompt job whose agent has `terminal`). It also removes `process_manage`,
+the other tool of the `terminal` toolset. *Executed:* `gateway/telegram-toolset-edit-removes-the-shell` runs that
+command on a copy of the live shape and asks Hermes' own resolver (`_get_platform_tools`, `resolve_toolset`) what
+is left; a grep of the YAML would pass `platform_toolsets.telegram: [hermes-telegram]`, which holds every one of
+them without naming one. The command also adds `known_builtin_toolsets` and `known_plugin_toolsets` keys to
+`config.yaml`: Hermes' own bookkeeping, not part of the edit. **A profile that serves Telegram has a
+toolset of its own** (`hermes -p <name> tools disable --platform telegram terminal code_execution cronjob`
+edits `<root>/profiles/<name>/config.yaml`, *executed* against an isolated root); the root's says nothing about
+it, so the probe and `make preflight` read every profile that names a `platform_toolsets.telegram`.
+Left after all of that, none of it closed by this slice, and each an act of the operator's or of a tool the
+guard cannot see: (1) **the gateway's built-in `/kanban ...` slash command** (`hermes_cli/commands.py`,
+`gateway/slash_commands.py` `_handle_kanban_command` -> `hermes_cli.kanban.run_slash`) is available to anyone
+`TELEGRAM_ALLOWED_USERS` lets in, runs while an agent is busy, and bypasses arming: `/kanban complete <gate>`
+completes a gate. It is an explicit operator command, the same as a shell on the host, and the paired chat
+is the operator; (2) `computer_use` (it drives any app, a terminal included; dormant while `cua-driver` is
+absent, and `make preflight` WARNs if both hold); (3) any MCP server that gives a shell; (4) the text match's own
+blind spots above, which the toolset removal covers. `delegate_task` is not a route: a child gets the parent's
+toolsets and never `cronjob_manage` or `kanban` (`tools/delegate_tool_toolsets.py`).
+
+**The gate scripts run under the mini's `/bin/bash` 3.2.57, and CI runs bash 5.** The mini has no Homebrew
+bash, and a launchd gateway's PATH finds `/bin/bash`. bash 3.2 does not take a backslash-quote inside
+`${var//.../...}` (it keeps the backslashes), so `/park sq GATE-M1 don't proceed` was a SQL syntax error, the
+read-back failed, the script exited 3 and never recorded the decision. Put the quote in a variable
+(`gr_sql_escape`). `gateway/gate-scripts-run-under-the-minis-bash` reads every new script for bash-4 idioms,
+parses each under `/bin/bash -n`, and runs `/park` and `/redirect` with an apostrophe and every other character
+a phone can send under `/bin/bash`. **`make verify` is not run in `~/dev/forge-runtime`:** its mutation
+harnesses edit files in place and the live cron executes from there; the runtime gets `git pull --ff-only` and
+`make preflight`, and `make verify` runs on `main` after the merge.
 
 **`registry.dispatch` does not look at a tool's `check_fn`.** A tool absent from the model's schema because its
 toolset is off can still run if something names it: `kanban_complete` on a gate, called through

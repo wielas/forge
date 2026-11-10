@@ -1592,14 +1592,24 @@ else
       [ "$(printf '%s' "$PF_GW_OUT" | jq -r '.plugin_enabled')" = true ] && PF_GW_ENABLED=1
       PF_GW_SHELL="$(printf '%s' "$PF_GW_OUT" | jq -r '.shell_tools | join(", ")')"
       if [ -z "$PF_GW_SHELL" ]; then
-        pass "the Telegram agent has no terminal, process_manage or execute_code (as Hermes resolves platform_toolsets.telegram)"
+        pass "the Telegram agent has no terminal, process_manage, execute_code or cronjob_manage (as Hermes resolves platform_toolsets.telegram)"
       elif [ "$PF_GW_ENABLED" = 1 ]; then
         fail "forge-gateway is enabled and the Telegram agent still holds: $PF_GW_SHELL — a verb typed while it is busy can still reach a board through its shell"
-        say  "      hermes tools disable --platform telegram terminal code_execution    # then: hermes gateway restart"
+        say  "      hermes tools disable --platform telegram terminal code_execution cronjob    # then: hermes gateway restart"
       else
         warn "operator step pending: the Telegram agent holds $PF_GW_SHELL (the plugin is not enabled yet; it becomes a FAIL once it is)"
-        say  "      hermes tools disable --platform telegram terminal code_execution"
+        say  "      hermes tools disable --platform telegram terminal code_execution cronjob"
       fi
+      # A profile that serves Telegram has its own toolset: judge every profile with an EXPLICIT telegram entry the same way.
+      while IFS= read -r _gwp; do
+        [ -n "$_gwp" ] || continue
+        _gwpn="${_gwp%%|*}"; _gwps="${_gwp#*|}"
+        if [ "$PF_GW_ENABLED" = 1 ]; then
+          fail "profile $_gwpn names its own Telegram toolset and it still holds: $_gwps — hermes -p $_gwpn tools disable --platform telegram terminal code_execution cronjob"
+        else
+          warn "operator step pending: profile $_gwpn names its own Telegram toolset and it holds $_gwps — hermes -p $_gwpn tools disable --platform telegram terminal code_execution cronjob"
+        fi
+      done < <(printf '%s' "$PF_GW_OUT" | jq -r '.profiles | to_entries[] | select(.value.explicit and (.value.shell_tools | length) > 0) | "\(.key)|\(.value.shell_tools | join(", "))"')
       if [ "$(printf '%s' "$PF_GW_OUT" | jq -r '.computer_use.enabled and .computer_use.available')" = true ]; then
         warn "the Telegram toolset holds computer_use and a desktop-control driver is installed: it can drive any app, a terminal included, which no guard here can see"
       fi

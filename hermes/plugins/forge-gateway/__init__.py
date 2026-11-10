@@ -25,13 +25,15 @@ Two things, and nothing else.
    into a board write. The guard refuses, in a messaging session that is not a kanban worker, the tool
    calls that could write a board: `terminal`, `execute_code` and `process_manage` text that names
    `kanban` with a verb outside a read list or names the board file, every `kanban_*` tool but the
-   readers, the file tools aimed at forge's own state, scripts, plugins, config or board directories, and
-   `cronjob_manage` with a script. A plugin hook fails CLOSED when it raises or times out, so the guard
+   readers, the file tools aimed at forge's own state, scripts, plugins, config or board directories (a relative
+   path is placed the way Hermes places it, or refused), and every `cronjob_manage` call but a listing. A plugin hook fails CLOSED when it raises or times out, so the guard
    catches everything itself and, on an internal error, blocks exactly those tools and passes the rest.
-   IT IS A TRIPWIRE, not a sandbox: `sqlite3`, `python -c` with a built-up string and a sub-process
-   bypass a text match. The only literal "never" is that the Telegram toolset does not hold `terminal` or
-   `code_execution` (hermes tools disable --platform telegram terminal code_execution; preflight section
-   14 and `gateway/` assert it).
+   IT IS A TRIPWIRE, not a sandbox: `sqlite3`, `python -c` with a built-up string, a backslash-newline splitting
+   the word `kanban`, and a sub-process bypass a text match. What takes those routes away is the toolset: the
+   Telegram agent holds no `terminal`, `code_execution` or `cronjob` (a chat-made cron job can run a prompt
+   with the shell toolset): `hermes tools disable --platform telegram terminal code_execution cronjob`;
+   preflight section 14 and `gateway/` assert it. Two things are outside it and are the operator's own acts:
+   the gateway's built-in `/kanban ...` slash command (hermes_cli/commands.py), and `computer_use`.
 """
 
 from __future__ import annotations
@@ -318,6 +320,8 @@ _FILE_TOOLS = frozenset({"write_file", "patch"})
 BLOCK_MESSAGE = ("forge-gateway: refused. A board write cannot be made from a chat turn. To act on a gate, "
                  "send /accept, /redirect or /park as its own message from the paired chat; if the bot is "
                  "busy, send /stop first.")
+RELATIVE_PATH_MESSAGE = ("forge-gateway: refused. That relative path could not be placed, and a write under forge's "
+                         "state, scripts, plugins, config or boards is not made from a chat turn. Use an absolute path.")
 
 
 def _applies() -> bool:
@@ -388,19 +392,37 @@ def _protected_roots() -> List[str]:
     return out
 
 
-def _path_is_protected(path: str) -> bool:
+def _resolve_relative(path: str, task_id: str) -> Optional[str]:
+    """Where Hermes' own file tools would put a relative path: against the task's workspace root, which is not
+    this process's cwd (`tools.file_tools_paths._resolve_path_for_task`). None when Hermes cannot say."""
+    try:
+        from tools.file_tools_paths import _resolve_path_for_task
+        return str(_resolve_path_for_task(path, task_id or "default"))
+    except Exception:
+        return None
+
+
+def _path_verdict(path: str, task_id: str = "") -> Optional[str]:
+    """'protected', 'unplaced' (a relative path Hermes cannot place, refused), or None."""
     expanded = os.path.expanduser(path)
-    for candidate in (os.path.abspath(expanded), os.path.realpath(expanded)):
+    if os.path.isabs(expanded):
+        candidates = [os.path.abspath(expanded), os.path.realpath(expanded)]
+    else:
+        resolved = _resolve_relative(path, task_id)
+        if resolved is None:
+            return "unplaced"
+        candidates = [os.path.abspath(resolved), os.path.realpath(resolved)]
+    for candidate in candidates:
         for root in _protected_roots():
             if candidate == root or candidate.startswith(root.rstrip(os.sep) + os.sep):
-                return True
-    return False
+                return "protected"
+    return None
 
 
 _PATCH_FILE_RE = re.compile(r"^\*\*\*\s+(?:Update|Add|Delete|Move to)\s+File:\s*(.+?)\s*$", re.M)
 
 
-def _file_tool_hits_protected(args: Dict[str, Any]) -> bool:
+def _file_tool_verdict(args: Dict[str, Any], task_id: str = "") -> Optional[str]:
     paths: List[str] = []
     for key in ("path", "file_path", "filepath", "filename", "target"):
         v = args.get(key)
@@ -409,10 +431,14 @@ def _file_tool_hits_protected(args: Dict[str, Any]) -> bool:
     patch = args.get("patch")
     if isinstance(patch, str):
         paths += _PATCH_FILE_RE.findall(patch)
-    return any(_path_is_protected(p) for p in paths)
+    verdicts = [_path_verdict(p, task_id) for p in paths]
+    for want in ("protected", "unplaced"):
+        if want in verdicts:
+            return want
+    return None
 
 
-def _decide(tool_name: str, args: Any) -> Optional[Dict[str, str]]:
+def _decide(tool_name: str, args: Any, task_id: str = "") -> Optional[Dict[str, str]]:
     name = (tool_name or "").lower()
     args = args if isinstance(args, dict) else {}
     block = {"action": "block", "message": BLOCK_MESSAGE}
@@ -423,9 +449,16 @@ def _decide(tool_name: str, args: Any) -> Optional[Dict[str, str]]:
         _strings(args, strings)
         return block if _text_is_a_board_write("\n".join(strings)) else None
     if name in _FILE_TOOLS:
-        return block if _file_tool_hits_protected(args) else None
+        verdict = _file_tool_verdict(args, task_id)
+        if verdict == "protected":
+            return block
+        if verdict == "unplaced":
+            return {"action": "block", "message": RELATIVE_PATH_MESSAGE}
+        return None
     if name == "cronjob_manage":
-        return block if (args.get("script") or args.get("monitor_script")) else None
+        # Any cron job a chat turn creates or changes can run a prompt with the shell toolset, or a script, so only a
+        # listing passes. (Listing is a read.)
+        return None if str(args.get("action", "")).strip().lower() == "list" else block
     return None
 
 
@@ -434,13 +467,13 @@ def _could_write_a_board(tool_name: str) -> bool:
     return name.startswith("kanban_") or name in _TEXT_TOOLS or name in _FILE_TOOLS or name == "cronjob_manage"
 
 
-def _guard(tool_name: str = "", args: Any = None, **_: Any) -> Optional[Dict[str, str]]:
+def _guard(tool_name: str = "", args: Any = None, task_id: str = "", **_: Any) -> Optional[Dict[str, str]]:
     """Never raises: a hook that raises blocks EVERY tool. On an internal error it blocks the tools that
     could write a board and passes the rest."""
     try:
         if not _applies():
             return None
-        return _decide(tool_name, args)
+        return _decide(tool_name, args, task_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("forge-gateway guard: internal error on %s: %s", tool_name, exc)
         if _could_write_a_board(tool_name):

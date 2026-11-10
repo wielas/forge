@@ -493,7 +493,7 @@ through it.
   symlink and that a busy-path verb cannot become a board write. Unproven until
   the operator's steps and smoke test: a root-enabled plugin answering in a
   multiplexed turn, and a real Telegram message reaching a handler. The literal
-  "never" needs `hermes tools disable --platform telegram terminal code_execution`
+  "never" needs `hermes tools disable --platform telegram terminal code_execution cronjob`
   on the host (`make preflight` section 14 says whether it was done). See GW3 and
   row S8d in `docs/epic-hands-free.md`.
 - **Provider terms for automated subscription use** — settled for what *works*

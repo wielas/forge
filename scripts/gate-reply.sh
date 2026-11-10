@@ -24,8 +24,9 @@
 #     the hold it reported), and a reply is honoured only for the hold that was
 #     reported, so a stale record can never license a later block;
 #   - the gate is ARMED: checkpoint/armed/<board>--<gate> holds exactly two
-#     lines, `mode=rehearse|apply` and `project=/abs/path`. Anything else, a
-#     malformed file, a symlink, a third line, reads as NOT armed. `complete`
+#     lines, `mode=rehearse|apply` and `project=/abs/path`, byte for byte as
+#     checkpoint-arm.sh writes them. Anything else, a malformed file, a symlink,
+#     a third line (terminated or not), a missing final newline, reads as NOT armed. `complete`
 #     needs `apply`; `rehearse` completes nothing (scripts/checkpoint-arm.sh).
 #
 # WHAT A DECISION LEAVES BEHIND, on the host (not on the board):
@@ -141,11 +142,15 @@ gr_read_armed() {
   local f l1 l2 n
   f="$(gr_state_dir)/armed/$(gr_key "$1" "$2")"
   [ -f "$f" ] && [ ! -L "$f" ] || return 1
-  n="$(wc -l < "$f" 2>/dev/null | tr -d ' ')"
-  [ "$n" = 2 ] || return 1
+  # The file is checked BYTE FOR BYTE against what checkpoint-arm.sh writes, not by counting newlines (a third,
+  # unterminated line is not counted by `wc -l`): read the two values, rebuild the file and compare. A trailing
+  # newline is part of the format, so a file without one is not armed either.
   l1="$(sed -n 1p "$f")"; l2="$(sed -n 2p "$f")"
   case "$l1" in mode=apply|mode=rehearse) GR_ARM_MODE="${l1#mode=}";; *) return 1;; esac
-  case "$l2" in project=/*) GR_ARM_PROJECT="${l2#project=}";; *) return 1;; esac
+  case "$l2" in project=/*) GR_ARM_PROJECT="${l2#project=}";; *) GR_ARM_MODE=""; return 1;; esac
+  if [ "$(cat "$f"; printf x)" != "$(printf 'mode=%s\nproject=%s\n' "$GR_ARM_MODE" "$GR_ARM_PROJECT"; printf x)" ]; then
+    GR_ARM_MODE=""; GR_ARM_PROJECT=""; return 1
+  fi
   case "$GR_ARM_PROJECT" in *[[:cntrl:]]*) GR_ARM_MODE=""; GR_ARM_PROJECT=""; return 1;; esac
   return 0
 }
@@ -188,10 +193,17 @@ gr_reread_status() {
   return 1
 }
 
+# gr_sql_escape <text>: the text with every ' doubled, for a SQL string literal. THE QUOTE IS IN A VARIABLE ON
+# PURPOSE: /bin/bash 3.2 (the mini's, and macOS's) does not take \' inside ${var//.../...}: it leaves the
+# backslashes in, so `don't` became a SQL syntax error, the read-back failed, and the decision was never recorded.
+# bash 5 takes either, so CI cannot see the difference; `gateway/gate-scripts-run-under-the-minis-bash` greps for the
+# idiom and runs the verbs under /bin/bash.
+gr_sql_escape() { local q="'"; printf '%s' "${1//$q/$q$q}"; }
+
 # gr_reread_comment <body>: succeeds if the gate card carries a comment with exactly this body, on a fresh snapshot.
 gr_reread_comment() {
   local body="$1" try snap esc n
-  esc="${body//\'/\'\'}"
+  esc="$(gr_sql_escape "$body")"
   for try in 1 2; do
     snap="$("$GR_HERE/board-snapshot.sh" "$GR_DB" "$GR_WORK/read-comment$try" 2>/dev/null)" && [ -n "$snap" ] || continue
     n="$(sqlite3 "$snap" "SELECT count(*) FROM task_comments WHERE task_id = '$GR_CARD' AND body = '$esc';" 2>/dev/null)" || continue

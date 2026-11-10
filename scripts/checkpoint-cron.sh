@@ -125,8 +125,8 @@ for armed in "$STATE"/armed/*; do
     || { fault "the chunks of $gate could not be read"; continue; }
   [ "$open" = 0 ] && [ "${total:-0}" -gt 0 ] 2>/dev/null || continue
 
-  # A decision for this hold (a /park or a /redirect) stops the cron for it.
-  if jq -e --argjson h "$hold" '.hold == $h' "$STATE/decided/$key.json" >/dev/null 2>&1; then continue; fi
+  # A decision for this hold (a /park or a /redirect) stops the cron for it: still_armed, below, asks (the same question
+  # checkpoint.sh asks again right before it completes the gate).
 
   # The product checkout: on main, clean. A probe of anything else says nothing about the milestone.
   if [ ! -d "$project/.git" ] && ! git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -148,7 +148,16 @@ for armed in "$STATE"/armed/*; do
   [ ! -e "$probed" ] || continue
 
   flag=--rehearse; [ "$mode" = apply ] && flag=--apply
-  run_out="$("$HERE/checkpoint.sh" "$project" --board "$board" --gate "$gate" "$flag" 2>"$GR_WORK/checkpoint.err")"; rc=$?
+  # Still armed for this mode, and not decided for this hold, as of now? (a /park may have landed since the read above)
+  still_armed() { "$HERE/checkpoint-arm.sh" still-armed --board "$board" --gate "$gate" --mode "$mode" --hold "$hold" >/dev/null 2>&1; }
+  still_armed || continue
+  # --before-complete: checkpoint.sh asks again right before it completes the gate, after a probe that can take minutes.
+  run_out="$("$HERE/checkpoint.sh" "$project" --board "$board" --gate "$gate" "$flag" \
+              --before-complete "$HERE/checkpoint-arm.sh" still-armed --board "$board" --gate "$gate" --mode "$mode" --hold "$hold" \
+              2>"$GR_WORK/checkpoint.err")"; rc=$?
+  # Disarmed or parked while it ran: say nothing and record nothing, whatever it found (a completion that did happen is
+  # still said: the gate is done and the operator must be told).
+  if ! still_armed && ! printf '%s' "$run_out" | grep -q '^completed '; then continue; fi
   case "$rc" in
     0)
       : > "$probed"
