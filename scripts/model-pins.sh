@@ -47,3 +47,14 @@ FORGE_PIN_DRIVER="z-ai/glm-5.3-flash"
 # chunk's completion metadata (F22).
 FORGE_PIN_CODEX_MODEL="gpt-5.6-luna"
 FORGE_PIN_CODEX_EFFORT="xhigh"
+
+# The overseer (epic MS3, S8c): `forge-overseer` judges milestone gates, exceptions
+# and triage and never touches a chunk. It drives on the OpenAI subscription through
+# Hermes's native OAuth (`openai-codex`), so it spends no metered tokens. The model
+# is account-gated and was unverified when it was pinned (owner decision
+# 2026-11-06): whether it answers on this account is the operator's live check, a
+# `make preflight --probe` item, not an assertion here. `scripts/set-model.sh` does
+# not manage these two: they change by editing this file and re-running the
+# bootstrap.
+FORGE_PIN_OVERSEER="gpt-6-astra"
+FORGE_PIN_OVERSEER_PROVIDER="openai-codex"

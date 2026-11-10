@@ -53,6 +53,9 @@
 #               with what --apply WOULD have done. This is the only mode a held
 #               gate may be rehearsed with; --apply is refused beside it.
 #   --apply     the one write there is: on a pass, `complete` on the gate card.
+#               `complete` exiting 0 is not enough: the gate is read again from a
+#               fresh snapshot and must read `done`, or this exits 2 and says the
+#               gate did NOT pass.
 #               On a block the gate is already held by the bootstrap, and
 #               blocking it again would trip the kernel's recurrence limit into
 #               `triage`, so a block writes nothing and only prints the message.
@@ -352,8 +355,9 @@ for case in cases:
                 f"- expects today: {then}",
                 f"- finding: {case['reason']}",
                 f"- proposed: expect stdout {proposed!r} instead",
-                "- to apply: edit the probe, re-run acceptance-freeze (the frozen digest changes), and record a",
-                "  decision entry. A probe is a frozen plan, so this is a contract amendment."])})
+                "- to apply: ~/.forge/repo/scripts/amend-contract.sh <project> --id " + gate + " --set " + rel + "=<edited probe> --reason <why> --rehearse,",
+                "  then --apply. It re-freezes through acceptance-freeze and records the decision entry, or changes nothing.",
+                "  A probe is a frozen plan, so this is a contract amendment."])})
 
 classes = sorted({c["class"] for c in cases})
 if not cases:
@@ -447,6 +451,18 @@ say_numbers() {
   fi
 }
 
+# read_gate_back: read the gate card's status from a fresh snapshot into DONE_STATUS. Succeeds only when the
+# board was actually read (a gate that is gone reads as the empty string, which is a read); two tries, because a
+# snapshot is a copy of a board that Hermes may be writing. Fails when neither try read the board.
+read_gate_back() {
+  local try snap
+  for try in 1 2; do
+    snap="$("$HERE/board-snapshot.sh" "$DB" "$WORK/board-after$try" 2>/dev/null)" && [ -n "$snap" ] || continue
+    DONE_STATUS="$(sqlite3 "$snap" "SELECT status FROM tasks WHERE id = '$GCARD';" 2>/dev/null)" && return 0
+  done
+  return 1
+}
+
 reply_text() {
   printf '%s' "\`accept\` completes the gate as it is: \`hermes kanban --board $BOARD complete $GCARD --result \"accepted: <why>\"\`; \`redirect <text>\` says what to change, and the run waits; \`park\` leaves the gate held and the run stopped. Today only \`accept\` has a command; the others are decisions you make by editing the plan or doing nothing."
 }
@@ -454,18 +470,40 @@ reply_text() {
 printf 'checkpoint %s — %s\n\n' "$GATE" "$mode_line"
 case "$OUTCOME" in
   pass)
+    # "passes" is said only once the gate is really complete. It used to be printed first, so a
+    # `complete` the kernel refused still left "passes" in the log and in the operator's notification
+    # (#102 minor a). In a rehearsal nothing is completed, so the line is the verdict on the numbers.
+    COMPLETE_OUT=""
+    if [ "$MODE" = apply ]; then
+      # (#102 minor b) The gate was read at the top of this run, before the probe, which can take
+      # minutes. Read it again immediately before writing: a gate that is no longer held (completed
+      # by hand, reopened, archived) is no verdict, and nothing is completed over it.
+      NOW_SNAP="$("$HERE/board-snapshot.sh" "$DB" "$WORK/board-recheck")" && [ -n "$NOW_SNAP" ] \
+        || no_verdict "$GATE ($GCARD) could not be read again just before completing it, so nothing was completed"
+      NOW_STATUS="$(sqlite3 "$NOW_SNAP" "SELECT status FROM tasks WHERE id = '$GCARD';" 2>/dev/null)" # gate-reread
+      [ "$NOW_STATUS" = blocked ] || no_verdict "$GATE ($GCARD) moved while the checkpoint ran: it is now '${NOW_STATUS:-gone}', not blocked (held); nothing was completed" # gate-reread
+      COMPLETE_OUT="$(board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST" 2>&1)"; COMPLETE_RC=$?
+      [ "$COMPLETE_RC" = 0 ] || { echo "checkpoint: completing $GCARD failed — $GATE did NOT pass and the gate is still held: $COMPLETE_OUT" >&2; exit 2; } # complete-checked
+      # (#105 review, finding 5) A zero exit is the kernel's word; the board is the evidence. Read the gate
+      # once more, from a fresh snapshot (a copy, never mode=ro: a Hermes board is WAL), and say "passes"
+      # only if it reads done. A read that itself fails is not "the gate is not done": it is unknown, so it is
+      # tried once more and, if it still fails, reported as unverified, with no pass and no success line.
+      DONE_STATUS=""
+      read_gate_back || { echo "checkpoint: completing $GCARD reported success, but the board could not be read back (tried twice), so completion is unverified — check the card $GCARD: it may or may not be done, and no pass is recorded" >&2; exit 2; } # complete-unverified
+      [ "$DONE_STATUS" = done ] || { echo "checkpoint: completing $GCARD reported success, but a fresh read of the board reads the gate as '${DONE_STATUS:-gone}', not done — $GATE did NOT pass: $COMPLETE_OUT" >&2; exit 2; } # complete-readback
+    fi
     echo "checkpoint: $GATE passes — the probe holds and the milestone is within its estimate, so it proceeds on its own (decision 6)"
     echo
     say_numbers
     echo
     if [ "$MODE" = rehearse ]; then
       echo "On --apply this would complete the gate, which releases the next milestone:"
+      board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST"
+      echo "rehearsal: nothing was written to the board"
+    else
+      [ -z "$COMPLETE_OUT" ] || printf '%s\n' "$COMPLETE_OUT"
+      echo "completed $GCARD"
     fi
-    board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST" || {
-      echo "checkpoint: completing $GCARD failed; the gate is still held" >&2
-      exit 2; }
-    [ "$MODE" = apply ] && echo "completed $GCARD"
-    [ "$MODE" = rehearse ] && echo "rehearsal: nothing was written to the board"
     exit 0;;
   no-verdict)
     if [ -n "$NOT_DONE" ]; then why="the milestone is not finished: $NOT_DONE"

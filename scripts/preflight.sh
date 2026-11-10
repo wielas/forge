@@ -44,6 +44,8 @@ while [ $# -gt 0 ]; do
 done
 
 P=0; F=0; W=0
+# This checkout, derived from the script's own location ($FORGE_DIR is resolved much further down).
+PF_OV_REPO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
 # Every helper MUST return 0. They are used as `cond && pass ... || fail ...`,
 # so a non-zero return makes BOTH branches fire — which is exactly what happened
 # on the first real run: `[ -n "$OUT" ]` was false, say() returned 1, and every
@@ -575,6 +577,39 @@ else
       v="$(pcfg model.default)"
       [ -n "$v" ] && info "$prof: model.default = $v" \
                   || warn "$prof: model.default unset — inherits whatever is ambient"
+
+      # MS3 (S8c): the overseer's model and provider are one pin (scripts/model-pins.sh). Reading
+      # the pin back proves the profile is configured; it does NOT prove the model answers on this
+      # account. gpt-6-astra is account-gated and was unverified when pinned, so that is the
+      # operator's live check: `make preflight` with --probe makes one call (section 6).
+      if [ "$prof" = forge-overseer ]; then
+        _ov_pin="$(bash -c '. "$1" && printf "%s %s" "$FORGE_PIN_OVERSEER" "$FORGE_PIN_OVERSEER_PROVIDER"' _ "$PF_OV_REPO/scripts/model-pins.sh" 2>/dev/null)"
+        v="$(pcfg model.default) $(pcfg model.provider)"
+        if [ -z "${_ov_pin// /}" ]; then
+          fail "$prof: cannot read FORGE_PIN_OVERSEER out of scripts/model-pins.sh, so the live model cannot be compared"
+        elif [ "$v" = "$_ov_pin" ]; then
+          pass "$prof: model.default and model.provider are the pin ($v)"
+        else
+          fail "$prof: model/provider '$v' is not the pin '$_ov_pin' — run ./hermes/profiles-bootstrap.sh"
+        fi
+        # Decision 13: the overseer is never dispatched and its LLM never writes the board, so its profile
+        # carries NO `kanban` toolset (an unfenced session with it would hold in-process kanban_create /
+        # _comment / _complete / _unblock). Read WHOLE: pcfg keeps one line. The list must also be the
+        # bootstrap's own, with a terminal in it: a profile with no `toolsets` key reads back as
+        # `hermes-cli` (measured, 0.21.5), which resolves to every kanban_* tool, so "does not name kanban"
+        # alone would PASS the profile that has the most. A profile not yet created never gets here (it is
+        # not on disk); section 6 warns that it is missing.
+        v="$(hermes -p "$prof" config get toolsets 2>/dev/null)"
+        if printf '%s\n' "$v" | grep -Eq '(^|[^A-Za-z0-9_-])kanban([^A-Za-z0-9_-]|$)'; then
+          fail "$prof: carries the kanban toolset — an unfenced overseer would hold in-process kanban_create/_comment/_complete/_unblock (decision 13); run ./hermes/profiles-bootstrap.sh"
+        elif printf '%s\n' "$v" | grep -Eq '(^|[^A-Za-z0-9_-])(hermes-[a-z-]+|all)([^A-Za-z0-9_-]|$)' \
+             || ! printf '%s\n' "$v" | grep -Eq '(^|[^A-Za-z0-9_-])terminal([^A-Za-z0-9_-]|$)'; then
+          fail "$prof: toolsets '$(printf '%s' "$v" | tr '\n' ' ')' are not the bootstrap's explicit list — none, or a platform toolset such as hermes-cli, carries every kanban_* tool (decision 13); run ./hermes/profiles-bootstrap.sh"
+        else
+          pass "$prof: no kanban toolset (decision 13): $(printf '%s' "$v" | tr '\n' ' ')"
+        fi
+        info "$prof: whether '${_ov_pin% *}' answers on this account is NOT checked by inspection — run ./scripts/preflight.sh --probe (one call), or: hermes -p forge-overseer -z \"reply with exactly: OK\""
+      fi
     done
   fi
 fi
@@ -624,11 +659,23 @@ PROF=""
 if [ -n "$PROF" ]; then
   info "profiles/assignees visible to the board:"
   printf '%s\n' "$PROF" | sed 's/^/      /' | while read -r l; do say "$l"; done
-  for want in forge-orchestrator forge-codex-lane forge-verifier forge-digest; do
+  for want in forge-orchestrator forge-codex-lane forge-verifier forge-digest forge-overseer; do
     printf '%s' "$PROF" | grep -q "$want" \
       && pass "profile exists: $want" \
       || warn "profile NOT yet created: $want (its cards will sit stranded in ready)"
   done
+  # The one model call in this section, and only behind --probe: the overseer's model is
+  # account-gated and unverified (MS3), and nothing but a call can show it answers.
+  if [ "$PROBE" = 1 ] && printf '%s' "$PROF" | grep -q 'forge-overseer'; then
+    bounded "$PROBE_TIMEOUT" hermes -p forge-overseer -z "reply with exactly: OK"; _ovrc=$?
+    if [ $_ovrc -eq 124 ]; then
+      fail "forge-overseer model probe TIMED OUT after ${PROBE_TIMEOUT}s (killed)"
+    elif [ $_ovrc -eq 0 ] && [ "$(printf '%s' "$BOUNDED_OUT" | tr -d '[:space:]' | tr 'A-Z' 'a-z')" = "ok" ]; then
+      pass "forge-overseer model probe answered OK (rc=0)"
+    else
+      fail "forge-overseer model probe failed (rc=$_ovrc): $(printf '%s' "$BOUNDED_OUT" | head -2 | tr '\n' ' ')"
+    fi
+  fi
 else
   warn "could not enumerate profiles — check 'hermes profiles --help'"
 fi
@@ -795,6 +842,38 @@ if [ "$HAVE_HERMES" = 1 ]; then
   fi
 fi
 
+# MS3 (S8c): no live card is ever the overseer's: no chunk (MS3), and, since decision 13, no gate or
+# any other card either, because it is never a dispatched worker. Asked of every board that exists, through the
+# guard (scripts/overseer-guard.sh), which reads a snapshot copy of each board and never opens it
+# mode=ro. Boards are the per-board databases under kanban/boards/; the top-level kanban.db is the
+# stale legacy artifact the default board no longer uses (scripts/metrics.sh says why).
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  warn "sqlite3 is not on PATH — cannot ask whether any board holds a card for forge-overseer (MS3)"
+elif [ ! -x "$PF_OV_REPO/scripts/overseer-guard.sh" ]; then
+  fail "scripts/overseer-guard.sh is missing or not executable, so nothing asks whether the overseer holds a card (MS3)"
+else
+  _ov_root="${HERMES_HOME:-$HOME/.hermes}"; _ov_n=0; _ov_bad=""; _ov_unread=""
+  for _ov_db in "$_ov_root"/kanban/boards/*/kanban.db; do
+    [ -f "$_ov_db" ] || continue
+    _ov_n=$((_ov_n + 1))
+    _ov_out="$("$PF_OV_REPO/scripts/overseer-guard.sh" board "$_ov_db" 2>&1)"; _ov_rc=$?
+    case $_ov_rc in
+      0) ;;
+      1) _ov_bad="$_ov_bad $(basename "$(dirname "$_ov_db")")"; printf '%s\n' "$_ov_out" | while read -r l; do say "      $l"; done;;
+      *) _ov_unread="$_ov_unread $(basename "$(dirname "$_ov_db")")";;
+    esac
+  done
+  if [ -n "$_ov_bad" ]; then
+    fail "card(s) are held by forge-overseer on board(s):$_ov_bad — it is gate-only and never a dispatched worker; reassign them (MS3, decision 13)"
+  elif [ -n "$_ov_unread" ]; then
+    warn "could not read board(s):$_ov_unread — a board that was not read has not passed the overseer audit (MS3)"
+  elif [ "$_ov_n" = 0 ]; then
+    warn "no board database found under $_ov_root/kanban/boards — nothing to audit for cards held by forge-overseer (MS3)"
+  else
+    pass "no card is held by forge-overseer on $_ov_n board(s) (MS3)"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # The lane's protocol is a program (epic FL2): forge-lane §1 invokes
 # scripts/lane.sh through ~/.forge/repo, and lane.sh reaches the helpers below
@@ -829,7 +908,8 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
                 codex-run.sh quota-window.py codex-progress.py \
                 prejudge-review.sh prejudge.sh verdict.sh merge-check.sh \
                 merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
-                driver-call-hook.sh claude-token.sh; do
+                driver-call-hook.sh claude-token.sh \
+                checkpoint.sh triage.sh amend-contract.sh overseer-guard.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
