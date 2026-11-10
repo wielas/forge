@@ -669,6 +669,80 @@ though the code path was not pinned down). Useful here, because it is exactly
 what a hand-run worker needs. Worth knowing because the same mechanism would
 propagate a metered `ANTHROPIC_API_KEY` into every profile just as quietly.
 
+## The paired gateway (GW3, S8d)
+
+Read from Hermes 0.21.5 source at `~/.hermes/hermes-agent`; each line says whether `make verify` executes it
+(`gateway/`, under an isolated `HERMES_HOME`, never `~/.hermes`) or whether it is read and not run.
+
+**A verb typed while the agent is busy is not a command.** A plugin command sent mid-turn does not run: it
+interrupts the turn and reaches the model as plain text (`hermes_cli/commands.py:425-438`,
+`gateway/run_busy.py:767-788`, `gateway/run_turn.py:3895`). `pre_gateway_dispatch` is not called on that path
+(`run_busy.py:788`), so nothing in a plugin can veto or rewrite it before the model sees it. *Read, not
+run.* **The operator's rule is: send `/stop` first, then the verb as its own message.** With
+`display.busy_input_mode: interrupt` (the live value) the verb is the message that interrupts the turn, and it
+reaches the model as text; it never runs as a command. `checkpoint.sh`'s reply says so. A verb that did run answers
+on the chat with `refused:`, the script's outcome, or `outcome unknown:`, so no reply means it did not run as a command.
+
+**What stops that text becoming a board write is the toolset, and the guard is only a tripwire.** The
+plugin's `pre_tool_call` hook blocks `terminal`, `execute_code` and `process_manage` text that names
+`kanban` with a verb outside the read list (list, show, runs, log, tail, stats, context, `boards list`) or
+names the board file, every `kanban_*` tool but `kanban_show`, `kanban_list` and `kanban_attachments`, the file
+tools aimed at forge's state, the runtime, and Hermes' scripts, plugins, profiles, config, cron and board
+files, and `cronjob_manage` with a script. It only fires in a messaging session that is not a kanban worker
+(`HERMES_KANBAN_TASK` unset). It is a text match: `sqlite3` on a path built in pieces, `python -c` with a
+string assembled at run time, and a sub-process defeat it. **The only literal "never" is that the Telegram agent
+has no shell:** `hermes tools disable --platform telegram terminal code_execution` (owner decision 3,
+2026-11-09), which also removes `process_manage`, the other tool of the `terminal` toolset. *Executed:*
+`gateway/telegram-toolset-edit-removes-the-shell` runs that command on a copy of the live shape and asks
+Hermes' own resolver (`_get_platform_tools`, `resolve_toolset`) what is left; a grep of the YAML would pass
+`platform_toolsets.telegram: [hermes-telegram]`, which holds all three tools without naming one. The command
+also adds `known_builtin_toolsets` and `known_plugin_toolsets` keys to `config.yaml`: Hermes' own
+bookkeeping, not part of the edit.
+What is left after it, and is not closed: `computer_use` (it drives any app, a terminal included; dormant while
+`cua-driver` is absent, and `make preflight` WARNs if both hold), any MCP server that gives a shell, and a
+model that finds a route the file and cron checks do not name. `delegate_task` is not one: a child gets the
+parent's toolsets and never `cronjob_manage` or `kanban` (`tools/delegate_tool_toolsets.py`).
+
+**`registry.dispatch` does not look at a tool's `check_fn`.** A tool absent from the model's schema because its
+toolset is off can still run if something names it: `kanban_complete` on a gate, called through
+`model_tools.handle_function_call` in a process where no `kanban` toolset is enabled and `HERMES_KANBAN_TASK`
+is unset, completes it. *Executed* (`gateway/busy-text-never-writes-a-gate`, with the guard cut). That is why the
+guard names `kanban_*` although the Telegram toolset does not list `kanban`.
+
+**Plugin hooks fail closed; the dispatch machinery around them does not.** A `pre_tool_call` callback that raises
+or times out blocks the call (`plugins_dispatch.py:49`, `_policy_error_block_directive`). *Executed:* a plugin
+whose hook raises blocks even `echo ok` (`gateway/real-hermes-loads-the-plugin-and-routes-only-three-verbs`).
+So a raising guard blocks every tool, and the forge guard catches its own errors and blocks only the tools that
+could write a board. Config shell hooks fail open. An error in `_pre_dispatch_guards` itself, outside any
+callback, is logged at debug level and the call proceeds (`model_tools.py:784`). *Read, not run.*
+
+**A symlinked plugin directory loads.** `scan_directory` follows a symlink (`child.is_dir()`), and
+`hermes plugins enable forge-gateway` against an isolated `HERMES_HOME` whose `plugins/forge-gateway` is a
+symlink to the checkout registers the three commands and one hook. *Executed* (same case). A plugin is opt-in:
+linked and not enabled it registers nothing. Not exercised: a plugin enabled at the root while the gateway
+multiplexes profiles (`gateway.multiplex_profiles` is true live). The operator's write-nothing smoke test
+settles that.
+
+**What a plugin command handler sees.** `run_inbound.py:1060-1072` binds the session as `ContextVar`s around the
+call (`gateway/session_context.py`: platform `telegram`, chat type `dm`, `USER_ID` and `CHAT_ID` both the
+user's id in a direct message, `MESSAGE_ID`) and runs a sync handler on the gateway's pool with those variables
+copied, so `get_session_env` answers and `os.environ` does not hold them. The command name goes through
+`.replace("_", "-")` before the lookup, so a registered hyphenated name would be reached by its underscore form
+while `allow_admin_from` matches the typed name exactly; the three forge names are single words for that
+reason. An exception from a handler is logged and the text falls through to the agent, so a handler must never
+raise; a handler returning a string replies with it. *Executed* for the lookup (`registry`); *read* for the
+dispatch.
+
+**Hermes and forge disagree about `HERMES_KANBAN_HOME`.** Hermes' `kanban_home()` is the root, and a named board
+lives at `<root>/kanban/boards/<slug>/kanban.db`. Forge's scripts (`checkpoint.sh`, `metrics.sh`, `digest.sh`,
+`triage.sh`, and now `gate-reply.sh`) read `${HERMES_KANBAN_HOME:-$HERMES_HOME/kanban}/boards/<slug>/kanban.db`.
+They agree only while the variable is unset, which is the live state; the fixtures set it for the scripts and not
+for Hermes. P43 holds it.
+
+**`hermes cron --no-agent` runs a script, not an agent, and any non-zero exit is an alert.** The job's script must
+be a real file under `~/.hermes/scripts` (a symlink is refused, P22). `scripts/checkpoint-cron.sh` is silent
+until it has a decision to deliver, because its stdout is the message, and exits non-zero only for its own faults.
+
 ## Codex
 
 **There is no `--full-auto` in codex-cli 0.145.0.** The sandbox flag is

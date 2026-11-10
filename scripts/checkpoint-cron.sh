@@ -160,7 +160,11 @@ for armed in "$STATE"/armed/*; do
         "$board" "$gate" "$card" "$hold" "$(date +%s)" > "$STATE/pending/$key.json.tmp" \
         && mv -f "$STATE/pending/$key.json.tmp" "$STATE/pending/$key.json" \
         || { fault "cannot record the block for $gate"; continue; }
-      report_once "$key.block.$hold" "$run_out";;
+      # A block is said ONCE PER HOLD, whatever HEAD it was found at: the text names the commit, so a second
+      # probe of the same hold would otherwise read as a new message every time the product moves.
+      if [ ! -e "$STATE/reported/$key.block.$hold" ]; then
+        if : > "$STATE/reported/$key.block.$hold" 2>/dev/null; then say "$run_out"; else fault "cannot write $STATE/reported"; fi
+      fi;;
     2)
       report_once "$key.noverdict" "$run_out";;
     *)

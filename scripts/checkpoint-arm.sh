@@ -70,7 +70,7 @@ case "$CMD" in
     case "$PROJECT" in *[[:cntrl:]]*) die "the project path has control characters";; esac
     mkdir -p "$STATE/armed" "$STATE/pending" "$STATE/decided" "$STATE/probed" "$STATE/reported" || die "cannot create $STATE"
     # Fresh start: a report, a decision or a probe record belongs to the arming that made it.
-    rm -f "$STATE/pending/$KEY.json" "$STATE/decided/$KEY.json" "$STATE/reported/$KEY".* "$STATE/probed/$KEY".* 2>/dev/null
+    rm -f "$STATE/pending/$KEY.json" "$STATE/decided/$KEY.json" "$STATE/reported/$KEY".* "$STATE/probed/$KEY"--* 2>/dev/null
     TMP="$(mktemp "$STATE/armed/.tmp.XXXXXX")" || die "cannot write under $STATE/armed"
     printf 'mode=%s\nproject=%s\n' "$MODE" "$PROJECT" > "$TMP" && mv -f "$TMP" "$STATE/armed/$KEY" || { rm -f "$TMP"; die "cannot write the arming file"; }
     if [ "$MODE" = apply ]; then

@@ -557,6 +557,10 @@ failed probe or a cost overrun the gate blocks with a decision-first message
 and waits for `accept`, `redirect <text>` or `park`. Before run B, it runs once
 against M1's finished milestone, so run B does not introduce it untested.
 
+*S8d: the replies exist (GW3) and the checkpoint runs from `scripts/checkpoint-cron.sh`, a cron `--no-agent` job
+that looks only at an armed gate. On a pass with the gate armed `apply`, that job completes it (decision 6); with
+no arming file nothing runs.*
+
 **MS5. Triage and contract amendments have an owner.** Thirteen redglass
 `CARD?` items sit stranded in triage, and a verifier finding like CHUNK-8's
 "fix the contract, not the PR" has no path today. The overseer promotes,
@@ -678,6 +682,38 @@ the installed Hermes 0.21.5 at `~/.hermes/hermes-agent`, not executed.*
 Decision 13 puts these verbs in the plugin's handlers and `checkpoint.sh` in a cron
 `--no-agent` job; neither is a dispatched worker, so neither is fenced.
 S8d's row carries the corrected done-when.
+
+*S8d: met in source, not deployed. Owner decisions of 2026-11-09 applied: (1) three scripts with explicit
+`<board> <GATE-id>` arguments, (2) redirect and park write an audit comment and a host marker, and no automation
+acts on redirect text, (3) the guard AND the Telegram toolset loses `terminal` and `code_execution`, (4) `/accept`
+honours arming.* `hermes/plugins/forge-gateway/` registers `/accept`, `/redirect` and `/park` from a constant
+three-entry table. Each handler checks the sender itself (platform telegram, a direct message, user id and chat
+id both `FORGE_OPERATOR_TELEGRAM_ID` from `~/.hermes/.env`; an unset id, a `*` in `TELEGRAM_ALLOWED_USERS` or
+`GATEWAY_ALLOWED_USERS`, or an allow-all flag refuses everything), creates
+`<state>/gateway/ledger/<chat>-<message>.json` `O_EXCL` before the script runs so a replay returns the first
+reply and writes nothing, runs exactly one of `scripts/gate-accept.sh`, `gate-redirect.sh`, `gate-park.sh`
+through `~/.forge/repo` with `--board` (25 s, and a timeout kills the whole process group and says the outcome is
+unknown), and never raises. The scripts share `scripts/gate-reply.sh` and each makes one write: `accept` is
+`complete` with result `accepted: <why>` (never `checkpoint pass:`), and needs the gate `blocked`, a block the cron
+reported for the gate's CURRENT hold (the id of its last `blocked` event), and an arming file reading exactly
+`mode=apply`; `redirect` and `park` are `operator` comments (`redirect: …`, `parked: …`), `redirect` needing the
+reported block and any valid arming and `park` only a blocked gate. Each records its decision on the host and
+disarms the gate. A malformed arming file (a third line, CRLF, a symlink, a mis-spelt mode) reads as not armed.
+`scripts/checkpoint-cron.sh` is the cron `--no-agent` job (decision 13): it looks only at gates with an arming
+file (`scripts/checkpoint-arm.sh arm|disarm|list`; `apply` needs `--confirm-release`), is silent while a chunk is
+open, probes once per gate, hold and product HEAD, delivers a block once per hold and records it for the replies,
+and exits non-zero only for its own faults. **GATE-M1 is armed `apply` only at the owner's go for run B (S9);
+S8e arms it `rehearse`; the job is created `--paused`.** The plugin's `pre_tool_call` guard and the toolset edit
+are in `docs/hermes-field-notes.md` (*The paired gateway*): the guard is a tripwire, and the literal "never" is
+the Telegram agent holding no shell. `make preflight` section 14 asks Hermes' own resolver and FAILs once the
+plugin is enabled while a shell remains. **Decisions taken in-slice, beyond the brief:** a guard also covering the
+file tools aimed at forge state, scripts, plugins, config and board files, and `cronjob_manage` with a script,
+because with the shell gone they are what remains; `park` asks only that the gate is blocked, since the stopping
+verb must not be refusable for lack of arming; `apply` arming needs `--confirm-release`; a block is delivered once
+per hold, not once per text, because the text names the commit. **Not built / not proven:** a plugin enabled at the
+root answering in a multiplexed turn, and the live smoke test, are the operator's (field notes); `computer_use`
+and MCP servers that give a shell are a residual route, WARNed by the preflight when `computer_use` is both
+enabled and installed. Cases: `gateway/*`.
 
 **GW4. A coloured, live dependency graph.** `forge graph <project>` renders
 `docs/chunks/graph.json` with live board status: colour by status, outline by
@@ -2289,6 +2325,16 @@ cron `--no-agent` script and the GW3 verbs from S8d's gateway plugin. Neither is
 the fence does not apply to either (the reasons and the source paths are in decision 13). The overseer
 LLM proposes and never writes the board. The envelope pattern stays only for a worker's own card
 transition. The wiring lands in S8d, before S9 puts the overseer on the live path.
+
+**P43 (S8d). Hermes and forge read `HERMES_KANBAN_HOME` differently.** Hermes' `kanban_home()` is the root
+(`kanban_db.py:399-407`), and a named board is `<root>/kanban/boards/<slug>/kanban.db`. Forge's `checkpoint.sh`,
+`metrics.sh`, `digest.sh`, `triage.sh`, `commission.sh`, `metadata-live.sh` and now `gate-reply.sh` read
+`${HERMES_KANBAN_HOME:-$HERMES_HOME/kanban}/boards/<slug>/kanban.db`, one level up. The two agree only while the
+variable is unset, which is the live state (`~/.hermes/.env` does not set it). Every fixture that sets it sets it
+for forge's scripts and not for Hermes, so `make verify` cannot see the difference. If a host ever exports it,
+every forge script reads a board Hermes does not write. Not fixed here: it touches seven scripts and their
+fixtures, and nothing is exposed while it is unset. Evidence: the two lines above, read, and
+`gateway/*` building its worlds without the variable.
 
 ## Open questions
 

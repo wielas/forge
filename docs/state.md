@@ -484,10 +484,18 @@ through it.
   it; the failure mode until then is a silent loss of write access mid-run.
 - **The flywheel.** `/retro` has never executed. `retro-metrics.md` has several
   rows, all written by hand after runs rather than by the ceremony.
-- **The Telegram approval flow.** Still unproven. A source read on 2026-11-06
-  (not executed) corrected its premise: the pairing gate is
-  `TELEGRAM_ALLOWED_USERS`, not `telegram.allowed_chats`, which filters group
-  chats only. See GW3 and row S8d in `docs/epic-hands-free.md`.
+- **The Telegram approval flow.** Built in source by S8d, **not deployed and not
+  proven live.** A source read on 2026-11-06 corrected its premise: the pairing
+  gate is `TELEGRAM_ALLOWED_USERS`, not `telegram.allowed_chats`, which filters
+  group chats only. S8d's forge-gateway plugin (`/accept`, `/redirect`, `/park`) and the
+  `gateway/` cases prove the handlers, the scripts and the guard offline, and prove
+  with the real Hermes under an isolated home that the plugin loads through a
+  symlink and that a busy-path verb cannot become a board write. Unproven until
+  the operator's steps and smoke test: a root-enabled plugin answering in a
+  multiplexed turn, and a real Telegram message reaching a handler. The literal
+  "never" needs `hermes tools disable --platform telegram terminal code_execution`
+  on the host (`make preflight` section 14 says whether it was done). See GW3 and
+  row S8d in `docs/epic-hands-free.md`.
 - **Provider terms for automated subscription use** — settled for what *works*
   (ADR-0004), never for what is *permitted*.
 

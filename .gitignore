@@ -20,3 +20,7 @@ preflight.md
 # Same rule the staged run guide puts on every product: run evidence is real, and
 # it does not belong in the methodology repo.
 .forge/
+
+# Python bytecode: the plugin is imported from the checkout by the gateway, by the cases and by hand.
+__pycache__/
+*.pyc
