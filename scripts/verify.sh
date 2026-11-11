@@ -16345,9 +16345,9 @@ other-user|telegram|dm|999|424242|424242|forge-gate|||np
 other-chat|telegram|dm|424242|999|424242|forge-gate|||np
 group|telegram|group|424242|424242|424242|forge-gate|||np
 non-telegram|discord|dm|424242|424242|424242|forge-gate|||np
-no-session|||||424242|||||np
+no-session|||||424242||||np
 operator-unset|telegram|dm|424242|424242||forge-gate|||np
-operator-unset-and-no-user|telegram|dm|||||forge-gate|||np
+operator-unset-and-no-user|telegram|dm||||forge-gate|||np
 operator-malformed|telegram|dm|abc|abc|abc|forge-gate|||np
 star-allowlist|telegram|dm|424242|424242|424242|forge-gate|TELEGRAM_ALLOWED_USERS=424242,*||np
 star-gateway-allowlist|telegram|dm|424242|424242|424242|forge-gate|GATEWAY_ALLOWED_USERS=*||np
@@ -16987,7 +16987,7 @@ GW_ROUTES
   _gw_caught _gw_c_routes plugin relative-paths-are-trusted __init__.py '        if resolved is None:
             return "unplaced"' '        if resolved is None:
             resolved = os.path.abspath(path)' 'relative-' || mnot="$mnot relative-paths-are-trusted"
-  _gw_caught _gw_c_routes plugin prefix-match-is-loose __init__.py 'candidate.startswith(root.rstrip(os.sep) + os.sep)' 'candidate.startswith(root.rstrip(os.sep))' || mnot="$mnot prefix-match-is-loose"
+  _gw_caught _gw_c_routes plugin prefix-match-is-loose __init__.py 'folded.startswith(root.rstrip(os.sep) + os.sep)' 'folded.startswith(root.rstrip(os.sep))' || mnot="$mnot prefix-match-is-loose"
   if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-covers-the-other-routes (file tools aimed at forge's state root, the runtime (through its symlink and by its real path), Hermes' scripts, plugins, profiles, config, cron and board files, a patch that names one, and cronjob_manage with a script are blocked; ordinary paths, a lookalike directory, reads and a plain cron job pass; five mutants caught)"
   else bad "guard-covers-the-other-routes" "with a shell gone, the file tools and cron are the remaining routes to a board write:${gwd}; mutants not caught:${mnot:- none}"; fi
 
@@ -17911,6 +17911,8 @@ gr_cleanup() {' || mnot="$mnot a-second-bare-call"
     mkdir -p "$PFH/.hermes/plugins"; ln -s "$plug" "$PFH/.hermes/plugins/forge-gateway"
     printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$PFH/.hermes/config.yaml"
     printf 'TELEGRAM_BOT_TOKEN=main-token-0002\nFORGE_OPERATOR_TELEGRAM_ID=424242\n' > "$PFH/.hermes/.env"
+    mkdir -p "$PFH/.hermes/scripts"
+    printf '#!/usr/bin/env bash\nexec bash "$HOME/.forge/repo/scripts/checkpoint-cron.sh" "$@"\n' > "$PFH/.hermes/scripts/forge-checkpoint.sh"
   }
   _gw_pf_run() { # PFH -> pfout: preflight section 14 as that host reads it
     local pf="${GW_REPO:-$REPO_ROOT}/scripts/preflight.sh" sec="$root/pf-section.sh"

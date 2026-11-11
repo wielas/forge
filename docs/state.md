@@ -484,18 +484,15 @@ through it.
   it; the failure mode until then is a silent loss of write access mid-run.
 - **The flywheel.** `/retro` has never executed. `retro-metrics.md` has several
   rows, all written by hand after runs rather than by the ceremony.
-- **The Telegram approval flow.** Built in source by S8d, **not deployed and not
-  proven live.** A source read on 2026-11-06 corrected its premise: the pairing
-  gate is `TELEGRAM_ALLOWED_USERS`, not `telegram.allowed_chats`, which filters
-  group chats only. S8d's forge-gateway plugin (`/accept`, `/redirect`, `/park`) and the
-  `gateway/` cases prove the handlers, the scripts and the guard offline, and prove
-  with the real Hermes under an isolated home that the plugin loads through a
-  symlink and that a busy-path verb cannot become a board write. Unproven until
-  the operator's steps and smoke test: a root-enabled plugin answering in a
-  multiplexed turn, and a real Telegram message reaching a handler. The literal
-  "never" needs `hermes tools disable --platform telegram terminal code_execution cronjob`
-  on the host (`make preflight` section 14 says whether it was done). See GW3 and
-  row S8d in `docs/epic-hands-free.md`.
+- **The Telegram approval flow.** Built in source by S8d, **not deployed and not proven live.** A source read on 2026-11-06
+  corrected its premise: the pairing gate is `TELEGRAM_ALLOWED_USERS`, not `telegram.allowed_chats`, which filters group chats
+  only. Owner decision 14 (2026-11-11) made the gateway a DEDICATED Telegram bot bound to a new profile, `forge-gate`, whose
+  toolset is empty; the owner's main Telegram agent keeps its tools. The `gateway/` cases prove offline the handlers, the scripts,
+  the guard, the profile the bootstrap writes (resolved by Hermes' own resolver to no tools) and that the plugin is per
+  profile. Unproven until the operator creates the bot and runs the smoke test: that the multiplexed gateway enters the
+  forge-gate scope for a message to its bot, an agent turn with an empty toolset, and a real Telegram message reaching a handler.
+  The arming file is an operator switch, not a security boundary: any agent running as the owner can write it. See GW3,
+  decision 14 and row S8d in `docs/epic-hands-free.md`.
 - **Provider terms for automated subscription use** — settled for what *works*
   (ADR-0004), never for what is *permitted*.
 
