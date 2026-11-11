@@ -731,8 +731,8 @@ toolset. **Decisions taken in-slice, beyond the brief:** the guard also covers t
 plugins, config and board files, with the case-insensitive comparison APFS needs, a relative path placed by Hermes' own
 resolver and a V4A patch read with Hermes' own parser (refused when it cannot be read), and `cronjob_manage` with a script;
 the main bot's `cronjob` and file tools are otherwise left alone (decision 14), so the guard there blocks `write_file` or
-`patch` into forge state, `~/.hermes/{scripts,plugins,profiles,kanban,cron,config.yaml}` and the runtime, which the owner may
-veto; `park` asks only that the gate is blocked; `apply` arming needs `--confirm-release`; a block is delivered once per
+`patch` into forge state, `~/.hermes/{scripts,plugins,profiles,kanban,cron,config.yaml}` and the runtime, and board writes
+through its terminal, which the owner may veto with `FORGE_GATEWAY_MAIN_GUARD=off` in `~/.hermes/.env` (it never spares forge-gate); `park` asks only that the gate is blocked; `apply` arming needs `--confirm-release`; a block is delivered once per
 hold. **Not built / not proven, and read from source rather than executed:** that the multiplexed gateway enters the
 forge-gate scope for a message to its bot (`gateway/run_adapters.py` 1062-1126, 1499-1509; field notes), an agent turn with an
 empty toolset, and `unauthorized_dm_behavior: ignore` (`run_inbound.py` 240); the operator's smoke test settles them.

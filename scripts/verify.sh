@@ -17093,10 +17093,28 @@ main-memory|memory|{"action":"add","content":"x"}|pass
 main-complete|terminal|{"command":"hermes kanban complete t_1"}|block
 GW_MAIN
     _gw_run_table "$CHAT_SESSION" '{}' 0 "$m"
+    # The main agent's tripwire is the owner's to switch off; the gate profile is not theirs to switch off by that route.
+    local off="$root/guard-off.tbl"
+    cat > "$off" <<'GW_OFF'
+off-complete|terminal|{"command":"hermes kanban complete t_1"}|pass
+off-forge-state|write_file|{"path":"/etc/hosts-not-forge","content":"x"}|pass
+GW_OFF
+    _gw_run_table "$CHAT_SESSION" '{"FORGE_GATEWAY_MAIN_GUARD":"off"}' 0 "$off"
+    _gw_run_table "$GATE_SESSION" '{"FORGE_GATEWAY_MAIN_GUARD":"off"}' 0 "$t"
   }
   gwd=""; _gw_c_gateguard
   mnot=""
   _gw_caught _gw_c_gateguard plugin gate-is-ordinary __init__.py '        if _is_gate_session():' '        if False:' 'echo-was' || mnot="$mnot gate-is-ordinary"
+  _gw_caught _gw_c_gateguard plugin the-switch-is-ignored __init__.py '        if os.environ.get("FORGE_GATEWAY_MAIN_GUARD", "").strip().lower() in ("off", "0", "false", "no"):
+            return None' '        if False:
+            return None' 'off-complete-was' || mnot="$mnot the-switch-is-ignored"
+  _gw_caught _gw_c_gateguard plugin the-switch-spares-the-gate __init__.py '        if _is_gate_session():
+            return _decide_gate(tool_name)
+        # The owner' '        if os.environ.get("FORGE_GATEWAY_MAIN_GUARD", "").strip().lower() in ("off", "0", "false", "no"):
+            return None
+        if _is_gate_session():
+            return _decide_gate(tool_name)
+        # The owner' 'echo-was' || mnot="$mnot the-switch-spares-the-gate"
   _gw_caught _gw_c_gateguard plugin the-allowlist-grows __init__.py '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS)' '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS | {"web_search"})' 'search-was' || mnot="$mnot the-allowlist-grows"
   _gw_caught _gw_c_gateguard plugin a-denylist-instead __init__.py 'return None if (tool_name or "").lower() in _GATE_READONLY else {"action": "block", "message": GATE_BLOCK_MESSAGE}' 'return {"action": "block", "message": GATE_BLOCK_MESSAGE} if (tool_name or "").lower() in _TEXT_TOOLS else None' 'unknown-was' || mnot="$mnot a-denylist-instead"
   _gw_caught _gw_c_gateguard plugin a-worker-env-spares-the-gate __init__.py '        if _is_gate_session():
@@ -17106,7 +17124,7 @@ GW_MAIN
         if _is_gate_session():
             return _decide_gate(tool_name)
         if not _applies():' 'echo-was' || mnot="$mnot a-worker-env-spares-the-gate"
-  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-forge-gate-blocks-everything (on a forge-gate turn every tool call is refused (the shell, code, process, files, patch, search, memory, todo, skills, delegation, browser, cron even to list, messaging, speech, images, desktop, an MCP tool and a tool nobody has heard of) except a board read; a worker's environment or a CLI surface does not spare it; the main bot's calls are left to the tripwire; four mutants caught)"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-forge-gate-blocks-everything (on a forge-gate turn every tool call is refused (the shell, code, process, files, patch, search, memory, todo, skills, delegation, browser, cron even to list, messaging, speech, images, desktop, an MCP tool and a tool nobody has heard of) except a board read; a worker's environment or a CLI surface does not spare it; the main bot's calls are left to the tripwire, which its owner may switch off with FORGE_GATEWAY_MAIN_GUARD=off and which never spares the gate; six mutants caught)"
   else bad "guard-forge-gate-blocks-everything" "forge-gate has an empty toolset and the guard is the second wall:${gwd}; mutants not caught:${mnot:- none}"; fi
 
   # ======================================================================
