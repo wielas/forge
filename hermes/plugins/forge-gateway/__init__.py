@@ -1,6 +1,8 @@
 """forge-gateway: Forge's paired gateway (epic GW3, S8d).
 
-Two things, and nothing else.
+THE GATEWAY IS A DEDICATED BOT. Owner ruling, 2026-11-11: the gate verbs are typed to a Telegram bot of their own, bound to
+the Hermes profile `forge-gate`, whose toolset is EMPTY. The owner's main Telegram agent keeps its tools. This plugin does
+two things, and the first only answers on that profile.
 
 1. THREE SLASH COMMANDS, `/accept`, `/redirect` and `/park`, each a handler that calls exactly one
    allowlisted forge script with `--board` (scripts/gate-accept.sh, gate-redirect.sh, gate-park.sh,
@@ -11,8 +13,12 @@ Two things, and nothing else.
 
    THE SENDER. The platform must be telegram, the chat a direct message, and the user id and the chat id
    both exactly `FORGE_OPERATOR_TELEGRAM_ID` (set in ~/.hermes/.env; unset refuses everything). A gateway
-   that is open to everyone (`*` in an allowlist, or an allow-all flag) refuses too: the paired chat is the
-   only way in and an open door beside it voids the pairing.
+   that is open to everyone (`*` in an allowlist, or an allow-all flag, in the profile's own scope or the process's)
+   refuses too: the paired chat is the only way in and an open door beside it voids the pairing.
+   THE PROFILE. The session's profile (HERMES_SESSION_PROFILE) must be `forge-gate`. The paired operator who sends a verb
+   to any other bot is answered `refused: send gate verbs to the forge-gate bot` and nothing runs. The plugin is
+   enabled in the forge-gate profile (where it answers) and in the root profile (where it only refuses, so that a
+   verb typed to the main bot never reaches a model that has a shell).
 
    THE LEDGER. `<state root>/gateway/ledger/<chat>-<message>.json` is created O_EXCL after the sender and the
    syntax are checked and BEFORE the script runs. A second delivery of the same message finds it, writes
@@ -20,20 +26,18 @@ Two things, and nothing else.
    verb again as a NEW message. pre_gateway_dispatch cannot hold this check: it is not called on the busy
    path (docs/hermes-field-notes.md).
 
-2. A `pre_tool_call` GUARD for chat turns. A verb typed while the agent is busy does not run: it
-   interrupts the turn and reaches the model as text. The model then has to be unable to turn that text
-   into a board write. The guard refuses, in a messaging session that is not a kanban worker, the tool
-   calls that could write a board: `terminal`, `execute_code` and `process_manage` text that names
-   `kanban` with a verb outside a read list or names the board file, every `kanban_*` tool but the
-   readers, the file tools aimed at forge's own state, scripts, plugins, config or board directories (a relative
-   path is placed the way Hermes places it, or refused), and every `cronjob_manage` call but a listing. A plugin hook fails CLOSED when it raises or times out, so the guard
-   catches everything itself and, on an internal error, blocks exactly those tools and passes the rest.
-   IT IS A TRIPWIRE, not a sandbox: `sqlite3`, `python -c` with a built-up string, a backslash-newline splitting
-   the word `kanban`, and a sub-process bypass a text match. What takes those routes away is the toolset: the
-   Telegram agent holds no `terminal`, `code_execution` or `cronjob` (a chat-made cron job can run a prompt
-   with the shell toolset): `hermes tools disable --platform telegram terminal code_execution cronjob`;
-   preflight section 14 and `gateway/` assert it. Two things are outside it and are the operator's own acts:
-   the gateway's built-in `/kanban ...` slash command (hermes_cli/commands.py), and `computer_use`.
+2. A `pre_tool_call` GUARD. On a forge-gate turn it refuses EVERY tool call but a board read, a second wall behind the empty
+   toolset. On any other messaging session that is not a kanban worker it is defence in depth, and only a tripwire: it
+   refuses the tool calls that could write a board: `terminal`, `execute_code` and `process_manage` text that names
+   `kanban` with a verb outside a read list or names the board file, every `kanban_*` tool but the readers, the file tools
+   aimed at forge's own state, scripts, plugins, config or board directories (a relative path is placed the way Hermes
+   places it, a patch is read with Hermes' own V4A parser, paths are compared case-insensitively, and a path that cannot
+   be placed or a patch that cannot be read is refused), and `cronjob_manage` with a script. A plugin hook fails CLOSED
+   when it raises or times out, so the guard catches everything itself and, on an internal error, blocks exactly those
+   tools and passes the rest. `sqlite3`, `python -c` with a built-up string, a backslash-newline splitting the word
+   `kanban`, and a sub-process bypass the text match; the main agent also has the gateway's built-in `/kanban ...` command.
+   THE ARMING FILE IS AN OPERATOR SWITCH, NOT A SECURITY BOUNDARY: any agent running as the owner with a shell or file tool
+   can write it. What stops a chat message from releasing a gate is that the only bot that answers the verbs has no tools.
 """
 
 from __future__ import annotations
@@ -51,6 +55,11 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger("forge_gateway")
 
 LEDGER_SCHEMA = "forge.gateway-ledger.v1"
+
+# THE PAIRED GATEWAY IS A DEDICATED BOT, bound to the profile `forge-gate` (owner ruling, 2026-11-11). The owner's main
+# Telegram agent keeps its tools; the gate verbs run only on this profile's bot, whose toolset is empty.
+GATE_PROFILE = "forge-gate"
+WRONG_BOT_REPLY = "refused: send gate verbs to the forge-gate bot"
 
 # THE ALLOWLIST. A constant of three entries; nothing below builds a script name from the typed text.
 VERB_SCRIPTS: Dict[str, str] = {
@@ -122,24 +131,49 @@ def _forge_repo() -> str:
 # ---------------------------------------------------------------------------
 # The sender
 # ---------------------------------------------------------------------------
+def _scoped_env(name: str) -> str:
+    """The value of a gate variable in the ACTIVE PROFILE's secret scope: under a multiplexed gateway a profile's own
+    `.env` is not in os.environ (gateway/platforms/_shared.py platform_gate_env). Without Hermes (CI), os.environ.
+    With Hermes present but the accessor gone, it raises, so the caller refuses: a gate variable that cannot be read
+    is not "unset"."""
+    try:
+        import gateway.session_context  # noqa: F401 - are we inside Hermes at all?
+    except Exception:
+        return os.environ.get(name, "")
+    from gateway.platforms._shared import platform_gate_env
+    return platform_gate_env(name)
+
+
 def _allow_all_problem() -> Optional[str]:
+    """An open door beside the pairing voids it. Both views are read, the profile's scope and the process: a `*` in
+    either is a problem."""
     for key in ("TELEGRAM_ALLOWED_USERS", "GATEWAY_ALLOWED_USERS"):
-        items = [x for x in re.split(r"[\s,]+", os.environ.get(key, "")) if x]
-        if "*" in items:
-            return f"{key} holds *"
+        for value in (_scoped_env(key), os.environ.get(key, "")):
+            if "*" in [x for x in re.split(r"[\s,]+", value) if x]:
+                return f"{key} holds *"
     for key in ("TELEGRAM_ALLOW_ALL_USERS", "GATEWAY_ALLOW_ALL_USERS"):
-        if os.environ.get(key, "").strip().lower() in _TRUTHY:
-            return f"{key} is on"
+        for value in (_scoped_env(key), os.environ.get(key, "")):
+            if value.strip().lower() in _TRUTHY:
+                return f"{key} is on"
     return None
 
 
+def _session_profile() -> str:
+    """The profile the session belongs to: HERMES_SESSION_PROFILE, which the gateway binds from `source.profile`
+    (run.py `_set_session_env`), which `build_source` stamps with the profile that owns the receiving bot
+    (gateway/platforms/base.py build_source, `set_owner_profile` from run_adapters.py `_configure_profile_adapter`).
+    Empty for the default profile's own bot."""
+    return _session_env("HERMES_SESSION_PROFILE").strip().lower()
+
+
 def _sender_problem() -> Optional[str]:
-    """None when the message comes from the paired chat; otherwise a short reason for the log."""
+    """None when the message comes from the paired chat; otherwise a short reason for the log. (The profile is judged
+    separately, so that the paired operator who types a verb to the WRONG bot is told where to send it.)"""
     if _session_env("HERMES_SESSION_PLATFORM").strip().lower() != "telegram":
         return "not a telegram session"
     if _session_env("HERMES_SESSION_CHAT_TYPE").strip().lower() != "dm":
         return "not a direct message"
-    operator = os.environ.get("FORGE_OPERATOR_TELEGRAM_ID", "").strip()
+    operator = (os.environ.get("FORGE_OPERATOR_TELEGRAM_ID", "") or _scoped_env("FORGE_OPERATOR_TELEGRAM_ID")).strip()
     if not _USER_ID_RE.match(operator):
         return "FORGE_OPERATOR_TELEGRAM_ID is unset or malformed"
     user = _session_env("HERMES_SESSION_USER_ID").strip()
@@ -240,6 +274,9 @@ def _handle_inner(verb: str, raw_args: str, state: Dict[str, bool]) -> str:
     if problem is not None:
         logger.warning("forge-gateway: /%s refused: %s", verb, problem)
         return "refused: this chat is not paired for gate commands."
+    if _session_profile() != GATE_PROFILE:
+        logger.warning("forge-gateway: /%s refused: profile %r is not %s", verb, _session_profile(), GATE_PROFILE)
+        return WRONG_BOT_REPLY
     chat_id = _session_env("HERMES_SESSION_CHAT_ID").strip()
     message_id = _session_env("HERMES_SESSION_MESSAGE_ID").strip()
     if not _CHAT_ID_RE.match(chat_id) or not _MESSAGE_ID_RE.match(message_id):
@@ -317,11 +354,23 @@ _BOARDS_READ = frozenset({"list", "ls"})
 _KANBAN_READ_TOOLS = frozenset({"kanban_show", "kanban_list", "kanban_attachments"})
 _TEXT_TOOLS = frozenset({"terminal", "execute_code", "process_manage"})
 _FILE_TOOLS = frozenset({"write_file", "patch"})
+# On a forge-gate turn the toolset is empty, so no tool call should exist at all; the guard is the second wall. The
+# only calls that pass are board READS, which change nothing (an assertion in `gateway/` holds the list to that).
+_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS)
 BLOCK_MESSAGE = ("forge-gateway: refused. A board write cannot be made from a chat turn. To act on a gate, "
-                 "send /accept, /redirect or /park as its own message from the paired chat; if the bot is "
+                 "send /accept, /redirect or /park as its own message to the forge-gate bot; if the bot is "
                  "busy, send /stop first.")
 RELATIVE_PATH_MESSAGE = ("forge-gateway: refused. That relative path could not be placed, and a write under forge's "
                          "state, scripts, plugins, config or boards is not made from a chat turn. Use an absolute path.")
+PATCH_MESSAGE = ("forge-gateway: refused. That patch could not be read with Hermes' own patch parser, so the files it "
+                 "names could not be checked.")
+GATE_BLOCK_MESSAGE = ("forge-gate: refused. This bot has no tools. It explains /accept, /redirect and /park and "
+                      "does nothing else; send a verb as its own message.")
+
+
+def _is_gate_session() -> bool:
+    """A turn of the forge-gate profile: every tool call but a board read is refused."""
+    return _session_profile() == GATE_PROFILE
 
 
 def _applies() -> bool:
@@ -402,8 +451,18 @@ def _resolve_relative(path: str, task_id: str) -> Optional[str]:
         return None
 
 
+def _fold(path: str) -> str:
+    """Case-fold for comparison (see _path_verdict)."""
+    return path.casefold()
+
+
 def _path_verdict(path: str, task_id: str = "") -> Optional[str]:
-    """'protected', 'unplaced' (a relative path Hermes cannot place, refused), or None."""
+    """'protected', 'unplaced' (a relative path Hermes cannot place, refused), or None.
+
+    Compared CASE-INSENSITIVELY, on every platform: APFS (the mini's) is case-insensitive, so `~/.FORGE/checkpoint` IS
+    `~/.forge/checkpoint` there, and a comparison that is not folded is a hole on exactly one OS. Folding on all of
+    them makes it testable on Linux CI too, at the price of refusing a path that differs from a protected one only in
+    case on a case-sensitive disk."""
     expanded = os.path.expanduser(path)
     if os.path.isabs(expanded):
         candidates = [os.path.abspath(expanded), os.path.realpath(expanded)]
@@ -412,14 +471,32 @@ def _path_verdict(path: str, task_id: str = "") -> Optional[str]:
         if resolved is None:
             return "unplaced"
         candidates = [os.path.abspath(resolved), os.path.realpath(resolved)]
+    roots = [_fold(r) for r in _protected_roots()]
     for candidate in candidates:
-        for root in _protected_roots():
-            if candidate == root or candidate.startswith(root.rstrip(os.sep) + os.sep):
+        folded = _fold(candidate)
+        for root in roots:
+            if folded == root or folded.startswith(root.rstrip(os.sep) + os.sep):
                 return "protected"
     return None
 
 
-_PATCH_FILE_RE = re.compile(r"^\*\*\*\s+(?:Update|Add|Delete|Move to)\s+File:\s*(.+?)\s*$", re.M)
+def _patch_paths(text: str) -> Optional[List[str]]:
+    """Every file a V4A patch names, as HERMES's own parser reads it (tools/patch_parser.py: `***` markers with or
+    without a space, and `*** Move File: a -> b`, which names two). None when the parser cannot be imported or the
+    patch does not parse: a patch that cannot be read cannot be checked, so the caller refuses it."""
+    try:
+        from tools.patch_parser import parse_v4a_patch
+        operations, error = parse_v4a_patch(text)
+    except Exception:
+        return None
+    if error:
+        return None
+    paths: List[str] = []
+    for op in operations:
+        paths.append(op.file_path)
+        if getattr(op, "new_path", None):
+            paths.append(op.new_path)
+    return paths
 
 
 def _file_tool_verdict(args: Dict[str, Any], task_id: str = "") -> Optional[str]:
@@ -428,11 +505,16 @@ def _file_tool_verdict(args: Dict[str, Any], task_id: str = "") -> Optional[str]
         v = args.get(key)
         if isinstance(v, str) and v:
             paths.append(v)
+    verdicts: List[Optional[str]] = []
     patch = args.get("patch")
-    if isinstance(patch, str):
-        paths += _PATCH_FILE_RE.findall(patch)
-    verdicts = [_path_verdict(p, task_id) for p in paths]
-    for want in ("protected", "unplaced"):
+    if isinstance(patch, str) and patch.strip():
+        named = _patch_paths(patch)
+        if named is None:
+            verdicts.append("unparsed")
+        else:
+            paths += named
+    verdicts += [_path_verdict(p, task_id) for p in paths]
+    for want in ("protected", "unparsed", "unplaced"):
         if want in verdicts:
             return want
     return None
@@ -452,14 +534,21 @@ def _decide(tool_name: str, args: Any, task_id: str = "") -> Optional[Dict[str, 
         verdict = _file_tool_verdict(args, task_id)
         if verdict == "protected":
             return block
+        if verdict == "unparsed":
+            return {"action": "block", "message": PATCH_MESSAGE}
         if verdict == "unplaced":
             return {"action": "block", "message": RELATIVE_PATH_MESSAGE}
         return None
     if name == "cronjob_manage":
-        # Any cron job a chat turn creates or changes can run a prompt with the shell toolset, or a script, so only a
-        # listing passes. (Listing is a read.)
-        return None if str(args.get("action", "")).strip().lower() == "list" else block
+        # A cron job that runs a SCRIPT is a direct, non-agent way to run a command. (The owner's main agent keeps its
+        # `cronjob` tool, owner ruling 2026-11-11: a prompt job passes here. The forge-gate profile has no tools.)
+        return block if (args.get("script") or args.get("monitor_script")) else None
     return None
+
+
+def _decide_gate(tool_name: str) -> Optional[Dict[str, str]]:
+    """forge-gate: nothing but a board read. An unknown tool, a future tool and an MCP tool are all refused by default."""
+    return None if (tool_name or "").lower() in _GATE_READONLY else {"action": "block", "message": GATE_BLOCK_MESSAGE}
 
 
 def _could_write_a_board(tool_name: str) -> bool:
@@ -469,8 +558,10 @@ def _could_write_a_board(tool_name: str) -> bool:
 
 def _guard(tool_name: str = "", args: Any = None, task_id: str = "", **_: Any) -> Optional[Dict[str, str]]:
     """Never raises: a hook that raises blocks EVERY tool. On an internal error it blocks the tools that
-    could write a board and passes the rest."""
+    could write a board and passes the rest (and, on a forge-gate turn, blocks all of them)."""
     try:
+        if _is_gate_session():
+            return _decide_gate(tool_name)
         if not _applies():
             return None
         return _decide(tool_name, args, task_id)

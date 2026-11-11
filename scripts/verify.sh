@@ -3241,8 +3241,11 @@ gateway/guard-covers-the-other-routes     file tools aimed at forge state, the r
 gateway/guard-never-raises-or-blocks-the-innocent  an internal failure in the guard returns a decision, blocks the tools that could write a board and passes search, read, memory and todo
 gateway/real-hermes-loads-the-plugin-and-routes-only-three-verbs  an isolated HERMES_HOME, the plugin symlinked in and enabled with hermes plugins enable: the gateway's own lookup finds three commands and no other; a raising hook blocks every tool
 gateway/busy-text-never-writes-a-gate    through the real handle_function_call with the session bound as a ContextVar: ten board-writing calls are refused by the guard, the stub is never called and a real board is byte-identical (GW3 done-when)
-gateway/telegram-toolset-edit-removes-the-shell  hermes tools disable --platform telegram terminal code_execution takes terminal, process_manage and execute_code away, as Hermes resolves it, and nothing else
-gateway/deployed-telegram-toolset-has-no-shell  the live platform_toolsets.telegram resolves to no shell; pending (a skip) until the plugin is enabled, a failure after (decision 3, 2026-11-09)
+gateway/forge-gate-profile-has-no-tools  the real bootstrap into a scratch root and Hermes' own resolver: forge-gate has an explicit EMPTY Telegram toolset, no MCP server, the plugin linked and enabled, strangers ignored, its SOUL installed and no secret written; the default bundle, the bundle form, one tool and an MCP server are each seen
+gateway/deployed-forge-gate-has-no-tools  the live forge-gate profile has no tools and the verbs are on it alone; pending (a skip) until the profile exists and the plugin is not enabled, a failure if the plugin is live before forge-gate is
+gateway/guard-forge-gate-blocks-everything  on a forge-gate turn every tool call but a board read is refused, whatever the tool, the environment or the surface; the main bot is left to the tripwire
+gateway/forge-gate-soul-says-what-the-plugin-does  the SOUL teaches each verb's syntax exactly as the plugin states it, says it has no tools and never acts, teaches /stop first, names no tool or program, and describes the answers and /accept truthfully (ADR-0003)
+gateway/park-and-redirect-disarm-before-they-write  the gate is already disarmed and decided at the moment the comment is written, so a still-armed check cannot pass in between; a refused comment leaves it disarmed and says so
 gateway/unarmed-gate-never-completes      the cron completes nothing unarmed, nothing armed rehearse, exactly one armed apply (which needs --confirm-release); a malformed arming is no arming (decision 4)
 gateway/cron-silent-and-exit-0            a block is delivered once and recorded for its hold; repeat ticks, an unfinished milestone and a gate that is not held are silent; a dirty or non-main checkout is said once; only the job's own fault is non-zero
 gateway/arming-is-explicit                checkpoint-arm.sh needs a mode, a --confirm-release for apply and an absolute project; arming clears an earlier hold's records; a malformed file lists as not armed
@@ -3250,7 +3253,7 @@ gateway/every-hermes-kanban-call-carries-board  no hermes kanban call in the gat
 gateway/state-root-agrees-with-forge-state  the plugin's ledger root and forge-state.sh's forge_state_root are one path
 gateway/gate-scripts-run-under-the-minis-bash  no bash-4 idiom in the gate, arming, cron or checkpoint scripts, each parses under /bin/bash, and /park and /redirect with an apostrophe or any shell, SQL or option character complete under it (CI's bash 5 hides this)
 gateway/a-decision-during-the-probe-wins  a probe that removes the arming file or records a decision while it runs: the gate is not completed and the cron is silent; checkpoint.sh --before-complete is the last look
-gateway/preflight-asks-the-gateway        preflight section 14 resolves the scripts through ~/.forge/repo, runs their --check, asks Hermes about the Telegram toolset, lists what is armed and WARNs on GATE-M1 armed apply
+gateway/preflight-asks-the-gateway        preflight section 14, executed against scratch hosts: nothing deployed warns, the plugin live before forge-gate exists / a tool / the default bundle / an MCP server / pairing codes / a shared token / another bot with the verbs fail, a good deploy is clean
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -16135,7 +16138,7 @@ run_gateway_group() {
   local hdrive="$REPO_ROOT/scripts/fixtures/gateway-hermes-drive.py"
   local fixsql="$REPO_ROOT/scripts/fixtures/checkpoint-board.sql"
   local hpy="$HOME/.hermes/hermes-agent/venv/bin/python"
-  local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate telegram-toolset-edit-removes-the-shell deployed-telegram-toolset-has-no-shell unarmed-gate-never-completes cron-silent-and-exit-0 arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
+  local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent guard-forge-gate-blocks-everything forge-gate-soul-says-what-the-plugin-does park-and-redirect-disarm-before-they-write real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate forge-gate-profile-has-no-tools deployed-forge-gate-has-no-tools unarmed-gate-never-completes cron-silent-and-exit-0 arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
   local tool n
   for tool in sqlite3 jq python3 shasum; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -16165,6 +16168,7 @@ for a in "$@"; do
 done
 case "$verb" in show|list|ls|stats|runs|log|tail|context|"") exit 0;; esac
 printf '%s\n' "hermes WRITE $verb $*" >> "${GW_WLOG:?}"
+if [ -n "${GW_ARMED_PROBE:-}" ]; then if [ -e "$GW_ARMED_PROBE" ]; then echo armed; else echo disarmed; fi >> "${GW_WLOG}.armed"; fi
 case " ${GW_STUB_ALLOW:-} " in *" $verb "*) ;; *) echo "STUB: refusing write verb '$verb'" >&2; exit 1;; esac
 db="${HERMES_HOME:?}/kanban/boards/$board/kanban.db"
 case "$verb" in
@@ -16209,17 +16213,19 @@ GW_GH
     sqlite3 "$d/k.db" "SELECT status FROM tasks WHERE id='t_g1'"
   }
   _gw_session() { # message-id -> the JSON the gateway would bind
-    jq -nc --arg p "${GW_PLATFORM-telegram}" --arg t "${GW_CHATTYPE-dm}" --arg u "${GW_USER-424242}" --arg c "${GW_CHAT-424242}" --arg m "$1" \
-      '{HERMES_SESSION_PLATFORM:$p, HERMES_SESSION_CHAT_TYPE:$t, HERMES_SESSION_USER_ID:$u, HERMES_SESSION_CHAT_ID:$c, HERMES_SESSION_MESSAGE_ID:$m}'
+    jq -nc --arg p "${GW_PLATFORM-telegram}" --arg t "${GW_CHATTYPE-dm}" --arg u "${GW_USER-424242}" --arg c "${GW_CHAT-424242}" --arg m "$1" --arg f "${GW_PROFILE-forge-gate}" \
+      '{HERMES_SESSION_PLATFORM:$p, HERMES_SESSION_CHAT_TYPE:$t, HERMES_SESSION_USER_ID:$u, HERMES_SESSION_CHAT_ID:$c, HERMES_SESSION_MESSAGE_ID:$m, HERMES_SESSION_PROFILE:$f}'
   }
   # The handler, from world $1, verb $2, args $3, message id $4, + driver flags. Sets hout (JSON) and hrc.
   # GW_PLUG / GW_REPO aim it at a mutant copy; GW_XENV (an array) adds variables to the gateway process.
   GW_XENV=()
   _gw_h() {
-    local W="$1" verb="$2" args="$3" msg="$4"; shift 4
+    local W="$1" verb="$2" args="$3" msg="$4" scoped="${GW_SCOPED:-}"; shift 4
+    [ -n "$scoped" ] || scoped='{}'
     hout="$(cd / && env FORGE_REPO="${GW_REPO:-$REPO_ROOT}" FORGE_STATE_ROOT="$W/state" HERMES_HOME="$W/home" \
               FORGE_OPERATOR_TELEGRAM_ID="${GW_OP-424242}" PATH="$root/bin:$PATH" ${GW_XENV[@]+"${GW_XENV[@]}"} \
               python3 -I "$drive" handler --plugin "${GW_PLUG:-$plug}" --session "$(_gw_session "$msg")" \
+              --scoped "$scoped" \
               --child-env "$(jq -nc --arg l "$W/stub.log" --arg w "$W/wlog.log" --arg a "${GW_ALLOW:-}" '{GW_STUB_LOG:$l, GW_WLOG:$w, GW_STUB_ALLOW:$a}')" \
               --verb "$verb" --args "$args" "$@" 2>"$W/h.err")"; hrc=$?
   }
@@ -16228,7 +16234,7 @@ GW_GH
   _gw_s() {
     local W="$1" script="$2"; shift 2
     gout="$(cd / && env FORGE_STATE_ROOT="$W/state" HERMES_HOME="$W/home" GW_STUB_LOG="$W/stub.log" GW_WLOG="$W/wlog.log" \
-              GW_STUB_ALLOW="${GW_ALLOW:-}" PATH="$root/bin:$PATH" "${GW_BASH:-bash}" "${GW_REPO:-$REPO_ROOT}/scripts/$script" "$@" 2>"$W/err.txt")"; grc=$?
+              GW_STUB_ALLOW="${GW_ALLOW:-}" GW_ARMED_PROBE="${GW_ARMED_PROBE:-}" PATH="$root/bin:$PATH" "${GW_BASH:-bash}" "${GW_REPO:-$REPO_ROOT}/scripts/$script" "$@" 2>"$W/err.txt")"; grc=$?
     gerr="$(cat "$W/err.txt")"
   }
   # Zero writes in world $1: nothing in the write log (no hermes write verb, no gh call), board byte-identical to $2.
@@ -16322,34 +16328,39 @@ GW_MUT
     # the gate: a refusal that is only about the arming could not tell the difference.
     GW_ALLOW="complete comment"
     W="$(_gw_world unpaired)"; _gw_arm "$W" apply; _gw_pend "$W" 1; h0="$(_gw_hash "$W")"
-    local i=0
-    # name | platform | chat type | user | chat | operator id | extra env (one assignment, may be empty)
-    while IFS='|' read -r label GW_PLATFORM GW_CHATTYPE GW_USER GW_CHAT GW_OP xenv; do
+    local i=0 want np='refused: this chat is not paired for gate commands.' wb='refused: send gate verbs to the forge-gate bot'
+    # name | platform | chat type | user | chat | operator id | session profile | extra process env (one assignment) | profile scope (JSON) | np|wb
+    while IFS='|' read -r label GW_PLATFORM GW_CHATTYPE GW_USER GW_CHAT GW_OP GW_PROFILE xenv GW_SCOPED want; do
       [ -n "$label" ] || continue
       i=$((i+1)); GW_XENV=(); [ -z "$xenv" ] || GW_XENV=("$xenv")
       _gw_h "$W" accept 'ck GATE-M1' "$((9000+i))"
       reply="$(_gw_reply)"
-      case "$reply" in
-        'refused: this chat is not paired for gate commands.') ;;
-        *) gwd="$gwd $label-answered($reply)";;
-      esac
+      case "$want" in np) want="$np";; wb) want="$wb";; esac
+      [ "$reply" = "$want" ] || gwd="$gwd $label-answered($reply)"
       [ ! -s "$W/stub.log" ] || gwd="$gwd $label-called-hermes"
       _gw_nowrites "$W" "$h0" || gwd="$gwd $label-wrote"
       [ -z "$(ls "$W/state/gateway/ledger" 2>/dev/null)" ] || gwd="$gwd $label-left-a-ledger-entry"
     done <<'GW_UNPAIRED'
-other-user|telegram|dm|999|424242|424242|
-other-chat|telegram|dm|424242|999|424242|
-group|telegram|group|424242|424242|424242|
-non-telegram|discord|dm|424242|424242|424242|
-no-session|||||424242|
-operator-unset|telegram|dm|424242|424242||
-operator-unset-and-no-user|telegram|dm|||||
-operator-malformed|telegram|dm|abc|abc|abc|
-star-allowlist|telegram|dm|424242|424242|424242|TELEGRAM_ALLOWED_USERS=424242,*
-star-gateway-allowlist|telegram|dm|424242|424242|424242|GATEWAY_ALLOWED_USERS=*
-allow-all-telegram|telegram|dm|424242|424242|424242|TELEGRAM_ALLOW_ALL_USERS=true
-allow-all-gateway|telegram|dm|424242|424242|424242|GATEWAY_ALLOW_ALL_USERS=1
+other-user|telegram|dm|999|424242|424242|forge-gate|||np
+other-chat|telegram|dm|424242|999|424242|forge-gate|||np
+group|telegram|group|424242|424242|424242|forge-gate|||np
+non-telegram|discord|dm|424242|424242|424242|forge-gate|||np
+no-session|||||424242|||||np
+operator-unset|telegram|dm|424242|424242||forge-gate|||np
+operator-unset-and-no-user|telegram|dm|||||forge-gate|||np
+operator-malformed|telegram|dm|abc|abc|abc|forge-gate|||np
+star-allowlist|telegram|dm|424242|424242|424242|forge-gate|TELEGRAM_ALLOWED_USERS=424242,*||np
+star-gateway-allowlist|telegram|dm|424242|424242|424242|forge-gate|GATEWAY_ALLOWED_USERS=*||np
+allow-all-telegram|telegram|dm|424242|424242|424242|forge-gate|TELEGRAM_ALLOW_ALL_USERS=true||np
+allow-all-gateway|telegram|dm|424242|424242|424242|forge-gate|GATEWAY_ALLOW_ALL_USERS=1||np
+star-in-the-profiles-own-scope|telegram|dm|424242|424242|424242|forge-gate||{"TELEGRAM_ALLOWED_USERS":"424242,*"}|np
+allow-all-in-the-profiles-own-scope|telegram|dm|424242|424242|424242|forge-gate||{"TELEGRAM_ALLOW_ALL_USERS":"true"}|np
+the-main-bot|telegram|dm|424242|424242|424242||||wb
+the-default-profile-by-name|telegram|dm|424242|424242|424242|default|||wb
+another-profile|telegram|dm|424242|424242|424242|forge-overseer|||wb
+a-lookalike-profile|telegram|dm|424242|424242|424242|forge-gate-2|||wb
 GW_UNPAIRED
+    GW_PROFILE=forge-gate; GW_SCOPED=""
     [ "$(_gw_status "$W")" = blocked ] || gwd="$gwd the-gate-was-completed-for-a-stranger"
     # The control: the same world, the paired sender. It completes the gate, so the refusals above are about the
     # sender and not about a broken setup.
@@ -16357,7 +16368,7 @@ GW_UNPAIRED
     _gw_h "$W" accept 'ck GATE-M1' 9100
     case "$(_gw_reply)" in 'accepted: GATE-M1'*) ;; *) gwd="$gwd control-did-not-complete-the-gate($(_gw_reply))";; esac
     [ "$(_gw_status "$W")" = done ] && [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] || gwd="$gwd control-wrote-$(wc -l < "$W/wlog.log" | tr -d ' ')-times"
-    unset GW_PLATFORM GW_CHATTYPE GW_USER GW_CHAT GW_OP
+    unset GW_PLATFORM GW_CHATTYPE GW_USER GW_CHAT GW_OP GW_PROFILE GW_SCOPED
     GW_XENV=(); GW_ALLOW=""
   }
   gwd=""; _gw_c_unpaired
@@ -16367,8 +16378,10 @@ GW_UNPAIRED
   _gw_caught _gw_c_unpaired plugin ignores-chat-type __init__.py 'if _session_env("HERMES_SESSION_CHAT_TYPE").strip().lower() != "dm":' 'if False:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-chat-type"
   _gw_caught _gw_c_unpaired plugin ignores-platform __init__.py 'if _session_env("HERMES_SESSION_PLATFORM").strip().lower() != "telegram":' 'if False:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-platform"
   _gw_caught _gw_c_unpaired plugin allows-open-gateway __init__.py '    return _allow_all_problem()' '    return None' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot allows-open-gateway"
+  _gw_caught _gw_c_unpaired plugin ignores-the-profile __init__.py 'if _session_profile() != GATE_PROFILE:' 'if False:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-the-profile"
+  _gw_caught _gw_c_unpaired plugin ignores-the-profiles-own-scope __init__.py 'for value in (_scoped_env(key), os.environ.get(key, "")):' 'for value in (os.environ.get(key, ""),):' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-the-profiles-own-scope"
   _gw_caught _gw_c_unpaired plugin unset-operator-passes __init__.py 'if not _USER_ID_RE.match(operator):' 'if False:' || mnot="$mnot unset-operator-passes"
-  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "unpaired-chat-refused (another user, another chat, a group, another platform, no session, an unset or malformed operator id, a * allowlist and both allow-all flags: refused, the script never ran, zero writes, board byte-identical; six mutants caught)"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "unpaired-chat-refused (another user, another chat, a group, another platform, no session, an unset or malformed operator id, a * allowlist and both allow-all flags, in the process or in the profile's own scope: refused; the paired operator on the main bot, the default profile, another profile and a lookalike is told to send gate verbs to the forge-gate bot; the script never ran, zero writes, board byte-identical; eight mutants caught)"
   else bad "unpaired-chat-refused" "only the operator's own direct message may reach a script:${gwd}; mutants not caught:${mnot:- none}"; fi
 
   # ======================================================================
@@ -16941,13 +16954,18 @@ patch-text-names-it|patch|{"patch":"*** Begin Patch\n*** Update File: $h/.hermes
 cron-with-script|cronjob_manage|{"action":"create","schedule":"every 1m","script":"x.sh","no_agent":true}|block
 cron-monitor-script|cronjob_manage|{"action":"update","job_id":"j","monitor_script":"m.sh"}|block
 cron-list|cronjob_manage|{"action":"list"}|pass
-cron-list-uppercase|cronjob_manage|{"action":"LIST"}|pass
-cron-plain-prompt|cronjob_manage|{"action":"create","schedule":"every 1h","prompt":"say hi"}|block
-cron-prompt-with-the-shell|cronjob_manage|{"action":"create","schedule":"every 1m","prompt":"run it","enabled_toolsets":["terminal"]}|block
-cron-run-now|cronjob_manage|{"action":"run","job_id":"j"}|block
-cron-resume|cronjob_manage|{"action":"resume","job_id":"j"}|block
-cron-remove|cronjob_manage|{"action":"remove","job_id":"j"}|block
-cron-no-action|cronjob_manage|{}|block
+cron-plain-prompt|cronjob_manage|{"action":"create","schedule":"every 1h","prompt":"say hi"}|pass
+cron-run-now|cronjob_manage|{"action":"run","job_id":"j"}|pass
+casefold-state|write_file|{"path":"$h/.FORGE/checkpoint/armed/x","content":"x"}|block
+casefold-hermes-scripts|write_file|{"path":"$h/.Hermes/SCRIPTS/x.sh","content":"x"}|block
+casefold-runtime|write_file|{"path":"$h/DEV/Forge-Runtime/scripts/x.sh","content":"x"}|block
+v4a-update|patch|{"patch":"*** Begin Patch\n*** Update File: $h/.forge/checkpoint/armed/x\n@@\n-a\n+b\n*** End Patch"}|block
+v4a-no-space-after-the-stars|patch|{"patch":"***Update File: $h/.forge/checkpoint/armed/x\n@@\n-a\n+b"}|block
+v4a-add|patch|{"patch":"*** Begin Patch\n*** Add File: $h/.hermes/scripts/x.sh\n+echo hi\n*** End Patch"}|block
+v4a-delete|patch|{"patch":"*** Begin Patch\n*** Delete File: $h/.hermes/config.yaml\n*** End Patch"}|block
+v4a-move-source|patch|{"patch":"*** Begin Patch\n*** Move File: $h/.hermes/config.yaml -> $h/notes/copy.yaml\n*** End Patch"}|block
+v4a-move-destination|patch|{"patch":"*** Begin Patch\n*** Move File: $h/notes/a.md -> $h/.hermes/scripts/x.sh\n*** End Patch"}|block
+v4a-unreadable|patch|{"patch":"*** Begin Patch\n*** Update File: $h/notes/a.md\n*** End Patch"}|block
 notes|write_file|{"path":"$h/notes/a.md","content":"x"}|pass
 notes-tilde|write_file|{"path":"~/notes/a.md","content":"x"}|pass
 memories|write_file|{"path":"$h/.hermes/memories/m.md","content":"x"}|pass
@@ -16961,13 +16979,14 @@ GW_ROUTES
   gwd=""; _gw_c_routes
   mnot=""
   _gw_caught _gw_c_routes plugin files-pass __init__.py '        if verdict == "protected":' '        if False:' || mnot="$mnot files-pass"
-  _gw_caught _gw_c_routes plugin cron-prompts-pass __init__.py "        return None if str(args.get(\"action\", \"\")).strip().lower() == \"list\" else block" '        return block if (args.get("script") or args.get("monitor_script")) else None' 'cron-plain-prompt' || mnot="$mnot cron-prompts-pass"
-  _gw_caught _gw_c_routes plugin cron-is-open __init__.py "        return None if str(args.get(\"action\", \"\")).strip().lower() == \"list\" else block" '        return None' 'cron-run-now' || mnot="$mnot cron-is-open"
+  _gw_caught _gw_c_routes plugin cron-scripts-pass __init__.py '        return block if (args.get("script") or args.get("monitor_script")) else None' '        return None' 'cron-with-script' || mnot="$mnot cron-scripts-pass"
+  _gw_caught _gw_c_routes plugin case-is-trusted __init__.py '    return path.casefold()' '    return path' 'casefold-' || mnot="$mnot case-is-trusted"
+  _gw_caught _gw_c_routes plugin patch-text-is-not-read __init__.py '    if isinstance(patch, str) and patch.strip():' '    if False:' 'v4a-' || mnot="$mnot patch-text-is-not-read"
+  _gw_caught _gw_c_routes plugin an-unreadable-patch-passes __init__.py '            verdicts.append("unparsed")' '            pass' 'v4a-' || mnot="$mnot an-unreadable-patch-passes"
   _gw_caught _gw_c_routes plugin symlinks-are-not-followed __init__.py '        candidates = [os.path.abspath(expanded), os.path.realpath(expanded)]' '        candidates = [os.path.abspath(expanded)]' 'symlinked-into-' || mnot="$mnot symlinks-are-not-followed"
   _gw_caught _gw_c_routes plugin relative-paths-are-trusted __init__.py '        if resolved is None:
             return "unplaced"' '        if resolved is None:
             resolved = os.path.abspath(path)' 'relative-' || mnot="$mnot relative-paths-are-trusted"
-  _gw_caught _gw_c_routes plugin patch-text-is-not-read __init__.py '        paths += _PATCH_FILE_RE.findall(patch)' '        pass' || mnot="$mnot patch-text-is-not-read"
   _gw_caught _gw_c_routes plugin prefix-match-is-loose __init__.py 'candidate.startswith(root.rstrip(os.sep) + os.sep)' 'candidate.startswith(root.rstrip(os.sep))' || mnot="$mnot prefix-match-is-loose"
   if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-covers-the-other-routes (file tools aimed at forge's state root, the runtime (through its symlink and by its real path), Hermes' scripts, plugins, profiles, config, cron and board files, a patch that names one, and cronjob_manage with a script are blocked; ordinary paths, a lookalike directory, reads and a plain cron job pass; five mutants caught)"
   else bad "guard-covers-the-other-routes" "with a shell gone, the file tools and cron are the remaining routes to a board write:${gwd}; mutants not caught:${mnot:- none}"; fi
@@ -17024,6 +17043,149 @@ GW_ERR
   else bad "guard-never-raises-or-blocks-the-innocent" "a raising pre_tool_call hook blocks EVERY tool, so the guard must catch its own errors and fail closed only where a board could be written:${gwd}; mutants not caught:${mnot:- none}"; fi
 
   # ======================================================================
+  # guard-forge-gate-blocks-everything
+  # ======================================================================
+  local GATE_SESSION='{"HERMES_SESSION_PLATFORM":"telegram","HERMES_SESSION_CHAT_TYPE":"dm","HERMES_SESSION_USER_ID":"424242","HERMES_SESSION_CHAT_ID":"424242","HERMES_SESSION_MESSAGE_ID":"1","HERMES_SESSION_PROFILE":"forge-gate"}'
+  _gw_c_gateguard() {
+    local t="$root/guard-gate.tbl"
+    cat > "$t" <<'GW_GATE'
+echo|terminal|{"command":"echo ok"}|block
+listing|terminal|{"command":"ls"}|block
+code|execute_code|{"code":"print(1)"}|block
+process|process_manage|{"action":"list"}|block
+write|write_file|{"path":"/tmp/x","content":"y"}|block
+patch|patch|{"path":"/tmp/x","old_string":"a","new_string":"b"}|block
+read|read_file|{"path":"/tmp/x"}|block
+search|web_search|{"query":"x"}|block
+extract|web_extract|{"urls":["https://example.com"]}|block
+memory|memory|{"action":"add","content":"x"}|block
+todo|todo_list|{}|block
+skill|skill_manage|{"action":"create"}|block
+skills|skills_list|{}|block
+delegate|delegate_task|{"goal":"x"}|block
+browser|browser_navigate|{"url":"https://example.com"}|block
+cron-list|cronjob_manage|{"action":"list"}|block
+cron-create|cronjob_manage|{"action":"create","prompt":"x"}|block
+send|send_message|{}|block
+speech|text_to_speech|{"text":"x"}|block
+image|image_generate|{"prompt":"x"}|block
+computer|computer_use|{"action":"screenshot"}|block
+mcp|mcp__github__create_issue|{}|block
+unknown|frobnicate|{}|block
+uppercase|TERMINAL|{"command":"echo ok"}|block
+kanban-complete|kanban_complete|{"task_id":"t"}|block
+kanban-comment|kanban_comment|{"task_id":"t","body":"x"}|block
+kanban-create|kanban_create|{"title":"x"}|block
+kanban-show|kanban_show|{"task_id":"t"}|pass
+kanban-list|kanban_list|{}|pass
+kanban-attachments|kanban_attachments|{"task_id":"t"}|pass
+GW_GATE
+    # an ordinary messaging session; a worker's environment does not spare the gate profile; neither does a CLI surface
+    _gw_run_table "$GATE_SESSION" '{}' 0 "$t"
+    _gw_run_table "$GATE_SESSION" '{"HERMES_KANBAN_TASK":"t_1"}' 0 "$t"
+    _gw_run_table "$(printf '%s' "$GATE_SESSION" | jq -c '.HERMES_SESSION_PLATFORM = "cli"')" '{}' 0 "$t"
+    # the same calls from the owner's main bot are NOT the gate's business (it is only the tripwire there)
+    local m="$root/guard-main.tbl"
+    cat > "$m" <<'GW_MAIN'
+main-echo|terminal|{"command":"echo ok"}|pass
+main-search|web_search|{"query":"x"}|pass
+main-memory|memory|{"action":"add","content":"x"}|pass
+main-complete|terminal|{"command":"hermes kanban complete t_1"}|block
+GW_MAIN
+    _gw_run_table "$CHAT_SESSION" '{}' 0 "$m"
+  }
+  gwd=""; _gw_c_gateguard
+  mnot=""
+  _gw_caught _gw_c_gateguard plugin gate-is-ordinary __init__.py '        if _is_gate_session():' '        if False:' 'echo-was' || mnot="$mnot gate-is-ordinary"
+  _gw_caught _gw_c_gateguard plugin the-allowlist-grows __init__.py '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS)' '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS | {"web_search"})' 'search-was' || mnot="$mnot the-allowlist-grows"
+  _gw_caught _gw_c_gateguard plugin a-denylist-instead __init__.py 'return None if (tool_name or "").lower() in _GATE_READONLY else {"action": "block", "message": GATE_BLOCK_MESSAGE}' 'return {"action": "block", "message": GATE_BLOCK_MESSAGE} if (tool_name or "").lower() in _TEXT_TOOLS else None' 'unknown-was' || mnot="$mnot a-denylist-instead"
+  _gw_caught _gw_c_gateguard plugin a-worker-env-spares-the-gate __init__.py '        if _is_gate_session():
+            return _decide_gate(tool_name)
+        if not _applies():' '        if os.environ.get("HERMES_KANBAN_TASK"):
+            return None
+        if _is_gate_session():
+            return _decide_gate(tool_name)
+        if not _applies():' 'echo-was' || mnot="$mnot a-worker-env-spares-the-gate"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-forge-gate-blocks-everything (on a forge-gate turn every tool call is refused (the shell, code, process, files, patch, search, memory, todo, skills, delegation, browser, cron even to list, messaging, speech, images, desktop, an MCP tool and a tool nobody has heard of) except a board read; a worker's environment or a CLI surface does not spare it; the main bot's calls are left to the tripwire; four mutants caught)"
+  else bad "guard-forge-gate-blocks-everything" "forge-gate has an empty toolset and the guard is the second wall:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # forge-gate-soul-says-what-the-plugin-does
+  # ======================================================================
+  _gw_c_soul() {
+    local soul="${GW_SOUL:-$REPO_ROOT/hermes/profiles/forge-gate.SOUL.md}" j v hint script="$REPO_ROOT/scripts"
+    [ -f "$soul" ] || { gwd="$gwd no-soul"; return; }
+    j="$(python3 -I "$drive" table --plugin "$plug" 2>/dev/null)"
+    # the syntax it teaches is the plugin's own hint, verbatim, for each verb
+    for v in accept redirect park; do
+      hint="$(printf '%s' "$j" | jq -r --arg v "$v" '.hints[$v] // empty')"
+      [ -n "$hint" ] && grep -qF -- "/$v $hint" "$soul" || gwd="$gwd soul-does-not-teach-/$v-$hint"
+    done
+    grep -qF 'You have NO tools' "$soul" || gwd="$gwd soul-does-not-say-it-has-no-tools"
+    grep -qF 'You never act' "$soul" || gwd="$gwd soul-does-not-say-it-never-acts"
+    grep -qF '/stop' "$soul" || gwd="$gwd soul-does-not-teach-stop-first"
+    grep -qF 'own message' "$soul" || gwd="$gwd soul-does-not-say-own-message"
+    # it names no tool and no program: a SOUL that names one is a promise to run it
+    if grep -qE 'kanban_|terminal|execute_code|process_manage|\.forge/repo|scripts/|hermes kanban' "$soul"; then gwd="$gwd soul-names-a-tool-or-a-program"; fi
+    # what it says about the answers and about /accept is true of the plugin and of the script
+    grep -qF 'outcome unknown:' "$soul" && grep -qF 'outcome unknown:' "$plug/__init__.py" && grep -qF 'refused:' "$soul" && grep -qF 'refused:' "$plug/__init__.py" \
+      || gwd="$gwd the-answers-it-describes-are-not-the-plugins"
+    grep -qF 'armed' "$soul" && grep -q 'GR_ARM_MODE" = apply' "$script/gate-accept.sh" && grep -q 'gr_require_pending' "$script/gate-accept.sh" \
+      || gwd="$gwd what-it-says-about-accept-is-not-gate-accepts"
+    # the bootstrap gives the profile no tools
+    grep -q '"forge-gate|[^|]*|"$' "$REPO_ROOT/hermes/profiles-bootstrap.sh" || gwd="$gwd the-bootstrap-gives-forge-gate-tools"
+  }
+  gwd=""; _gw_c_soul
+  mnot=""
+  local sm="$root/mut-soul"; rm -rf "$sm"; mkdir -p "$sm"
+  while IFS='|' read -r mk old new; do
+    cp "$REPO_ROOT/hermes/profiles/forge-gate.SOUL.md" "$sm/soul.md"
+    _gw_mut "$sm/soul.md" "$old" "$new" || { gwd="$gwd mutant-$mk-did-not-apply"; continue; }
+    local keep="$gwd"; gwd=""; GW_SOUL="$sm/soul.md" _gw_c_soul; [ -n "$gwd" ] || mnot="$mnot $mk"; gwd="$keep"
+  done <<'GW_SOULMUT'
+claims-tools|You have NO tools|You have a terminal
+claims-to-act|You never act|You act
+wrong-syntax|/park <board> <GATE-id> [why]|/park <GATE-id>
+no-stop|send `/stop` first|send a message first
+names-a-program|`<board>` is a board name|run scripts/gate-accept.sh for the board name
+GW_SOULMUT
+  GW_SOUL=""
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "forge-gate-soul-says-what-the-plugin-does (the SOUL teaches each verb's syntax exactly as the plugin states it, says it has no tools and never acts, teaches /stop first and one command per message, names no tool or program, and what it says about the answers and about /accept is true of the plugin and of gate-accept.sh; the bootstrap gives the profile no tools; five mutants caught)"
+  else bad "forge-gate-soul-says-what-the-plugin-does" "a SOUL is read by a model that must not promise what the gateway cannot do (ADR-0003):${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # park-and-redirect-disarm-before-they-write
+  # ======================================================================
+  _gw_c_order() {
+    local W v dis
+    for v in park redirect; do
+      GW_ALLOW="complete comment"
+      W="$(_gw_world order-$v)"; _gw_arm "$W" apply; _gw_pend "$W" 1; : > "$W/wlog.log.armed"
+      GW_ARMED_PROBE="$W/state/checkpoint/armed/ck--GATE-M1"
+      _gw_s "$W" "gate-$v.sh" --board ck --gate GATE-M1 --text "stop" --apply
+      GW_ARMED_PROBE=""
+      [ "$grc" = 0 ] || gwd="$gwd $v-rc$grc($gout)"
+      [ "$(cat "$W/wlog.log.armed")" = disarmed ] || gwd="$gwd $v-was-still-armed-when-it-wrote($(cat "$W/wlog.log.armed" | tr '\n' ' '))"
+      jq -e --arg v "$v" '.verb == $v and .hold == 1' "$W/state/checkpoint/decided/ck--GATE-M1.json" >/dev/null 2>&1 || gwd="$gwd $v-recorded-no-decision"
+      # and when the board refuses the comment, the gate stays disarmed and decided, and the reply says so
+      GW_ALLOW=""
+      W="$(_gw_world order-fail-$v)"; _gw_arm "$W" apply; _gw_pend "$W" 1
+      _gw_s "$W" "gate-$v.sh" --board ck --gate GATE-M1 --text "stop" --apply
+      [ "$grc" = 2 ] && printf '%s' "$gout" | grep -q 'DISARMED' || gwd="$gwd $v-refused-comment(rc=$grc,$gout)"
+      [ ! -e "$W/state/checkpoint/armed/ck--GATE-M1" ] && [ -e "$W/state/checkpoint/decided/ck--GATE-M1.json" ] || gwd="$gwd $v-refused-comment-left-the-gate-armed"
+    done
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_order
+  mnot=""
+  _gw_caught _gw_c_order scripts park-writes-first gate-park.sh 'gr_mark_decided "$GR_BOARD" "$GR_GATE" park
+OUT=' 'OUT=' 'park-was-still-armed' || mnot="$mnot park-writes-first"
+  _gw_caught _gw_c_order scripts redirect-writes-first gate-redirect.sh 'gr_mark_decided "$GR_BOARD" "$GR_GATE" redirect
+OUT=' 'OUT=' 'redirect-was-still-armed' || mnot="$mnot redirect-writes-first"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "park-and-redirect-disarm-before-they-write (the stub looks at the arming file at the moment of the comment: it is already gone and the decision recorded; when the board refuses the comment the gate stays disarmed and decided and the reply says so; two mutants caught)"
+  else bad "park-and-redirect-disarm-before-they-write" "a still-armed check made while the comment is being written must already see the decision:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
   # Real Hermes, isolated HERMES_HOME
   # ======================================================================
   local hermes_ok=1
@@ -17057,6 +17219,18 @@ GW_ERR
     _gw_hhome load-off "" && mkdir -p "$GW_HH/plugins" && ln -s "${GW_PLUG:-$plug}" "$GW_HH/plugins/forge-gateway"
     j="$(HERMES_HOME="$GW_HH" "$hpy" -I "$hdrive" registry --names "accept" 2>/dev/null)"
     printf '%s' "$j" | jq -e '(.commands.accept | not) and .hooks == 0' >/dev/null 2>&1 || gwd="$gwd not-enabled-but-loaded($(printf '%s' "$j" | head -c 200))"
+    # Plugins are PER PROFILE: a manager is keyed by the profile's home (hermes_cli/plugins.py get_plugin_manager). Enabled in
+    # forge-gate's home and not in the root's, only forge-gate's scope has the commands. (That the multiplexed gateway enters
+    # that scope for a forge-gate message is read from gateway/run_adapters.py, not run here.)
+    _gw_hhome perprofile ""
+    mkdir -p "$GW_HH/plugins" "$GW_HH/profiles/forge-gate/plugins"
+    ln -s "${GW_PLUG:-$plug}" "$GW_HH/plugins/forge-gateway"
+    ln -s "${GW_PLUG:-$plug}" "$GW_HH/profiles/forge-gate/plugins/forge-gateway"
+    printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$GW_HH/profiles/forge-gate/config.yaml"
+    j="$(HERMES_HOME="$GW_HH/profiles/forge-gate" "$hpy" -I "$hdrive" registry --names "accept,redirect,park" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '.commands.accept and .commands.redirect and .commands.park and .hooks == 1' >/dev/null 2>&1 || gwd="$gwd forge-gate-scope-lacks-the-commands($(printf '%s' "$j" | head -c 200))"
+    j="$(HERMES_HOME="$GW_HH" "$hpy" -I "$hdrive" registry --names "accept" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.commands.accept | not) and .hooks == 0' >/dev/null 2>&1 || gwd="$gwd the-root-scope-has-them-though-it-did-not-enable-them($(printf '%s' "$j" | head -c 200))"
   }
   if [ "$hermes_ok" = 1 ]; then
     gwd=""; _gw_c_real_load
@@ -17143,12 +17317,30 @@ GW_JQ
     printf '%s' "$j" | jq -e '.results[0] | fromjson | .error | startswith("forge-gateway: refused.")' >/dev/null 2>&1 \
       && [ ! -e "$H/scripts/x.sh" ] && [ ! -e "$root/hh-proc-cwd/scripts/x.sh" ] || gwd="$gwd relative-protected-was-not-refused($(printf '%s' "$j" | jq -r '.results[0]' 2>/dev/null | head -c 160))"
     [ "$(cat "$H/notes/a.md" 2>/dev/null)" = hello ] || gwd="$gwd relative-benign-was-not-written($(printf '%s' "$j" | jq -r '.results[1]' 2>/dev/null | head -c 160))"
+    # V4A patches are read with Hermes' own parser: a Move File names two paths, and the stars may stand without a space.
+    printf '*** Begin Patch\n*** Move File: %s/notes/a.md -> %s/scripts/moved.sh\n*** End Patch' "$H" "$H" > "$H/p-move.txt"
+    printf '***Update File: %s/scripts/x.sh\n@@\n-a\n+b' "$H" > "$H/p-nospace.txt"
+    printf '*** Begin Patch\n*** Update File: %s/notes/a.md\n@@\n-hello\n+bye\n*** End Patch' "$H" > "$H/p-benign.txt"
+    calls="$(jq -nc --rawfile a "$H/p-move.txt" --rawfile b "$H/p-nospace.txt" --rawfile c "$H/p-benign.txt" '[{tool:"patch",args:{mode:"patch",patch:$a}},{tool:"patch",args:{mode:"patch",patch:$b}},{tool:"patch",args:{mode:"patch",patch:$c}}]')"
+    j="$(cd "$root/hh-proc-cwd" && HERMES_HOME="$H" HERMES_KANBAN_BOARD=ck "$hpy" -I "$hdrive" calls \
+          --session '{"platform":"telegram","chat_type":"dm","user_id":"424242","chat_id":"424242","message_id":"58"}' --calls "$calls" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.results[0] | fromjson | .error | startswith("forge-gateway: refused.")) and (.results[1] | fromjson | .error | startswith("forge-gateway: refused."))' >/dev/null 2>&1 \
+      && [ ! -e "$H/scripts/moved.sh" ] && [ ! -e "$H/scripts/x.sh" ] || gwd="$gwd v4a-protected-patch-was-not-refused($(printf '%s' "$j" | jq -c '[.results[0], .results[1]]' 2>/dev/null | head -c 220))"
+    [ "$(cat "$H/notes/a.md" 2>/dev/null)" = bye ] || gwd="$gwd v4a-benign-patch-was-not-applied($(printf '%s' "$j" | jq -r '.results[2]' 2>/dev/null | head -c 160))"
+    # The forge-gate profile's turn: NOTHING but a board read gets through, and the refusal is the gate's own.
+    calls="$(jq -nc --arg g "$gate" --arg w "$H/forge-gate-x" '[{tool:"terminal",args:{command:"echo ok"}},{tool:"web_search",args:{query:"x"}},{tool:"write_file",args:{path:$w,"content":"y"}},{tool:"kanban_show",args:{task_id:$g}}]')"
+    j="$(cd / && HERMES_HOME="$H" HERMES_KANBAN_BOARD=ck "$hpy" -I "$hdrive" calls \
+          --session '{"platform":"telegram","chat_type":"dm","user_id":"424242","chat_id":"424242","message_id":"59","profile":"forge-gate"}' --calls "$calls" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.results[0:3] | map(fromjson | .error | startswith("forge-gate: refused.")) | all) and (.results[3] | fromjson | .task.id != null)' >/dev/null 2>&1 \
+      && [ ! -e "$H/forge-gate-x" ] || gwd="$gwd forge-gate-turn-was-not-refused-whole($(printf '%s' "$j" | jq -c '.results' 2>/dev/null | head -c 260))"
   }
   if [ "$hermes_ok" = 1 ]; then
     gwd=""; _gw_c_busy
     mnot=""
     _gw_caught _gw_c_busy plugin guard-cut __init__.py '        return _decide(tool_name, args, task_id)' '        return None' 'the-board-changed' || mnot="$mnot guard-cut"
     _gw_caught _gw_c_busy plugin relative-uses-the-process-cwd __init__.py '        return str(_resolve_path_for_task(path, task_id or "default"))' '        return os.path.abspath(path)' 'relative-protected-was-not-refused' || mnot="$mnot relative-uses-the-process-cwd"
+    _gw_caught _gw_c_busy plugin v4a-move-destination-unread __init__.py '        if getattr(op, "new_path", None):' '        if False:' 'v4a-protected-patch-was-not-refused' || mnot="$mnot v4a-move-destination-unread"
+    _gw_caught _gw_c_busy plugin the-gate-profile-is-ordinary __init__.py '        if _is_gate_session():' '        if False:' 'forge-gate-turn-was-not-refused-whole' || mnot="$mnot the-gate-profile-is-ordinary"
     _gw_caught _gw_c_busy plugin guard-is-off-for-telegram __init__.py '        return platform not in _NON_MESSAGING' '        return False' 'the-board-changed' || mnot="$mnot guard-is-off-for-telegram"
     if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "busy-text-never-writes-a-gate (in an isolated HERMES_HOME with the plugin enabled and the session bound as a ContextVar, ten calls a model could make with a verb's text in hand — terminal and execute_code naming the hermes CLI and the board file, and five kanban_* tools — each come back as the guard's own refusal, the stub is never called and a real board is byte-identical; echo, a read and kanban_show still work; two mutants caught: with the guard cut the same calls reach the stub and complete the gate)"
     else bad "busy-text-never-writes-a-gate" "a verb that reaches the agent as text must not become a board write on a gate card:${gwd}; mutants not caught:${mnot:- none}"; fi
@@ -17157,109 +17349,115 @@ GW_JQ
   fi
 
   # ======================================================================
-  # telegram-toolset-edit-removes-the-shell  (the operator's exact edit, applied to a copy)
+  # forge-gate-profile-has-no-tools  (the real bootstrap into a scratch root, then Hermes' own resolver)
   # ======================================================================
   _gw_probe() { # home -> JSON on stdout
     HERMES_HOME="$1" "$hpy" -I "${GW_PROBE:-$REPO_ROOT/scripts/gateway-toolset-probe.py}" --platform telegram 2>/dev/null
   }
-  _gw_tg_config() { # dir: a config whose telegram toolset is the live shape (17 toolsets, shell included)
-    mkdir -p "$1"
-    cat > "$1/config.yaml" <<'GW_TGCFG'
-platform_toolsets:
-  cli:
-    - terminal
-    - file
-  telegram:
-    - browser
-    - clarify
-    - code_execution
-    - computer_use
-    - cronjob
-    - delegation
-    - file
-    - image_gen
-    - memory
-    - messaging
-    - session_search
-    - skills
-    - terminal
-    - todo
-    - tts
-    - vision
-    - web
-GW_TGCFG
+  # The bootstrap, for forge-gate alone, into a scratch Hermes root AND a scratch HOME (so `hermes profile create` writes no
+  # wrapper into the real ~/.local/bin). $1 = the bootstrap to run, $2 = the scratch name. Sets GP_HOME (the root).
+  _gw_gate_boot() {
+    GP_HOME="$root/gp-$2"; rm -rf "$GP_HOME" "$root/gph-$2"; mkdir -p "$GP_HOME" "$root/gph-$2"
+    HOME="$root/gph-$2" HERMES_HOME="$GP_HOME" FORGE_PROFILES_ONLY=forge-gate bash "$1" >"$root/gp-$2.out" 2>&1
   }
-  _gw_c_toolset() {
-    local h="$root/hh-toolset" j
-    rm -rf "$h"; _gw_tg_config "$h"
-    j="$(_gw_probe "$h")"
-    printf '%s' "$j" | jq -e '.shell_tools == ["cronjob_manage","execute_code","process_manage","terminal"]' >/dev/null 2>&1 || gwd="$gwd before-the-edit($(printf '%s' "$j" | head -c 300))"
-    # The operator's command, exactly as the operator steps print it.
-    HERMES_HOME="$h" hermes tools disable --platform telegram terminal code_execution cronjob >/dev/null 2>&1 || gwd="$gwd hermes-tools-disable-failed"
-    j="$(_gw_probe "$h")"
-    printf '%s' "$j" | jq -e '.shell_tools == [] and (.tools | index("web_search")) != null and (.tools | index("read_file")) != null and (.tools | index("delegate_task")) != null and (.toolsets | index("terminal")) == null and (.toolsets | index("code_execution")) == null and (.toolsets | index("cronjob")) == null' >/dev/null 2>&1 \
-      || gwd="$gwd after-the-edit($(printf '%s' "$j" | head -c 300))"
-    # The edit is Telegram's only: the CLI keeps its terminal.
-    HERMES_HOME="$h" "$hpy" -I "${GW_PROBE:-$REPO_ROOT/scripts/gateway-toolset-probe.py}" --platform cli 2>/dev/null | jq -e '.shell_tools | length > 0' >/dev/null 2>&1 || gwd="$gwd the-cli-lost-its-shell"
-    # Controls, in which a grep of the YAML says "no shell" and Hermes says otherwise.
-    rm -rf "$h"; mkdir -p "$h"; printf 'platform_toolsets:\n  telegram:\n    - hermes-telegram\n' > "$h/config.yaml"
-    j="$(_gw_probe "$h")"; printf '%s' "$j" | jq -e '(.shell_tools | length) == 4' >/dev/null 2>&1 || gwd="$gwd bundle-form-is-not-a-shell($(printf '%s' "$j" | head -c 200))"
-    rm -rf "$h"; mkdir -p "$h"; printf 'model:\n  default: x\n' > "$h/config.yaml"
-    j="$(_gw_probe "$h")"; printf '%s' "$j" | jq -e '(.shell_tools | length) == 4' >/dev/null 2>&1 || gwd="$gwd no-list-means-the-default-bundle($(printf '%s' "$j" | head -c 200))"
-    _gw_tg_config "$h"; printf 'agent:\n  disabled_toolsets:\n    - terminal\n    - code_execution\n    - cronjob\n' >> "$h/config.yaml"
-    j="$(_gw_probe "$h")"; printf '%s' "$j" | jq -e '.shell_tools == []' >/dev/null 2>&1 || gwd="$gwd disabled-toolsets-not-honoured($(printf '%s' "$j" | head -c 200))"
-    # A profile that serves Telegram has a toolset of its own: the root's says nothing about it. One profile names its
-    # own telegram toolset (with the shell), one names none; the operator's command for a profile is `hermes -p <name> ...`.
-    rm -rf "$h"; _gw_tg_config "$h"; mkdir -p "$h/profiles/p1" "$h/profiles/p2"
-    cp "$h/config.yaml" "$h/profiles/p1/config.yaml"; printf 'model:\n  default: x\n' > "$h/profiles/p2/config.yaml"
-    j="$(_gw_probe "$h")"
-    printf '%s' "$j" | jq -e '.profiles.p1.explicit == true and (.profiles.p1.shell_tools | length) == 4 and .profiles.p2.explicit == false' >/dev/null 2>&1 \
-      || gwd="$gwd profiles-before-the-edit($(printf '%s' "$j" | jq -c '.profiles' 2>/dev/null | head -c 300))"
-    HERMES_HOME="$h" hermes -p p1 tools disable --platform telegram terminal code_execution cronjob >/dev/null 2>&1 || gwd="$gwd hermes-p-tools-disable-failed"
-    j="$(_gw_probe "$h")"
-    printf '%s' "$j" | jq -e '.profiles.p1.explicit == true and .profiles.p1.shell_tools == [] and (.shell_tools | length) == 4' >/dev/null 2>&1 \
-      || gwd="$gwd profiles-after-the-edit($(printf '%s' "$j" | jq -c '.profiles, .shell_tools' 2>/dev/null | head -c 300))"
-    rm -rf "$h"
+  _gw_c_gateprofile() {
+    local boot="${GW_BOOT:-$REPO_ROOT/hermes/profiles-bootstrap.sh}" j f cfg
+    _gw_gate_boot "$boot" real || gwd="$gwd bootstrap-failed($(tail -3 "$root/gp-real.out" | tr '\n' ' ' | head -c 300))"
+    j="$(_gw_probe "$GP_HOME")"
+    f='.forge_gate'
+    printf '%s' "$j" | jq -e "$f != null and $f.explicit == true and ($f.tools | length) == 0 and ($f.write_tools | length) == 0
+          and ($f.toolsets | length) == 0 and $f.mcp_servers == 0 and $f.plugin_enabled == true and $f.plugin_link == true
+          and $f.unauthorized_dm_behavior == \"ignore\" and $f.own_token == false and $f.allowed_users == \"none\"" >/dev/null 2>&1 \
+      || gwd="$gwd forge-gate-as-hermes-resolves-it($(printf '%s' "$j" | jq -c '.forge_gate' 2>/dev/null | head -c 400))"
+    cmp -s "$GP_HOME/profiles/forge-gate/SOUL.md" "$REPO_ROOT/hermes/profiles/forge-gate.SOUL.md" || gwd="$gwd the-soul-was-not-installed"
+    [ ! -e "$root/gph-real/.local/bin/forge-gate" ] || gwd="$gwd a-wrapper-was-created"
+    ! grep -q 'TELEGRAM_BOT_TOKEN\|TELEGRAM_ALLOWED_USERS' "$GP_HOME/profiles/forge-gate/.env" 2>/dev/null || gwd="$gwd the-script-wrote-a-secret"
+    [ "$(readlink "$GP_HOME/profiles/forge-gate/plugins/forge-gateway")" = "$(cd "$(dirname "$boot")/.." && pwd)/hermes/plugins/forge-gateway" ] || gwd="$gwd the-plugin-link-points-elsewhere"
+    grep -q '"forge-gate|[^|]*|"$' "$boot" || gwd="$gwd the-bootstrap-gives-forge-gate-a-toolset"
+    # Controls: the same profile with one thing changed. Each must be SEEN by the probe, or "empty" proves nothing.
+    cfg="$GP_HOME/profiles/forge-gate/config.yaml"
+    cp "$cfg" "$cfg.good"
+    sed '/^platform_toolsets:/,/^  telegram: \[\]/d' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.explicit == false and (.forge_gate.write_tools | length) > 0' >/dev/null 2>&1 || gwd="$gwd no-entry-is-not-the-default-bundle($(printf '%s' "$j" | jq -c '.forge_gate' | head -c 160))"
+    sed 's/^  telegram: \[\]/  telegram: [hermes-telegram]/' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.explicit == true and (.forge_gate.write_tools | length) > 0' >/dev/null 2>&1 || gwd="$gwd the-bundle-form-is-not-seen"
+    sed 's/^  telegram: \[\]/  telegram: [clarify]/' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '(.forge_gate.tools | length) > 0' >/dev/null 2>&1 || gwd="$gwd one-harmless-tool-is-not-seen"
+    sed 's/^  telegram: \[\]/  telegram: [web]/' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '(.forge_gate.tools | length) > 0 and (.forge_gate.write_tools | length) == 0' >/dev/null 2>&1 || gwd="$gwd a-read-only-tool-is-not-told-from-a-write"
+    { cat "$cfg.good"; printf 'mcp_servers:\n  github:\n    command: x\n'; } > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.mcp_servers == 1' >/dev/null 2>&1 || gwd="$gwd an-mcp-server-is-not-seen"
+    grep -v '^unauthorized_dm_behavior' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.unauthorized_dm_behavior == null' >/dev/null 2>&1 || gwd="$gwd pairing-codes-are-not-seen"
+    cp "$cfg.good" "$cfg"
+    # Another profile with the gate verbs enabled and tools of its own is seen too (the preflight FAILs it), and a token or
+    # allowlist is reported as a fact and never as a value.
+    mkdir -p "$GP_HOME/profiles/p9"
+    printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$GP_HOME/profiles/p9/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=tok-fake-0123456789\nTELEGRAM_ALLOWED_USERS=1,*\n' > "$GP_HOME/profiles/p9/.env"
+    printf 'TELEGRAM_BOT_TOKEN=tok-fake-0123456789\n' > "$GP_HOME/.env"
+    j="$(_gw_probe "$GP_HOME")"
+    printf '%s' "$j" | jq -e '.profiles.p9.plugin_enabled == true and (.profiles.p9.write_tools | length) > 0 and .profiles.p9.explicit == false
+          and .profiles.p9.own_token == true and .profiles.p9.token_shared_with_root == true and .profiles.p9.allowed_users == "star"' >/dev/null 2>&1 \
+      || gwd="$gwd another-profile-with-the-verbs-and-tools-is-not-seen($(printf '%s' "$j" | jq -c '.profiles.p9' | head -c 300))"
+    printf '%s' "$j" | grep -q 'tok-fake' && gwd="$gwd the-probe-printed-a-token"
+    rm -rf "$GP_HOME" "$root/gph-real"
   }
   if [ "$hermes_ok" = 1 ]; then
-    gwd=""; _gw_c_toolset
+    gwd=""; _gw_c_gateprofile
     mnot=""
-    # Mutants of the probe, on a copy: one that only looks for 'terminal', one that never reads the config.
-    local pm="$root/mut-probe"; rm -rf "$pm"; mkdir -p "$pm"
-    cp "$REPO_ROOT/scripts/gateway-toolset-probe.py" "$pm/p1.py"; cp "$REPO_ROOT/scripts/gateway-toolset-probe.py" "$pm/p2.py"
-    cp "$REPO_ROOT/scripts/gateway-toolset-probe.py" "$pm/p3.py"; cp "$REPO_ROOT/scripts/gateway-toolset-probe.py" "$pm/p4.py"
-    _gw_mut "$pm/p1.py" 'SHELL_TOOLS = ("terminal", "process_manage", "execute_code", "cronjob_manage")' 'SHELL_TOOLS = ("terminal",)' || gwd="$gwd probe-mutant-1-did-not-apply"
-    _gw_mut "$pm/p3.py" 'SHELL_TOOLS = ("terminal", "process_manage", "execute_code", "cronjob_manage")' 'SHELL_TOOLS = ("terminal", "process_manage", "execute_code")' || gwd="$gwd probe-mutant-3-did-not-apply"
-    _gw_mut "$pm/p4.py" '        "profiles": profiles,' '        "profiles": {},' || gwd="$gwd probe-mutant-4-did-not-apply"
-    _gw_mut "$pm/p2.py" 'enabled = sorted(_get_platform_tools(cfg, a.platform))' 'enabled = sorted(set(cfg.get("platform_toolsets", {}).get(a.platform, [])) - {"hermes-telegram"})' || gwd="$gwd probe-mutant-2-did-not-apply"
-    local keep="$gwd" k
-    for k in p1 p2 p3 p4; do
-      gwd=""; GW_PROBE="$pm/$k.py" _gw_c_toolset
-      [ -n "$gwd" ] || mnot="$mnot probe-$k"
+    local bm="$root/mut-boot"; rm -rf "$bm"; mkdir -p "$bm/hermes/profiles" "$bm/scripts" "$bm/skills" "$bm/hermes/plugins"
+    cp "$REPO_ROOT/scripts/model-pins.sh" "$bm/scripts/"; cp "$REPO_ROOT"/hermes/profiles/*.SOUL.md "$bm/hermes/profiles/"
+    cp -R "$REPO_ROOT/hermes/plugins/forge-gateway" "$bm/hermes/plugins/"; rm -rf "$bm/hermes/plugins/forge-gateway/__pycache__"
+    local s2; for s2 in $(cd "$REPO_ROOT/skills" && ls -d */ 2>/dev/null | tr -d '/'); do mkdir -p "$bm/skills/$s2"; done
+    local mk
+    for mk in no-platform-toolsets no-ignore-for-strangers plugin-not-enabled makes-a-wrapper; do
+      cp "$REPO_ROOT/hermes/profiles-bootstrap.sh" "$bm/hermes/profiles-bootstrap.sh"
+      case "$mk" in
+        no-platform-toolsets)     _gw_mut "$bm/hermes/profiles-bootstrap.sh" '      echo "platform_toolsets:"
+      echo "  telegram: []"' '      echo "# nothing here"';;
+        no-ignore-for-strangers)  _gw_mut "$bm/hermes/profiles-bootstrap.sh" '      echo "unauthorized_dm_behavior: ignore"' '      echo "# default"';;
+        plugin-not-enabled)       _gw_mut "$bm/hermes/profiles-bootstrap.sh" '      echo "    - forge-gateway"' '      echo "    - nothing"';;
+        makes-a-wrapper)          _gw_mut "$bm/hermes/profiles-bootstrap.sh" 'hermes profile create "$name" --no-alias --no-skills' 'hermes profile create "$name" --no-skills';;
+      esac || { gwd="$gwd mutant-$mk-did-not-apply"; continue; }
+      local keep="$gwd"; gwd=""
+      GW_BOOT="$bm/hermes/profiles-bootstrap.sh" _gw_c_gateprofile
+      [ -n "$gwd" ] || mnot="$mnot $mk"
+      gwd="$keep"
     done
-    gwd="$keep"; GW_PROBE=""
-    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "telegram-toolset-edit-removes-the-shell (the live shape of platform_toolsets.telegram resolves, through Hermes' own resolver, to terminal + process_manage + execute_code; 'hermes tools disable --platform telegram terminal code_execution' takes all three and nothing else away and leaves the CLI alone; the bundle form and a missing list still hold them, which a grep of the YAML would miss; agent.disabled_toolsets is honoured; two probe mutants caught)"
-    else bad "telegram-toolset-edit-removes-the-shell" "the operator's edit must remove the Telegram agent's shell, as Hermes resolves it:${gwd}; mutants not caught:${mnot:- none}"; fi
+    GW_BOOT=""
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "forge-gate-profile-has-no-tools (the real bootstrap into a scratch root: forge-gate resolves, through Hermes' own resolver, to an explicit EMPTY Telegram toolset, no MCP server, the plugin linked and enabled, strangers ignored, its SOUL installed, no wrapper, no secret written; a missing entry (the default bundle), the bundle form, one harmless tool, an MCP server and pairing codes are each seen; a read-only tool is told from a write; another profile with the verbs and tools is seen; no token is printed; four mutants caught)"
+    else bad "forge-gate-profile-has-no-tools" "the dedicated gate bot must resolve to no tools at all, as Hermes resolves it:${gwd}; mutants not caught:${mnot:- none}"; fi
   else
-    skip "telegram-toolset-edit-removes-the-shell" "needs the Hermes venv at ~/.hermes/hermes-agent and hermes on PATH"
+    skip "forge-gate-profile-has-no-tools" "needs the Hermes venv at ~/.hermes/hermes-agent and hermes on PATH"
   fi
 
   # ======================================================================
-  # deployed-telegram-toolset-has-no-shell  (the live host; pending until the operator's step)
+  # deployed-forge-gate-has-no-tools  (the live host; pending until the operator's steps)
   # ======================================================================
   if [ "$hermes_ok" != 1 ] || [ ! -f "$HOME/.hermes/config.yaml" ]; then
-    skip "deployed-telegram-toolset-has-no-shell" "no installed Hermes with a config to read"
+    skip "deployed-forge-gate-has-no-tools" "no installed Hermes with a config to read"
   else
-    local lj lprof; lj="$(_gw_probe "$HOME/.hermes")"
-    lprof="$(printf '%s' "$lj" | jq -r '[.profiles // {} | to_entries[] | select(.value.explicit and (.value.shell_tools | length) > 0) | .key] | join(", ")' 2>/dev/null)"
+    local lj lbad lverbs; lj="$(_gw_probe "$HOME/.hermes")"
     if ! printf '%s' "$lj" | jq -e '.platform == "telegram"' >/dev/null 2>&1; then
-      bad "deployed-telegram-toolset-has-no-shell" "the probe could not ask Hermes about the live Telegram toolset: $(printf '%s' "$lj" | head -c 300)"
-    elif [ "$(printf '%s' "$lj" | jq -r '.shell_tools | length')" = 0 ] && [ -z "$lprof" ]; then
-      ok "deployed-telegram-toolset-has-no-shell (the live platform_toolsets.telegram resolves to no terminal, process_manage, execute_code or cronjob_manage, and no profile names a Telegram toolset that does)"
-    elif [ "$(printf '%s' "$lj" | jq -r '.plugin_enabled')" = true ]; then
-      bad "deployed-telegram-toolset-has-no-shell" "forge-gateway is enabled and a Telegram agent still has a shell or cron: root [$(printf '%s' "$lj" | jq -r '.shell_tools | join(", ")')] profiles [${lprof}]. Run: hermes tools disable --platform telegram terminal code_execution cronjob (and hermes -p <name> tools disable ... for each profile named), then restart the gateway"
+      bad "deployed-forge-gate-has-no-tools" "the probe could not ask Hermes about the live Telegram toolsets: $(printf '%s' "$lj" | head -c 300)"
     else
-      skip "deployed-telegram-toolset-has-no-shell" "operator step pending: forge-gateway is not enabled and the live Telegram toolset still holds root [$(printf '%s' "$lj" | jq -r '.shell_tools | join(", ")')] profiles [${lprof}]"
+      # live = the gate verbs are enabled anywhere; bad = forge-gate is unsafe; verbs = a profile OTHER than forge-gate that has them and tools
+      lbad="$(printf '%s' "$lj" | jq -r 'if .forge_gate == null then "" else
+              ([ (if .forge_gate.explicit then empty else "no-explicit-toolset" end),
+                 (if (.forge_gate.tools | length) == 0 then empty else "holds:" + (.forge_gate.tools | join(",")) end),
+                 (if .forge_gate.mcp_servers == 0 then empty else "mcp-servers" end),
+                 (if .forge_gate.unauthorized_dm_behavior == "ignore" then empty else "answers-strangers" end) ] | join(" ")) end')"
+      lverbs="$(printf '%s' "$lj" | jq -r '[.profiles | to_entries[] | select(.key != "forge-gate" and .value.plugin_enabled and (.value.write_tools | length) > 0) | .key] | join(", ")')"
+      if [ -n "$lbad" ] || [ -n "$lverbs" ]; then
+        bad "deployed-forge-gate-has-no-tools" "the gate bot must have no tools and the verbs must be on it alone: forge-gate [${lbad}]; other profiles with the verbs and tools [${lverbs}]"
+      elif [ "$(printf '%s' "$lj" | jq -r '.forge_gate != null')" = true ]; then
+        ok "deployed-forge-gate-has-no-tools (the live forge-gate profile has an explicit, empty Telegram toolset, no MCP server and ignores strangers; no other profile has the gate verbs and tools)"
+      elif [ "$(printf '%s' "$lj" | jq -r '.plugin_enabled or ([.profiles[]?.plugin_enabled] | any)')" = true ]; then
+        bad "deployed-forge-gate-has-no-tools" "the gate verbs are enabled but the forge-gate profile does not exist: the plugin must never be live before forge-gate is"
+      else
+        skip "deployed-forge-gate-has-no-tools" "operator step pending: there is no forge-gate profile yet and the gate verbs are not enabled anywhere"
+      fi
     fi
   fi
 
@@ -17694,42 +17892,106 @@ gr_cleanup() {' || mnot="$mnot a-second-bare-call"
 
 
   # ======================================================================
-  # preflight-asks-the-gateway  (static: the host reading itself is the operator's `make preflight`)
+  # preflight-asks-the-gateway  (section 14 EXECUTED against scratch hosts; the real host is the operator's `make preflight`)
   # ======================================================================
+  # The section is cut out of preflight.sh and run with its helpers stubbed, against a scratch HOME whose ~/.hermes is a scratch
+  # Hermes root (the real checkout linked in so the probe can import it). Each scenario is a host the operator might have.
+  _gw_pf_host() { # name -> PFH: a scratch HOME with a bare root
+    PFH="$root/pf-$1"; rm -rf "$PFH"; mkdir -p "$PFH/.hermes/profiles" "$PFH/.hermes/plugins"
+    ln -s "$HOME/.hermes/hermes-agent" "$PFH/.hermes/hermes-agent"
+    : > "$PFH/.hermes/config.yaml"
+  }
+  _gw_pf_gate() { # PFH, then the facts to change: a good forge-gate profile
+    local d="$PFH/.hermes/profiles/forge-gate"
+    mkdir -p "$d/plugins"; ln -s "$plug" "$d/plugins/forge-gateway"
+    printf 'toolsets: []\nplatform_toolsets:\n  telegram: []\nplugins:\n  enabled:\n    - forge-gateway\nunauthorized_dm_behavior: ignore\n' > "$d/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=gate-token-0001\nTELEGRAM_ALLOWED_USERS=424242\n' > "$d/.env"
+  }
+  _gw_pf_root() { # PFH: the root side of a finished deploy
+    mkdir -p "$PFH/.hermes/plugins"; ln -s "$plug" "$PFH/.hermes/plugins/forge-gateway"
+    printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$PFH/.hermes/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=main-token-0002\nFORGE_OPERATOR_TELEGRAM_ID=424242\n' > "$PFH/.hermes/.env"
+  }
+  _gw_pf_run() { # PFH -> pfout: preflight section 14 as that host reads it
+    local pf="${GW_REPO:-$REPO_ROOT}/scripts/preflight.sh" sec="$root/pf-section.sh"
+    python3 -I - "$pf" "$sec" <<'GW_PFCUT'
+import sys
+src = open(sys.argv[1]).read()
+a = src.index('sect "14. ')
+b = src.index('# ---------------------------------------------------------------------------\nsay ""\nsay "## Summary"')
+open(sys.argv[2], "w").write(src[a:b])
+GW_PFCUT
+    cat > "$root/pf-harness.sh" <<'GW_PFH'
+set -u
+say()  { printf '%s\n' "$*"; }
+sect() { say "## $*"; }
+pass() { say "PASS  $*"; }
+fail() { say "FAIL  $*"; }
+warn() { say "WARN  $*"; }
+info() { say "info  $*"; }
+PIPED=0
+PF_SELF_REPO="$1"; PF_PY="$2"
+. "$3"
+GW_PFH
+    pfout="$(cd / && env HOME="$PFH" bash "$root/pf-harness.sh" "${GW_REPO:-$REPO_ROOT}" "$hpy" "$sec" 2>&1)"
+  }
   _gw_c_preflight() {
-    local pf="${GW_REPO:-$REPO_ROOT}/scripts/preflight.sh" sec loop s
+    local pf="${GW_REPO:-$REPO_ROOT}/scripts/preflight.sh" sec loop s sc
+    # static: what the scenarios cannot reach (the runtime's own scripts do not exist in a scratch HOME)
     loop="$(sed -n '/^for _lscript in /,/; do$/p' "$pf")"
     for s in gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do
       printf '%s' "$loop" | grep -Fq " $s" || gwd="$gwd $s-is-not-resolved-through-the-runtime"
     done
     sec="$(sed -n '/^sect "14\. /,/^say ""$/p' "$pf")"
     [ -n "$sec" ] || { gwd="$gwd section-14-is-missing"; return; }
-    printf '%s' "$sec" | grep -Fq 'gateway-toolset-probe.py' || gwd="$gwd no-toolset-probe"
-    printf '%s' "$sec" | grep -Fq 'fail "forge-gateway is enabled and the Telegram agent still holds' || gwd="$gwd no-fail-for-a-live-gateway-with-a-shell"
-    printf '%s' "$sec" | grep -Fq 'warn "operator step pending: the Telegram agent holds' || gwd="$gwd no-warn-while-the-step-is-pending"
-    printf '%s' "$sec" | grep -Fq 'COULD NOT ASK Hermes' || gwd="$gwd could-not-ask-is-not-a-fail"
+    printf '%s' "$sec" | grep -Fq 'PATH="/usr/bin:/bin"' && printf '%s' "$sec" | grep -Fq -- '--check' || gwd="$gwd the-scripts-check-is-not-run-under-a-bare-path"
+    printf '%s' "$sec" | grep -Fq 'is a symlink: Hermes cron refuses' || gwd="$gwd does-not-refuse-a-symlinked-cron-script"
     printf '%s' "$sec" | grep -Fq '*" GATE-M1 apply "*) warn "GATE-M1 is armed APPLY' || gwd="$gwd no-warn-for-gate-m1-armed-apply"
     printf '%s' "$sec" | grep -Fq 'checkpoint-arm.sh" list' || gwd="$gwd does-not-list-what-is-armed"
-    printf '%s' "$sec" | grep -Fq -- '--check' || gwd="$gwd does-not-run-the-scripts-check"
-    printf '%s' "$sec" | grep -Fq 'PATH="/usr/bin:/bin"' || gwd="$gwd check-does-not-use-a-bare-path"
-    printf '%s' "$sec" | grep -Fq 'FORGE_OPERATOR_TELEGRAM_ID' || gwd="$gwd does-not-look-for-the-operator-id"
-    printf '%s' "$sec" | grep -Fq 'terminal code_execution cronjob' || gwd="$gwd does-not-name-cronjob-in-the-operator-command"
-    printf '%s' "$sec" | grep -Fq 'fail "profile $_gwpn names its own Telegram toolset' || gwd="$gwd does-not-judge-a-profiles-telegram-toolset"
-    printf '%s' "$sec" | grep -Fq 'is a symlink: Hermes cron refuses' || gwd="$gwd does-not-refuse-a-symlinked-cron-script"
-    # The arming listing the preflight parses, executed: GATE-M1 armed apply is listed in the shape its case matches.
     local W st line
     W="$(_gw_world pf)"; st="$W/state"; mkdir -p "$st/checkpoint/armed"
     printf 'mode=apply\nproject=/p\n' > "$st/checkpoint/armed/ck--GATE-M1"
     line="$(cd / && env FORGE_STATE_ROOT="$st" bash "$REPO_ROOT/scripts/checkpoint-arm.sh" list 2>&1)"
     case "$line" in *" GATE-M1 apply "*) ;; *) gwd="$gwd list-shape($line)";; esac
+    [ "$hermes_ok" = 1 ] || return 0
+    # executed: nothing deployed yet (WARN only), then the ways a deploy goes wrong (FAIL), then a good one (no WARN, no FAIL)
+    _gw_pf_host s0; _gw_pf_run
+    ! printf '%s' "$pfout" | grep -q '^FAIL' && printf '%s' "$pfout" | grep -q '^WARN  operator step pending: the forge-gate profile does not exist' \
+      || gwd="$gwd nothing-deployed-should-only-warn($(printf '%s' "$pfout" | grep '^FAIL' | head -2 | tr '\n' ' ' | head -c 200))"
+    _gw_pf_host s1; _gw_pf_root; _gw_pf_run
+    printf '%s' "$pfout" | grep -q '^FAIL  operator step pending\|^FAIL  the forge-gate profile does not exist' \
+      || gwd="$gwd the-plugin-live-before-forge-gate-is-not-a-fail"
+    _gw_pf_host s2; _gw_pf_gate; _gw_pf_root; _gw_pf_run
+    ! printf '%s' "$pfout" | grep -q '^FAIL\|^WARN' && printf '%s' "$pfout" | grep -q '^PASS  forge-gate has an explicit, EMPTY Telegram toolset' \
+      && printf '%s' "$pfout" | grep -q "^PASS  forge-gate has a bot token of its own" \
+      || gwd="$gwd a-good-deploy-should-be-clean($(printf '%s' "$pfout" | grep '^FAIL\|^WARN' | head -3 | tr '\n' ' ' | head -c 300))"
+    # each bad host and the line it must draw
+    local sc_name sc_change sc_want
+    while IFS='|' read -r sc_name sc_change sc_want; do
+      [ -n "$sc_name" ] || continue
+      _gw_pf_host "$sc_name"; _gw_pf_gate; _gw_pf_root
+      eval "$sc_change"
+      _gw_pf_run
+      printf '%s' "$pfout" | grep -q "^FAIL  .*$sc_want" || gwd="$gwd $sc_name-should-FAIL($sc_want)"
+    done <<'GW_PFSCEN'
+a-tool|sed -i.bak 's/^  telegram: \[\]/  telegram: [web]/' "$PFH/.hermes/profiles/forge-gate/config.yaml"|forge-gate holds tools
+the-default-bundle|sed -i.bak '/^platform_toolsets:/,/^  telegram: \[\]/d' "$PFH/.hermes/profiles/forge-gate/config.yaml"|forge-gate has no platform_toolsets.telegram entry
+an-mcp-server|printf 'mcp_servers:\n  github:\n    command: x\n' >> "$PFH/.hermes/profiles/forge-gate/config.yaml"|lists 1 MCP server
+pairing-codes|sed -i.bak '/^unauthorized_dm_behavior/d' "$PFH/.hermes/profiles/forge-gate/config.yaml"|does not ignore a stranger
+the-mains-token|printf 'TELEGRAM_BOT_TOKEN=gate-token-0001\n' > "$PFH/.hermes/.env"; printf 'FORGE_OPERATOR_TELEGRAM_ID=424242\n' >> "$PFH/.hermes/.env"|is the main bot's
+a-star-allowlist|printf 'TELEGRAM_BOT_TOKEN=gate-token-0001\nTELEGRAM_ALLOWED_USERS=1,*\n' > "$PFH/.hermes/profiles/forge-gate/.env"|holds \*
+another-bot-with-the-verbs|mkdir -p "$PFH/.hermes/profiles/p9"; printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$PFH/.hermes/profiles/p9/config.yaml"; printf 'TELEGRAM_BOT_TOKEN=other-0003\n' > "$PFH/.hermes/profiles/p9/.env"|profile p9 has the gate verbs enabled
+no-operator-id|printf 'TELEGRAM_BOT_TOKEN=main-token-0002\n' > "$PFH/.hermes/.env"|FORGE_OPERATOR_TELEGRAM_ID is not a number
+GW_PFSCEN
   }
   gwd=""; _gw_c_preflight
   mnot=""
-  _gw_caught _gw_c_preflight scripts no-fail-when-live preflight.sh 'fail "forge-gateway is enabled and the Telegram agent still holds' 'warn "forge-gateway is enabled and the Telegram agent still holds' || mnot="$mnot no-fail-when-live"
+  _gw_caught _gw_c_preflight scripts a-tool-is-only-a-warning preflight.sh 'fail "forge-gate holds tools: ' 'warn "forge-gate holds tools: ' 'forge-gate holds tools' || mnot="$mnot a-tool-is-only-a-warning"
+  _gw_caught _gw_c_preflight scripts the-order-is-not-checked preflight.sh '        if [ "$PF_GW_LIVE" = 1 ]; then fail "$*"; else warn "operator step pending: $*"; fi' '        warn "operator step pending: $*"' 'plugin-live-before-forge-gate' || mnot="$mnot the-order-is-not-checked"
+  _gw_caught _gw_c_preflight scripts other-bots-are-not-judged preflight.sh 'fail "profile ${_gwp%%|*} has the gate verbs enabled' 'info "profile ${_gwp%%|*} has the gate verbs enabled' 'another-bot-with-the-verbs' || mnot="$mnot other-bots-are-not-judged"
   _gw_caught _gw_c_preflight scripts no-gate-m1-warning preflight.sh '*" GATE-M1 apply "*) warn "GATE-M1 is armed APPLY' '*" GATE-M1 apply "*) info "GATE-M1 is armed APPLY' || mnot="$mnot no-gate-m1-warning"
-  _gw_caught _gw_c_preflight scripts profiles-not-judged preflight.sh 'fail "profile $_gwpn names its own Telegram toolset and it still holds' 'info "profile $_gwpn names its own Telegram toolset and it still holds' || mnot="$mnot profiles-not-judged"
   _gw_caught _gw_c_preflight scripts new-script-not-resolved preflight.sh '                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do' '                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh; do' || mnot="$mnot new-script-not-resolved"
-  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "preflight-asks-the-gateway (section 14 resolves the six new scripts through ~/.forge/repo, runs their --check under a bare PATH, asks Hermes' own resolver about the Telegram toolset and FAILs when the plugin is live and a shell is still there (a WARN while the step is pending, a FAIL when it could not ask), checks the operator id and a file-not-symlink cron script, and WARNs on GATE-M1 armed apply; three mutants caught)"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "preflight-asks-the-gateway (section 14, run against scratch hosts: nothing deployed only warns; the plugin live before forge-gate exists, a tool, the default bundle, an MCP server, pairing codes, the main bot's token, a * allowlist, another bot with the verbs and no operator id each FAIL; a good deploy is clean; the six new scripts are resolved through ~/.forge/repo and run under a bare PATH; five mutants caught)"
   else bad "preflight-asks-the-gateway" "the host check must ask what the unit tests cannot:${gwd}; mutants not caught:${mnot:- none}"; fi
 }
 wants gateway && run_gateway_group

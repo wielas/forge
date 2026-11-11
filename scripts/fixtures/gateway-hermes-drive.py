@@ -8,6 +8,7 @@ builds it: the plugin symlinked into plugins/ and enabled in config.yaml). Nothi
       whether the gateway's own lookup, `get_plugin_command_handler`, finds a handler for each name (it
       lowercases nothing and the gateway first turns '_' into '-', so the case asks for both spellings).
   gateway-hermes-drive.py calls --session JSON --calls JSON
+      The session JSON may carry "profile" (HERMES_SESSION_PROFILE: the profile that owns the receiving bot).
       Binds the session the way the gateway binds it for a turn (gateway.session_context.set_session_vars,
       a ContextVar, NOT os.environ) and makes each {"tool", "args"} call through the real
       model_tools.handle_function_call, which fires pre_tool_call before it looks the tool up. Prints
@@ -54,7 +55,7 @@ def main():
     import model_tools
     s = json.loads(a.session)
     set_session_vars(platform=s.get("platform", ""), chat_id=s.get("chat_id", ""), chat_type=s.get("chat_type", ""),
-                     user_id=s.get("user_id", ""), message_id=s.get("message_id", ""))
+                     user_id=s.get("user_id", ""), message_id=s.get("message_id", ""), profile=s.get("profile", ""))
     results = []
     for call in json.loads(a.calls):
         results.append(model_tools.handle_function_call(call["tool"], call.get("args", {}), task_id="gw-t", session_id="gw-s"))

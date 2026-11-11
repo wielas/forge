@@ -18,6 +18,7 @@
 # forge-* config.yaml will be overwritten — change this file instead.
 #
 #   ./hermes/profiles-bootstrap.sh [--dry-run]
+#   FORGE_PROFILES_ONLY="forge-gate" ./hermes/profiles-bootstrap.sh     only the named profiles
 #
 # Rebuild-from-scratch test (this is the F7 assertion — run it after any edit):
 #   HERMES_HOME=/tmp/scratch-hermes ./hermes/profiles-bootstrap.sh
@@ -122,7 +123,19 @@ PROFILES=(
   "forge-verifier|Verifies one chunk PR on its own card: deterministic gate, make check on the merged tree, then recommend or request changes. Never edits code, never creates cards.|terminal,kanban,memory,skills"
   "forge-digest|Reads the forge boards and sends one short daily status message. Read-only.|kanban,memory"
   "forge-overseer|Judges milestone gates, exceptions and triage by running three scripts. Gate-only: never implements, reviews or runs a chunk.|terminal,memory,skills"
+  "forge-gate|The paired gateway: a dedicated Telegram bot that explains /accept, /redirect and /park. It has no tools at all and never acts.|"
 )
+# forge-gate carries NO tools at all (owner ruling, 2026-11-11): `toolsets: []` for its own runs and
+# `platform_toolsets.telegram: []` for the bot, which Hermes reads as "none" (hermes_cli/tools_config.py
+# _get_platform_tools: an explicit empty list is authoritative). Its bot is the only one that answers the gate
+# verbs (hermes/plugins/forge-gateway), and a bot that cannot call a tool cannot turn a verb that arrives as text
+# into a board write. It is bound to its own Telegram bot by the profile's .env (TELEGRAM_BOT_TOKEN and
+# TELEGRAM_ALLOWED_USERS), which this script NEVER writes: the multiplexed gateway reads a profile's credentials
+# from its own scope (gateway/run_adapters.py _start_one_profile_adapters). It is asserted by verify
+# gateway/forge-gate-profile-has-no-tools and, on the host, by the preflight.
+gate_profile() {  # $1=profile -> succeeds for the paired-gateway profile
+  [ "$1" = forge-gate ]
+}
 # forge-overseer carries NO `kanban` toolset, deliberately (decision 13, 2026-11-09). Hermes registers
 # kanban_* for a dispatcher-spawned worker, "else the profile toolset decides" (tools/kanban_tools.py
 # check_fn), and the overseer is never dispatched: an operator or the gateway invokes it, unfenced. With the
@@ -135,6 +148,7 @@ PROFILES=(
 # then verified by verify_config — if you add a key to the template, add it
 # here or it is not actually guaranteed.
 VERIFIED_KEYS=(model.default model.provider toolsets skills.external_dirs skills.disabled skills.write_approval terminal.timeout hooks.pre_tool_call)
+GATE_VERIFIED_KEYS=(model.default toolsets platform_toolsets.telegram plugins.enabled unauthorized_dm_behavior skills.disabled skills.write_approval)
 
 # THE DRIVER-CALL HOOK (P34). The two profiles whose programs name a terminal call
 # (lane.sh, prejudge-review.sh) get a `pre_tool_call` shell hook that rewrites the driver's
@@ -163,24 +177,40 @@ write_config() {  # $1=name $2=model $3=comma-separated toolsets $4=dest $5=prov
     echo "model:"
     echo "  default: $model"
     [ -z "$provider" ] || echo "  provider: $provider"
-    echo "toolsets:"
-    printf '  - %s\n' ${tools//,/ }
+    if [ -z "$tools" ]; then echo "toolsets: []"; else
+      echo "toolsets:"
+      printf '  - %s\n' ${tools//,/ }
+    fi
+    if gate_profile "$name"; then
+      echo "# The bot of this profile has no tools. An explicit empty list is authoritative (it is not 'unset')."
+      echo "platform_toolsets:"
+      echo "  telegram: []"
+      echo "# Only this profile's bot answers the gate verbs. A stranger who messages it is ignored, not paired."
+      echo "plugins:"
+      echo "  enabled:"
+      echo "    - forge-gateway"
+      echo "unauthorized_dm_behavior: ignore"
+    fi
     echo "skills:"
     echo "  # ADR-0013: Hermes cannot disable skill_manage separately from"
     echo "  # the skills toolset. Profiles retaining it may stage a skill edit,"
     echo "  # but write approval prevents it taking effect unattended."
     echo "  write_approval: true"
-    echo "  # Forge methodology skills stay in git and are read from the"
-    echo "  # checkout. The curator never touches external-dir skills, so"
-    echo "  # nothing drifts out of version control."
-    echo "  external_dirs:"
-    echo "    - $FORGE_DIR/skills"
+    if ! gate_profile "$name"; then   # forge-gate has no skills toolset, so it is shown no skill directory either
+      echo "  # Forge methodology skills stay in git and are read from the"
+      echo "  # checkout. The curator never touches external-dir skills, so"
+      echo "  # nothing drifts out of version control."
+      echo "  external_dirs:"
+      echo "    - $FORGE_DIR/skills"
+    fi
     echo "  # Scoped per profile: everything this profile is not documented to"
     echo "  # run is disabled, so nothing auto-invokes in the wrong layer."
     echo "  disabled:"
     printf '    - %s\n' $(disabled_skills_for "$name")
-    echo "terminal:"
-    echo "  timeout: $TERMINAL_TIMEOUT"
+    if ! gate_profile "$name"; then
+      echo "terminal:"
+      echo "  timeout: $TERMINAL_TIMEOUT"
+    fi
     if hook_profile "$name"; then
       echo "# P34: make the driver's terminal call the one its program recorded. No fail_closed."
       echo "hooks:"
@@ -241,12 +271,22 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets $4=provider (o
     [ "$got" = "$provider" ] || { echo "  FAIL model.provider: got '$got' want '$provider'" >&2; rc=1; }
   fi
 
-  want=$(printf -- '- %s\n' ${tools//,/ })
+  if [ -z "$tools" ]; then want='[]'; else want=$(printf -- '- %s\n' ${tools//,/ }); fi
   got=$(cfg_get "$name" toolsets)
   [ "$got" = "$want" ] || { echo "  FAIL toolsets: got '$got' want '$want'" >&2; rc=1; }
 
+  if gate_profile "$name"; then
+    # The paired gateway's bot has no tools, answers the gate verbs and ignores strangers.
+    got=$(cfg_get "$name" platform_toolsets.telegram)
+    [ "$got" = "[]" ] || { echo "  FAIL platform_toolsets.telegram: got '$got' want '[]'" >&2; rc=1; }
+    got=$(cfg_get "$name" plugins.enabled)
+    [ "$got" = "- forge-gateway" ] || { echo "  FAIL plugins.enabled: got '$got' want '- forge-gateway'" >&2; rc=1; }
+    got=$(cfg_get "$name" unauthorized_dm_behavior)
+    [ "$got" = "ignore" ] || { echo "  FAIL unauthorized_dm_behavior: got '$got' want 'ignore'" >&2; rc=1; }
+  else
   got=$(cfg_get "$name" skills.external_dirs)
   [ "$got" = "- $FORGE_DIR/skills" ] || { echo "  FAIL skills.external_dirs: got '$got'" >&2; rc=1; }
+  fi
 
   want=$(printf -- '- %s\n' $(disabled_skills_for "$name"))
   got=$(cfg_get "$name" skills.disabled)
@@ -255,8 +295,10 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets $4=provider (o
   got=$(cfg_get "$name" skills.write_approval)
   [ "$got" = "true" ] || { echo "  FAIL skills.write_approval: got '$got' want 'true'" >&2; rc=1; }
 
-  got=$(cfg_get "$name" terminal.timeout)
-  [ "$got" = "$TERMINAL_TIMEOUT" ] || { echo "  FAIL terminal.timeout: got '$got' want '$TERMINAL_TIMEOUT'" >&2; rc=1; }
+  if ! gate_profile "$name"; then
+    got=$(cfg_get "$name" terminal.timeout)
+    [ "$got" = "$TERMINAL_TIMEOUT" ] || { echo "  FAIL terminal.timeout: got '$got' want '$TERMINAL_TIMEOUT'" >&2; rc=1; }
+  fi
 
   # The hook block is read back whole, so a changed matcher, command or timeout is as visible as a
   # missing one — and a profile that must NOT carry it is checked too.
@@ -274,6 +316,9 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets $4=provider (o
 failed=0
 for spec in "${PROFILES[@]}"; do
   IFS='|' read -r name desc tools <<< "$spec"
+  # FORGE_PROFILES_ONLY="forge-gate" (space-separated names) writes only those: to add one profile to a live root without
+  # touching the others, and for the verify cases, which bootstrap a single profile into a scratch root.
+  case " ${FORGE_PROFILES_ONLY:-} " in "  ") ;; *" $name "*) ;; *) continue;; esac
   echo "── $name"
 
   provider=""
@@ -286,7 +331,12 @@ for spec in "${PROFILES[@]}"; do
   if [ -d "$HERMES_ROOT/profiles/$name" ]; then
     echo "  exists, skipping create"
   else
-    run hermes profile create "$name" --description "$desc"
+    if gate_profile "$name"; then
+      # No wrapper script in ~/.local/bin and no bundled skills: nothing for this profile to run or to be shown.
+      run hermes profile create "$name" --no-alias --no-skills --description "$desc"
+    else
+      run hermes profile create "$name" --description "$desc"
+    fi
   fi
 
   # SOUL.md is the profile's identity slot. Rewriting it is safe and idempotent;
@@ -314,16 +364,26 @@ for spec in "${PROFILES[@]}"; do
     else mkdir -p "$(dirname "$shim_dest")" && cp "$shim" "$shim_dest" && echo "  wrote $shim_dest"; fi
   fi
 
+  # The gate verbs' plugin is installed INTO forge-gate's own plugins directory: plugins are per profile (a manager is
+  # keyed by the profile's home, hermes_cli/plugins.py get_plugin_manager), and enabling is the config below.
+  if gate_profile "$name"; then
+    plug_dest="$HERMES_ROOT/profiles/$name/plugins/forge-gateway"
+    run mkdir -p "$(dirname "$plug_dest")"
+    run ln -sfn "$FORGE_DIR/hermes/plugins/forge-gateway" "$plug_dest"
+    [ "$DRY" = 1 ] || { [ -L "$plug_dest" ] && [ "$(readlink "$plug_dest")" = "$FORGE_DIR/hermes/plugins/forge-gateway" ] \
+      && echo "  linked $plug_dest" || { echo "  FAIL the plugin link $plug_dest" >&2; failed=1; }; }
+  fi
+
   cfg="$HERMES_ROOT/profiles/$name/config.yaml"
   if [ "$DRY" = 1 ]; then
     echo "  + write $cfg :"
     write_config "$name" "$model" "$tools" /dev/stdout "$provider" | sed 's/^/      /'
-    echo "  + then read back and require: ${VERIFIED_KEYS[*]}"
+    if gate_profile "$name"; then echo "  + then read back and require: ${GATE_VERIFIED_KEYS[*]}"; else echo "  + then read back and require: ${VERIFIED_KEYS[*]}"; fi
   else
     write_config "$name" "$model" "$tools" "$cfg" "$provider"
     echo "  wrote $cfg"
     if verify_config "$name" "$model" "$tools" "$provider"; then
-      echo "  verified: ${VERIFIED_KEYS[*]}"
+      if gate_profile "$name"; then echo "  verified: ${GATE_VERIFIED_KEYS[*]}"; else echo "  verified: ${VERIFIED_KEYS[*]}"; fi
     else
       echo "  READBACK FAILED for $name" >&2
       failed=1
@@ -353,6 +413,13 @@ cat <<'EOF'
   CLAUDE_CODE_OAUTH_TOKEN=...      # subscription auth, keychain-independent
   GH_TOKEN=...                     # only if `gh auth login` state is not inherited
   (secrets are the one thing this script deliberately does NOT write)
+
+── forge-gate is a DEDICATED Telegram bot (owner ruling, 2026-11-11). This script writes its config and links its plugin and
+   NEVER its secrets. Create the bot with @BotFather, then put its token and your numeric Telegram user id in the
+   PROFILE's own env file (the multiplexed gateway reads a profile's credentials from there, and refuses a token that
+   another profile also uses):
+     ~/.hermes/profiles/forge-gate/.env     TELEGRAM_BOT_TOKEN=...   TELEGRAM_ALLOWED_USERS=<your id>
+   Then `hermes gateway restart`. See docs/epic-hands-free.md (S8d) for the exact steps.
 
 ── and in the DEFAULT profile's config.yaml (see hermes/config-examples.yaml):
   approvals.mode: smart            # `manual` hangs an unattended worker forever

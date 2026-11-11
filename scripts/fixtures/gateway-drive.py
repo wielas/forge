@@ -5,15 +5,16 @@ this file runs under a plain python3 and the handler/guard logic is exercised on
 Hermes at all. The session the gateway would bind (platform, chat, user, message) is given as JSON.
 
   gateway-drive.py handler --plugin DIR --session JSON --verb V --args TEXT [--repeat N] [--timeout S]
-                           [--raise sender|session] [--child-env JSON] [--direct]
+                           [--raise sender|session] [--child-env JSON] [--direct] [--scoped JSON]
       Calls the handler the plugin REGISTERS for V (the entry point the gateway calls) N times and
       prints {"replies": [...], "raised": null | "<exception>", "registered": [...]}. A verb the plugin
       did not register has no handler; the gateway would hand that text to the agent, and this prints
       {"no_handler": true}. --direct skips the registry and calls the plugin's own `_handle(verb, args)`,
       which is how the allowlist answers a verb that was never registered. --raise makes a seam raise, to prove the handler still returns a string.
   gateway-drive.py table --plugin DIR
-      Prints the allowlist, what the plugin registers, its hooks and the state root it resolves.
+      Prints the allowlist, the syntax hint of each verb, what the plugin registers, its hooks and the state root it resolves.
   gateway-drive.py guard --plugin DIR --session JSON --calls JSON [--engaged 0|1] [--env JSON] [--break applies|decide]
+      --scoped JSON (both modes) is what the profile's secret scope holds, separate from the process environment.
       Calls the pre_tool_call hook for each {"tool": ..., "args": ...} and prints
       {"decisions": ["block" | "pass" | "raised: ..."]}.
 """
@@ -44,6 +45,8 @@ def load(plugin_dir, session):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     mod._session_env = lambda name: session.get(name, "")
+    mod._scoped = {}
+    mod._scoped_env = lambda name: mod._scoped.get(name, "")
     return mod
 
 
@@ -51,6 +54,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", choices=["handler", "guard", "table"])
     ap.add_argument("--child-env", default="{}")
+    ap.add_argument("--scoped", default="{}")
     ap.add_argument("--plugin", required=True)
     ap.add_argument("--session", default="{}")
     ap.add_argument("--verb")
@@ -67,11 +71,12 @@ def main():
 
     session = json.loads(a.session)
     mod = load(a.plugin, session)
+    mod._scoped.update(json.loads(a.scoped))
     ctx = FakeCtx()
     mod.register(ctx)
 
     if a.mode == "table":
-        print(json.dumps({"table": mod.VERB_SCRIPTS, "registered": sorted(ctx.commands),
+        print(json.dumps({"table": mod.VERB_SCRIPTS, "hints": mod._ARGS_HINT, "registered": sorted(ctx.commands),
                           "hooks": [n for n, _ in ctx.hooks], "state_root": mod._state_root()}))
         return
 

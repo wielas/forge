@@ -35,15 +35,19 @@ if [ "$GR_MODE" = rehearse ]; then
   exit 0
 fi
 
+# DISARM FIRST, THEN WRITE. The decision is recorded and the gate is disarmed before the comment is written, so a
+# still-armed check made by the cron in between (checkpoint.sh --before-complete) already sees the decision: a comment
+# written first, then the disarm, would leave a window in which the gate is still armed and undecided. If the comment
+# then fails, the gate stays disarmed and decided: the safe side, and the reply says so.
+gr_mark_decided "$GR_BOARD" "$GR_GATE" park
 OUT="$(hermes kanban --board "$GR_BOARD" comment --author operator "$GR_CARD" "$BODY" 2>&1)"; RC=$?
 if [ "$RC" != 0 ]; then
   printf '%s\n' "$OUT" >&2
-  gr_fail "commenting on $GR_GATE ($GR_CARD) was refused by the board"
+  gr_fail "commenting on $GR_GATE ($GR_CARD) was refused by the board; the gate is now DISARMED and decided, so the cron has stopped, but the comment was not written"
 fi
 if ! gr_reread_comment "$BODY"; then
-  printf 'unconfirmed: the comment on %s (%s) reported success, but a fresh read does not show it; check the card\n' "$GR_GATE" "$GR_CARD"
+  printf 'unconfirmed: the comment on %s (%s) reported success, but a fresh read does not show it; the gate is DISARMED and decided; check the card\n' "$GR_GATE" "$GR_CARD"
   exit 3
 fi
-gr_mark_decided "$GR_BOARD" "$GR_GATE" park
 printf 'parked: %s (%s) stays held and the cron stops probing it.\n' "$GR_GATE" "$GR_CARD"
 exit 0
