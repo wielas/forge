@@ -1128,6 +1128,9 @@ fi
 [ -f "$cfg" ] || exit 0
 awk -v want="$key" '
   /^[a-z_]+:$/            { top=$0; sub(/:$/,"",top); nest=""; next }
+  /^[a-z_]+: /            { k=$1; sub(/:$/,"",k); v=$0; sub(/^[a-z_]+: /,"",v); top=k; nest=""
+                            if (want == k) print v
+                            next }
   /^  #/                  { next }
   /^  - /                 { if (want == top) { sub(/^  /,""); print } next }
   /^  [a-z_]+: /          { k=$1; sub(/:$/,"",k); v=$0; sub(/^  [a-z_]+: /,"",v)
@@ -1145,8 +1148,8 @@ PBHERMES
   pb_out="$(env PATH="$pb_lab/bin:$PATH" HERMES_HOME="$pb_lab/clean" \
             bash hermes/profiles-bootstrap.sh 2>&1)"; pb_rc=$?
   [ "$pb_rc" = 0 ] || pb_detail="$pb_detail correct-write-still-fatal(rc=$pb_rc)"
-  [ "$(printf '%s\n' "$pb_out" | grep -c '^  verified: ')" = 5 ] \
-    || pb_detail="$pb_detail not-all-five-profiles-verified"
+  [ "$(printf '%s\n' "$pb_out" | grep -c '^  verified: ')" = 6 ] \
+    || pb_detail="$pb_detail not-all-six-profiles-verified"
   printf '%s' "$pb_out" | grep -Fq 'not a recognized config key' \
     || pb_detail="$pb_detail stderr-swallowed"
   printf '%s' "$pb_out" | grep -Fq 'note (forge-codex-lane skills.disabled):' \
@@ -1167,7 +1170,7 @@ PBHERMES
     || pb_detail="$pb_detail wrong-value-did-not-fatal"
 
   [ -z "$pb_detail" ] \
-    && ok "bootstrap-readback-compares-stdout-only (real script, stubbed 0.21.5: a correct write verifies five profiles and surfaces the warning; a wrong value still FATALs)" \
+    && ok "bootstrap-readback-compares-stdout-only (real script, stubbed 0.21.5: a correct write verifies six profiles (forge-gate's top-level toolsets and unauthorized_dm_behavior among them) and surfaces the warning; a wrong value still FATALs)" \
     || bad "bootstrap-readback-compares-stdout-only" \
         "hermes/profiles-bootstrap.sh must verify a correct write while surfacing stderr, and still FATAL on a real mismatch —$pb_detail"
 
@@ -17117,13 +17120,13 @@ GW_OFF
         # The owner' 'echo-was' || mnot="$mnot the-switch-spares-the-gate"
   _gw_caught _gw_c_gateguard plugin the-allowlist-grows __init__.py '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS)' '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS | {"web_search"})' 'search-was' || mnot="$mnot the-allowlist-grows"
   _gw_caught _gw_c_gateguard plugin a-denylist-instead __init__.py 'return None if (tool_name or "").lower() in _GATE_READONLY else {"action": "block", "message": GATE_BLOCK_MESSAGE}' 'return {"action": "block", "message": GATE_BLOCK_MESSAGE} if (tool_name or "").lower() in _TEXT_TOOLS else None' 'unknown-was' || mnot="$mnot a-denylist-instead"
-  _gw_caught _gw_c_gateguard plugin a-worker-env-spares-the-gate __init__.py '        if _is_gate_session():
-            return _decide_gate(tool_name)
-        if not _applies():' '        if os.environ.get("HERMES_KANBAN_TASK"):
+  _gw_caught _gw_c_gateguard plugin a-worker-env-spares-the-gate __init__.py '    try:
+        if _is_gate_session():
+            return _decide_gate(tool_name)' '    try:
+        if os.environ.get("HERMES_KANBAN_TASK"):
             return None
         if _is_gate_session():
-            return _decide_gate(tool_name)
-        if not _applies():' 'echo-was' || mnot="$mnot a-worker-env-spares-the-gate"
+            return _decide_gate(tool_name)' 'echo-was' || mnot="$mnot a-worker-env-spares-the-gate"
   if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-forge-gate-blocks-everything (on a forge-gate turn every tool call is refused (the shell, code, process, files, patch, search, memory, todo, skills, delegation, browser, cron even to list, messaging, speech, images, desktop, an MCP tool and a tool nobody has heard of) except a board read; a worker's environment or a CLI surface does not spare it; the main bot's calls are left to the tripwire, which its owner may switch off with FORGE_GATEWAY_MAIN_GUARD=off and which never spares the gate; six mutants caught)"
   else bad "guard-forge-gate-blocks-everything" "forge-gate has an empty toolset and the guard is the second wall:${gwd}; mutants not caught:${mnot:- none}"; fi
 
