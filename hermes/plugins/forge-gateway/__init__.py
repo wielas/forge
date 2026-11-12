@@ -562,8 +562,10 @@ def _guard(tool_name: str = "", args: Any = None, task_id: str = "", **_: Any) -
     try:
         if _is_gate_session():
             return _decide_gate(tool_name)
-        # The owner's main agent keeps its tools (decision 14). The tripwire on its turns is defence in depth, and the owner's to
-        # switch off: FORGE_GATEWAY_MAIN_GUARD=off in ~/.hermes/.env. It never applies to the forge-gate profile.
+        # The owner's main agent keeps its tools (decision 14). The tripwire on its turns is defence in depth, and the owner's
+        # to switch off: FORGE_GATEWAY_MAIN_GUARD=off in ~/.hermes/.env, read from the gateway's environment. It is ON unless
+        # the value is exactly off, 0, false or no (any other value, or none, leaves it on); it is checked AFTER the forge-gate
+        # test above, so no value of it ever spares a forge-gate turn; and it is an operator switch, not a security boundary.
         if os.environ.get("FORGE_GATEWAY_MAIN_GUARD", "").strip().lower() in ("off", "0", "false", "no"):
             return None
         if not _applies():

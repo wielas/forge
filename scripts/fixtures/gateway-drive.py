@@ -111,6 +111,7 @@ def main():
 
     # guard
     mod._gateway_engaged = lambda: a.engaged == "1"
+    os.environ.pop("FORGE_GATEWAY_MAIN_GUARD", None)   # the harness's own shell must not decide a case
     for k, v in json.loads(a.env).items():
         os.environ[k] = v
     if a.break_ == "applies":

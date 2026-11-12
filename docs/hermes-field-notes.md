@@ -702,6 +702,10 @@ refused when Hermes cannot say; a symlink is followed; a V4A patch is read with 
 `tools/patch_parser.py` `parse_v4a_patch`, whose grammar takes `***Update File:` with or without a space and
 `*** Move File: a -> b` (two paths), and is refused when it cannot be read), and `cronjob_manage` with a script. *Executed* in
 `gateway/guard-covers-the-other-routes` and, through the real `handle_function_call`, `gateway/busy-text-never-writes-a-gate`.
+The tripwire on the main agent has one switch, the owner's: `FORGE_GATEWAY_MAIN_GUARD=off` in `~/.hermes/.env` (read from the
+gateway's environment). It is ON by default and for every value but `off`, `0`, `false` and `no`; it is tested after the
+forge-gate check, so no value spares a forge-gate turn; and it is an operator switch, not a security boundary (an agent that
+can write that file and restart the gateway can set it). Executed in `gateway/guard-forge-gate-blocks-everything`.
 **The arming file is an operator switch, not a security boundary.** Any agent running as the owner's user with a shell or a
 file tool, the main Telegram agent and a Claude Code session among them, can write `checkpoint/armed/*`; so can anything that
 can write `~/.local/bin/hermes`, `~/.hermes/hermes-agent/**` or `~/Library/LaunchAgents`, which the guard does not cover and
