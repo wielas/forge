@@ -1,7 +1,7 @@
 # forge repo-level commands
 .PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check plan-check commission
 
-verify:                        ## execute this repo's own claims; SUITES="cli config ... probe checkpoint overseer triage gateway gate docs digest quota manifest" narrows (scripts/verify.sh --help)
+verify:                        ## execute this repo's own claims; SUITES="cli config ... bootstrap sync ... probe checkpoint overseer triage gateway gate docs digest quota manifest" narrows (scripts/verify.sh --help)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
 
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
@@ -114,7 +114,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  head -1 $$f | grep -q '^---$$' || { echo "BAD frontmatter: $$f"; exit 1; }; \
 	  grep -q '^name:' $$f && grep -q '^description:' $$f || { echo "MISSING name/description: $$f"; exit 1; }; \
 	done
-	@bash -n install.sh hermes/board-bootstrap.sh hermes/profiles-bootstrap.sh \
+	@bash -n install.sh hermes/board-bootstrap.sh hermes/board-sync.sh hermes/profiles-bootstrap.sh \
 	  scripts/preflight.sh scripts/metrics.sh scripts/verify.sh scripts/prejudge.sh \
 	  scripts/lane.sh scripts/lane-handoff.sh \
 	  scripts/lane-setup.sh scripts/lane-blast-radius.sh scripts/codex-run.sh \
