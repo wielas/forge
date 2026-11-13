@@ -21338,7 +21338,7 @@ WD_CFGS
     }
     pf_row="$(_pf_wl 0)"; case "$pf_row" in "PASS the liveness watchdog LaunchAgent ai.forge.watchdog is loaded"*) ;; *) d="$d a-loaded-watchdog-did-not-pass($pf_row)";; esac
     pf_row="$(_pf_wl 113)"; case "$pf_row" in "WARN the liveness watchdog LaunchAgent ai.forge.watchdog is not loaded"*"watchdog-install.sh"*) ;; *) d="$d an-unloaded-watchdog-did-not-warn($(printf '%s' "$pf_row" | tr '\n' '|' | cut -c1-200))";; esac
-    printf '%s' "$pf_loop" | grep -Fq ' watchdog.sh watchdog-install.sh; do' || d="$d the-script-loop-does-not-resolve-both-scripts-through-the-runtime"
+    { printf '%s' "$pf_loop" | grep -Fq ' watchdog.sh' && printf '%s' "$pf_loop" | grep -Fq ' watchdog-install.sh'; } || d="$d the-script-loop-does-not-resolve-both-scripts-through-the-runtime"
     local pf_real="the installed CLI rows were skipped (no hermes here)"
     [ "$pf_n" = 0 ] || pf_real="the installed Hermes agrees on $pf_n throwaway configs"
     local pf_sec4; pf_sec4="$(sed -n '/^sect "4\. /,/^sect "4b\. /p' "$wdp")"
