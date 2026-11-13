@@ -69,7 +69,8 @@ forge/
     ├── config-examples.yaml   ← settings for the DEFAULT profile
     ├── profiles-bootstrap.sh  ← creates the four forge-* profiles
     ├── profiles/*.SOUL.md     ← one identity file per profile
-    └── board-bootstrap.sh
+    ├── board-bootstrap.sh     ← creates the board's cards from docs/chunks
+    └── board-sync.sh          ← brings that board back in line after the plan changes
 ```
 
 There is no lane runner. The lane IS a Hermes profile (`forge-codex-lane`)
@@ -146,6 +147,7 @@ make verify WITH_CODEX=1        # + sandbox probes (spends tokens)
 | `roadmap/` | chunk envelopes, graph integrity, frozen acceptance, lane resolution, and the advisory `CLEAR` report |
 | `gate/` | GitHub merge-gate interpretation against recorded API shapes and failure modes, including a repository the platform *cannot* gate (ADR-0017) |
 | `bootstrap/` | malformed graphs create nothing; root-only creates one root; full mode reuses it and attaches remaining parents atomically |
+| `sync/` | `board-sync.sh`: a dry run writes nothing; apply converges a drifted board with links before unlinks, one read-back mutation at a time; a step that would release a card needs `--allow-release`; only `create`, `link`, `edit` and `unlink` reach the board; the card it creates is the one bootstrap makes |
 | `commission/` | launch evidence is complete, paid only when requested, atomically published, and board-non-mutating |
 | `docs/` | the readiness ledger, staged sequence, ownership boundaries, and shared next command remain reconciled |
 | `manifest/` | `--list` names every case the suite runs — a check added without a catalogue entry is caught (full runs only) |
