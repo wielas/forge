@@ -15,6 +15,8 @@
 kanban:
   dispatch_in_gateway: true    # default; the dispatcher lives in the gateway
   max_in_progress: 2           # cap concurrent lanes on one mini
+  auto_decompose: false        # the kernel default is TRUE: it turns every `triage` card on every board into
+                               # new cards and dispatches workers on them, outside Forge's plan-and-contract flow
   auto_promote_children: false # /roadmap builds the graph deliberately; review
                                # decomposed children before they go ready
 

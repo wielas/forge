@@ -136,6 +136,40 @@ files, run `./hermes/profiles-bootstrap.sh` from the runtime.
 re-spawn hit the **respawn guard**: quota/auth error, a recent success, or a
 comment linking an open PR.
 
+## Liveness
+
+Nothing Hermes runs can report that Hermes is down, so a plain script does: a LaunchAgent,
+`ai.forge.watchdog`, runs `/bin/bash ~/.forge/repo/scripts/watchdog.sh` every 10 minutes, with
+no gateway, no Hermes cron and no `hermes` binary. Install it from the runtime (after a deploy that has the
+script) with `~/.forge/repo/scripts/watchdog-install.sh`; `--print` shows the plist and `--uninstall`
+removes it. Read what it sees at any time, changing nothing, with `scripts/watchdog.sh --no-alert`.
+
+**Four checks**, one `OK` or `FAIL` line each: the `ai.hermes.gateway` job is running (`launchctl print`);
+the newest output of the `forge-merge-watcher` cron job is under `FORGE_WATCHDOG_TICK_MAX_MIN` (30)
+minutes old, so the cron ticker is alive; the newest output of `forge-digest` is under 26 hours old;
+and `kanban.auto_decompose` is `false` in `~/.hermes/config.yaml` (the kernel default is `true`, so
+an absent key fails too; fix with `hermes config set kanban.auto_decompose false`).
+Exit 0 healthy, 1 unhealthy, 2 cannot run.
+
+**Alerts go on a change, not on every pass.** Healthy to unhealthy sends one Telegram message naming the
+failing checks; unhealthy to healthy sends one recovery; while it stays unhealthy it repeats at most every
+`FORGE_WATCHDOG_REMIND_HOURS` (6). A message counts as sent only when Telegram answers `"ok":true`, so
+a refused one is retried on the next pass. It goes straight to the Bot API with `curl`, using
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_HOME_CHANNEL` from `~/.hermes/.env`, not through Hermes; the token is on curl's
+stdin and in no argv, output or state file. State is `~/.forge/watchdog/state.json`, the log
+`~/.forge/watchdog/watchdog.log`. With no token the pass says so and still exits by health.
+
+**The heartbeat.** Put `FORGE_HEARTBEAT_URL=<url>` in `~/.forge/watchdog.env` (a secret; never in the repo)
+and every healthy pass does a GET of it, an unhealthy one does not. Point it at a hosted dead-man's-switch
+service (healthchecks.io and the like): they alert when the pings stop, so they also cover a watchdog that
+cannot run.
+
+**The limit, plainly.** With FileVault on, nothing on this machine runs after a restart until someone
+unlocks the disk: no gateway, no cron, no watchdog. Only the external heartbeat can report that, because its
+silence is the signal. The options: a hosted dead-man's-switch URL (above); `sudo fdesetup authrestart` for
+planned restarts, which unlocks the disk once for the next boot; or turning FileVault off on a machine that
+must recover by itself, which is the owner's security decision and Forge does not make it.
+
 ## Claude Code, the parts that matter here
 
 - **Plan mode** (Shift+Tab) before anything non-trivial — it explores and proposes
