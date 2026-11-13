@@ -160,7 +160,7 @@ chk_gateway() {
     res fail gateway "$GW_LABEL is not loaded in gui/$uid (launchctl print exited $rc: $(printf '%s' "$out" | head -n 1 | cut -c1-80))"
     return
   fi
-  state="$(printf '%s\n' "$out" | awk '$1 == "state" && $2 == "=" { print $3; exit }')"
+  state="$(printf '%s\n' "$out" | awk '$1 == "state" && $2 == "=" { $1 = ""; $2 = ""; sub(/^ +/, ""); print; exit }')"
   case "$state" in
     running) res ok gateway "$GW_LABEL is running";;
     "")      res fail gateway "$GW_LABEL is loaded but launchctl print shows no state";;

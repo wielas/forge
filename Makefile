@@ -1,7 +1,7 @@
 # forge repo-level commands
 .PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check plan-check commission
 
-verify:                        ## execute this repo's own claims; SUITES="cli config ... probe checkpoint overseer triage gateway gate docs digest quota manifest" narrows (scripts/verify.sh --help)
+verify:                        ## execute this repo's own claims; SUITES="cli config ... probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest" narrows (scripts/verify.sh --help)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
 
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
@@ -130,6 +130,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/claude-token.sh \
 	  scripts/gate-reply.sh scripts/gate-accept.sh scripts/gate-redirect.sh scripts/gate-park.sh \
 	  scripts/checkpoint-cron.sh scripts/checkpoint-arm.sh \
+	  scripts/watchdog.sh scripts/watchdog-install.sh \
   scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which

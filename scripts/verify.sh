@@ -83,6 +83,13 @@
 #   quota/      the usage-limit park: which window a run waits on, and that the
 #               lane resumes the same Codex session rather than restarting it.
 #               Fixtures and a stubbed codex only — spends nothing   (ADR-0016)
+#   watchdog/   the liveness watchdog as a program: a healthy pass pings the heartbeat and says nothing;
+#               a dead gateway, a stale cron ticker, a missed digest or auto_decompose left on each fail
+#               on their own line; one alert per state change, a reminder only after the interval and one
+#               recovery; the token and the heartbeat URL reach curl on stdin and nowhere else; a missing
+#               token is said and health still decides the exit; the LaunchAgent installer; and the two
+#               preflight checks (auto_decompose, the watchdog loaded). Stubbed launchctl and curl, a
+#               pinned clock, temp directories only                                   (S8e, liveness)
 #   manifest/   `--list` names every case the suite actually runs. Compares the
 #               catalogue against what THIS run emitted, so a check added
 #               without a catalogue entry is caught. Full runs only    (F65/F66)
@@ -115,11 +122,11 @@ while [ $# -gt 0 ]; do
     --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|watchdog|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -3258,6 +3265,15 @@ gateway/state-root-agrees-with-forge-state  the plugin's ledger root and forge-s
 gateway/gate-scripts-run-under-the-minis-bash  no bash-4 idiom in the gate, arming, cron or checkpoint scripts, each parses under /bin/bash, and /park and /redirect with an apostrophe or any shell, SQL or option character complete under it (CI's bash 5 hides this)
 gateway/a-decision-during-the-probe-wins  a probe that removes the arming file or records a decision while it runs: the gate is not completed and the cron is silent; checkpoint.sh --before-complete is the last look
 gateway/preflight-asks-the-gateway        preflight section 14, executed against scratch hosts: nothing deployed warns, the plugin live before forge-gate exists / a tool / the default bundle / an MCP server / pairing codes / a shared token / another bot with the verbs fail, a good deploy is clean
+watchdog/healthy-pings-the-heartbeat-and-stays-quiet  a healthy host: four OK lines, exit 0, one heartbeat per healthy pass (also under launchd's bare PATH), no alert, state healthy
+watchdog/gateway-down-alerts-once-and-recovers  a dead gateway: exit 1 and one alert; no repeat, a reminder only after the interval, exactly one recovery message, no heartbeat while down
+watchdog/gateway-states-and-stale-cron-output-fail-on-their-own-lines  loaded-not-running, stateless and not-loaded gateways; a ticker over its limit and a digest over 26h each fail alone; a missing job and an empty output directory are named
+watchdog/secrets-reach-curl-on-stdin-only  the bot token and the heartbeat URL are on curl's stdin and in no argv, environment, output, trace, state file or launchctl call; --dry-run redacts; --no-alert and --dry-run send, ping and write nothing
+watchdog/a-missing-token-is-said-and-health-still-decides  no token, no chat id and no .env are reported, call nothing and exit by health; an owed alert goes out once; a refused send is retried and then not repeated
+watchdog/auto-decompose-must-be-a-bare-false  only an unquoted false inside the kanban block passes; true, an absent key, a quoted "false", flow style, another block's key and a missing file each fail
+watchdog/preflight-judges-auto-decompose-and-the-watchdog  preflight FAILs kanban.auto_decompose unless it reads false (with the fix command) and WARNs when ai.forge.watchdog is not loaded; the installed Hermes agrees on throwaway configs
+watchdog/install-prints-the-runtime-plist-and-touches-nothing  watchdog-install.sh --print renders the runtime-path plist and touches nothing; install and --uninstall drive launchctl bootout/bootstrap
+watchdog/watchdog-scripts-are-executable-and-share-the-state-root  both scripts are 100755 in git and forge_watchdog_root is <state root>/watchdog
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -20996,6 +21012,398 @@ CRON_STUB
   rm -rf "$root/dormant"
 }
 wants digest    && run_digest_group
+
+# ---------------------------------------------------------------------------
+# watchdog/ — the liveness watchdog (scripts/watchdog.sh) as a program, its installer, and the two preflight checks
+# that came with it.
+#
+# Two things went wrong in November 2026 and nothing reported either: the gateway was down for days (and nothing on the
+# host can report that, FileVault being on), and the kernel's auto-decomposer woke up and turned parked triage cards
+# into dispatched workers (docs/hermes-field-notes.md). Every case here runs the real script against a stubbed
+# launchctl and a stubbed curl, in a temp HERMES_HOME and a temp state root, under a PINNED clock: the output files are
+# touched to fixed times and FORGE_WATCHDOG_NOW is set from their real mtimes, never from the wall clock. Nothing here
+# reaches Telegram, a heartbeat URL, the operator's ~/.hermes or ~/.forge, or a real launchd.
+#
+# WD_SCRIPTS and WD_PREFLIGHT aim the group at a COPY of the scripts, which is how each case was made to fail once
+# against a deliberately broken script without editing a tracked file.
+# ---------------------------------------------------------------------------
+run_watchdog_group() {
+  group watchdog
+  command -v jq >/dev/null 2>&1 || { skip "healthy-pings-the-heartbeat-and-stays-quiet" "jq not on PATH"; return; }
+  local wds="${WD_SCRIPTS:-$REPO_ROOT/scripts}" wdp="${WD_PREFLIGHT:-$REPO_ROOT/scripts/preflight.sh}" root="$TMPROOT/watchdog"
+  local TOK="7000001:TEST-token_ABCdef" HB="https://hc.example.test/ping/00000000-test-heartbeat-secret"
+  local W NOW wdout wdrc WD_X="" WD_BASHFLAGS="" WD_BARE=0
+  mkdir -p "$root"
+
+  _wd_mtime() { local m; m="$(stat -c %Y "$1" 2>/dev/null)" || m=""; case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)";; esac; printf '%s' "$m"; }
+  _wd_n() { local n; n="$(grep -c "^$1\$" "$W/stub/curl.log" 2>/dev/null)"; printf '%s' "${n:-0}"; }
+  # A host: a Hermes home whose cron has run (the digest at 09:00, the ticker at 13:00 on 2026-11-13), the kernel
+  # setting off, a bot token, a heartbeat URL, a gateway that is up and a Telegram that answers. NOW is ten minutes
+  # after the ticker's last output.
+  _wd_world() { # name
+    local h
+    W="$root/$1"; h="$W/hermes"; rm -rf "$W"
+    mkdir -p "$W/home" "$h/cron/output/mw1" "$h/cron/output/dg1" "$W/state" "$W/bin" "$W/stub"
+    printf '{"jobs":[{"id":"zz9","name":"hermes-daily-watch"},{"id":"mw1","name":"forge-merge-watcher"},{"id":"dg1","name":"forge-digest"}]}\n' > "$h/cron/jobs.json"
+    : > "$h/cron/output/mw1/2026-11-13_13-00-00.md"; : > "$h/cron/output/dg1/2026-11-13_09-00-00.md"
+    touch -t 202611131300 "$h/cron/output/mw1/2026-11-13_13-00-00.md"; touch -t 202611130900 "$h/cron/output/dg1/2026-11-13_09-00-00.md"
+    printf 'kanban:\n  dispatch_in_gateway: true\n  auto_decompose: false\n  max_in_progress: 1\n' > "$h/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=%s\nTELEGRAM_HOME_CHANNEL=-1001234567\n' "$TOK" > "$h/.env"
+    printf 'FORGE_HEARTBEAT_URL=%s\n' "$HB" > "$W/state/watchdog.env"
+    cat > "$W/bin/launchctl" <<'WD_LAUNCHCTL'
+#!/bin/sh
+# stub: records every call; answers `print` from the mode file
+echo "$*" >> "$WD_STUB_DIR/launchctl.calls"
+case "$1" in
+  print)
+    case "$(cat "$WD_STUB_DIR/launchctl.mode" 2>/dev/null || echo running)" in
+      running) printf 'gui/501/ai.hermes.gateway = {\n\tactive count = 1\n\tstate = running\n}\n';;
+      stopped) printf 'gui/501/ai.hermes.gateway = {\n\tactive count = 0\n\tstate = not running\n}\n';;
+      nostate) printf 'gui/501/ai.hermes.gateway = {\n\tactive count = 0\n}\n';;
+      *) echo 'Could not find service "ai.hermes.gateway" in domain for user gui: 501' >&2; exit 113;;
+    esac;;
+  bootstrap) [ "$(cat "$WD_STUB_DIR/launchctl.bootstrap" 2>/dev/null || echo ok)" = ok ] || { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; };;
+esac
+exit 0
+WD_LAUNCHCTL
+    cat > "$W/bin/curl" <<'WD_CURL'
+#!/bin/sh
+# stub: records argv, environment and stdin of every call apart; tells a Telegram send from a heartbeat by its stdin
+d="$WD_STUB_DIR"
+n=$(cat "$d/count" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$d/count"
+printf '%s\n' "$@" > "$d/call.$n.argv"
+env > "$d/call.$n.env"
+cat > "$d/call.$n.stdin"
+if grep -q 'sendMessage' "$d/call.$n.stdin"; then
+  echo telegram >> "$d/curl.log"
+  case "$(cat "$d/telegram.mode" 2>/dev/null || echo ok)" in
+    ok) printf '{"ok":true,"result":{}}\n200';;
+    401) printf '{"ok":false,"error_code":401}\n401';;
+    *) exit 6;;
+  esac
+else
+  echo heartbeat >> "$d/curl.log"
+  [ "$(cat "$d/heartbeat.mode" 2>/dev/null || echo ok)" = ok ] || exit 22
+fi
+exit 0
+WD_CURL
+    chmod +x "$W/bin/launchctl" "$W/bin/curl"
+    echo running > "$W/stub/launchctl.mode"; echo ok > "$W/stub/telegram.mode"
+    NOW=$(( $(_wd_mtime "$h/cron/output/mw1/2026-11-13_13-00-00.md") + 600 ))
+    WD_X=""; WD_BASHFLAGS=""; WD_BARE=0
+  }
+  _wd_run() { # args for watchdog.sh; WD_X holds extra NAME=value words -> wdout, wdrc (stdout and stderr both kept, appended)
+    local pathv="$PATH"
+    [ "$WD_BARE" = 1 ] && pathv=/usr/bin:/bin
+    if [ "$WD_BARE" = 1 ]; then
+      wdout="$(env -i PATH="$pathv" HOME="$W/home" HERMES_HOME="$W/hermes" FORGE_STATE_ROOT="$W/state" FORGE_WATCHDOG_NOW="$NOW" \
+        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" WD_STUB_DIR="$W/stub" $WD_X \
+        /bin/bash $WD_BASHFLAGS "$wds/watchdog.sh" "$@" 2>>"$W/stderr")"; wdrc=$?
+    else
+      wdout="$(env -u FORGE_WATCHDOG_TICK_MAX_MIN -u FORGE_WATCHDOG_REMIND_HOURS -u FORGE_WATCHDOG_ROOT -u HERMES_KANBAN_BOARD \
+        HOME="$W/home" HERMES_HOME="$W/hermes" FORGE_STATE_ROOT="$W/state" FORGE_WATCHDOG_NOW="$NOW" \
+        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" WD_STUB_DIR="$W/stub" $WD_X \
+        /bin/bash $WD_BASHFLAGS "$wds/watchdog.sh" "$@" 2>>"$W/stderr")"; wdrc=$?
+    fi
+    printf '%s\n' "$wdout" >> "$W/stdout.txt"
+  }
+  _wd_line() { printf '%s\n' "$wdout" | grep -E "^$1 +$2 " | head -n 1; }
+  _wd_state() { jq -r '[.observed, .alerted, (.alerted_at | tostring)] | join(" ")' "$W/state/watchdog/state.json" 2>/dev/null; }
+  _wd_leaks() { # needle -> the places it appears that it must not
+    local needle="$1" f out=""
+    for f in "$W"/stub/call.*.argv "$W"/stub/call.*.env "$W/stub/launchctl.calls" "$W/state/watchdog/state.json" "$W/stdout.txt" "$W/stderr"; do
+      [ -f "$f" ] && grep -qF -- "$needle" "$f" && out="$out ${f##*/}"
+    done
+    printf '%s' "$out"
+  }
+  local d
+
+  # --- healthy: exit 0, one heartbeat, no alert -----------------------------------------------------------------------
+  d=""; _wd_world healthy
+  _wd_run
+  [ "$wdrc" = 0 ] || d="$d exit=$wdrc"
+  [ "$(printf '%s\n' "$wdout" | grep -c '^OK ')" = 4 ] || d="$d not-four-OK-lines"
+  ! printf '%s\n' "$wdout" | grep -q '^FAIL' || d="$d a-FAIL-line"
+  [ "$(_wd_n heartbeat)" = 1 ] || d="$d heartbeats=$(_wd_n heartbeat)"
+  [ "$(_wd_n telegram)" = 0 ] || d="$d alerts=$(_wd_n telegram)"
+  [ "$(_wd_state | cut -d' ' -f1,2)" = "healthy healthy" ] || d="$d state=$(_wd_state)"
+  # The same pass under the PATH launchd gives a LaunchAgent (jq is found in the Homebrew dirs the script appends).
+  if [ -x /usr/bin/jq ] || [ -x /bin/jq ] || [ -x /opt/homebrew/bin/jq ] || [ -x /usr/local/bin/jq ]; then
+    WD_BARE=1; _wd_run; WD_BARE=0
+    { [ "$wdrc" = 0 ] && [ "$(_wd_n heartbeat)" = 2 ] && [ "$(_wd_n telegram)" = 0 ]; } || d="$d bare-path(exit=$wdrc heartbeats=$(_wd_n heartbeat))"
+  fi
+  [ -z "$d" ] && ok "healthy-pings-the-heartbeat-and-stays-quiet (four OK lines, exit 0, one heartbeat per healthy pass including under launchd's bare PATH, no alert, state healthy)" \
+    || bad "healthy-pings-the-heartbeat-and-stays-quiet" "a healthy host exits 0, pings once and says nothing —$d (output: $(printf '%s' "$wdout" | head -12 | tr '\n' '|' | cut -c1-500))"
+
+  # --- a dead gateway: one alert, no repeat, a reminder after the interval, one recovery, no ping while down ----------
+  d=""; _wd_world lifecycle
+  local t0="$NOW"
+  WD_X="FORGE_WATCHDOG_TICK_MAX_MIN=2000"
+  echo down > "$W/stub/launchctl.mode"
+  _wd_run
+  [ "$wdrc" = 1 ] || d="$d first-exit=$wdrc"
+  [ -n "$(_wd_line FAIL gateway)" ] || d="$d no-FAIL-gateway-line"
+  [ "$(_wd_n telegram)" = 1 ] || d="$d first-pass-alerts=$(_wd_n telegram)"
+  grep -q 'UNHEALTHY' "$W"/stub/call.*.stdin 2>/dev/null && grep -q 'gateway' "$W"/stub/call.*.stdin 2>/dev/null || d="$d alert-does-not-name-the-gateway"
+  [ "$(_wd_state | cut -d' ' -f1,2)" = "unhealthy unhealthy" ] || d="$d state-after-first=$(_wd_state)"
+  NOW=$((t0 + 60)); _wd_run
+  [ "$wdrc" = 1 ] && [ "$(_wd_n telegram)" = 1 ] || d="$d immediate-second-run(exit=$wdrc alerts=$(_wd_n telegram))"
+  NOW=$((t0 + 6 * 3600 - 60)); _wd_run
+  [ "$(_wd_n telegram)" = 1 ] || d="$d one-minute-before-the-interval(alerts=$(_wd_n telegram))"
+  NOW=$((t0 + 6 * 3600)); _wd_run
+  [ "$(_wd_n telegram)" = 2 ] || d="$d at-the-interval(alerts=$(_wd_n telegram))"
+  grep -q 'still UNHEALTHY' "$W"/stub/call.2.stdin 2>/dev/null || d="$d reminder-is-not-worded-as-one"
+  NOW=$((t0 + 6 * 3600 + 60)); _wd_run
+  [ "$(_wd_n telegram)" = 2 ] || d="$d after-the-reminder(alerts=$(_wd_n telegram))"
+  [ "$(_wd_n heartbeat)" = 0 ] || d="$d heartbeat-while-unhealthy($(_wd_n heartbeat))"
+  echo running > "$W/stub/launchctl.mode"
+  NOW=$((t0 + 6 * 3600 + 120)); _wd_run
+  [ "$wdrc" = 0 ] || d="$d recovery-exit=$wdrc"
+  [ "$(_wd_n telegram)" = 3 ] || d="$d recovery-alerts=$(_wd_n telegram)"
+  grep -q 'healthy again' "$W"/stub/call.3.stdin 2>/dev/null || d="$d recovery-is-not-worded-as-one"
+  [ "$(_wd_n heartbeat)" = 1 ] || d="$d heartbeat-at-recovery($(_wd_n heartbeat))"
+  NOW=$((t0 + 6 * 3600 + 180)); _wd_run
+  [ "$wdrc" = 0 ] && [ "$(_wd_n telegram)" = 3 ] && [ "$(_wd_n heartbeat)" = 2 ] || d="$d after-recovery(alerts=$(_wd_n telegram) heartbeats=$(_wd_n heartbeat))"
+  [ -z "$d" ] && ok "gateway-down-alerts-once-and-recovers (exit 1 and one alert; the next run, and one a minute short of 6h, send nothing; the run at 6h sends one reminder; recovery sends exactly one message; no heartbeat while down, one per healthy pass after)" \
+    || bad "gateway-down-alerts-once-and-recovers" "alerts follow state changes, not passes —$d"
+
+  # --- a stopped or stateless gateway is not a running one -------------------------------------------------------------
+  d=""; _wd_world gwstate
+  echo stopped > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && _wd_line FAIL gateway | grep -q 'not running'; } || d="$d loaded-not-running-was-not-a-fail(exit=$wdrc)"
+  echo nostate > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && _wd_line FAIL gateway | grep -q 'no state'; } || d="$d loaded-with-no-state-was-not-a-fail(exit=$wdrc)"
+  echo down > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && _wd_line FAIL gateway | grep -q 'not loaded'; } || d="$d not-loaded-was-not-a-fail(exit=$wdrc)"
+
+  # --- a stale ticker and a stale digest each fail on their own line ---------------------------------------------------
+  _wd_world stale
+  local tick_m; tick_m="$(_wd_mtime "$W/hermes/cron/output/mw1/2026-11-13_13-00-00.md")"
+  NOW=$((tick_m + 29 * 60)); _wd_run --no-alert
+  { [ "$wdrc" = 0 ] && [ -n "$(_wd_line OK ticker)" ]; } || d="$d ticker-29m-old-failed(exit=$wdrc)"
+  NOW=$((tick_m + 31 * 60)); _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && [ -n "$(_wd_line FAIL ticker)" ] && [ -n "$(_wd_line OK digest)" ] && [ -n "$(_wd_line OK gateway)" ] \
+    && [ "$(printf '%s\n' "$wdout" | grep -c '^FAIL')" = 1 ]; } || d="$d stale-ticker(exit=$wdrc: $(printf '%s' "$wdout" | grep '^FAIL' | tr '\n' '|' | cut -c1-200))"
+  WD_X="FORGE_WATCHDOG_TICK_MAX_MIN=60"; NOW=$((tick_m + 31 * 60)); _wd_run --no-alert
+  [ -n "$(_wd_line OK ticker)" ] || d="$d the-ticker-limit-is-not-read-from-FORGE_WATCHDOG_TICK_MAX_MIN"
+  WD_X=""
+  touch -t 202611120700 "$W/hermes/cron/output/dg1/2026-11-13_09-00-00.md"
+  NOW=$((tick_m + 600)); _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && [ -n "$(_wd_line FAIL digest)" ] && [ -n "$(_wd_line OK ticker)" ] && [ "$(printf '%s\n' "$wdout" | grep -c '^FAIL')" = 1 ]; } \
+    || d="$d stale-digest(exit=$wdrc: $(printf '%s' "$wdout" | grep '^FAIL' | tr '\n' '|' | cut -c1-200))"
+  touch -t 202611121400 "$W/hermes/cron/output/dg1/2026-11-13_09-00-00.md"
+  _wd_run --no-alert
+  [ -n "$(_wd_line OK digest)" ] || d="$d a-digest-23h-old-failed"
+  # a job the cron does not have, and one that never wrote anything, are failures with their own words
+  jq 'del(.jobs[] | select(.name == "forge-digest"))' "$W/hermes/cron/jobs.json" > "$W/jobs.tmp" && mv "$W/jobs.tmp" "$W/hermes/cron/jobs.json"
+  _wd_run --no-alert
+  _wd_line FAIL digest | grep -q 'no cron job named forge-digest' || d="$d a-missing-job-was-not-named"
+  rm -f "$W/hermes/cron/output/mw1/"*
+  _wd_run --no-alert
+  _wd_line FAIL ticker | grep -q 'never written' || d="$d an-empty-output-directory-was-not-named"
+  [ -z "$d" ] && ok "gateway-states-and-stale-cron-output-fail-on-their-own-lines (loaded-not-running, stateless and not-loaded gateways; a ticker 31m old fails and 29m passes, FORGE_WATCHDOG_TICK_MAX_MIN moves the limit; a digest 30h old fails and 23h passes; a missing job and an empty output directory are named)" \
+    || bad "gateway-states-and-stale-cron-output-fail-on-their-own-lines" "each failing check is its own FAIL line and exit 1 —$d"
+
+  # --- secrets: stdin only --------------------------------------------------------------------------------------------
+  d=""; _wd_world secrets
+  echo down > "$W/stub/launchctl.mode"
+  WD_BASHFLAGS="-x"; _wd_run; WD_BASHFLAGS=""
+  echo running > "$W/stub/launchctl.mode"
+  NOW=$((NOW + 60)); WD_BASHFLAGS="-x"; _wd_run; WD_BASHFLAGS=""
+  { [ "$(_wd_n telegram)" = 2 ] && [ "$(_wd_n heartbeat)" = 1 ]; } || d="$d the-calls-did-not-happen(alerts=$(_wd_n telegram) heartbeats=$(_wd_n heartbeat))"
+  grep -qF -- "$TOK" "$W"/stub/call.1.stdin 2>/dev/null || d="$d token-never-reached-curl-on-stdin"
+  grep -qF -- "$HB" "$W"/stub/call.3.stdin 2>/dev/null || d="$d heartbeat-url-never-reached-curl-on-stdin"
+  [ -z "$(_wd_leaks "$TOK")" ] || d="$d token-leaked-into:$(_wd_leaks "$TOK")"
+  [ -z "$(_wd_leaks "${TOK#*:}")" ] || d="$d token-secret-half-leaked-into:$(_wd_leaks "${TOK#*:}")"
+  [ -z "$(_wd_leaks "$HB")" ] || d="$d heartbeat-url-leaked-into:$(_wd_leaks "$HB")"
+  [ -z "$(_wd_leaks "${HB##*/}")" ] || d="$d heartbeat-secret-leaked-into:$(_wd_leaks "${HB##*/}")"
+  [ "$(cat "$W"/stub/call.1.argv)" = "$(printf -- '-q\n--config\n-')" ] || d="$d curl-argv-is-not-just--q---config--($(tr '\n' ' ' < "$W"/stub/call.1.argv))"
+  # --dry-run prints the request with the token redacted and sends, pings and writes nothing; --no-alert likewise
+  _wd_world dry
+  echo down > "$W/stub/launchctl.mode"
+  _wd_run --dry-run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'bot<redacted>/sendMessage'; } || d="$d dry-run-did-not-print-a-redacted-request(exit=$wdrc)"
+  { [ ! -e "$W/stub/curl.log" ] && [ ! -e "$W/state/watchdog" ] && [ -z "$(_wd_leaks "$TOK")" ]; } || d="$d dry-run-sent-wrote-or-leaked"
+  _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && [ ! -e "$W/stub/curl.log" ] && [ ! -e "$W/state/watchdog" ]; } || d="$d no-alert-sent-or-wrote(exit=$wdrc)"
+  echo running > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 0 ] && [ ! -e "$W/stub/curl.log" ] && printf '%s\n' "$wdout" | grep -q '^heartbeat: skipped'; } || d="$d no-alert-pinged-the-heartbeat"
+  [ -z "$d" ] && ok "secrets-reach-curl-on-stdin-only (the token and the heartbeat URL are on curl's stdin and in no argv, environment, output, stderr, bash -x trace, state file or launchctl call; curl's argv is only -q --config -; --dry-run redacts, --no-alert and --dry-run send, ping and write nothing)" \
+    || bad "secrets-reach-curl-on-stdin-only" "a secret must be on curl's stdin and nowhere else —$d"
+
+  # --- a missing token or chat id is said, health still decides, nothing crashes; a failed send stays owed -------------
+  d=""; _wd_world notoken
+  grep -v '^TELEGRAM_BOT_TOKEN=' "$W/hermes/.env" > "$W/env.tmp"; mv "$W/env.tmp" "$W/hermes/.env"
+  echo down > "$W/stub/launchctl.mode"; : > "$W/stderr"
+  _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'TELEGRAM_BOT_TOKEN is not set'; } || d="$d no-token-unhealthy(exit=$wdrc)"
+  printf '%s\n' "$wdout" | grep -q 'alert: alert NOT sent' || d="$d no-token-claimed-a-send"
+  { [ ! -e "$W/stub/curl.log" ] && [ ! -s "$W/stderr" ]; } || d="$d no-token-called-curl-or-wrote-stderr"
+  [ "$(_wd_state | cut -d' ' -f1,2)" = "unhealthy healthy" ] || d="$d the-owed-alert-was-recorded-as-sent($(_wd_state))"
+  echo running > "$W/stub/launchctl.mode"; NOW=$((NOW + 60)); _wd_run
+  { [ "$wdrc" = 0 ] && [ "$(_wd_n telegram)" = 0 ] && [ "$(_wd_n heartbeat)" = 1 ]; } || d="$d no-token-healthy(exit=$wdrc)"
+  printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TOK" >> "$W/hermes/.env"
+  echo down > "$W/stub/launchctl.mode"; NOW=$((NOW + 60)); _wd_run
+  { [ "$wdrc" = 1 ] && [ "$(_wd_n telegram)" = 1 ]; } || d="$d the-owed-alert-was-not-sent-once-the-token-came(alerts=$(_wd_n telegram))"
+  _wd_world nochat
+  grep -v '^TELEGRAM_HOME_CHANNEL=' "$W/hermes/.env" > "$W/env.tmp"; mv "$W/env.tmp" "$W/hermes/.env"
+  echo down > "$W/stub/launchctl.mode"; _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'TELEGRAM_HOME_CHANNEL is not set' && [ ! -e "$W/stub/curl.log" ]; } || d="$d no-chat-id(exit=$wdrc)"
+  _wd_world noenv
+  rm -f "$W/hermes/.env"; echo down > "$W/stub/launchctl.mode"; _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'is not readable' && [ ! -e "$W/stub/curl.log" ]; } || d="$d no-env-file(exit=$wdrc)"
+  _wd_world refused
+  echo down > "$W/stub/launchctl.mode"; echo 401 > "$W/stub/telegram.mode"; _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'NOT sent: HTTP 401' && [ "$(_wd_state | cut -d' ' -f2)" = healthy ]; } || d="$d a-401-was-taken-for-a-send(exit=$wdrc state=$(_wd_state))"
+  echo ok > "$W/stub/telegram.mode"; NOW=$((NOW + 60)); _wd_run
+  { [ "$(_wd_n telegram)" = 2 ] && printf '%s\n' "$wdout" | grep -q 'alert: alert sent'; } || d="$d the-refused-alert-was-not-retried(alerts=$(_wd_n telegram))"
+  NOW=$((NOW + 60)); _wd_run
+  [ "$(_wd_n telegram)" = 2 ] || d="$d the-delivered-alert-was-sent-again"
+  [ -z "$d" ] && ok "a-missing-token-is-said-and-health-still-decides (no token, no chat id and no .env each print their reason, make no curl call, write nothing to stderr and exit by health; the owed alert goes out once the token exists; a refused send (HTTP 401) is not recorded as delivered and is retried, then not repeated)" \
+    || bad "a-missing-token-is-said-and-health-still-decides" "a watchdog that cannot alert still reports and still exits by health —$d"
+
+  # --- the kernel setting, read from the file ---------------------------------------------------------------------------
+  d=""; _wd_world cfg
+  local row label text want
+  while IFS='|' read -r label text want; do
+    [ -n "$label" ] || continue
+    printf '%b' "$text" > "$W/hermes/config.yaml"
+    _wd_run --no-alert
+    if [ "$want" = OK ]; then
+      [ -n "$(_wd_line OK auto_decompose)" ] || d="$d $label(wanted-OK)"
+    else
+      [ -n "$(_wd_line FAIL auto_decompose)" ] || d="$d $label(wanted-FAIL)"
+    fi
+  done <<'WD_CFGS'
+false|kanban:\n  auto_decompose: false\n|OK
+false-with-a-comment|kanban:\n  auto_decompose: false   # stop the fan-out\n|OK
+False-capitalised|kanban:\n  auto_decompose: False\n|OK
+off-reads-as-false|kanban:\n  auto_decompose: off\n|OK
+true|kanban:\n  auto_decompose: true\n|FAIL
+key-absent-so-the-kernel-default-true|kanban:\n  dispatch_in_gateway: true\n  max_in_progress: 1\n|FAIL
+no-kanban-block|terminal:\n  timeout: 1800\n|FAIL
+quoted-false-is-a-string-the-kernel-reads-as-true|kanban:\n  auto_decompose: "false"\n|FAIL
+single-quoted-false|kanban:\n  auto_decompose: 'false'\n|FAIL
+flow-style-cannot-be-read|kanban: {auto_decompose: false}\n|FAIL
+another-block-has-the-key-and-kanban-does-not|agent:\n  auto_decompose: false\nkanban:\n  max_in_progress: 1\n|FAIL
+a-later-block-has-it-true-and-kanban-has-it-false|kanban:\n  max_in_progress: 1\n  auto_decompose: false\nprompt_caching:\n  auto_decompose: true\n|OK
+a-nested-key-is-not-the-setting|kanban:\n  dispatch:\n    auto_decompose: false\n|FAIL
+a-key-that-only-starts-with-the-name|kanban:\n  auto_decompose_per_tick: false\n|FAIL
+WD_CFGS
+  rm -f "$W/hermes/config.yaml"; _wd_run --no-alert
+  [ -n "$(_wd_line FAIL auto_decompose)" ] || d="$d a-missing-config-passed"
+  [ -z "$d" ] && ok "auto-decompose-must-be-a-bare-false (false, False, off and a commented false pass; true, an absent key, no kanban block, a quoted \"false\", flow style, another block's key, a nested key, a key that only shares a prefix and a missing file each fail; a later block's value is not read)" \
+    || bad "auto-decompose-must-be-a-bare-false" "only an unquoted false in the kanban block passes —$d"
+
+  # --- preflight: auto_decompose FAILs unless false; the watchdog's absence WARNs -----------------------------------------
+  local pf_ad pf_wl pf_loop pf_n=0 pf_row
+  pf_ad="$(awk '/^pf_check_auto_decompose\(\) \{/{f=1} f{print} f && /^}$/{exit}' "$wdp")"
+  pf_wl="$(awk '/^pf_check_watchdog_loaded\(\) \{/{f=1} f{print} f && /^}$/{exit}' "$wdp")"
+  pf_loop="$(sed -n '/^for _lscript in /,/; do$/p' "$wdp")"
+  d=""
+  if [ -z "$pf_ad" ] || [ -z "$pf_wl" ] || [ -z "$pf_loop" ]; then
+    bad "preflight-judges-auto-decompose-and-the-watchdog" "could not cut pf_check_auto_decompose (${#pf_ad} bytes), pf_check_watchdog_loaded (${#pf_wl}) or the script loop (${#pf_loop}) out of $wdp: the check went blind (F65)"
+  else
+    _pf_ad() { # hermes-json-answer hcfg-answer have-hermes -> what the check prints
+      ( pass() { echo "PASS $*"; }; fail() { echo "FAIL $*"; }; say() { echo "say $*"; }
+        HAVE_HERMES="$3"; PF_J="$1"; PF_H="$2"
+        hermes() { printf '%s\n' "$PF_J"; }
+        hcfg() { printf '%s' "$PF_H"; }
+        eval "$pf_ad"; pf_check_auto_decompose ) 2>/dev/null
+    }
+    pf_row="$(_pf_ad false x 1)";               case "$pf_row" in "PASS kanban.auto_decompose is false"*) ;; *) d="$d false-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_ad true x 1)";                case "$pf_row" in "FAIL kanban.auto_decompose is not false: it reads true."*"hermes config set kanban.auto_decompose false"*) ;; *) d="$d true-did-not-fail-with-the-fix($(printf '%s' "$pf_row" | tr '\n' '|' | cut -c1-200))";; esac
+    pf_row="$(_pf_ad '"false"' x 1)";           case "$pf_row" in FAIL*) ;; *) d="$d a-quoted-false-passed($pf_row)";; esac
+    pf_row="$(_pf_ad null x 1)";                case "$pf_row" in FAIL*) ;; *) d="$d null-passed($pf_row)";; esac
+    pf_row="$(_pf_ad '' true 1)";               case "$pf_row" in FAIL*) ;; *) d="$d unreadable-cli-with-true-in-the-file-passed($pf_row)";; esac
+    pf_row="$(_pf_ad '' '' 0)";                 case "$pf_row" in "FAIL kanban.auto_decompose is not false: it reads (not set; the kernel default is true)."*) ;; *) d="$d an-absent-key-did-not-fail($pf_row)";; esac
+    pf_row="$(_pf_ad '' false 0)";              case "$pf_row" in "PASS kanban.auto_decompose is false"*) ;; *) d="$d false-from-the-file-without-hermes-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_ad '' '"false"' 0)";          case "$pf_row" in FAIL*) ;; *) d="$d a-quoted-false-from-the-file-passed($pf_row)";; esac
+    # the same check against the INSTALLED Hermes, in a throwaway home: absent reads true, false reads false, a quoted "false" reads quoted
+    if command -v hermes >/dev/null 2>&1; then
+      local pfh="$root/pf-real" pf_cfg
+      for pf_cfg in 'kanban:\n  auto_decompose: false\n|PASS' 'kanban:\n  auto_decompose: "false"\n|FAIL' 'kanban:\n  max_in_progress: 1\n|FAIL' 'kanban:\n  auto_decompose: true\n|FAIL'; do
+        rm -rf "$pfh"; mkdir -p "$pfh"; printf '%b' "${pf_cfg%|*}" > "$pfh/config.yaml"
+        pf_row="$( ( pass() { echo "PASS $*"; }; fail() { echo "FAIL $*"; }; say() { :; }
+                     HAVE_HERMES=1; export HERMES_HOME="$pfh"; hcfg() { :; }
+                     eval "$pf_ad"; pf_check_auto_decompose ) 2>/dev/null )"
+        case "$pf_row" in "${pf_cfg##*|} "*) ;; *) d="$d real-hermes(${pf_cfg%|*}: $pf_row)";; esac
+        pf_n=$((pf_n+1))
+      done
+    fi
+    _pf_wl() { # exit status of launchctl print -> what the check prints
+      ( pass() { echo "PASS $*"; }; warn() { echo "WARN $*"; }; say() { echo "say $*"; }
+        PF_RC="$1"; launchctl() { return "$PF_RC"; }
+        eval "$pf_wl"; pf_check_watchdog_loaded ) 2>/dev/null
+    }
+    pf_row="$(_pf_wl 0)"; case "$pf_row" in "PASS the liveness watchdog LaunchAgent ai.forge.watchdog is loaded"*) ;; *) d="$d a-loaded-watchdog-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_wl 113)"; case "$pf_row" in "WARN the liveness watchdog LaunchAgent ai.forge.watchdog is not loaded"*"watchdog-install.sh"*) ;; *) d="$d an-unloaded-watchdog-did-not-warn($(printf '%s' "$pf_row" | tr '\n' '|' | cut -c1-200))";; esac
+    printf '%s' "$pf_loop" | grep -Fq ' watchdog.sh watchdog-install.sh; do' || d="$d the-script-loop-does-not-resolve-both-scripts-through-the-runtime"
+    local pf_real="the installed CLI rows were skipped (no hermes here)"
+    [ "$pf_n" = 0 ] || pf_real="the installed Hermes agrees on $pf_n throwaway configs"
+    local pf_sec4; pf_sec4="$(sed -n '/^sect "4\. /,/^sect "4b\. /p' "$wdp")"
+    printf '%s' "$pf_sec4" | grep -q '^pf_check_auto_decompose$' || d="$d section-4-never-calls-the-auto-decompose-check"
+    local pf_sec7; pf_sec7="$(sed -n '/^sect "7\. /,/^sect "8\. /p' "$wdp")"
+    printf '%s' "$pf_sec7" | grep -q '^pf_check_watchdog_loaded$' || d="$d section-7-never-calls-the-watchdog-check"
+    [ -z "$d" ] && ok "preflight-judges-auto-decompose-and-the-watchdog (cut out of preflight.sh: false passes; true, an absent key, null, a quoted \"false\" and an unreadable CLI each FAIL with the fix command; $pf_real; a loaded watchdog passes, an unloaded one WARNs with the installer; both scripts are resolved through ~/.forge/repo; sections 4 and 7 call the checks)" \
+      || bad "preflight-judges-auto-decompose-and-the-watchdog" "preflight FAILs a kernel that decomposes triage cards on its own and WARNs on a missing watchdog —$d"
+  fi
+
+  # --- the installer: --print touches nothing; install and uninstall drive launchctl ------------------------------------
+  d=""; _wd_world install
+  local H="$W/home" ipl lc="$W/stub/launchctl.calls" uid; uid="$(id -u)"
+  _wd_inst() { # args -> wdout, wdrc
+    wdout="$(env -u FORGE_STATE_ROOT -u FORGE_WATCHDOG_ROOT HOME="$H" FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" WD_STUB_DIR="$W/stub" /bin/bash "$wds/watchdog-install.sh" "$@" 2>&1)"; wdrc=$?
+  }
+  _wd_inst --print
+  printf '%s\n' "$wdout" > "$W/plist.xml"
+  [ "$wdrc" = 0 ] || d="$d print-exit=$wdrc"
+  [ -z "$(ls -A "$H")" ] || d="$d print-created:$(ls -A "$H" | tr '\n' ' ')"
+  [ ! -e "$lc" ] || d="$d print-called-launchctl"
+  if command -v plutil >/dev/null 2>&1; then plutil -lint "$W/plist.xml" >/dev/null 2>&1 || d="$d plutil-lint-failed"; fi
+  ipl="$(python3 -I - "$W/plist.xml" "$H" <<'WD_PLIST' 2>&1
+import plistlib, sys
+d = plistlib.load(open(sys.argv[1], "rb")); home = sys.argv[2]
+want = {"Label": "ai.forge.watchdog", "StartInterval": 600, "RunAtLoad": True,
+        "ProgramArguments": ["/bin/bash", home + "/.forge/repo/scripts/watchdog.sh"]}
+bad = [k for k, v in want.items() if d.get(k) != v]
+logs = {d.get("StandardOutPath"), d.get("StandardErrorPath")}
+if logs != {home + "/.forge/watchdog/watchdog.log"}: bad.append("logs=%r" % sorted(map(str, logs)))
+print(" ".join(bad))
+WD_PLIST
+)"
+  [ -z "$ipl" ] || d="$d plist-wrong:$ipl"
+  _wd_inst
+  { [ "$wdrc" = 2 ] && printf '%s\n' "$wdout" | grep -q 'does not exist' && [ -z "$(ls -A "$H")" ] && [ ! -e "$lc" ]; } || d="$d install-without-the-runtime-script(exit=$wdrc)"
+  mkdir -p "$H/.forge/repo/scripts"; : > "$H/.forge/repo/scripts/watchdog.sh"
+  _wd_inst
+  [ "$wdrc" = 0 ] || d="$d install-exit=$wdrc($(printf '%s' "$wdout" | head -2 | tr '\n' '|'))"
+  [ -f "$H/Library/LaunchAgents/ai.forge.watchdog.plist" ] && [ -d "$H/.forge/watchdog" ] || d="$d install-did-not-write-the-plist-and-the-log-directory"
+  [ "$(sed -n 1p "$lc")" = "bootout gui/$uid/ai.forge.watchdog" ] && [ "$(sed -n 2p "$lc")" = "bootstrap gui/$uid $H/Library/LaunchAgents/ai.forge.watchdog.plist" ] \
+    || d="$d install-launchctl-calls($(tr '\n' '|' < "$lc"))"
+  _wd_inst
+  [ "$(grep -c '^bootout ' "$lc")" = 2 ] && [ "$(grep -c '^bootstrap ' "$lc")" = 2 ] || d="$d a-reinstall-did-not-unload-first"
+  _wd_inst --uninstall
+  { [ "$wdrc" = 0 ] && [ ! -e "$H/Library/LaunchAgents/ai.forge.watchdog.plist" ] && [ -d "$H/.forge/watchdog" ] && [ "$(tail -n 1 "$lc")" = "bootout gui/$uid/ai.forge.watchdog" ]; } || d="$d uninstall(exit=$wdrc)"
+  echo bad > "$W/stub/launchctl.bootstrap"; _wd_inst
+  [ "$wdrc" = 1 ] || d="$d a-refused-bootstrap-was-not-exit-1($wdrc)"
+  [ -z "$d" ] && ok "install-prints-the-runtime-plist-and-touches-nothing (--print: a plist naming ai.forge.watchdog, StartInterval 600, RunAtLoad and /bin/bash <home>/.forge/repo/scripts/watchdog.sh with its log under the watchdog root, creating nothing and calling no launchctl; install refuses without the runtime script, then writes the plist and the log directory and calls bootout then bootstrap, again on a reinstall; --uninstall unloads, removes the plist and keeps the state; a refused bootstrap is exit 1)" \
+    || bad "install-prints-the-runtime-plist-and-touches-nothing" "the installer must render the runtime path form and only act when asked —$d"
+
+  # --- git: both scripts are executable in the index and the new function sits beside its siblings ----------------------
+  d=""
+  local s
+  for s in watchdog.sh watchdog-install.sh; do
+    case "$(git -C "$REPO_ROOT" ls-files -s "scripts/$s" 2>/dev/null | cut -c1-6)" in 100755) ;; "") ;; *) d="$d $s-not-100755-in-git";; esac
+    [ -x "$wds/$s" ] || d="$d $s-not-executable"
+  done
+  { [ "$(env -u FORGE_WATCHDOG_ROOT FORGE_STATE_ROOT=/x bash -c '. "$1"; forge_watchdog_root' _ "$wds/forge-state.sh")" = /x/watchdog ] \
+    && [ "$(env -u FORGE_WATCHDOG_ROOT -u FORGE_STATE_ROOT HOME=/h bash -c '. "$1"; forge_watchdog_root' _ "$wds/forge-state.sh")" = /h/.forge/watchdog ]; } \
+    || d="$d forge_watchdog_root-is-not-state-root-slash-watchdog"
+  [ -z "$d" ] && ok "watchdog-scripts-are-executable-and-share-the-state-root (100755 in git; forge_watchdog_root is <state root>/watchdog, \$HOME/.forge/watchdog by default)" \
+    || bad "watchdog-scripts-are-executable-and-share-the-state-root" "—$d"
+}
+wants watchdog  && run_watchdog_group
 
 # ---------------------------------------------------------------------------
 # manifest/ — `--list` is a hand-maintained catalogue, and nothing compared it

@@ -473,6 +473,36 @@ else
   say  "      integer: hermes config set kanban.max_in_progress <n>, then re-run."
 fi
 
+# --- the kernel's auto-decomposer ------------------------------------------
+# kanban.auto_decompose defaults to TRUE in the kernel (hermes_cli/config_defaults.py), so an absent key is a FAIL
+# too. With it on, the gateway's dispatcher turns every card in `triage`, on EVERY board, into new cards and then
+# dispatches workers on them, outside Forge's plan-and-contract flow. It did, on 2026-11-10: a host config change gave
+# the decomposer a working model, and within a minute seven parked triage cards on two older product boards became 19
+# cards and about 17 spawned workers (docs/hermes-field-notes.md). FAIL, not WARN: this is not a risk to size, it is
+# a control that is off.
+#
+# READ WITH --json, AND PASS ONLY ON A BARE false. The dispatcher does `bool(kcfg.get("auto_decompose", True))`, so
+# a quoted "false" is the string "false" and is TRUE to it; plain `config get` prints `false` for both, `--json`
+# prints `false` for the boolean and "false" (quoted) for the string. The dispatcher re-reads the config on every
+# tick (gateway/kanban_watchers_common.py), so the fix needs no gateway restart. scripts/watchdog.sh judges the same
+# key from the file, for the case where nothing about Hermes can be asked.
+pf_check_auto_decompose() {
+  local raw=""
+  [ "$HAVE_HERMES" = 1 ] && raw="$(hermes config get --json kanban.auto_decompose 2>/dev/null | tail -1)"
+  [ -n "$raw" ] || raw="$(hcfg kanban.auto_decompose)"
+  case "$raw" in
+    false) pass "kanban.auto_decompose is false (the kernel does not turn triage cards into new cards and dispatch them)";;
+    *)
+      if [ -z "$raw" ]; then raw="(not set; the kernel default is true)"; fi
+      fail "kanban.auto_decompose is not false: it reads $(printf '%s' "$raw" | tr -d '\000-\037' | cut -c1-60)."
+      say  "      With it on, the Hermes dispatcher turns any card in \`triage\`, on any board, into new cards and"
+      say  "      dispatches workers on them, outside Forge's plan-and-contract flow. An absent key is the same as true."
+      say  "      Fix: hermes config set kanban.auto_decompose false   (read on every dispatcher tick: no restart)";;
+  esac
+  return 0
+}
+pf_check_auto_decompose
+
 # ---------------------------------------------------------------------------
 sect "4b. LANE config, read PER PROFILE — this is what workers actually run on"
 # ---------------------------------------------------------------------------
@@ -745,6 +775,23 @@ else
   say  "      ready cards will sit untouched (this is safe, but nothing progresses)"
 fi
 
+# The liveness watchdog (scripts/watchdog.sh) is a LaunchAgent OUTSIDE Hermes: it is what reports a dead gateway, a
+# stopped cron ticker, a missed digest and auto_decompose turned back on. Nothing inside Hermes can report its own
+# death. WARN, not FAIL: the host is usable without it, only unwatched. Read-only: `launchctl print` changes nothing.
+pf_check_watchdog_loaded() {
+  local uid; uid="$(id -u)"
+  if ! command -v launchctl >/dev/null 2>&1; then
+    warn "launchctl not found, so whether the liveness watchdog (ai.forge.watchdog) is loaded cannot be asked"
+  elif launchctl print "gui/$uid/ai.forge.watchdog" >/dev/null 2>&1; then
+    pass "the liveness watchdog LaunchAgent ai.forge.watchdog is loaded (it runs outside Hermes)"
+  else
+    warn "the liveness watchdog LaunchAgent ai.forge.watchdog is not loaded: nothing reports a dead gateway, a stopped"
+    say  "      cron ticker or a missed digest. Install it: ~/.forge/repo/scripts/watchdog-install.sh   (docs/operator-guide.md, Liveness)"
+  fi
+  return 0
+}
+pf_check_watchdog_loaded
+
 # ---------------------------------------------------------------------------
 sect "8. Board state"
 # ---------------------------------------------------------------------------
@@ -910,7 +957,8 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
                 merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
                 driver-call-hook.sh claude-token.sh \
                 checkpoint.sh triage.sh amend-contract.sh overseer-guard.sh \
-                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do
+                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh \
+                watchdog.sh watchdog-install.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
