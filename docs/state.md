@@ -1,5 +1,16 @@
 # Forge — current state
 
+**Direction, 2026-11-13:** the next proving run is meant to be the first hands-free one. Epic
+decisions 15 to 18 record it: in run B the verifier merges lane-built chunks under a per-board grant
+(effective at the owner's go), the board follows the plan through `hermes/board-sync.sh`, and the
+session ritual is lighter. **Built in source, not deployed:** the paired gateway (S8d, #106), board
+sync (S8f), per-board merge authority (S8g), the digest's dormant-board collapse (S8h), and the
+liveness watchdog with the `kanban.auto_decompose` preflight FAIL (S8i). **Not proven:** merge mode
+has never run live; the gateway verbs have never received a real Telegram message; nothing on the
+host can report a restart while FileVault holds the disk locked. **Found:** on 2026-11-10 the Hermes
+kernel's auto-decomposer created and dispatched 19 cards on two older boards outside Forge's flow
+(epic P45). The S7 text below is left as written.
+
 **S7 closeout, 2026-11-06:** Run A is closed (epic S7, "met in part"). `docs/run-a.md`'s
 *Results* paste the evidence. **Not proven:** the flip criterion is *not met* (S-1 is uncredited;
 clause 2 is not met under the owner's ruling of 2026-11-06, "CHUNK-5 counts, CHUNK-2 not"; clause 3
