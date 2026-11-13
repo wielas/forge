@@ -123,7 +123,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/metadata-live.sh scripts/commission.sh scripts/model-pins.sh \
 	  scripts/set-model.sh scripts/acceptance-freeze.sh scripts/verdict.sh \
 	  scripts/prejudge-review.sh scripts/merge-check.sh \
-	  scripts/merge-watcher.sh scripts/bounce.sh \
+	  scripts/merge-watcher.sh scripts/bounce.sh scripts/merge-authority.sh \
 	  scripts/decision-message.sh scripts/digest.sh scripts/plan-check.sh \
 	  scripts/probe-run.sh scripts/checkpoint.sh scripts/forge-state.sh scripts/driver-call-hook.sh \
 	  scripts/overseer-guard.sh scripts/triage.sh scripts/amend-contract.sh \
