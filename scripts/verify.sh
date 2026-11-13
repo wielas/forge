@@ -18976,7 +18976,7 @@ CRON_STUB
   # The archive verb is a real one: named in a message to the operator, so asked of the CLI when there is one.
   d_note="archive verb not checked: no hermes on PATH"
   if command -v hermes >/dev/null 2>&1; then
-    hermes kanban boards rm --help >/dev/null 2>&1 \
+    hermes kanban boards --help 2>&1 | grep -Eq '[{,]rm[,}]' \
       && d_note="archive verb confirmed by the live hermes --help" \
       || detail="$detail hermes-kanban-boards-rm-is-not-a-command"
   fi
