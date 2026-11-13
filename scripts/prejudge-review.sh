@@ -120,8 +120,8 @@
 #   <state>/merge-authority/<board>.json
 #                                   merge mode for ONE board, by an explicit grant:
 #                                   `~/.forge/repo/scripts/merge-authority.sh grant <board> --by <you>`.
-#                                   Revoked by `... revoke <board>`. Never covers a chunk a
-#                                   person built, which is held for them to merge.
+#                                   Revoked by `... revoke <board>`. Merges only a chunk the
+#                                   lane (forge-codex-lane) built; any other is held.
 #   FORGE_VERIFIER_BOUNCE_BUDGET    rounds before the exception          [2]
 #   FORGE_MERGE_CHECK_BIN           stand in for scripts/merge-check.sh
 #   FORGE_MUTATION_PROBE_BOUNCE=1   the mutation probe BOUNCES. Absent = it
@@ -663,13 +663,14 @@ hold_call() {  # $1=reason, already carrying its registry class
 #     volume is case-insensitive, so the file name proves nothing) or one that names nobody are all "no grant".
 #     `FORGE_VERIFIER_MERGE=0`, or any other value, neither disables a grant nor enables merging on its own.
 #
-# A GRANT DOES NOT COVER A CHUNK A PERSON BUILT. A human chunk is one whose recorded implementer, the one the
-# kernel stored on the card's last `review_requested` event (what bounce.sh returns the card to), is the
-# non-spawnable sentinel `forge-operator-handoff` (or `claude-interactive`, the roadmap's name for the same
-# lane). Under a grant it takes the recommend-only hold, and the hold says why. An implementer that cannot be
-# read, or that is absent, is held too: it cannot be shown that nobody built the chunk. THE ENV SWITCH IS NOT
-# GIVEN THIS RULE (it is the unchanged host-wide switch: nothing in the approve branch asked who built the
-# chunk before this), so a human chunk still merges under FORGE_VERIFIER_MERGE=1.
+# A GRANT MERGES ONLY A CHUNK THE LANE BUILT. This is an ALLOWLIST: under a grant the recorded implementer, the one
+# the kernel stored on the card's last `review_requested` event (what bounce.sh returns the card to), must be
+# exactly the lane profile `forge-codex-lane`. Anything else takes the recommend-only hold, and the hold says why:
+# the non-spawnable sentinel `forge-operator-handoff` (the literal, whatever FORGE_HANDOFF_SENTINEL says) and
+# `claude-interactive` are a person's chunk; an empty or unreadable implementer cannot be shown to be nobody's;
+# any other string (a card reassigned to another profile, a lookalike) is simply not the lane. THE ENV SWITCH IS NOT
+# GIVEN THIS RULE (it is the unchanged host-wide switch: nothing in the approve branch asked who built the chunk
+# before this), so a person's chunk still merges under FORGE_VERIFIER_MERGE=1.
 #
 # The decision is made HERE, at the one place an approval is acted on, not at the start of the run, so a revoke
 # made during a long review still wins. Called once, from the approve branch, in the shell that reads the
@@ -678,22 +679,28 @@ hold_call() {  # $1=reason, already carrying its registry class
 #   MERGE_HOLD_HEADLINE / MERGE_HOLD_MEANS  non-empty only when a grant exists and this chunk is held anyway
 MERGE_AUTHORITY_CLAUSE=""; MERGE_HOLD_HEADLINE=""; MERGE_HOLD_MEANS=""
 merge_mode() {
-  local implementer sentinel="${FORGE_HANDOFF_SENTINEL:-forge-operator-handoff}"
+  # A plain assignment, never an environment override: who may be merged under a grant is not configuration.
+  local implementer lane=forge-codex-lane
   MERGE_AUTHORITY_CLAUSE=""; MERGE_HOLD_HEADLINE=""; MERGE_HOLD_MEANS=""
   [ "${FORGE_VERIFIER_MERGE:-}" = 1 ] && return 0
   forge_merge_authority_read "$BOARD" || return 1
   implementer="$(printf '%s' "${CARD0:-}" | jq -r '
       [.events[]? | select(.kind == "review_requested")] | last | .payload.implementer // ""' 2>/dev/null)"
-  case "$implementer" in
-    "")
-      MERGE_HOLD_HEADLINE="this board has merge authority, but this card names no implementer, so the merge is yours"
-      MERGE_HOLD_MEANS="Board $BOARD has given the verifier merge authority (granted by $FORGE_MA_BY at $FORGE_MA_AT), but the card records no implementer, so it cannot be shown that no person built this chunk. A grant never covers a chunk a person built; the merge is yours"
-      return 1;;
-    "$sentinel"|claude-interactive)
-      MERGE_HOLD_HEADLINE="this board has merge authority, but this chunk was built by a person, so the merge is yours"
-      MERGE_HOLD_MEANS="Board $BOARD has given the verifier merge authority (granted by $FORGE_MA_BY at $FORGE_MA_AT), but this chunk was built by a person (recorded implementer: $implementer), and a grant never covers one; the merge is yours"
-      return 1;;
-  esac
+  if [ "$implementer" != "$lane" ]; then
+    local grant="Board $BOARD has given the verifier merge authority (granted by $FORGE_MA_BY at $FORGE_MA_AT)"
+    case "$implementer" in
+      "")
+        MERGE_HOLD_HEADLINE="this board has merge authority, but this card names no implementer, so the merge is yours"
+        MERGE_HOLD_MEANS="$grant, but the card records no implementer, so it cannot be shown that the lane built this chunk. A grant merges only a chunk the lane ($lane) built; the merge is yours";;
+      forge-operator-handoff|claude-interactive|"${FORGE_HANDOFF_SENTINEL:-forge-operator-handoff}")
+        MERGE_HOLD_HEADLINE="this board has merge authority, but this chunk was built by a person, so the merge is yours"
+        MERGE_HOLD_MEANS="$grant, but this chunk was built by a person (recorded implementer: $implementer), and a grant merges only a chunk the lane ($lane) built; the merge is yours";;
+      *)
+        MERGE_HOLD_HEADLINE="this board has merge authority, but this chunk was not built by the lane, so the merge is yours"
+        MERGE_HOLD_MEANS="$grant, but this chunk's recorded implementer is $implementer, not the lane ($lane), and a grant merges only a chunk the lane built; the merge is yours";;
+    esac
+    return 1
+  fi
   MERGE_AUTHORITY_CLAUSE="board merge authority granted by $FORGE_MA_BY at $FORGE_MA_AT"
   return 0
 }

@@ -16,8 +16,9 @@
 # a missing, unreadable or malformed file, one for another board, or one without
 # a named grantor all read as "not granted", and the verifier recommends.
 #
-# A grant never covers a chunk a person built. The verifier holds that chunk for
-# its builder to merge however the board is granted (see prejudge-review.sh).
+# A grant merges only a chunk the lane (forge-codex-lane) built. The verifier holds
+# any other chunk, a person's above all, for its builder to merge however the board is
+# granted (see prejudge-review.sh).
 # It does not reach back into a merge already made: revoking stops the NEXT
 # merge decision, it cannot recall one in flight.
 #
@@ -30,10 +31,11 @@
 #   ~/.forge/repo/scripts/merge-authority.sh revoke <board>
 #   ~/.forge/repo/scripts/merge-authority.sh status [<board>]
 #
-# Exit: 0 done (status <board>: granted; status: listed).
-#       1 status <board>: NOT granted (the same answer the verifier would reach); status: a file that is
-#         not a grant was found and is listed MALFORMED (it grants nothing); a write or delete that failed;
-#         grant or revoke refused because this is a fenced worker terminal (only the operator grants).
+# Exit: 0 done. `status <board>` is the ONE yes/no test: 0 = granted, 1 = not granted (the answer the verifier would
+#         reach). `status` with no board is a LISTING and not a test: it exits 0 once it has listed what is there (no
+#         grants at all is 0 too) and 1 only when a file in the grants directory is not a valid grant (printed
+#         MALFORMED; it grants nothing).
+#       1 also: a write or delete that failed; grant or revoke refused because this is a fenced worker terminal.
 #       2 usage: an unknown command, a missing or empty --by, a board that is not a Hermes slug.
 # =============================================================================
 set -uo pipefail
