@@ -38,7 +38,7 @@
 #
 # Paths: HERMES_HOME (default ~/.hermes) and the forge state root (scripts/forge-state.sh; the alert
 # state is <root>/watchdog/state.json). Test seams, not operator knobs: FORGE_WATCHDOG_NOW (epoch
-# seconds), FORGE_WATCHDOG_LAUNCHCTL, FORGE_WATCHDOG_CURL, FORGE_WATCHDOG_TELEGRAM_API.
+# seconds), FORGE_WATCHDOG_LAUNCHCTL, FORGE_WATCHDOG_CURL.
 # =============================================================================
 set -uo pipefail
 
@@ -74,7 +74,7 @@ REMIND_H="${FORGE_WATCHDOG_REMIND_HOURS:-6}"
 DIGEST_MAX_H=26
 LAUNCHCTL="${FORGE_WATCHDOG_LAUNCHCTL:-launchctl}"
 CURL="${FORGE_WATCHDOG_CURL:-curl}"
-TG_API="${FORGE_WATCHDOG_TELEGRAM_API:-https://api.telegram.org}"
+TG_API="https://api.telegram.org"   # fixed: no override may redirect where the bot token is sent
 GW_LABEL="ai.hermes.gateway"
 for _v in NOW TICK_MAX_MIN REMIND_H; do
   eval "_val=\${$_v}"
