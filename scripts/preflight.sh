@@ -911,7 +911,8 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
                 prejudge-review.sh prejudge.sh verdict.sh merge-check.sh \
                 merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
                 driver-call-hook.sh claude-token.sh merge-authority.sh \
-                checkpoint.sh triage.sh amend-contract.sh overseer-guard.sh; do
+                checkpoint.sh triage.sh amend-contract.sh overseer-guard.sh \
+                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
@@ -1544,6 +1545,162 @@ else
       fi
       # A worktree registered inside the lab is removed with it; nothing here touches a real repository.
       rm -rf "$PF_SB_LAB"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+sect "14. The paired gateway: a dedicated forge-gate bot with no tools, the plugin, the operator's id, what is armed"
+# ---------------------------------------------------------------------------
+# GW3 (S8d). A phone can act on a milestone gate through /accept, /redirect and /park, which the forge-gateway plugin hands
+# to scripts/gate-*.sh, and the checkpoint runs from a cron job that looks only at gates somebody ARMED. Owner ruling,
+# 2026-11-11: the verbs are typed to a DEDICATED Telegram bot bound to the profile `forge-gate`, whose toolset is empty; the
+# owner's main Telegram agent keeps its tools and is not judged here. This section reads what the host has of all that. It
+# writes nothing; every operator step it names is printed in docs/epic-hands-free.md (S8d) and in the PR that landed it.
+#
+# THE DOCTRINE is the one of sections 11-13: "I could not ask" is a FAIL, not a note. What is FAIL only once the gateway is
+# live (the plugin enabled anywhere) is a WARN naming the step until then, because before the operator's steps the host has
+# not been asked to do anything yet. THE ORDER matters: the plugin must never be live before forge-gate exists with an
+# empty toolset, so "the plugin is enabled and forge-gate is missing or has a tool" is a FAIL.
+#
+# WHY THE TOOLSET, NOT THE GUARD. The plugin's guard is a tripwire (a text match; sqlite3, a built-up python string or a
+# sub-process get past it). What makes "a verb that arrives as text can never become a board write" true is that the only
+# bot that answers the verbs has no tools. This asks Hermes' OWN resolver (scripts/gateway-toolset-probe.py), because
+# `platform_toolsets.telegram: [hermes-telegram]` holds a shell without naming it, and so does a profile with no entry.
+PF_GW_REPO="$HOME/.forge/repo"
+PF_GW_STATE="${FORGE_STATE_ROOT:-$HOME/.forge}"
+PF_GW_LIVE=0
+if [ "$PIPED" = 1 ]; then
+  warn "cannot locate scripts/gateway-toolset-probe.py because this script was piped in on stdin — there is no file path to resolve it from."
+else
+  # (a) the programs run with the PATH a launchd gateway gives them, not this shell's.
+  for _gws in gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh; do
+    if [ -x "$PF_GW_REPO/scripts/$_gws" ]; then
+      _gwo="$(env -i HOME="$HOME" PATH="/usr/bin:/bin" "$PF_GW_REPO/scripts/$_gws" --check 2>&1)" \
+        && pass "$_gws --check: its tools resolve under a bare PATH (a launchd gateway's), via ~/.forge/repo" \
+        || fail "$_gws --check failed under a bare PATH: $_gwo — the gateway would refuse every verb with a message the operator reads on a phone"
+    fi
+  done
+  # (b) what Hermes says each profile's Telegram agent can call.
+  PF_GW_PROBE="$PF_SELF_REPO/scripts/gateway-toolset-probe.py"
+  _gwhome="${HERMES_HOME:-$HOME/.hermes}"
+  if [ ! -f "$PF_GW_PROBE" ]; then
+    fail "scripts/gateway-toolset-probe.py is missing — nothing states what the Telegram agents can call"
+  elif [ -z "$PF_PY" ]; then
+    fail "cannot resolve the Hermes venv python3 from the 'hermes' shim — the Telegram agents' tools are UNCHECKED, not fine."
+  else
+    PF_GW_OUT="$(env -i HOME="$HOME" PATH="$PATH" TERM=dumb "$PF_PY" -I "$PF_GW_PROBE" --platform telegram 2>&1)"; PF_GW_RC=$?
+    if [ "$PF_GW_RC" != 0 ] || ! printf '%s' "$PF_GW_OUT" | jq -e '.platform == "telegram"' >/dev/null 2>&1; then
+      fail "gateway-toolset-probe COULD NOT ASK Hermes about the Telegram toolsets (exit $PF_GW_RC): $(printf '%s' "$PF_GW_OUT" | head -c 300) — nothing was verified."
+    else
+      # live = the plugin is enabled in the root or in any profile
+      [ "$(printf '%s' "$PF_GW_OUT" | jq -r '.plugin_enabled or ([.profiles[]?.plugin_enabled] | any)')" = true ] && PF_GW_LIVE=1
+      pending() { # message...: a WARN while the gateway is not live, a FAIL once it is
+        if [ "$PF_GW_LIVE" = 1 ]; then fail "$*"; else warn "operator step pending: $*"; fi
+      }
+      # forge-gate itself: it exists, it names its toolset, and the toolset is empty.
+      if [ "$(printf '%s' "$PF_GW_OUT" | jq -r '.forge_gate != null')" != true ]; then
+        pending "the forge-gate profile does not exist (./hermes/profiles-bootstrap.sh from the runtime creates it with an empty toolset)"
+      else
+        _gwg() { printf '%s' "$PF_GW_OUT" | jq -r "$1"; }
+        if [ "$(_gwg '.forge_gate.explicit')" != true ]; then
+          fail "forge-gate has no platform_toolsets.telegram entry, so Hermes resolves the default bundle (a shell included) for its bot"
+        elif [ "$(_gwg '.forge_gate.tools | length')" != 0 ]; then
+          fail "forge-gate holds tools: $(_gwg '.forge_gate.tools | join(", ")') — it must hold none (platform_toolsets.telegram: [])"
+        else
+          pass "forge-gate has an explicit, EMPTY Telegram toolset (as Hermes resolves it): nothing it is told can become a tool call"
+        fi
+        [ "$(_gwg '.forge_gate.mcp_servers')" = 0 ] || fail "forge-gate lists $(_gwg '.forge_gate.mcp_servers') MCP server(s): each is a source of tools its empty toolset does not name"
+        [ "$(_gwg '.forge_gate.unauthorized_dm_behavior')" = ignore ] \
+          || fail "forge-gate does not ignore a stranger's DM (unauthorized_dm_behavior is '$(_gwg '.forge_gate.unauthorized_dm_behavior')'): the bot would hand out pairing codes"
+        [ "$(_gwg '.forge_gate.plugin_enabled and .forge_gate.plugin_link')" = true ] \
+          || pending "the forge-gateway plugin is not enabled and linked in the forge-gate profile (./hermes/profiles-bootstrap.sh does both)"
+        if [ "$(_gwg '.forge_gate.own_token')" = true ]; then
+          [ "$(_gwg '.forge_gate.token_shared_with_root')" = false ] \
+            && pass "forge-gate has a bot token of its own (not printed), different from the main bot's" \
+            || fail "forge-gate's TELEGRAM_BOT_TOKEN is the main bot's: Hermes refuses the second adapter, so the gate bot would be silent"
+        else
+          pending "forge-gate has no TELEGRAM_BOT_TOKEN in ~/.hermes/profiles/forge-gate/.env (create the bot with @BotFather)"
+        fi
+        case "$(_gwg '.forge_gate.allowed_users')" in
+          set) pass "forge-gate's TELEGRAM_ALLOWED_USERS is set (not printed)";;
+          star) fail "forge-gate's TELEGRAM_ALLOWED_USERS holds *: anyone could message the gate bot";;
+          *) pending "forge-gate has no TELEGRAM_ALLOWED_USERS in ~/.hermes/profiles/forge-gate/.env";;
+        esac
+      fi
+      # Any OTHER profile that has the gate verbs enabled must have no write-capable tool: a bot with tools answering
+      # /accept is the thing the dedicated bot exists to avoid. A profile with its own bot token and no explicit Telegram
+      # toolset is judged as the default bundle, which it is.
+      while IFS= read -r _gwp; do
+        [ -n "$_gwp" ] || continue
+        fail "profile ${_gwp%%|*} has the gate verbs enabled and its Telegram agent holds tools (${_gwp#*|}): the verbs belong on forge-gate only"
+      done < <(printf '%s' "$PF_GW_OUT" | jq -r '.profiles | to_entries[] | select(.key != "forge-gate" and .value.plugin_enabled and (.value.write_tools | length) > 0) | "\(.key)|\(.value.write_tools | join(", "))"')
+      while IFS= read -r _gwp; do
+        [ -n "$_gwp" ] || continue
+        info "profile $_gwp has a Telegram bot token of its own and no explicit Telegram toolset, so Hermes would give it the default bundle (the gate verbs are not enabled there)"
+      done < <(printf '%s' "$PF_GW_OUT" | jq -r '.profiles | to_entries[] | select(.key != "forge-gate" and .value.own_token and (.value.explicit | not)) | .key')
+      # the owner's main agent keeps its tools; it only needs to REFUSE a verb typed to it
+      if [ "$(printf '%s' "$PF_GW_OUT" | jq -r '.plugin_enabled')" = true ]; then
+        pass "the forge-gateway plugin is enabled in the root profile (there it only answers a verb with 'send gate verbs to the forge-gate bot')"
+      else
+        pending "the forge-gateway plugin is not enabled in the root profile, so a verb typed to the main bot goes to a model that has a shell"
+      fi
+      if [ "$(printf '%s' "$PF_GW_OUT" | jq -r '.computer_use.enabled and .computer_use.available')" = true ]; then
+        info "the main Telegram agent holds computer_use and a desktop-control driver is installed (the main agent keeps its tools by owner ruling)"
+      fi
+    fi
+  fi
+  # (c) the plugin directory (root) and the operator's id.
+  if [ -f "$_gwhome/plugins/forge-gateway/plugin.yaml" ] && [ -f "$_gwhome/plugins/forge-gateway/__init__.py" ]; then
+    pass "the forge-gateway plugin directory is installed under $_gwhome/plugins"
+  elif [ "$PF_GW_LIVE" = 1 ]; then
+    fail "the gate verbs are enabled somewhere but $_gwhome/plugins/forge-gateway has no plugin.yaml and __init__.py (the root profile needs it to refuse a verb typed to the main bot)"
+  else
+    warn "operator step pending: the forge-gateway plugin is not installed under $_gwhome/plugins"
+    say  "      ln -s ~/.forge/repo/hermes/plugins/forge-gateway ~/.hermes/plugins/forge-gateway && hermes plugins enable forge-gateway"
+  fi
+  if grep -Eq '^FORGE_OPERATOR_TELEGRAM_ID=[0-9]+[[:space:]]*$' "$_gwhome/.env" 2>/dev/null; then
+    pass "FORGE_OPERATOR_TELEGRAM_ID is set in $_gwhome/.env (the paired chat; the value is not printed)"
+  elif [ "$PF_GW_LIVE" = 1 ]; then
+    fail "the gate verbs are enabled but FORGE_OPERATOR_TELEGRAM_ID is not a number in $_gwhome/.env — every verb would be refused"
+  else
+    warn "operator step pending: FORGE_OPERATOR_TELEGRAM_ID is not set in $_gwhome/.env"
+  fi
+  if grep -Eq '^(TELEGRAM_ALLOWED_USERS|GATEWAY_ALLOWED_USERS)=.*\*|^(TELEGRAM_ALLOW_ALL_USERS|GATEWAY_ALLOW_ALL_USERS)=(1|true|yes|on)[[:space:]]*$' "$_gwhome/.env" 2>/dev/null; then
+    if [ "$PF_GW_LIVE" = 1 ]; then
+      fail "$_gwhome/.env opens the gateway to everyone (a * allowlist or an allow-all flag): the plugin refuses every verb while it does"
+    else
+      warn "$_gwhome/.env opens the gateway to everyone (a * allowlist or an allow-all flag): once forge-gateway is enabled it refuses every verb"
+    fi
+  fi
+  # (d) the cron job's script: a REAL file under ~/.hermes/scripts that reaches the cron through ~/.forge/repo (P22).
+  _gwcron="$_gwhome/scripts/forge-checkpoint.sh"
+  if [ -L "$_gwcron" ]; then
+    fail "$_gwcron is a symlink: Hermes cron refuses a --script that resolves outside ~/.hermes/scripts (P22); make it a file"
+  elif [ -f "$_gwcron" ]; then
+    grep -q 'checkpoint-cron.sh' "$_gwcron" && grep -q '\.forge/repo' "$_gwcron" \
+      && pass "$_gwcron is a file that reaches checkpoint-cron.sh through ~/.forge/repo" \
+      || fail "$_gwcron does not exec \$HOME/.forge/repo/scripts/checkpoint-cron.sh"
+  else
+    warn "operator step pending: $_gwcron does not exist (the forge-checkpoint cron job needs it; create the job --paused)"
+  fi
+  # (e) what is armed. Nothing is the normal state; GATE-M1 armed apply is the owner's go for run B and nothing earlier.
+  #     The arming file is an operator switch, NOT a security boundary: any agent running as this user with a shell or a file
+  #     tool (the main Telegram agent, a Claude Code session) can write it.
+  if [ -x "$PF_GW_REPO/scripts/checkpoint-arm.sh" ]; then
+    _gwarm="$(env FORGE_STATE_ROOT="$PF_GW_STATE" "$PF_GW_REPO/scripts/checkpoint-arm.sh" list 2>&1)"; _gwarc=$?
+    if [ "$_gwarm" = "no gate is armed" ]; then
+      pass "no gate is armed (the cron looks at nothing)"
+    else
+      while IFS= read -r _gwl; do
+        [ -n "$_gwl" ] || continue
+        case "$_gwl" in
+          MALFORMED*) warn "an arming file is malformed, so that gate is NOT armed: ${_gwl#MALFORMED }";;
+          *" GATE-M1 apply "*) warn "GATE-M1 is armed APPLY (${_gwl%% *}): a passing probe completes it and releases the next milestone. That is the owner's go for run B (S9) and nothing earlier";;
+          *) info "armed: $_gwl";;
+        esac
+      done <<< "$_gwarm"
+      [ "$_gwarc" = 0 ] || [ "$_gwarc" = 1 ] || fail "checkpoint-arm.sh list failed (exit $_gwarc): $_gwarm"
     fi
   fi
 fi
