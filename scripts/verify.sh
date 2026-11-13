@@ -18026,13 +18026,19 @@ GW_PFSCEN
   }
   gwd=""; _gw_c_preflight
   mnot=""
-  _gw_caught _gw_c_preflight scripts a-tool-is-only-a-warning preflight.sh 'fail "forge-gate holds tools: ' 'warn "forge-gate holds tools: ' 'forge-gate holds tools' || mnot="$mnot a-tool-is-only-a-warning"
-  _gw_caught _gw_c_preflight scripts the-order-is-not-checked preflight.sh '        if [ "$PF_GW_LIVE" = 1 ]; then fail "$*"; else warn "operator step pending: $*"; fi' '        warn "operator step pending: $*"' 'plugin-live-before-forge-gate' || mnot="$mnot the-order-is-not-checked"
-  _gw_caught _gw_c_preflight scripts other-bots-are-not-judged preflight.sh 'fail "profile ${_gwp%%|*} has the gate verbs enabled' 'info "profile ${_gwp%%|*} has the gate verbs enabled' 'another-bot-with-the-verbs' || mnot="$mnot other-bots-are-not-judged"
+  # The first three mutants live in the EXECUTED scenarios, which ask Hermes' own resolver (gateway-toolset-probe.py runs under the
+  # Hermes venv python). A host without Hermes (CI) cannot catch them, so they are only judged where that resolver exists.
   _gw_caught _gw_c_preflight scripts no-gate-m1-warning preflight.sh '*" GATE-M1 apply "*) warn "GATE-M1 is armed APPLY' '*" GATE-M1 apply "*) info "GATE-M1 is armed APPLY' || mnot="$mnot no-gate-m1-warning"
   _gw_caught _gw_c_preflight scripts new-script-not-resolved preflight.sh '                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do' '                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh; do' || mnot="$mnot new-script-not-resolved"
-  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "preflight-asks-the-gateway (section 14, run against scratch hosts: nothing deployed only warns; the plugin live before forge-gate exists, a tool, the default bundle, an MCP server, pairing codes, the main bot's token, a * allowlist, another bot with the verbs and no operator id each FAIL; a good deploy is clean; the six new scripts are resolved through ~/.forge/repo and run under a bare PATH; five mutants caught)"
-  else bad "preflight-asks-the-gateway" "the host check must ask what the unit tests cannot:${gwd}; mutants not caught:${mnot:- none}"; fi
+  if [ "$hermes_ok" = 1 ]; then
+    _gw_caught _gw_c_preflight scripts a-tool-is-only-a-warning preflight.sh 'fail "forge-gate holds tools: ' 'warn "forge-gate holds tools: ' 'forge-gate holds tools' || mnot="$mnot a-tool-is-only-a-warning"
+    _gw_caught _gw_c_preflight scripts the-order-is-not-checked preflight.sh '        if [ "$PF_GW_LIVE" = 1 ]; then fail "$*"; else warn "operator step pending: $*"; fi' '        warn "operator step pending: $*"' 'plugin-live-before-forge-gate' || mnot="$mnot the-order-is-not-checked"
+    _gw_caught _gw_c_preflight scripts other-bots-are-not-judged preflight.sh 'fail "profile ${_gwp%%|*} has the gate verbs enabled' 'info "profile ${_gwp%%|*} has the gate verbs enabled' 'another-bot-with-the-verbs' || mnot="$mnot other-bots-are-not-judged"
+  fi
+  if [ -n "$gwd" ] || [ -n "$mnot" ]; then bad "preflight-asks-the-gateway" "the host check must ask what the unit tests cannot:${gwd}; mutants not caught:${mnot:- none}"
+  elif [ "$hermes_ok" != 1 ]; then skip "preflight-asks-the-gateway" "hermes (and its venv python) not installed: section 14's static checks and two mutants held, but its executed scenarios and the other three mutants need Hermes' own toolset resolver"
+  else ok "preflight-asks-the-gateway (section 14, run against scratch hosts: nothing deployed only warns; the plugin live before forge-gate exists, a tool, the default bundle, an MCP server, pairing codes, the main bot's token, a * allowlist, another bot with the verbs and no operator id each FAIL; a good deploy is clean; the six new scripts are resolved through ~/.forge/repo and run under a bare PATH; five mutants caught)"
+  fi
 }
 wants gateway && run_gateway_group
 
