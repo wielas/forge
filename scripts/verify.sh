@@ -71,8 +71,9 @@
 #               bounded cleanup, preserved history, and one next command
 #   digest/     the daily digest and the one decision-first format (GW1, GW2):
 #               the message a fixture board produces, exactly; silence when
-#               nothing happened; an unreadable board named, never quiet; and a
-#               decision entry for every block class the contract registers
+#               nothing happened; an unreadable board named, never quiet; a
+#               decision entry for every block class the contract registers;
+#               and boards untouched for weeks collapsed to one closing line
 #   quota/      the usage-limit park: which window a run waits on, and that the
 #               lane resumes the same Codex session rather than restarting it.
 #               Fixtures and a stubbed codex only — spends nothing   (ADR-0016)
@@ -3336,6 +3337,9 @@ digest/every-block-class-has-a-decision  every class in the contract's blocked_r
 digest/a-missing-decision-is-caught  a formatter with one class entry deleted reddens and names the class
 digest/one-formatter                the verifier, the merge-watcher, the digest and the board bootstrap all source scripts/decision-message.sh, and nothing else defines decision_message
 digest/cron-symlinks-reach-their-siblings  the digest and the merge-watcher, run through a symlink in another directory as `hermes cron --script` does, still find the scripts beside their target
+digest/dormant-board-collapses-to-one-line-at-the-end  a board untouched for FORGE_DIGEST_DORMANT_DAYS (14) before the end of --day, nothing landed, running or in review, is one line after every active board, with its full-view and archive commands; all-dormant is the header plus that section
+digest/dormancy-boundary-and-overrides  60 seconds inside the window renders in full, 60 outside collapses; a running or review card, --board, and FORGE_DIGEST_DORMANT_DAYS=0 or a non-number are never collapsed
+digest/an-unreadable-board-is-never-dormant  a board that cannot be read keeps its UNREADABLE block and exit 3 and is not a dormant line
 docs/launch-docs-share-next-command            all four operator documents name roadmap-check as the next command
 docs/the-open-epic-is-discoverable  CLAUDE.md and state.md both route a cold session to the epic and its § How we run this epic (Q4)
 manifest/makefile-syntax-list-is-complete  every tracked *.sh outside templates/ is named in the Makefile's bash -n list
@@ -18913,6 +18917,122 @@ CRON_STUB
   [ -z "$detail" ] \
     && ok "cron-symlinks-reach-their-siblings" \
     || bad "cron-symlinks-reach-their-siblings" "a cron job runs the script through a symlink, so it must find its siblings beside the symlink's TARGET —$detail"
+
+  # DORMANT BOARDS. A board nobody has touched for FORGE_DIGEST_DORMANT_DAYS (14)
+  # before the END of the digest day collapses to one line at the end of the
+  # message. Every time here is derived from the pinned --day, never the clock, so
+  # the boundary is the same on every date. The boards are synthetic and live in
+  # their own HERMES_HOME, so the shared fixture boards above cannot interfere.
+  local dh="$root/dormant/hermes" dk="$root/dormant/hermes/kanban/boards" dday=2026-07-28
+  local d_end d_cut d_old
+  d_end="$(TZ=UTC sqlite3 :memory: "SELECT strftime('%s','$dday','+1 day','utc');")"
+  d_cut=$((d_end - 14 * 86400))             # exactly 14 days before the end of the day
+  d_old=$((d_cut - 40 * 86400 + 43200))     # 2026-06-05 12:00 UTC: long untouched
+  _dgd() { TZ=UTC HERMES_HOME="$dh" "$REPO_ROOT/$ds" --day "$dday" "$@"; }
+  # $1=slug $2=time of the board's newest (and only) event $3...=one card per status.
+  # A blocked card carries a lane-block reason, so it is waiting on the operator.
+  _dormant_board() {
+    local slug="$1" at="$2" st n=0 sql="DELETE FROM tasks; DELETE FROM task_events; DELETE FROM task_runs; DELETE FROM task_links;"
+    shift 2
+    mkdir -p "$dk/$slug"
+    sqlite3 "$dk/$slug/kanban.db" < scripts/fixtures/digest-board.sql >/dev/null 2>&1
+    for st in "$@"; do
+      n=$((n + 1))
+      sql="$sql INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_${slug}_$n', 'CHUNK-$n: synthetic card', 'forge-codex-lane', '$st', $at);"
+      if [ "$st" = blocked ]; then
+        sql="$sql INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_${slug}_$n', 'blocked', '{\"reason\":\"ci-red: make check is red after codex\",\"kind\":\"needs_input\"}', $at);"
+      else
+        sql="$sql INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_${slug}_$n', 'created', NULL, $at);"
+      fi
+    done
+    sqlite3 "$dk/$slug/kanban.db" "$sql" >/dev/null 2>&1
+  }
+  # The one line a dormant board gets. $1=slug $2=what is open $3=date of its newest event
+  _dormant_line() {
+    printf -- '- %s: %s, last activity %s — full view: `~/.forge/repo/scripts/digest.sh --board %s`; archive it: `hermes kanban boards rm %s`' \
+      "$1" "$2" "$3" "$1" "$1"
+  }
+  local d_head="Forge digest — $dday" d_sec="Dormant boards (1) — untouched for 14+ days, nothing running"
+  local d_active d_expect d_note d_tail d_val rc2
+
+  # 1. A dormant board collapses to its one line, at the end, after an active board
+  # that renders exactly as it does under --board (which never collapses).
+  rm -rf "$root/dormant"; mkdir -p "$dk"
+  _dormant_board active-board $((d_end - 3600)) blocked
+  _dormant_board stale-board "$d_old" blocked blocked todo
+  d_active="$(_dgd --board active-board 2>/dev/null)"
+  d_expect="$d_active"$'\n\n'"$d_sec"$'\n'"$(_dormant_line stale-board '2 waiting on you, 1 not started' 2026-06-05)"
+  out="$(_dgd 2>"$root/err")"; rc=$?
+  detail=""
+  { [ "$rc" = 0 ] && [ "$out" = "$d_expect" ]; } \
+    || detail="$detail active-then-one-dormant-line(rc=$rc: $(printf '%s' "$out" | grep -E '^(== |Dormant|- stale)' | cut -c1-60 | tr '\n' '|'))"
+  printf '%s' "$d_active" | grep -q '^== active-board ==' && printf '%s' "$d_active" | grep -q '^Decision needed: ' \
+    || detail="$detail the-active-board-was-not-rendered-in-full"
+  # With no active board the message is the header line and the dormant section.
+  rm -rf "$dk/active-board"
+  out="$(_dgd 2>/dev/null)"; rc=$?
+  { [ "$rc" = 0 ] && [ "$out" = "$d_head"$'\n\n'"$d_sec"$'\n'"$(_dormant_line stale-board '2 waiting on you, 1 not started' 2026-06-05)" ]; } \
+    || detail="$detail all-dormant-is-header-plus-section(rc=$rc: $(printf '%s' "$out" | head -4 | cut -c1-60 | tr '\n' '|'))"
+  # The archive verb is a real one: named in a message to the operator, so asked of the CLI when there is one.
+  d_note="archive verb not checked: no hermes on PATH"
+  if command -v hermes >/dev/null 2>&1; then
+    hermes kanban boards rm --help >/dev/null 2>&1 \
+      && d_note="archive verb confirmed by the live hermes --help" \
+      || detail="$detail hermes-kanban-boards-rm-is-not-a-command"
+  fi
+  [ -z "$detail" ] \
+    && ok "dormant-board-collapses-to-one-line-at-the-end (active board in full first, header plus section when all are dormant; $d_note)" \
+    || bad "dormant-board-collapses-to-one-line-at-the-end" "a board untouched past the window must be one line after every active board —$detail"
+
+  # 2. The boundary and the overrides. Newest event 60s inside the 14 days: in
+  # full. 60s outside: one line. A running card, or one in review, keeps a board
+  # in full however old its events. --board and FORGE_DIGEST_DORMANT_DAYS=0 give
+  # back one full block per board.
+  rm -rf "$root/dormant"; mkdir -p "$dk"
+  _dormant_board edge-inside $((d_cut + 60)) blocked
+  _dormant_board edge-outside $((d_cut - 60)) blocked
+  _dormant_board old-review "$d_old" review
+  _dormant_board old-running "$d_old" running
+  detail=""
+  out="$(_dgd 2>/dev/null)"; rc=$?
+  d_expect="$(_dgd --board edge-inside --board old-review --board old-running 2>/dev/null)"$'\n\n'"$d_sec"$'\n'"$(_dormant_line edge-outside '1 waiting on you' 2026-07-14)"
+  { [ "$rc" = 0 ] && [ "$out" = "$d_expect" ]; } \
+    || detail="$detail boundary(rc=$rc: $(printf '%s' "$out" | grep -E '^(== |Dormant|- edge)' | cut -c1-40 | tr '\n' '|'))"
+  out="$(_dgd --board edge-outside 2>/dev/null)"
+  { printf '%s' "$out" | grep -q '^== edge-outside ==' && ! printf '%s' "$out" | grep -q '^Dormant boards'; } \
+    || detail="$detail an-explicit-board-must-render-in-full"
+  d_expect="$(_dgd --board edge-inside --board edge-outside --board old-review --board old-running 2>/dev/null)"
+  for d_val in 0 soon; do
+    out="$(FORGE_DIGEST_DORMANT_DAYS=$d_val _dgd 2>/dev/null)"
+    [ "$out" = "$d_expect" ] && ! printf '%s' "$out" | grep -q '^Dormant boards' \
+      || detail="$detail DORMANT_DAYS=$d_val-must-give-one-full-block-per-board"
+  done
+  out="$(FORGE_DIGEST_DORMANT_DAYS=13 _dgd 2>/dev/null)"
+  printf '%s' "$out" | grep -qF 'Dormant boards (2) — untouched for 13+ days, nothing running' \
+    || detail="$detail DORMANT_DAYS=13-must-move-the-window"
+  [ -z "$detail" ] \
+    && ok "dormancy-boundary-and-overrides (60s either side of 14 days, a running and a review card, --board, FORGE_DIGEST_DORMANT_DAYS 0/soon/13)" \
+    || bad "dormancy-boundary-and-overrides" "the window is 14 days before the end of --day; running, review and named boards are never collapsed; 0 or a non-number restores today's output —$detail"
+
+  # 3. A board that cannot be read is never dormant: it keeps its UNREADABLE
+  # block and the exit 3, and is not one of the dormant lines.
+  rm -rf "$root/dormant"; mkdir -p "$dk/broken"
+  printf 'not sqlite\n' > "$dk/broken/kanban.db"
+  _dormant_board stale-board "$d_old" blocked
+  detail=""
+  out="$(_dgd 2>/dev/null)"; rc=$?
+  d_tail="$(printf '%s\n' "$out" | sed -n '/^Dormant boards/,$p')"
+  { [ "$rc" = 3 ] && printf '%s\n' "$out" | grep -q '^== broken ==' && printf '%s\n' "$out" | grep -q '^UNREADABLE' \
+    && [ "$d_tail" = "$d_sec"$'\n'"$(_dormant_line stale-board '1 waiting on you' 2026-06-05)" ]; } \
+    || detail="$detail unreadable-beside-a-dormant-board(rc=$rc: $(printf '%s' "$out" | grep -E '^(== |UNREADABLE|Dormant|- )' | cut -c1-40 | tr '\n' '|'))"
+  rm -rf "$dk/stale-board"
+  out="$(_dgd 2>/dev/null)"; rc2=$?
+  { [ "$rc2" = 3 ] && printf '%s\n' "$out" | grep -q '^UNREADABLE' && ! printf '%s\n' "$out" | grep -q '^Dormant boards'; } \
+    || detail="$detail unreadable-alone(rc=$rc2: $(printf '%s' "$out" | head -4 | cut -c1-40 | tr '\n' '|'))"
+  [ -z "$detail" ] \
+    && ok "an-unreadable-board-is-never-dormant (still named UNREADABLE with exit 3, beside a dormant board and alone)" \
+    || bad "an-unreadable-board-is-never-dormant" "a board that could not be read is not a quiet or dormant board —$detail"
+  rm -rf "$root/dormant"
 }
 wants digest    && run_digest_group
 
