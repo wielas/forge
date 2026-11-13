@@ -30,6 +30,8 @@
 forge_state_root()        { printf '%s' "${FORGE_STATE_ROOT:-$HOME/.forge}"; }
 forge_lane_session_root() { printf '%s' "${FORGE_LANE_SESSION_ROOT:-$(forge_state_root)/lane-sessions}"; }
 forge_verdict_root()      { printf '%s' "${FORGE_VERDICT_ROOT:-$(forge_state_root)/verdicts}"; }
+# The liveness watchdog (scripts/watchdog.sh, scripts/watchdog-install.sh) keeps its alert state and its launchd log here.
+forge_watchdog_root()     { printf '%s' "${FORGE_WATCHDOG_ROOT:-$(forge_state_root)/watchdog}"; }
 
 # ---------------------------------------------------------------------------
 # THE PENDING CALL (P34). A program decides the one lifecycle call the driver must make and
