@@ -25,9 +25,25 @@
 # WHAT A BOARD IS. Every `<kanban home>/boards/<slug>/kanban.db` except the ones
 # Hermes moved under `_archived/`. A board appears only when something landed on
 # the day, something is in flight, or something waits on the operator — so a
-# finished run drops out when its board is archived, and a dormant card on an
-# old board keeps appearing until someone decides about it, which is what
-# "waiting on you" means.
+# finished run drops out when its board is archived. A card waiting on the
+# operator stays on its board until someone decides about it, which is what
+# "waiting on you" means; but a board nobody has touched for weeks is not
+# repeated in full every morning — see DORMANT BOARDS.
+#
+# DORMANT BOARDS. A board is dormant for the digest day when nothing landed on
+# the day, no card is `running` or in `review`, and its newest row (the latest
+# task event, or task timestamp if that is later) is more than
+# FORGE_DIGEST_DORMANT_DAYS days (default 14) before the END of the digest day —
+# measured from `--day`, never from the clock, so a fixture's answer is the same
+# on every date. A dormant board is not rendered in full: every dormant board
+# gets one line in a single section at the very END of the message, after all the
+# active boards, with the command for its full view and the one that archives it.
+# A board with nothing to say is still omitted entirely, and when every board
+# with something to say is dormant the message is the header line and that
+# section. Three things are never collapsed: a board named with `--board` (that
+# is the full view the dormant line points to), a board that could not be read
+# (UNREADABLE below, exit 3), and any board when FORGE_DIGEST_DORMANT_DAYS is 0
+# or not a number, which restores one full block per board.
 #
 # WAITING ON YOU is rendered in GW1's format (scripts/decision-message.sh). A
 # verifier hold already carries the whole format in its reason and is shown as
@@ -50,7 +66,10 @@
 # Usage:
 #   digest.sh [--board <slug>]... [--day YYYY-MM-DD]
 #     --day   the calendar day "landed" and "spend" cover (local); default yesterday
-#     --board limit to these boards (repeatable); default every live board
+#     --board limit to these boards (repeatable), each rendered in full even if
+#             dormant; default every live board, dormant ones collapsed
+#   FORGE_DIGEST_DORMANT_DAYS  days of silence that make a board dormant;
+#             default 14; 0 or anything that is not a number turns the collapse off
 #
 # Exit: 0 printed a digest, or there was nothing to say (empty stdout).
 #       2 a usage error, or a tool is missing.
@@ -72,10 +91,10 @@ HERE="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" \
 # shellcheck source=decision-message.sh
 . "$HERE/decision-message.sh" || { echo "digest: cannot source decision-message.sh" >&2; exit 2; }
 
-BOARDS=""; DAY=""
+BOARDS=""; DAY=""; EXPLICIT=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --board) BOARDS="$BOARDS ${2:?--board needs a slug}"; shift 2;;
+    --board) BOARDS="$BOARDS ${2:?--board needs a slug}"; EXPLICIT=1; shift 2;;
     --day)   DAY="${2:?--day needs YYYY-MM-DD}"; shift 2;;
     -h|--help) awk 'NR>2 && /^# ={10,}/{exit} NR>2 {sub(/^# ?/,""); print}' "$0"; exit 0;;
     *) echo "digest: unknown arg: $1" >&2; exit 2;;
@@ -102,6 +121,19 @@ fi
 # local time, so a day boundary is the operator's midnight, not Greenwich's.
 DAY_START="$(sqlite3 :memory: "SELECT strftime('%s','$DAY','utc');")"
 DAY_END="$(sqlite3 :memory: "SELECT strftime('%s','$DAY','+1 day','utc');")"
+
+# DORMANT BOARDS (header). "Now" is the end of the digest day, so the answer for a
+# fixture is the same on every date. A value that is not a plain number of days,
+# or is absurdly long, turns the collapse off: today's behaviour, one full block
+# per board. Naming a board always turns it off for that run.
+DORMANT_DAYS="${FORGE_DIGEST_DORMANT_DAYS:-14}"
+case "$DORMANT_DAYS" in
+  *[!0-9]*) DORMANT_DAYS=0;;
+  *) if [ "${#DORMANT_DAYS}" -le 5 ]; then DORMANT_DAYS=$((10#$DORMANT_DAYS)); else DORMANT_DAYS=0; fi;;
+esac
+COLLAPSE=0
+{ [ "$DORMANT_DAYS" -gt 0 ] && [ "$EXPLICIT" = 0 ]; } && COLLAPSE=1
+DORMANT_CUTOFF=$((DAY_END - DORMANT_DAYS * 86400))
 
 # The interactive hold as an SQL literal: board_json compares the last block
 # reason with it.
@@ -176,7 +208,13 @@ SELECT json_object(
                          AND EXISTS (SELECT 1 FROM task_links l
                                        JOIN tasks p ON p.id = l.parent_id
                                       WHERE l.child_id = w.id
-                                        AND p.status NOT IN ('done','archived'))))
+                                        AND p.status NOT IN ('done','archived')))),
+  -- The newest thing that happened on this board, for the dormancy test: the latest
+  -- task event, or a task's own created/completed time if one of those is later
+  -- (a board with no event rows still has cards).
+  'last', MAX(COALESCE((SELECT MAX(created_at) FROM task_events), 0),
+              COALESCE((SELECT MAX(created_at) FROM tasks), 0),
+              COALESCE((SELECT MAX(completed_at) FROM tasks), 0))
 );
 SQL
 }
@@ -401,7 +439,23 @@ render_spend() {  # $1=board
       end'
 }
 
+# One line for a dormant board. $1=board $2=board json. The archive verb is
+# `boards rm`: its default is to move the board under boards/_archived/, which is
+# recoverable (`--delete` is the hard one, and is never printed).
+dormant_line() {
+  local nw nf last date parts
+  { read -r nw; read -r nf; read -r last; } \
+    < <(printf '%s' "$2" | jq -r '(.waiting | length), (.flight | length), .last')
+  date="$(sqlite3 :memory: "SELECT strftime('%Y-%m-%d', $last, 'unixepoch', 'localtime');")"
+  parts=""
+  [ "$nw" -gt 0 ] && parts="$nw waiting on you"
+  [ "$nf" -gt 0 ] && parts="${parts:+$parts, }$nf not started"
+  printf -- '- %s: %s, last activity %s — full view: `~/.forge/repo/scripts/digest.sh --board %s`; archive it: `hermes kanban boards rm %s`\n' \
+    "$1" "$parts" "$date" "$1" "$1"
+}
+
 OUT="$WORK/out"; : > "$OUT"; rc=0
+DORMANT="$WORK/dormant"; : > "$DORMANT"; ndormant=0
 for BOARD in $BOARDS; do
   db="$KANBAN_ROOT/boards/$BOARD/kanban.db"
   [ "$BOARD" = default ] && db="$HERMES_ROOT/kanban.db"
@@ -413,6 +467,17 @@ for BOARD in $BOARDS; do
     printf '\n== %s ==\nUNREADABLE — the board could not be read, so nothing here says it is quiet\n' "$BOARD" >> "$OUT"
     rc=3; continue; }
   printf '%s' "$json" | jq -e '(.landed + .flight + .waiting) | length > 0' >/dev/null || continue
+  # Dormant: nothing landed on the day, nothing running or in review, and the board's
+  # newest row is older than the cutoff. A jq failure here is not dormant: the board
+  # is then rendered in full, which is the safe direction to be wrong in.
+  if [ "$COLLAPSE" = 1 ] && printf '%s' "$json" | jq -e --argjson cutoff "$DORMANT_CUTOFF" '
+       (.landed | length) == 0
+       and ([.flight[] | select(.status == "running" or .status == "review")] | length) == 0
+       and .last < $cutoff' >/dev/null 2>&1; then
+    dormant_line "$BOARD" "$json" >> "$DORMANT"
+    ndormant=$((ndormant + 1))
+    continue
+  fi
   {
     printf '\n== %s ==\n' "$BOARD"
     printf '%s' "$json" | jq -r '
@@ -449,7 +514,12 @@ for BOARD in $BOARDS; do
   } >> "$OUT"
 done
 
-[ -s "$OUT" ] || exit "$rc"
+[ -s "$OUT" ] || [ "$ndormant" -gt 0 ] || exit "$rc"
 printf 'Forge digest — %s\n' "$DAY"
 cat "$OUT"
+# The dormant boards come last, after every active board, in one section.
+if [ "$ndormant" -gt 0 ]; then
+  printf '\nDormant boards (%s) — untouched for %s+ days, nothing running\n' "$ndormant" "$DORMANT_DAYS"
+  cat "$DORMANT"
+fi
 exit "$rc"
