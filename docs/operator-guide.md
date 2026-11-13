@@ -455,6 +455,26 @@ is `claude-interactive`, full mode also accepts its documented `done` checkpoint
 without re-blocking it or erasing the human assignee; any nonterminal state
 other than the original sticky block fails closed.
 
+## When the plan changes after bootstrap
+
+Bootstrap is create-only: a card body is a copy of `docs/chunks/<ID>.md` taken once, and the lane builds from the
+card, so an amended plan does not reach the board by itself. Bring the board back in line, dry run first:
+
+```bash
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-sync.sh" "$BOARD" --branch-suffix "$SUF")           # the diff and the commands; writes nothing
+(cd "$PROJECT" && "$HOME/.forge/repo/hermes/board-sync.sh" "$BOARD" --branch-suffix "$SUF" --apply)   # makes the board match
+```
+
+The verdict words: `CREATE`, `EDGE-ADD`, `UPDATE-BODY` and `EDGE-REMOVE` are what `--apply` changes. `STALE-DONE` (a done or
+archived card whose body differs), `IN-FLIGHT` (running, in review, or blocked after a start) and `ORPHAN` (a card the plan
+no longer names) are reported and never touched. `MANUAL` is what v1 does not do: a title, lane or branch that differs on a
+card that has not started, and a gate or `claude-interactive` chunk with no card (create it as bootstrap does, then re-run).
+Exit 0 means nothing is left to change; 1 means it differs, or the apply was refused or stopped; 2 means it could not run.
+`--apply` creates with every parent named in the create, links before it unlinks, runs one mutation at a time and reads each
+back, and stops at the first surprise. **A step that would leave a card with no open parent** (an unlink, or a create whose
+parents are all done) makes the card dispatchable within a minute, so it is refused, with nothing written, until you pass
+`--allow-release`. Pass the board's own `--branch-suffix`; it only ever writes with `create`, `link`, `edit` and `unlink`.
+
 ## Landing a stack of PRs
 
 Slices stack: #B is based on #A's branch, #C on #B's. Two things about that are
