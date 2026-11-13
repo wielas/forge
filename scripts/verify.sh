@@ -65,6 +65,12 @@
 #   triage/     triage emptied with no model, each exit audited, and a contract
 #               amendment that changes the contract, its freeze and the decision
 #               log together or not at all                                (MS5, S8c)
+#   gateway/    the paired gateway: the forge-gateway plugin's /accept, /redirect and /park, each
+#               calling exactly one allowlisted script; an unpaired chat, a malformed command, a
+#               replay, an unlisted verb and bad args each refused with zero board and GitHub
+#               writes; a verb that arrives mid-turn as text never becoming a board write; and
+#               the cron job whose arming file is the only thing that can complete a gate
+#                                                                      (GW3, decision 13, S8d)
 #   gate/       repository merge protection and required-check diagnostics,
 #               driven through recorded API response shapes                    (F79)
 #   docs/       the reconciled launch ledger and operator contract: dispositions,
@@ -109,11 +115,11 @@ while [ $# -gt 0 ]; do
     --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gate docs digest quota manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -1123,6 +1129,9 @@ fi
 [ -f "$cfg" ] || exit 0
 awk -v want="$key" '
   /^[a-z_]+:$/            { top=$0; sub(/:$/,"",top); nest=""; next }
+  /^[a-z_]+: /            { k=$1; sub(/:$/,"",k); v=$0; sub(/^[a-z_]+: /,"",v); top=k; nest=""
+                            if (want == k) print v
+                            next }
   /^  #/                  { next }
   /^  - /                 { if (want == top) { sub(/^  /,""); print } next }
   /^  [a-z_]+: /          { k=$1; sub(/:$/,"",k); v=$0; sub(/^  [a-z_]+: /,"",v)
@@ -1140,8 +1149,8 @@ PBHERMES
   pb_out="$(env PATH="$pb_lab/bin:$PATH" HERMES_HOME="$pb_lab/clean" \
             bash hermes/profiles-bootstrap.sh 2>&1)"; pb_rc=$?
   [ "$pb_rc" = 0 ] || pb_detail="$pb_detail correct-write-still-fatal(rc=$pb_rc)"
-  [ "$(printf '%s\n' "$pb_out" | grep -c '^  verified: ')" = 5 ] \
-    || pb_detail="$pb_detail not-all-five-profiles-verified"
+  [ "$(printf '%s\n' "$pb_out" | grep -c '^  verified: ')" = 6 ] \
+    || pb_detail="$pb_detail not-all-six-profiles-verified"
   printf '%s' "$pb_out" | grep -Fq 'not a recognized config key' \
     || pb_detail="$pb_detail stderr-swallowed"
   printf '%s' "$pb_out" | grep -Fq 'note (forge-codex-lane skills.disabled):' \
@@ -1162,7 +1171,7 @@ PBHERMES
     || pb_detail="$pb_detail wrong-value-did-not-fatal"
 
   [ -z "$pb_detail" ] \
-    && ok "bootstrap-readback-compares-stdout-only (real script, stubbed 0.21.5: a correct write verifies five profiles and surfaces the warning; a wrong value still FATALs)" \
+    && ok "bootstrap-readback-compares-stdout-only (real script, stubbed 0.21.5: a correct write verifies six profiles (forge-gate's top-level toolsets and unauthorized_dm_behavior among them) and surfaces the warning; a wrong value still FATALs)" \
     || bad "bootstrap-readback-compares-stdout-only" \
         "hermes/profiles-bootstrap.sh must verify a correct write while surfacing stderr, and still FATAL on a real mismatch —$pb_detail"
 
@@ -3221,6 +3230,34 @@ triage/kernel-exits-need-no-model         the installed Hermes in an isolated HE
 triage/triage-calls-always-carry-board    every hermes kanban call in triage.sh carries --board and none is specify, decompose, promote or a model
 triage/amendment-is-atomic                the contract, its freeze and the decision log change together or not at all, each install step failed for real (MS5)
 triage/amendment-touches-only-the-contract  only docs/chunks/<ID>.md, tests/features and tests/probes may be amended; bad paths, symlinks and unfrozen projects cannot run
+gateway/plugin-registers-three-commands   the forge-gateway plugin registers /accept, /redirect and /park from a constant three-entry table, one distinct executable script each, and one pre_tool_call hook (GW3)
+gateway/unpaired-chat-refused             another user or chat, a group, another platform, no session, an unset or malformed operator id, a * allowlist and both allow-all flags: refused, no script, zero writes
+gateway/malformed-command-refused         no args, a bad board, a non-GATE id, no text for redirect, an oversize or control-character text: refused before any script runs; the scripts refuse the same shapes with zero writes
+gateway/replay-is-a-noop                  one (chat_id, message_id) runs its script once and returns the first reply; an empty message id and a half-recorded entry are refused unrun
+gateway/unlisted-verb-refused             complete, merge, gate-accept, gate_accept, Accept, unblock, bounce and an empty verb have no registered handler, and the plugin's own entry refuses them
+gateway/each-verb-maps-to-one-script      each verb calls its own script once with --board; each script makes exactly one write (complete or comment), and records the decision and disarms the gate
+gateway/bad-args-refused                  an unknown board, a gate with no card, not blocked, two cards, not a gate, no block event: exit 1, 'refused:', zero writes, by script and by handler
+gateway/accept-needs-a-recorded-block     accept needs the reported hold and an apply arming, redirect a report and any valid arming, park only a blocked gate; malformed reports and armings all refuse
+gateway/handler-never-raises              a failing seam, a crashed or hung or missing script and an unwritable ledger return a string; a timeout kills the whole process group and says the outcome is unknown
+gateway/guard-reads-the-text              the guard blocks every board write a terminal, code or process text or a kanban_* tool names, reads the shell's quoting, and lets the read verbs and kanban_show/list/attachments through
+gateway/guard-spares-workers              a dispatched worker's terminator and the CLI, TUI, API server and kanban surfaces pass; a messaging session that is not a worker, and an unbound gateway turn, are guarded
+gateway/guard-covers-the-other-routes     file tools aimed at forge state, the runtime, Hermes scripts, plugins, config, profiles and boards, a patch naming one, and cronjob_manage with a script are blocked
+gateway/guard-never-raises-or-blocks-the-innocent  an internal failure in the guard returns a decision, blocks the tools that could write a board and passes search, read, memory and todo
+gateway/real-hermes-loads-the-plugin-and-routes-only-three-verbs  an isolated HERMES_HOME, the plugin symlinked in and enabled with hermes plugins enable: the gateway's own lookup finds three commands and no other; a raising hook blocks every tool
+gateway/busy-text-never-writes-a-gate    through the real handle_function_call with the session bound as a ContextVar: ten board-writing calls are refused by the guard, the stub is never called and a real board is byte-identical (GW3 done-when)
+gateway/forge-gate-profile-has-no-tools  the real bootstrap into a scratch root and Hermes' own resolver: forge-gate has an explicit EMPTY Telegram toolset, no MCP server, the plugin linked and enabled, strangers ignored, its SOUL installed and no secret written; the default bundle, the bundle form, one tool and an MCP server are each seen
+gateway/deployed-forge-gate-has-no-tools  the live forge-gate profile has no tools and the verbs are on it alone; pending (a skip) until the profile exists and the plugin is not enabled, a failure if the plugin is live before forge-gate is
+gateway/guard-forge-gate-blocks-everything  on a forge-gate turn every tool call but a board read is refused, whatever the tool, the environment or the surface; the main bot is left to the tripwire
+gateway/forge-gate-soul-says-what-the-plugin-does  the SOUL teaches each verb's syntax exactly as the plugin states it, says it has no tools and never acts, teaches /stop first, names no tool or program, and describes the answers and /accept truthfully (ADR-0003)
+gateway/park-and-redirect-disarm-before-they-write  the gate is already disarmed and decided at the moment the comment is written, so a still-armed check cannot pass in between; a refused comment leaves it disarmed and says so
+gateway/unarmed-gate-never-completes      the cron completes nothing unarmed, nothing armed rehearse, exactly one armed apply (which needs --confirm-release); a malformed arming is no arming (decision 4)
+gateway/cron-silent-and-exit-0            a block is delivered once and recorded for its hold; repeat ticks, an unfinished milestone and a gate that is not held are silent; a dirty or non-main checkout is said once; only the job's own fault is non-zero
+gateway/arming-is-explicit                checkpoint-arm.sh needs a mode, a --confirm-release for apply and an absolute project; arming clears an earlier hold's records; a malformed file lists as not armed
+gateway/every-hermes-kanban-call-carries-board  no hermes kanban call in the gate, arming or cron scripts is without --board
+gateway/state-root-agrees-with-forge-state  the plugin's ledger root and forge-state.sh's forge_state_root are one path
+gateway/gate-scripts-run-under-the-minis-bash  no bash-4 idiom in the gate, arming, cron or checkpoint scripts, each parses under /bin/bash, and /park and /redirect with an apostrophe or any shell, SQL or option character complete under it (CI's bash 5 hides this)
+gateway/a-decision-during-the-probe-wins  a probe that removes the arming file or records a decision while it runs: the gate is not completed and the cron is silent; checkpoint.sh --before-complete is the last look
+gateway/preflight-asks-the-gateway        preflight section 14, executed against scratch hosts: nothing deployed warns, the plugin live before forge-gate exists / a tool / the default bundle / an MCP server / pairing codes / a shared token / another bot with the verbs fail, a good deploy is clean
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -14493,8 +14530,8 @@ CK_PROBE
   [ "$rc" = 1 ] && printf '%s\n' "$out" | sed -n '3p' | grep -Fq "checkpoint: GATE-M1's probe found a failing case: a relabelled record is stopped" \
     && printf '%s\n' "$out" | grep -q '^What it means: ' && printf '%s\n' "$out" | grep -q '^Decision needed: ' \
     && printf '%s\n' "$out" | grep -q '^Risk: ' && printf '%s\n' "$out" | grep -q '^Reply: ' || detail="$detail finding(rc=$rc)"
-  printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`accept`' && printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`redirect <text>`' \
-    && printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`park`' || detail="$detail options"
+  printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`/accept ck GATE-M1 [why]`' && printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`/redirect ck GATE-M1 <text>`' \
+    && printf '%s\n' "$out" | grep '^Reply: ' | grep -Fq '`/park ck GATE-M1 [why]`' || detail="$detail options"
   [ "$(printf '%s\n' "$out" | grep -n '^Decision needed:' | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n '^Numbers (' | head -1 | cut -d: -f1)" ] \
     || detail="$detail not-decision-first"
   printf '%s\n' "$out" | grep -q '^checkpoint: GATE-M1 passes' && detail="$detail finding-reads-as-a-pass"
@@ -16084,6 +16121,1930 @@ EOF_AM
   else bad "amendment-touches-only-the-contract" "only docs/chunks/<ID>.md, tests/features/*.feature and tests/probes/** may be amended:$detail"; fi
 }
 wants triage && run_triage_group
+
+# ---------------------------------------------------------------------------
+# gateway/ — the paired gateway (GW3, S8d): the forge-gateway plugin's three commands, the scripts they
+# call, the guard that keeps a chat turn off the board, and the cron job that runs the checkpoint.
+#
+# Two harnesses, neither of which needs a live host.
+#   - scripts/fixtures/gateway-drive.py runs the plugin under a plain python3 (it imports Hermes lazily,
+#     through two seams), with the session the gateway would bind given as JSON. So the handler and the
+#     guard are exercised on a runner that has no Hermes at all.
+#   - scripts/fixtures/gateway-hermes-drive.py runs the REAL Hermes, from the installed checkout, under an
+#     ISOLATED HERMES_HOME (the plugin symlinked into plugins/ and enabled with `hermes plugins enable`):
+#     real plugin discovery, and real model_tools.handle_function_call with the session bound as a
+#     ContextVar the way the gateway binds it. Those cases skip where Hermes is absent.
+# A `hermes` stub on PATH logs every call, refuses every write verb the case does not allow and, when it
+# allows one, applies it to the isolated board; `gh` and `git` stubs log any write. "Zero writes" is read
+# three ways: the write log is empty, no gh call happened, and the board (its WAL included) is byte-identical.
+# Every case is paired with mutants, applied to a COPY of the plugin or of scripts/, never in place.
+# ---------------------------------------------------------------------------
+run_gateway_group() {
+  group gateway
+  local plug="$REPO_ROOT/hermes/plugins/forge-gateway" drive="$REPO_ROOT/scripts/fixtures/gateway-drive.py"
+  local hdrive="$REPO_ROOT/scripts/fixtures/gateway-hermes-drive.py"
+  local fixsql="$REPO_ROOT/scripts/fixtures/checkpoint-board.sql"
+  local hpy="$HOME/.hermes/hermes-agent/venv/bin/python"
+  local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent guard-forge-gate-blocks-everything forge-gate-soul-says-what-the-plugin-does park-and-redirect-disarm-before-they-write real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate forge-gate-profile-has-no-tools deployed-forge-gate-has-no-tools unarmed-gate-never-completes cron-silent-and-exit-0 arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
+  local tool n
+  for tool in sqlite3 jq python3 shasum; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      for n in $gw_cases; do skip "$n" "$tool is not on PATH"; done
+      return
+    fi
+  done
+  local root="$TMPROOT/gw" gwd=""
+  mkdir -p "$root/bin"
+
+  # -- stubs --------------------------------------------------------------
+  cat > "$root/bin/hermes" <<'GW_HERMES'
+#!/bin/sh
+printf '%s\n' "hermes $*" >> "${GW_STUB_LOG:?}"
+verb=""; board=""; prev=""; id=""; body=""
+for a in "$@"; do
+  if [ -n "$prev" ]; then
+    if [ "$prev" = --board ]; then board="$a"; fi
+    prev=""; continue
+  fi
+  case "$a" in
+    kanban) ;;
+    --board|--author|--result) prev="$a";;
+    -*) ;;
+    *) if [ -z "$verb" ]; then verb="$a"; elif [ -z "$id" ]; then id="$a"; else body="$a"; fi;;
+  esac
+done
+case "$verb" in show|list|ls|stats|runs|log|tail|context|"") exit 0;; esac
+printf '%s\n' "hermes WRITE $verb $*" >> "${GW_WLOG:?}"
+if [ -n "${GW_ARMED_PROBE:-}" ]; then if [ -e "$GW_ARMED_PROBE" ]; then echo armed; else echo disarmed; fi >> "${GW_WLOG}.armed"; fi
+case " ${GW_STUB_ALLOW:-} " in *" $verb "*) ;; *) echo "STUB: refusing write verb '$verb'" >&2; exit 1;; esac
+db="${HERMES_HOME:?}/kanban/boards/$board/kanban.db"
+case "$verb" in
+  complete) sqlite3 "$db" "UPDATE tasks SET status='done' WHERE id='$id';" || exit 1;;
+  comment) esc=$(printf '%s' "$body" | sed "s/'/''/g")
+           sqlite3 "$db" "INSERT INTO task_comments (task_id, author, body, created_at) VALUES ('$id','operator','$esc',1785300000);" || exit 1;;
+esac
+exit 0
+GW_HERMES
+  cat > "$root/bin/gh" <<'GW_GH'
+#!/bin/sh
+echo "gh $*" >> "${GW_WLOG:?}"
+echo "STUB: gh is never called by the gateway" >&2
+exit 1
+GW_GH
+  chmod +x "$root/bin/hermes" "$root/bin/gh"
+
+  # -- worlds and runners -------------------------------------------------
+  # A world: an isolated HERMES_HOME with board `ck` (the checkpoint fixture, its gate GATE-M1 = card t_g1
+  # blocked, with one `blocked` event so the hold is 1) and a state root.
+  _gw_world() { # name [extra sql]
+    local W="$root/w-$1"
+    rm -rf "$W"; mkdir -p "$W/home/kanban/boards/ck" "$W/state/checkpoint/armed" "$W/state/checkpoint/pending"
+    sqlite3 "$W/home/kanban/boards/ck/kanban.db" < "$fixsql" >/dev/null 2>&1
+    sqlite3 "$W/home/kanban/boards/ck/kanban.db" \
+      "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_g1','blocked','{}',1785200050);${2:-}" >/dev/null 2>&1
+    : > "$W/stub.log"; : > "$W/wlog.log"
+    printf '%s' "$W"
+  }
+  _gw_arm()  { printf 'mode=%s\nproject=/nonexistent\n' "$2" > "$1/state/checkpoint/armed/ck--GATE-M1"; }
+  _gw_pend() { printf '{"schema":"forge.checkpoint-pending.v1","board":"ck","gate":"GATE-M1","card":"t_g1","hold":%s,"outcome":"block","at":1785200100}\n' "${2:-1}" > "$1/state/checkpoint/pending/ck--GATE-M1.json"; }
+  # The board AND its WAL sidecars: a write that lands in the -wal changes no byte of the .db.
+  _gw_hash() {
+    ( cd "$1/home/kanban/boards/ck" && for f in kanban.db kanban.db-wal kanban.db-shm; do [ -f "$f" ] && { printf '%s ' "$f"; shasum -a 256 "$f" | cut -d' ' -f1; }; done ) | shasum -a 256 | cut -d' ' -f1
+  }
+  # The gate's status, read from a COPY of the board and its sidecars: opening the live file would itself change the
+  # WAL and -shm and so the hash a case compares, and a Hermes board is never read in place.
+  _gw_status() {
+    local d="$root/q-status" b="$1/home/kanban/boards/ck" x
+    rm -rf "$d"; mkdir -p "$d"; cp "$b/kanban.db" "$d/k.db"
+    for x in -wal -shm; do [ -f "$b/kanban.db$x" ] && cp "$b/kanban.db$x" "$d/k.db$x"; done
+    sqlite3 "$d/k.db" "SELECT status FROM tasks WHERE id='t_g1'"
+  }
+  _gw_session() { # message-id -> the JSON the gateway would bind
+    jq -nc --arg p "${GW_PLATFORM-telegram}" --arg t "${GW_CHATTYPE-dm}" --arg u "${GW_USER-424242}" --arg c "${GW_CHAT-424242}" --arg m "$1" --arg f "${GW_PROFILE-forge-gate}" \
+      '{HERMES_SESSION_PLATFORM:$p, HERMES_SESSION_CHAT_TYPE:$t, HERMES_SESSION_USER_ID:$u, HERMES_SESSION_CHAT_ID:$c, HERMES_SESSION_MESSAGE_ID:$m, HERMES_SESSION_PROFILE:$f}'
+  }
+  # The handler, from world $1, verb $2, args $3, message id $4, + driver flags. Sets hout (JSON) and hrc.
+  # GW_PLUG / GW_REPO aim it at a mutant copy; GW_XENV (an array) adds variables to the gateway process.
+  GW_XENV=()
+  _gw_h() {
+    local W="$1" verb="$2" args="$3" msg="$4" scoped="${GW_SCOPED:-}"; shift 4
+    [ -n "$scoped" ] || scoped='{}'
+    hout="$(cd / && env FORGE_REPO="${GW_REPO:-$REPO_ROOT}" FORGE_STATE_ROOT="$W/state" HERMES_HOME="$W/home" \
+              FORGE_OPERATOR_TELEGRAM_ID="${GW_OP-424242}" PATH="$root/bin:$PATH" ${GW_XENV[@]+"${GW_XENV[@]}"} \
+              python3 -I "$drive" handler --plugin "${GW_PLUG:-$plug}" --session "$(_gw_session "$msg")" \
+              --scoped "$scoped" \
+              --child-env "$(jq -nc --arg l "$W/stub.log" --arg w "$W/wlog.log" --arg a "${GW_ALLOW:-}" '{GW_STUB_LOG:$l, GW_WLOG:$w, GW_STUB_ALLOW:$a}')" \
+              --verb "$verb" --args "$args" "$@" 2>"$W/h.err")"; hrc=$?
+  }
+  _gw_reply() { printf '%s' "$hout" | jq -r '.replies[0] // empty' 2>/dev/null; }
+  # A script, directly: world $1, script $2, its arguments. Sets gout, gerr and grc.
+  _gw_s() {
+    local W="$1" script="$2"; shift 2
+    gout="$(cd / && env FORGE_STATE_ROOT="$W/state" HERMES_HOME="$W/home" GW_STUB_LOG="$W/stub.log" GW_WLOG="$W/wlog.log" \
+              GW_STUB_ALLOW="${GW_ALLOW:-}" GW_ARMED_PROBE="${GW_ARMED_PROBE:-}" PATH="$root/bin:$PATH" "${GW_BASH:-bash}" "${GW_REPO:-$REPO_ROOT}/scripts/$script" "$@" 2>"$W/err.txt")"; grc=$?
+    gerr="$(cat "$W/err.txt")"
+  }
+  # Zero writes in world $1: nothing in the write log (no hermes write verb, no gh call), board byte-identical to $2.
+  _gw_nowrites() { [ ! -s "$1/wlog.log" ] && [ "$(_gw_hash "$1")" = "$2" ]; }
+  # A recorder standing in for the three scripts: logs its own name and argv, replies, exits $4.
+  _gw_recorder() { # dir logfile reply rc
+    mkdir -p "$1/scripts"
+    local v
+    for v in accept redirect park; do
+      printf '#!/bin/sh\necho "gate-%s.sh $*" >> "%s"\necho "%s"\nexit %s\n' "$v" "$2" "$3" "$4" > "$1/scripts/gate-$v.sh"
+      chmod +x "$1/scripts/gate-$v.sh"
+    done
+  }
+  # One mutation, exactly: replace $2 with $3 in file $1; exits non-zero if the text is absent (a mutation
+  # that changed nothing proves nothing, F65).
+  _gw_mut() {
+    python3 -I - "$1" "$2" "$3" <<'GW_MUT'
+import sys
+path, old, new = sys.argv[1:4]
+src = open(path).read()
+if old not in src:
+    sys.exit(1)
+open(path, "w").write(src.replace(old, new, 1))
+GW_MUT
+  }
+  # Is the check $1 red on a mutant? kind is plugin (a copy of the plugin) or scripts (a copy of scripts/ as
+  # FORGE_REPO). Returns 0 when the check reports a detail on the mutant, i.e. the mutant is CAUGHT.
+  _gw_caught() { # check-fn kind label file old new [want]  (want: a token the check's detail MUST hold, so the mutant is caught for the property under test and not for a broken harness)
+    local fn="$1" kind="$2" label="$3" file="$4" old="$5" new="$6" want="${7:-}" m rc
+    m="$root/mut-$(printf '%s' "$label" | tr -c 'A-Za-z0-9' _)"
+    rm -rf "$m"; mkdir -p "$m/scripts"
+    if [ "$kind" = plugin ]; then
+      cp -R "$plug" "$m/forge-gateway"
+      _gw_mut "$m/forge-gateway/$file" "$old" "$new" || { gwd="$gwd mutant($label)-did-not-apply"; return 0; }
+      GW_PLUG="$m/forge-gateway"
+    else
+      local f
+      for f in "$REPO_ROOT"/scripts/*.sh "$REPO_ROOT"/scripts/*.py; do
+        case "${f##*/}" in verify.sh) continue;; esac
+        [ -e "$f" ] && cp "$f" "$m/scripts/"
+      done
+      mkdir -p "$m/scripts/fixtures"; cp "$REPO_ROOT"/scripts/fixtures/*.py "$m/scripts/fixtures/" 2>/dev/null
+      ln -s "$REPO_ROOT/rubrics" "$m/rubrics"      # metrics.sh reads $HERE/../rubrics/run-metadata-contract.json
+      _gw_mut "$m/scripts/$file" "$old" "$new" || { gwd="$gwd mutant($label)-did-not-apply"; return 0; }
+      GW_REPO="$m"
+    fi
+    local keep="$gwd"; gwd=""
+    "$fn"
+    rc=1
+    if [ -n "$gwd" ]; then
+      if [ -z "$want" ]; then rc=0; else case "$gwd" in *"$want"*) rc=0;; esac; fi
+    fi
+    [ "$rc" = 0 ] || [ -z "${GW_DEBUG:-}" ] || echo "NOT CAUGHT: mutant $label; the check said: $gwd (wanted: ${want:-anything})" >&2
+    gwd="$keep"; GW_PLUG=""; GW_REPO=""
+    return "$rc"
+  }
+  GW_PLUG=""; GW_REPO=""
+
+  # ======================================================================
+  # plugin-registers-three-commands
+  # ======================================================================
+  _gw_c_register() {
+    local j v s
+    j="$(python3 -I "$drive" table --plugin "${GW_PLUG:-$plug}" 2>&1)"
+    printf '%s' "$j" | jq -e '.registered == ["accept","park","redirect"] and ((.table | keys) == ["accept","park","redirect"]) and .hooks == ["pre_tool_call"]' >/dev/null 2>&1 \
+      || gwd="$gwd registered-or-table-wrong($(printf '%s' "$j" | head -c 300))"
+    [ "$(printf '%s' "$j" | jq -r '[.table[]] | unique | length' 2>/dev/null)" = 3 ] || gwd="$gwd three-verbs-do-not-map-to-three-scripts"
+    for v in accept redirect park; do
+      s="$(printf '%s' "$j" | jq -r --arg v "$v" '.table[$v] // empty' 2>/dev/null)"
+      [ "$s" = "gate-$v.sh" ] || gwd="$gwd $v-maps-to-'$s'"
+      [ -x "$REPO_ROOT/scripts/$s" ] || gwd="$gwd $s-is-not-an-executable-script"
+    done
+    # The plugin is imported from the checkout, so bytecode can appear beside it; it must never be committed.
+    if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+      [ -z "$(git -C "$REPO_ROOT" ls-files hermes/plugins | grep -E '__pycache__|\.pyc$')" ] || gwd="$gwd bytecode-is-tracked"
+      git -C "$REPO_ROOT" check-ignore -q hermes/plugins/forge-gateway/__pycache__/__init__.cpython-315.pyc || gwd="$gwd bytecode-is-not-ignored"
+    fi
+  }
+  gwd=""; _gw_c_register
+  local mnot=""
+  _gw_caught _gw_c_register plugin fourth-verb __init__.py '"park": "gate-park.sh",' '"park": "gate-park.sh", "complete": "gate-accept.sh",' || mnot="$mnot fourth-verb"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "plugin-registers-three-commands (accept, redirect and park, a constant three-entry table, one distinct executable script each, one pre_tool_call hook)"
+  else bad "plugin-registers-three-commands" "the plugin must register exactly /accept, /redirect and /park, each mapped to its own script:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # unpaired-chat-refused
+  # ======================================================================
+  _gw_c_unpaired() {
+    local W h0 label reply
+    # The world is armed APPLY with the block reported and writes allowed, so a broken sender check would COMPLETE
+    # the gate: a refusal that is only about the arming could not tell the difference.
+    GW_ALLOW="complete comment"
+    W="$(_gw_world unpaired)"; _gw_arm "$W" apply; _gw_pend "$W" 1; h0="$(_gw_hash "$W")"
+    local i=0 want np='refused: this chat is not paired for gate commands.' wb='refused: send gate verbs to the forge-gate bot'
+    # name | platform | chat type | user | chat | operator id | session profile | extra process env (one assignment) | profile scope (JSON) | np|wb
+    while IFS='|' read -r label GW_PLATFORM GW_CHATTYPE GW_USER GW_CHAT GW_OP GW_PROFILE xenv GW_SCOPED want; do
+      [ -n "$label" ] || continue
+      i=$((i+1)); GW_XENV=(); [ -z "$xenv" ] || GW_XENV=("$xenv")
+      _gw_h "$W" accept 'ck GATE-M1' "$((9000+i))"
+      reply="$(_gw_reply)"
+      case "$want" in np) want="$np";; wb) want="$wb";; esac
+      [ "$reply" = "$want" ] || gwd="$gwd $label-answered($reply)"
+      [ ! -s "$W/stub.log" ] || gwd="$gwd $label-called-hermes"
+      _gw_nowrites "$W" "$h0" || gwd="$gwd $label-wrote"
+      [ -z "$(ls "$W/state/gateway/ledger" 2>/dev/null)" ] || gwd="$gwd $label-left-a-ledger-entry"
+    done <<'GW_UNPAIRED'
+other-user|telegram|dm|999|424242|424242|forge-gate|||np
+other-chat|telegram|dm|424242|999|424242|forge-gate|||np
+group|telegram|group|424242|424242|424242|forge-gate|||np
+non-telegram|discord|dm|424242|424242|424242|forge-gate|||np
+no-session|||||424242||||np
+operator-unset|telegram|dm|424242|424242||forge-gate|||np
+operator-unset-and-no-user|telegram|dm||||forge-gate|||np
+operator-malformed|telegram|dm|abc|abc|abc|forge-gate|||np
+star-allowlist|telegram|dm|424242|424242|424242|forge-gate|TELEGRAM_ALLOWED_USERS=424242,*||np
+star-gateway-allowlist|telegram|dm|424242|424242|424242|forge-gate|GATEWAY_ALLOWED_USERS=*||np
+allow-all-telegram|telegram|dm|424242|424242|424242|forge-gate|TELEGRAM_ALLOW_ALL_USERS=true||np
+allow-all-gateway|telegram|dm|424242|424242|424242|forge-gate|GATEWAY_ALLOW_ALL_USERS=1||np
+star-in-the-profiles-own-scope|telegram|dm|424242|424242|424242|forge-gate||{"TELEGRAM_ALLOWED_USERS":"424242,*"}|np
+allow-all-in-the-profiles-own-scope|telegram|dm|424242|424242|424242|forge-gate||{"TELEGRAM_ALLOW_ALL_USERS":"true"}|np
+the-main-bot|telegram|dm|424242|424242|424242||||wb
+the-default-profile-by-name|telegram|dm|424242|424242|424242|default|||wb
+another-profile|telegram|dm|424242|424242|424242|forge-overseer|||wb
+a-lookalike-profile|telegram|dm|424242|424242|424242|forge-gate-2|||wb
+GW_UNPAIRED
+    GW_PROFILE=forge-gate; GW_SCOPED=""
+    [ "$(_gw_status "$W")" = blocked ] || gwd="$gwd the-gate-was-completed-for-a-stranger"
+    # The control: the same world, the paired sender. It completes the gate, so the refusals above are about the
+    # sender and not about a broken setup.
+    GW_PLATFORM=telegram; GW_CHATTYPE=dm; GW_USER=424242; GW_CHAT=424242; GW_OP=424242; GW_XENV=()
+    _gw_h "$W" accept 'ck GATE-M1' 9100
+    case "$(_gw_reply)" in 'accepted: GATE-M1'*) ;; *) gwd="$gwd control-did-not-complete-the-gate($(_gw_reply))";; esac
+    [ "$(_gw_status "$W")" = done ] && [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] || gwd="$gwd control-wrote-$(wc -l < "$W/wlog.log" | tr -d ' ')-times"
+    unset GW_PLATFORM GW_CHATTYPE GW_USER GW_CHAT GW_OP GW_PROFILE GW_SCOPED
+    GW_XENV=(); GW_ALLOW=""
+  }
+  gwd=""; _gw_c_unpaired
+  mnot=""
+  _gw_caught _gw_c_unpaired plugin ignores-the-user __init__.py 'if user != operator or chat != operator:' 'if chat != operator:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-the-user"
+  _gw_caught _gw_c_unpaired plugin ignores-the-chat __init__.py 'if user != operator or chat != operator:' 'if user != operator:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-the-chat"
+  _gw_caught _gw_c_unpaired plugin ignores-chat-type __init__.py 'if _session_env("HERMES_SESSION_CHAT_TYPE").strip().lower() != "dm":' 'if False:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-chat-type"
+  _gw_caught _gw_c_unpaired plugin ignores-platform __init__.py 'if _session_env("HERMES_SESSION_PLATFORM").strip().lower() != "telegram":' 'if False:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-platform"
+  _gw_caught _gw_c_unpaired plugin allows-open-gateway __init__.py '    return _allow_all_problem()' '    return None' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot allows-open-gateway"
+  _gw_caught _gw_c_unpaired plugin ignores-the-profile __init__.py 'if _session_profile() != GATE_PROFILE:' 'if False:' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-the-profile"
+  _gw_caught _gw_c_unpaired plugin ignores-the-profiles-own-scope __init__.py 'for value in (_scoped_env(key), os.environ.get(key, "")):' 'for value in (os.environ.get(key, ""),):' 'the-gate-was-completed-for-a-stranger' || mnot="$mnot ignores-the-profiles-own-scope"
+  _gw_caught _gw_c_unpaired plugin unset-operator-passes __init__.py 'if not _USER_ID_RE.match(operator):' 'if False:' || mnot="$mnot unset-operator-passes"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "unpaired-chat-refused (another user, another chat, a group, another platform, no session, an unset or malformed operator id, a * allowlist and both allow-all flags, in the process or in the profile's own scope: refused; the paired operator on the main bot, the default profile, another profile and a lookalike is told to send gate verbs to the forge-gate bot; the script never ran, zero writes, board byte-identical; eight mutants caught)"
+  else bad "unpaired-chat-refused" "only the operator's own direct message may reach a script:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # malformed-command-refused
+  # ======================================================================
+  _gw_c_malformed() {
+    local W rec log reply a i=0 big ctl keep_repo="$GW_REPO"
+    W="$(_gw_world malformed)"; rec="$root/rec-malformed"; log="$W/rec.log"; : > "$log"
+    _gw_recorder "$rec" "$log" "RAN" 0
+    big="$(printf 'x%.0s' $(seq 1 1001))"; ctl="$(printf 'a\001b')"
+    GW_REPO="$rec"
+    # verb | args
+    while IFS='|' read -r verb a; do
+      [ -n "$verb" ] || continue
+      i=$((i+1))
+      a="${a//<big>/$big}"; a="${a//<ctl>/$ctl}"; a="${a//<blank>/}"
+      _gw_h "$W" "$verb" "$a" "$((8000+i))"
+      reply="$(_gw_reply)"
+      # the one well-formed row is the control: it must reach the recorder
+      if [ "$verb|$a" = "park|ck GATE-M1 ok" ]; then [ "$reply" = RAN ] || gwd="$gwd control-answered($reply)"; continue; fi
+      case "$reply" in refused:*) ;; *) gwd="$gwd /$verb[$a]-answered($reply)";; esac
+    done <<'GW_MALFORMED'
+accept|<blank>
+accept|ck
+redirect|ck
+redirect|ck GATE-M1
+park|ck GATE-M1 ok
+accept|bad!board GATE-M1
+accept|a--b GATE-M1
+accept|-ck GATE-M1
+accept|ck CHUNK-1
+accept|ck gate-m1
+accept|ck GATE-
+accept|ck GATE-M1;rm
+redirect|ck GATE-M1 <big>
+redirect|ck GATE-M1 <ctl>
+GW_MALFORMED
+    # Only the last-but-one line above is well formed ("park ck GATE-M1 ok"); it is the control that the
+    # recorder is reachable at all.
+    local ran; ran="$(wc -l < "$log" | tr -d ' ')"
+    [ "$ran" = 1 ] || gwd="$gwd scripts-ran-$ran-times-expected-1-(the-one-well-formed-control)"
+    grep -q '^gate-park.sh --board ck --gate GATE-M1 --text ok --apply$' "$log" || gwd="$gwd control-argv-wrong($(cat "$log"))"
+    [ "$(ls "$W/state/gateway/ledger" 2>/dev/null | wc -l | tr -d ' ')" = 1 ] || gwd="$gwd ledger-entries-for-refused-commands"
+    GW_REPO="$keep_repo"
+    # The scripts refuse the same shapes themselves, with the board untouched: they are the second wall.
+    W="$(_gw_world malformed2)"; _gw_arm "$W" apply; _gw_pend "$W" 1; local h0; h0="$(_gw_hash "$W")"
+    GW_ALLOW="complete comment"
+    _gw_s "$W" gate-accept.sh --board 'bad!board' --gate GATE-M1 --apply; [ "$grc" != 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd script-accepted-a-bad-board(rc=$grc)"
+    _gw_s "$W" gate-accept.sh --board ck --gate CHUNK-1 --apply; [ "$grc" != 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd script-accepted-a-non-gate(rc=$grc)"
+    _gw_s "$W" gate-redirect.sh --board ck --gate GATE-M1 --apply; [ "$grc" != 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd redirect-without-text-ran(rc=$grc)"
+    _gw_s "$W" gate-redirect.sh --board ck --gate GATE-M1 --text "$big" --apply; [ "$grc" != 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd redirect-oversize-ran(rc=$grc)"
+    _gw_s "$W" gate-park.sh --board ck --gate GATE-M1 --frobnicate --apply; [ "$grc" = 2 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd unknown-flag-ran(rc=$grc)"
+    _gw_s "$W" gate-park.sh --board ck --gate GATE-M1; [ "$grc" = 2 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd no-mode-ran(rc=$grc)"
+    # The shape is a wall of its own: a blocked card whose title is not a gate's, and which has a block event, is
+    # parked if the shape check is gone (park asks only that the card is blocked).
+    GW_ALLOW="comment"
+    W="$(_gw_world malformed3 "INSERT INTO tasks (id,title,status,created_at) VALUES ('t_x9','CHUNK-9: a blocked chunk','blocked',1785200001); INSERT INTO task_events (task_id,kind,payload,created_at) VALUES ('t_x9','blocked','{}',1785200060);")"
+    h0="$(_gw_hash "$W")"
+    _gw_s "$W" gate-park.sh --board ck --gate CHUNK-9 --apply; [ "$grc" = 1 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd script-parked-a-chunk-card(rc=$grc)"
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_malformed
+  mnot=""
+  _gw_caught _gw_c_malformed plugin any-gate-id __init__.py 'if not _GATE_RE.match(gate):' 'if False:' || mnot="$mnot any-gate-id"
+  _gw_caught _gw_c_malformed plugin no-length-limit __init__.py 'if len(text) > _TEXT_MAX:' 'if False:' || mnot="$mnot no-length-limit"
+  _gw_caught _gw_c_malformed plugin redirect-needs-no-text __init__.py 'if verb in _TEXT_REQUIRED and not text:' 'if False:' || mnot="$mnot redirect-needs-no-text"
+  _gw_caught _gw_c_malformed plugin control-characters __init__.py 'if _CONTROL_RE.search(text):' 'if False:' || mnot="$mnot control-characters"
+  _gw_caught _gw_c_malformed scripts script-takes-any-gate gate-reply.sh "[[ \$2 =~ \$GR_GATE_RE ]] ||" "true ||" 'script-parked-a-chunk-card' || mnot="$mnot script-takes-any-gate"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "malformed-command-refused (no args, one arg, a bad or '--' board, a non-GATE id, no text for redirect, 1001 characters, a control character: refused, no script ran, no ledger entry; the scripts refuse the same shapes with zero writes; five mutants caught)"
+  else bad "malformed-command-refused" "a malformed command must be refused before any script runs:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # replay-is-a-noop
+  # ======================================================================
+  _gw_c_replay() {
+    local W rec log r0 r1 n keep_repo="$GW_REPO"
+    W="$(_gw_world replay)"; rec="$root/rec-replay"; log="$W/rec.log"; : > "$log"
+    _gw_recorder "$rec" "$log" "RAN-ONCE" 0
+    GW_REPO="$rec"
+    _gw_h "$W" accept 'ck GATE-M1 fine' 7001 --repeat 3
+    n="$(wc -l < "$log" | tr -d ' ')"
+    [ "$n" = 1 ] || gwd="$gwd script-ran-$n-times-for-one-message"
+    r0="$(printf '%s' "$hout" | jq -r '.replies[0]')"; r1="$(printf '%s' "$hout" | jq -r '.replies[2]')"
+    [ "$r0" = RAN-ONCE ] && [ "$r1" = "$r0" ] || gwd="$gwd replay-did-not-return-the-first-reply($r0|$r1)"
+    [ "$(ls "$W/state/gateway/ledger" | wc -l | tr -d ' ')" = 1 ] || gwd="$gwd ledger-has-$(ls "$W/state/gateway/ledger" | wc -l | tr -d ' ')-entries"
+    jq -e '.schema == "forge.gateway-ledger.v1" and .chat_id == "424242" and .message_id == "7001" and .verb == "accept" and .rc == 0 and .reply == "RAN-ONCE" and (.args_sha256 | length) == 64 and (.at | type) == "number"' \
+      "$W/state/gateway/ledger/424242-7001.json" >/dev/null 2>&1 || gwd="$gwd ledger-entry-wrong($(cat "$W/state/gateway/ledger/424242-7001.json" 2>/dev/null | head -c 300))"
+    # A different message is a different command.
+    _gw_h "$W" accept 'ck GATE-M1 fine' 7002
+    [ "$(wc -l < "$log" | tr -d ' ')" = 2 ] || gwd="$gwd a-new-message-did-not-run"
+    # No message id: it cannot be told from a replay, so it does not run.
+    _gw_h "$W" accept 'ck GATE-M1 fine' ""
+    case "$(_gw_reply)" in refused:*) ;; *) gwd="$gwd empty-message-id-ran($(_gw_reply))";; esac
+    [ "$(wc -l < "$log" | tr -d ' ')" = 2 ] || gwd="$gwd empty-message-id-ran-the-script"
+    # A ledger entry with no outcome (the gateway died mid-run): refused, not re-run.
+    printf '{"schema":"forge.gateway-ledger.v1","chat_id":"424242","message_id":"7003","verb":"accept","rc":null,"reply":null}' > "$W/state/gateway/ledger/424242-7003.json"
+    _gw_h "$W" accept 'ck GATE-M1 fine' 7003
+    case "$(_gw_reply)" in refused:*'send the verb again as a new message'*) ;; *) gwd="$gwd in-flight-entry-answered($(_gw_reply))";; esac
+    [ "$(wc -l < "$log" | tr -d ' ')" = 2 ] || gwd="$gwd in-flight-entry-ran-the-script"
+    GW_REPO="$keep_repo"
+    # The real scripts, against a real board and a stub that records writes. A /park writes a comment EVERY time it
+    # runs, so a replay that ran it again would show as a second write.
+    GW_ALLOW="complete comment"
+    local h1
+    W="$(_gw_world replay-real)"; _gw_arm "$W" apply; _gw_pend "$W" 1
+    _gw_h "$W" park 'ck GATE-M1 later' 7101
+    r0="$(_gw_reply)"; h1="$(_gw_hash "$W")"
+    [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] && [ -n "$r0" ] || gwd="$gwd real-delivery-1-wrote-$(wc -l < "$W/wlog.log" | tr -d ' ')($r0)"
+    _gw_h "$W" park 'ck GATE-M1 later' 7101 --repeat 2
+    [ "$(printf '%s' "$hout" | jq -r '.replies[0]')" = "$r0" ] && [ "$(printf '%s' "$hout" | jq -r '.replies[1]')" = "$r0" ] || gwd="$gwd real-replay-reply-differs($(printf '%s' "$hout" | head -c 200))"
+    [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] && [ "$(_gw_hash "$W")" = "$h1" ] || gwd="$gwd real-replay-wrote-again(writes=$(wc -l < "$W/wlog.log" | tr -d ' '))"
+    W="$(_gw_world replay-real2)"; _gw_arm "$W" apply; _gw_pend "$W" 1
+    _gw_h "$W" accept 'ck GATE-M1 fine' 7102
+    r0="$(_gw_reply)"; h1="$(_gw_hash "$W")"
+    [ "$(_gw_status "$W")" = done ] && [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] || gwd="$gwd real-accept-did-not-complete-once"
+    _gw_h "$W" accept 'ck GATE-M1 fine' 7102 --repeat 2
+    [ "$(printf '%s' "$hout" | jq -r '.replies[1]')" = "$r0" ] && [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] && [ "$(_gw_hash "$W")" = "$h1" ] || gwd="$gwd real-accept-replay-differs"
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_replay
+  mnot=""
+  _gw_caught _gw_c_replay plugin ledger-truncates __init__.py 'os.O_WRONLY | os.O_CREAT | os.O_EXCL' 'os.O_WRONLY | os.O_CREAT | os.O_TRUNC' 'real-replay-wrote-again' || mnot="$mnot ledger-truncates"
+  _gw_caught _gw_c_replay plugin empty-message-id __init__.py 'or not _MESSAGE_ID_RE.match(message_id):' 'or False:' || mnot="$mnot empty-message-id"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "replay-is-a-noop (three deliveries of one message ran the script once and returned its first reply; a new message ran; an empty message id and a half-recorded entry were refused unrun; two mutants caught)"
+  else bad "replay-is-a-noop" "the handler must be idempotent on (chat_id, message_id):${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # unlisted-verb-refused
+  # ======================================================================
+  _gw_c_unlisted() {
+    local W rec log v out
+    W="$(_gw_world unlisted)"; rec="$root/rec-unlisted"; log="$W/rec.log"; : > "$log"
+    _gw_recorder "$rec" "$log" "RAN" 0
+    GW_REPO="$rec"
+    for v in complete merge gate-accept gate_accept Accept ACCEPT unblock bounce ""; do
+      # The registry has no handler for it: the gateway would give the text to the agent, not to a script.
+      _gw_h "$W" "$v" 'ck GATE-M1' 6001
+      printf '%s' "$hout" | jq -e '.no_handler == true' >/dev/null 2>&1 || gwd="$gwd '$v'-has-a-registered-handler($(printf '%s' "$hout" | head -c 120))"
+      # And the plugin's own entry point, reached with the verb anyway, refuses it.
+      _gw_h "$W" "$v" 'ck GATE-M1' 6002 --direct
+      case "$(_gw_reply)" in 'refused: not a gate command.') ;; *) gwd="$gwd '$v'-direct-answered($(_gw_reply))";; esac
+    done
+    [ ! -s "$log" ] || gwd="$gwd a-script-ran($(cat "$log"))"
+    [ -z "$(ls "$W/state/gateway/ledger" 2>/dev/null)" ] || gwd="$gwd ledger-entry-for-an-unlisted-verb"
+    GW_REPO=""
+  }
+  gwd=""; _gw_c_unlisted
+  mnot=""
+  _gw_caught _gw_c_unlisted plugin complete-is-listed __init__.py '"park": "gate-park.sh",' '"park": "gate-park.sh", "complete": "gate-accept.sh",' || mnot="$mnot complete-is-listed"
+  _gw_caught _gw_c_unlisted plugin table-lookup-is-lenient __init__.py 'script_name = VERB_SCRIPTS.get(verb)' 'script_name = VERB_SCRIPTS.get(verb.lower().replace("-", "").replace("_", "").replace("gate", ""))' || mnot="$mnot table-lookup-is-lenient"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "unlisted-verb-refused (complete, merge, gate-accept, gate_accept, Accept, unblock, bounce and an empty verb have no registered handler and the plugin's own entry refuses them; no script ran; two mutants caught)"
+  else bad "unlisted-verb-refused" "only accept, redirect and park may reach a script:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # each-verb-maps-to-one-script
+  # ======================================================================
+  _gw_c_each() {
+    local W rec log h0 v args keep_repo="$GW_REPO"
+    # (1) the handler calls exactly its own script, once, with --board, and no other.
+    W="$(_gw_world each1)"; rec="$root/rec-each"; log="$W/rec.log"; : > "$log"
+    _gw_recorder "$rec" "$log" "RAN" 0
+    GW_REPO="$rec"
+    _gw_h "$W" accept 'ck GATE-M1 shipped' 5001
+    _gw_h "$W" redirect 'ck GATE-M1 tighten the first case' 5002
+    _gw_h "$W" park 'ck GATE-M1' 5003
+    GW_REPO="$keep_repo"
+    [ "$(wc -l < "$log" | tr -d ' ')" = 3 ] || gwd="$gwd expected-three-script-calls-got-$(wc -l < "$log" | tr -d ' ')"
+    sed -n 1p "$log" | grep -qx 'gate-accept.sh --board ck --gate GATE-M1 --text shipped --apply' || gwd="$gwd accept-argv($(sed -n 1p "$log"))"
+    sed -n 2p "$log" | grep -qx 'gate-redirect.sh --board ck --gate GATE-M1 --text tighten the first case --apply' || gwd="$gwd redirect-argv($(sed -n 2p "$log"))"
+    sed -n 3p "$log" | grep -qx 'gate-park.sh --board ck --gate GATE-M1 --apply' || gwd="$gwd park-argv($(sed -n 3p "$log"))"
+    # (2) the real scripts: each makes exactly ONE board write, and it is the one it is named for.
+    GW_ALLOW="complete comment"
+    for v in accept redirect park; do
+      W="$(_gw_world each-$v)"; _gw_arm "$W" apply; _gw_pend "$W" 1; h0="$(_gw_hash "$W")"
+      case "$v" in redirect) args='ck GATE-M1 tighten the first case';; *) args='ck GATE-M1 because';; esac
+      _gw_h "$W" "$v" "$args" 5100
+      [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] || gwd="$gwd $v-made-$(wc -l < "$W/wlog.log" | tr -d ' ')-writes"
+      [ "$(_gw_hash "$W")" != "$h0" ] || gwd="$gwd $v-changed-nothing($(_gw_reply))"
+      case "$v" in
+        accept) grep -q '^hermes WRITE complete kanban --board ck complete t_g1 --result accepted: because$' "$W/wlog.log" || gwd="$gwd accept-write($(head -1 "$W/wlog.log"))"
+                [ "$(_gw_status "$W")" = done ] || gwd="$gwd accept-did-not-complete";;
+        redirect) grep -q '^hermes WRITE comment kanban --board ck comment --author operator t_g1 redirect: tighten the first case$' "$W/wlog.log" || gwd="$gwd redirect-write($(head -1 "$W/wlog.log"))";;
+        park) grep -q '^hermes WRITE comment kanban --board ck comment --author operator t_g1 parked: because$' "$W/wlog.log" || gwd="$gwd park-write($(head -1 "$W/wlog.log"))";;
+      esac
+      [ -s "$W/stub.log" ] && ! grep -v '^hermes kanban --board ck ' "$W/stub.log" >/dev/null 2>&1 || gwd="$gwd $v-called-hermes-without---board"
+      # the decision is recorded and the gate disarmed
+      [ ! -e "$W/state/checkpoint/armed/ck--GATE-M1" ] || gwd="$gwd $v-left-the-gate-armed"
+      jq -e --arg v "$v" '.verb == $v and .hold == 1 and .gate == "GATE-M1"' "$W/state/checkpoint/decided/ck--GATE-M1.json" >/dev/null 2>&1 || gwd="$gwd $v-recorded-no-decision"
+    done
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_each
+  mnot=""
+  _gw_caught _gw_c_each plugin accept-calls-park __init__.py '"accept": "gate-accept.sh",' '"accept": "gate-park.sh",' || mnot="$mnot accept-calls-park"
+  _gw_caught _gw_c_each scripts accept-comments-too gate-accept.sh 'gr_mark_decided "$GR_BOARD" "$GR_GATE" accept' 'hermes kanban --board "$GR_BOARD" comment --author operator "$GR_CARD" "extra" >/dev/null 2>&1; gr_mark_decided "$GR_BOARD" "$GR_GATE" accept' || mnot="$mnot accept-comments-too"
+  _gw_caught _gw_c_each scripts no-board-flag gate-park.sh 'hermes kanban --board "$GR_BOARD" comment' 'hermes kanban comment' || mnot="$mnot no-board-flag"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "each-verb-maps-to-one-script (accept, redirect and park each ran their own script once with --board; each script made exactly one write, complete or comment, every hermes call carried --board, and the decision was recorded; three mutants caught)"
+  else bad "each-verb-maps-to-one-script" "a verb is one script and a script is one write:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # bad-args-refused
+  # ======================================================================
+  _gw_c_badargs() {
+    local W h0 v label board gate sql
+    GW_ALLOW="complete comment"
+    # label | board | gate | SQL turned on the board first. Every row is armed apply with a pending block:
+    # the only thing wrong is the argument or the gate, so that is the only thing that can refuse it.
+    while IFS='|' read -r label board gate sql; do
+      [ -n "$label" ] || continue
+      for v in accept redirect park; do
+        W="$(_gw_world badargs)"; _gw_arm "$W" apply; _gw_pend "$W" 1
+        [ -z "$sql" ] || sqlite3 "$W/home/kanban/boards/ck/kanban.db" "$sql" >/dev/null 2>&1
+        h0="$(_gw_hash "$W")"
+        _gw_s "$W" "gate-$v.sh" --board "$board" --gate "$gate" --text "some words" --apply
+        [ "$grc" = 1 ] || gwd="$gwd $label/$v-exit-$grc"
+        case "$gout" in refused:*) ;; *) gwd="$gwd $label/$v-said($gout)";; esac
+        _gw_nowrites "$W" "$h0" || gwd="$gwd $label/$v-wrote"
+        [ ! -e "$W/state/checkpoint/decided/ck--GATE-M1.json" ] || gwd="$gwd $label/$v-recorded-a-decision"
+        # The same, through the handler.
+        _gw_h "$W" "$v" "$board $gate some words" 4001
+        case "$(_gw_reply)" in refused:*) ;; *) gwd="$gwd $label/$v-handler-said($(_gw_reply))";; esac
+        _gw_nowrites "$W" "$h0" || gwd="$gwd $label/$v-handler-wrote"
+      done
+    done <<'GW_BADARGS'
+unknown-board|nope|GATE-M1|
+no-such-gate|ck|GATE-M9|
+gate-ready|ck|GATE-M1|UPDATE tasks SET status='ready' WHERE id='t_g1';
+gate-done|ck|GATE-M1|UPDATE tasks SET status='done' WHERE id='t_g1';
+gate-archived|ck|GATE-M1|UPDATE tasks SET status='archived' WHERE id='t_g1';
+two-gates|ck|GATE-M1|INSERT INTO tasks (id,title,status,created_at) VALUES ('t_g1b','GATE-M1: twin','blocked',1785200001);
+not-a-gate-card|ck|GATE-M1|UPDATE tasks SET title='CHUNK-7: not a gate' WHERE id='t_g1';
+no-block-event|ck|GATE-M1|DELETE FROM task_events;
+GW_BADARGS
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_badargs
+  mnot=""
+  _gw_caught _gw_c_badargs scripts any-status gate-reply.sh '[ "$GR_STATUS" = blocked ] ||' 'true ||' '-wrote' || mnot="$mnot any-status"
+  _gw_caught _gw_c_badargs scripts twin-gates-pass gate-reply.sh "    *) GR_WHY=\"board '\$board' has more than one card for \$gate\"; return 1;;" '    *) rows="$(printf "%s\n" "$rows" | head -1)";;' '-wrote' || mnot="$mnot twin-gates-pass"
+  _gw_caught _gw_c_badargs scripts no-hold-needed gate-reply.sh "  case \"\$GR_HOLD\" in ''|*[!0-9]*|0) GR_WHY=" "  case \"\$GR_HOLD\" in 'x') GR_WHY=" '-wrote' || mnot="$mnot no-hold-needed"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "bad-args-refused (an unknown board, a gate with no card, a gate that is ready, done or archived, two cards for one gate, a card that is not a gate, a gate with no block event: every verb exits 1 with 'refused:' and zero writes, through the script and through the handler; three mutants caught)"
+  else bad "bad-args-refused" "bad arguments must exit non-zero with zero board and GitHub writes:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # accept-needs-a-recorded-block
+  # ======================================================================
+  # How the armed file and the pending record are made for one variant.
+  _gw_arm_as() { # world kind
+    local f="$1/state/checkpoint/armed/ck--GATE-M1"
+    rm -f "$f"
+    case "$2" in
+      apply)       printf 'mode=apply\nproject=/p\n' > "$f";;
+      rehearse)    printf 'mode=rehearse\nproject=/p\n' > "$f";;
+      none)        ;;
+      bad-mode)    printf 'mode=armed\nproject=/p\n' > "$f";;
+      upper)       printf 'mode=APPLY\nproject=/p\n' > "$f";;
+      crlf)        printf 'mode=apply\r\nproject=/p\r\n' > "$f";;
+      three-lines) printf 'mode=apply\nproject=/p\nextra=1\n' > "$f";;
+      no-project)  printf 'mode=apply\n' > "$f";;
+      no-newline)  printf 'mode=apply\nproject=/p' > "$f";;
+      third-unterminated) printf 'mode=apply\nproject=/p\nfoo' > "$f";;
+      rel-project) printf 'mode=apply\nproject=rel/p\n' > "$f";;
+      trailing)    printf 'mode=apply \nproject=/p\n' > "$f";;
+      reversed)    printf 'project=/p\nmode=apply\n' > "$f";;
+      empty)       : > "$f";;
+      symlink)     printf 'mode=apply\nproject=/p\n' > "$1/real-armed"; ln -s "$1/real-armed" "$f";;
+    esac
+  }
+  _gw_pend_as() { # world kind
+    local f="$1/state/checkpoint/pending/ck--GATE-M1.json"
+    rm -f "$f"
+    case "$2" in
+      ok)          _gw_pend "$1" 1;;
+      none)        ;;
+      stale)       _gw_pend "$1" 5;;
+      other-gate)  _gw_pend "$1" 1; sed -i.bak 's/"gate":"GATE-M1"/"gate":"GATE-M2"/' "$f"; rm -f "$f.bak";;
+      other-board) _gw_pend "$1" 1; sed -i.bak 's/"board":"ck"/"board":"other"/' "$f"; rm -f "$f.bak";;
+      malformed)   printf '{not json' > "$f";;
+      no-schema)   printf '{"board":"ck","gate":"GATE-M1","hold":1}\n' > "$f";;
+      string-hold) _gw_pend "$1" 1; sed -i.bak 's/"hold":1/"hold":"1"/' "$f"; rm -f "$f.bak";;
+      symlink)     _gw_pend "$1" 1; mv "$f" "$1/real-pending"; ln -s "$1/real-pending" "$f";;
+    esac
+  }
+  _gw_c_needs_block() {
+    local W h0 verb arm pend expect writes line
+    GW_ALLOW="complete comment"
+    # arm-kind pend-kind; the other half of each pair is the good one.
+    local pairs="apply:ok"
+    for pend in none stale other-gate other-board malformed no-schema string-hold symlink; do pairs="$pairs apply:$pend"; done
+    for arm in rehearse none bad-mode upper crlf three-lines third-unterminated no-project no-newline rel-project trailing reversed empty symlink; do pairs="$pairs $arm:ok"; done
+    for line in $pairs; do
+      arm="${line%%:*}"; pend="${line##*:}"
+      for verb in accept redirect; do
+        # accept completes only for (apply, ok); redirect acts for any well-formed arming and a matching block.
+        expect=refuse
+        case "$verb:$arm:$pend" in
+          accept:apply:ok) expect=write;;
+          redirect:apply:ok|redirect:rehearse:ok) expect=write;;
+        esac
+        W="$(_gw_world needsblock)"; _gw_arm_as "$W" "$arm"; _gw_pend_as "$W" "$pend"; h0="$(_gw_hash "$W")"
+        _gw_s "$W" "gate-$verb.sh" --board ck --gate GATE-M1 --text "go on" --apply
+        writes="$(wc -l < "$W/wlog.log" | tr -d ' ')"
+        if [ "$expect" = write ]; then
+          [ "$grc" = 0 ] && [ "$writes" = 1 ] || gwd="$gwd $verb[$arm/$pend]-should-write-got-rc$grc-writes$writes"
+        else
+          [ "$grc" = 1 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd $verb[$arm/$pend]-should-refuse-got-rc$grc-writes$writes($gout)"
+        fi
+      done
+    done
+    # Park is the stopping verb: it asks only that the gate is blocked, armed or not, reported or not.
+    for line in none:none rehearse:stale apply:ok; do
+      arm="${line%%:*}"; pend="${line##*:}"
+      W="$(_gw_world needsblock-park)"; _gw_arm_as "$W" "$arm"; _gw_pend_as "$W" "$pend"
+      _gw_s "$W" gate-park.sh --board ck --gate GATE-M1 --apply
+      [ "$grc" = 0 ] && [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] || gwd="$gwd park[$arm/$pend]-should-write-got-rc$grc($gout)"
+    done
+    # A rehearsal of an accepted gate writes nothing, and says what it would do.
+    W="$(_gw_world needsblock-reh)"; _gw_arm_as "$W" apply; _gw_pend_as "$W" ok; h0="$(_gw_hash "$W")"
+    _gw_s "$W" gate-accept.sh --board ck --gate GATE-M1 --text "go on" --rehearse
+    [ "$grc" = 0 ] && _gw_nowrites "$W" "$h0" && printf '%s' "$gout" | grep -q '^rehearsal: would run: hermes kanban --board ck complete t_g1 --result "accepted: go on"' \
+      || gwd="$gwd rehearsal-wrote-or-said-nothing(rc=$grc,$gout)"
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_needs_block
+  mnot=""
+  _gw_caught _gw_c_needs_block scripts rehearse-completes gate-accept.sh '[ "$GR_ARM_MODE" = apply ] ||' 'true ||' 'should-refuse-got-rc0' || mnot="$mnot rehearse-completes"
+  _gw_caught _gw_c_needs_block scripts any-hold-will-do gate-reply.sh ' and .hold == $h'"'" "'" 'should-refuse-got-rc0' || mnot="$mnot any-hold-will-do"
+  _gw_caught _gw_c_needs_block scripts no-pending-needed gate-accept.sh 'gr_require_pending "$GR_BOARD" "$GR_GATE"' 'true' 'should-refuse-got-rc0' || mnot="$mnot no-pending-needed"
+  _gw_caught _gw_c_needs_block scripts extra-lines-pass gate-reply.sh 'if [ "$(cat "$f"; printf x)" != "$(printf '"'"'mode=%s\nproject=%s\n'"'"' "$GR_ARM_MODE" "$GR_ARM_PROJECT"; printf x)" ]; then' 'if false; then' 'should-refuse-got-rc0' || mnot="$mnot extra-lines-pass"
+  _gw_caught _gw_c_needs_block scripts symlink-arming-passes gate-reply.sh '[ -f "$f" ] && [ ! -L "$f" ] || return 1' '[ -f "$f" ] || return 1' 'should-refuse-got-rc0' || mnot="$mnot symlink-arming-passes"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "accept-needs-a-recorded-block (accept completes only an apply-armed gate whose current hold was reported: a missing, stale, other-gate, other-board, malformed, schema-less, string-hold or symlinked report, and an unarmed, rehearse, mis-spelled, CRLF, three-line, an unterminated third line, no-project, no-newline, relative, reversed, empty or symlinked arming each refuse with zero writes; redirect needs a report and any valid arming; park needs neither; five mutants caught)"
+  else bad "accept-needs-a-recorded-block" "a phone must not release a gate that was not reported and armed apply:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # handler-never-raises
+  # ======================================================================
+  _gw_c_noraise() {
+    local W rec log r t0 t1 marker keep_repo="$GW_REPO" reply
+    W="$(_gw_world noraise)"; rec="$root/rec-noraise"; log="$W/rec.log"; : > "$log"
+    # (1) a seam raises: the handler still returns a string.
+    for r in sender session; do
+      _gw_h "$W" accept 'ck GATE-M1' 3001 --raise "$r"
+      printf '%s' "$hout" | jq -e '.raised == null and (.replies[0] | type) == "string" and (.replies[0] | test("^(refused|outcome unknown):"))' >/dev/null 2>&1 \
+        || gwd="$gwd raise-$r($(printf '%s' "$hout" | head -c 200))"
+    done
+    # (2) a script that crashes, one that never finishes, one that is not installed.
+    _gw_recorder "$rec" "$log" "x" 0
+    printf '#!/bin/sh\nkill -SEGV $$\n' > "$rec/scripts/gate-accept.sh"
+    GW_REPO="$rec"; _gw_h "$W" accept 'ck GATE-M1' 3002; reply="$(_gw_reply)"
+    case "$reply" in 'outcome unknown:'*) ;; *) gwd="$gwd crash-answered($reply)";; esac
+    marker="$W/grandchild.marker"
+    printf '#!/bin/sh\n( sleep 2; touch "%s" ) &\nsleep 30\n' "$marker" > "$rec/scripts/gate-accept.sh"
+    t0="$(date +%s)"; _gw_h "$W" accept 'ck GATE-M1' 3003 --timeout 1; t1="$(date +%s)"
+    reply="$(_gw_reply)"
+    case "$reply" in 'outcome unknown:'*'Check the card'*) ;; *) gwd="$gwd timeout-answered($reply)";; esac
+    [ $((t1 - t0)) -le 10 ] || gwd="$gwd timeout-took-$((t1 - t0))s"
+    jq -e '.rc == -1 and (.reply | startswith("outcome unknown:"))' "$W/state/gateway/ledger/424242-3003.json" >/dev/null 2>&1 \
+      || gwd="$gwd timeout-ledger($(head -c 200 "$W/state/gateway/ledger/424242-3003.json" 2>/dev/null))"
+    sleep 3
+    [ ! -e "$marker" ] || gwd="$gwd the-grandchild-outlived-the-timeout"
+    mkdir -p "$W/empty-repo"; GW_REPO="$W/empty-repo"; _gw_h "$W" accept 'ck GATE-M1' 3004
+    case "$(_gw_reply)" in 'refused: gate-accept.sh is not installed'*) ;; *) gwd="$gwd missing-script($(_gw_reply))";; esac
+    # (3) a script's own exit codes come back as the words they stand for.
+    local rc want
+    for rc in 1 2 3; do
+      printf '#!/bin/sh\necho "WORDS"\nexit %s\n' "$rc" > "$rec/scripts/gate-accept.sh"
+      GW_REPO="$rec"; _gw_h "$W" accept 'ck GATE-M1' "$((3100 + rc))"; reply="$(_gw_reply)"
+      case "$rc" in 1) want='refused: WORDS';; 2) want='failed: WORDS';; 3) want='WORDS';; esac
+      [ "$reply" = "$want" ] || gwd="$gwd exit-$rc-became($reply)"
+    done
+    # (4) a ledger that cannot be written: refused, and the script did not run.
+    if [ "$(id -u)" != 0 ]; then
+      : > "$log"; printf '#!/bin/sh\necho "gate-accept.sh $*" >> "%s"\necho RAN\n' "$log" > "$rec/scripts/gate-accept.sh"
+      chmod 500 "$W/state/gateway/ledger"
+      GW_REPO="$rec"; _gw_h "$W" accept 'ck GATE-M1' 3200; reply="$(_gw_reply)"
+      chmod 700 "$W/state/gateway/ledger"
+      case "$reply" in 'refused: the message ledger is unavailable'*) ;; *) gwd="$gwd unwritable-ledger-answered($reply)";; esac
+      [ ! -s "$log" ] || gwd="$gwd the-script-ran-with-no-ledger"
+    fi
+    GW_REPO="$keep_repo"
+  }
+  gwd=""; _gw_c_noraise
+  mnot=""
+  _gw_caught _gw_c_noraise plugin handler-raises __init__.py 'except Exception as exc:  # noqa: BLE001 - this is the point' 'except KeyboardInterrupt as exc:' || mnot="$mnot handler-raises"
+  _gw_caught _gw_c_noraise plugin only-the-child-is-killed __init__.py 'os.killpg(proc.pid, signal.SIGKILL)' 'proc.kill()' || mnot="$mnot only-the-child-is-killed"
+  _gw_caught _gw_c_noraise plugin crash-reads-as-refusal __init__.py 'return f"outcome unknown: the script ended abnormally' 'return f"refused: the script ended abnormally' || mnot="$mnot crash-reads-as-refusal"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "handler-never-raises (a failing sender check or session read, a crashed script, a script that never finishes, a missing script and an unwritable ledger each return a string and never raise; a timeout kills the whole process group, so the grandchild never lands, and says the outcome is unknown; exit codes 1, 2 and 3 keep their words; three mutants caught)"
+  else bad "handler-never-raises" "a handler that raises falls through to the agent as text:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # The guard, under a plain python3 (it runs on CI): what it reads, whom it spares, where it never raises
+  # ======================================================================
+  local calls_json
+  # [tool, args-as-JSON-object, expected: block|pass]
+  _gw_guard() { # session-json calls-json [--env JSON] [--engaged N] [--break X] -> sets gdec (JSON)
+    local s="$1" c="$2"; shift 2
+    gdec="$(cd / && python3 -I "$drive" guard --plugin "${GW_PLUG:-$plug}" --session "$s" --calls "$c" "$@" 2>/dev/null)"
+  }
+  local CHAT_SESSION='{"HERMES_SESSION_PLATFORM":"telegram","HERMES_SESSION_CHAT_TYPE":"dm","HERMES_SESSION_USER_ID":"424242","HERMES_SESSION_CHAT_ID":"424242","HERMES_SESSION_MESSAGE_ID":"1"}'
+  # table: id | tool | args JSON | expected
+  _gw_run_table() { # session env-json engaged table-file
+    local s="$1" env="$2" eng="$3" tbl="$4" calls="[]" expect=() id tool args want i=0 row rest
+    # id|tool|args|want, split from both ends: the args are JSON and may hold a '|'.
+    while IFS= read -r row || [ -n "$row" ]; do
+      [ -n "$row" ] || continue
+      id="${row%%|*}"; rest="${row#*|}"; tool="${rest%%|*}"; rest="${rest#*|}"; want="${rest##*|}"; args="${rest%|*}"
+      calls="$(printf '%s' "$calls" | jq -c --arg t "$tool" --argjson a "$args" '. + [{tool:$t, args:$a}]')"
+      expect+=("$id:$want")
+    done < "$tbl"
+    _gw_guard "$s" "$calls" --env "$env" --engaged "$eng"
+    local got; got="$(printf '%s' "$gdec" | jq -r '.decisions[]?' 2>/dev/null)"
+    if [ -z "$got" ]; then gwd="$gwd driver-said($(printf '%s' "$gdec" | head -c 200))"; return; fi
+    while IFS= read -r d; do
+      id="${expect[$i]%%:*}"; want="${expect[$i]##*:}"
+      [ "$d" = "$want" ] || gwd="$gwd $id-was-$d-expected-$want"
+      i=$((i+1))
+    done <<< "$got"
+    [ "$i" = "${#expect[@]}" ] || gwd="$gwd decisions-$i-of-${#expect[@]}"
+  }
+
+  # ======================================================================
+  # guard-reads-the-text
+  # ======================================================================
+  _gw_c_text() {
+    local t="$root/guard-text.tbl"
+    cat > "$t" <<'GW_TEXT'
+read-list|terminal|{"command":"hermes kanban --board ck list --json"}|pass
+read-show|terminal|{"command":"hermes -p x kanban --board ck show t_1"}|pass
+read-runs|terminal|{"command":"hermes kanban runs t_1"}|pass
+read-log|terminal|{"command":"hermes kanban log t_1"}|pass
+read-tail|terminal|{"command":"hermes kanban tail t_1"}|pass
+read-stats|terminal|{"command":"hermes kanban --board ck stats"}|pass
+read-context|terminal|{"command":"hermes kanban --board ck context t_1"}|pass
+read-boards-list|terminal|{"command":"hermes kanban boards list --all --json"}|pass
+no-kanban|terminal|{"command":"ls -la && echo ok"}|pass
+no-kanban-code|execute_code|{"code":"print(2 + 2)"}|pass
+write-complete|terminal|{"command":"hermes kanban --board ck complete t_1 --result x"}|block
+write-comment|terminal|{"command":"hermes kanban --board ck comment t_1 words"}|block
+write-unblock|terminal|{"command":"hermes kanban unblock t_1"}|block
+write-block|terminal|{"command":"hermes kanban block t_1 why"}|block
+write-create|terminal|{"command":"hermes kanban create title"}|block
+write-archive|terminal|{"command":"hermes kanban archive t_1"}|block
+write-boards-rm|terminal|{"command":"hermes kanban boards rm ck"}|block
+write-boards-create|terminal|{"command":"hermes kanban boards create zz"}|block
+write-no-verb|terminal|{"command":"hermes kanban"}|block
+write-after-read|terminal|{"command":"hermes kanban list; hermes kanban complete t_1"}|block
+write-after-pipe|terminal|{"command":"hermes kanban list | head && hermes kanban complete t_1"}|block
+write-quoted-word|terminal|{"command":"hermes kan\"ban\" complete t_1"}|block
+write-single-quoted|terminal|{"command":"hermes 'kanban' 'complete' t_1"}|block
+write-backslash|terminal|{"command":"hermes kan\\ban complete t_1"}|block
+write-uppercase|terminal|{"command":"HERMES KANBAN COMPLETE t_1"}|block
+write-env-prefix|terminal|{"command":"HERMES_HOME=/x hermes kanban complete t_1"}|block
+write-abs-path|terminal|{"command":"/Users/me/.local/bin/hermes kanban complete t_1"}|block
+write-python-m|terminal|{"command":"python -m hermes_cli.main kanban complete t_1"}|block
+write-board-file|terminal|{"command":"sqlite3 ~/.hermes/kanban/boards/ck/kanban.db \"update tasks set status='done'\""}|block
+write-board-path-only|terminal|{"command":"cp /x ~/.hermes/kanban/boards/ck/anything"}|block
+write-kanban-db-module|terminal|{"command":"python3 -c \"import hermes_cli.kanban_db as k; k.complete_task\""}|block
+write-code-subprocess|execute_code|{"code":"import subprocess\nsubprocess.run([\"hermes\",\"kanban\",\"complete\",\"t_1\"])"}|block
+write-code-module|execute_code|{"code":"from hermes_cli import kanban_db\nkanban_db.complete_task(None, 't_1')"}|block
+write-process-stdin|process_manage|{"action":"write","data":"hermes kanban complete t_1\n"}|block
+write-nested-arg|terminal|{"command":"echo hi","env":{"X":"hermes kanban complete t_1"}}|block
+tool-complete|kanban_complete|{"task_id":"t_1"}|block
+tool-comment|kanban_comment|{"task_id":"t_1","body":"x"}|block
+tool-unblock|kanban_unblock|{"task_id":"t_1"}|block
+tool-block|kanban_block|{"task_id":"t_1","reason":"x"}|block
+tool-create|kanban_create|{"title":"x"}|block
+tool-link|kanban_link|{"parent_id":"a","child_id":"b"}|block
+tool-heartbeat|kanban_heartbeat|{"task_id":"t_1"}|block
+tool-request-review|kanban_request_review|{"task_id":"t_1"}|block
+tool-attach|kanban_attach|{"task_id":"t_1","path":"/x"}|block
+tool-unknown-future|kanban_frobnicate|{}|block
+tool-uppercase|KANBAN_COMPLETE|{"task_id":"t_1"}|block
+tool-show|kanban_show|{"task_id":"t_1"}|pass
+tool-list|kanban_list|{}|pass
+tool-attachments|kanban_attachments|{"task_id":"t_1"}|pass
+other-tool|web_search|{"query":"kanban complete"}|pass
+GW_TEXT
+    _gw_run_table "$CHAT_SESSION" '{}' 0 "$t"
+  }
+  gwd=""; _gw_c_text
+  mnot=""
+  _gw_caught _gw_c_text plugin writes-are-reads __init__.py '_READ_VERBS = frozenset({"list", "show", "runs", "log", "tail", "stats", "context"})' '_READ_VERBS = frozenset({"list", "show", "runs", "log", "tail", "stats", "context", "complete"})' || mnot="$mnot writes-are-reads"
+  _gw_caught _gw_c_text plugin quotes-are-kept __init__.py 'low = re.sub(r"[\\'"'"'\"]", "", text.lower())' 'low = text.lower()' || mnot="$mnot quotes-are-kept"
+  _gw_caught _gw_c_text plugin kanban-db-passes __init__.py '        if tok != "kanban":
+            return True' '        if tok != "kanban":
+            continue' || mnot="$mnot kanban-db-passes"
+  _gw_caught _gw_c_text plugin kanban-tools-pass __init__.py 'return None if name in _KANBAN_READ_TOOLS else block' 'return None' || mnot="$mnot kanban-tools-pass"
+  _gw_caught _gw_c_text plugin boards-rm-passes __init__.py '            if nxt < len(tokens) and tokens[nxt] in _BOARDS_READ:
+                continue
+            return True' '            continue' || mnot="$mnot boards-rm-passes"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-reads-the-text (the seven read verbs and 'boards list' pass; every write verb, a bare 'kanban', a chain that ends in a write, kan\"ban\" and 'kanban' quoted, the board file or module by name, process stdin, a nested argument and every kanban_* tool but show, list and attachments is blocked; five mutants caught)"
+  else bad "guard-reads-the-text" "the guard must read text as a shell does and block every board write it names:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # guard-spares-workers
+  # ======================================================================
+  _gw_c_spares() {
+    local t="$root/guard-workers.tbl"
+    cat > "$t" <<'GW_WORKERS'
+lane-terminal|terminal|{"command":"hermes kanban --board ck complete t_1"}|pass
+lane-complete|kanban_complete|{"task_id":"t_1","summary":"x"}|pass
+lane-block|kanban_block|{"task_id":"t_1","reason":"env: x"}|pass
+lane-review|kanban_request_review|{"task_id":"t_1","reviewer":"forge-verifier"}|pass
+lane-write|write_file|{"path":"/x/y.py","content":"z"}|pass
+GW_WORKERS
+    # A dispatched worker: HERMES_KANBAN_TASK is set, whatever surface it reports.
+    _gw_run_table "$CHAT_SESSION" '{"HERMES_KANBAN_TASK":"t_1"}' 0 "$t"
+    _gw_run_table '{"HERMES_SESSION_PLATFORM":"kanban"}' '{"HERMES_KANBAN_TASK":"t_1"}' 1 "$t"
+    # Not a messaging session at all: the CLI, the TUI, the API server, a kanban surface.
+    local p
+    for p in cli tui api_server kanban webhook; do
+      _gw_run_table "{\"HERMES_SESSION_PLATFORM\":\"$p\"}" '{}' 1 "$t"
+    done
+    # No session bound in a plain CLI process (nothing has bound a session there), and no platform.
+    _gw_run_table '{}' '{}' 0 "$t"
+    # The contrast: a messaging session that is NOT a worker is guarded, and so is an unbound turn in a
+    # gateway process (default-deny, as Hermes treats an unrecognised identity).
+    local g="$root/guard-chat.tbl"
+    cat > "$g" <<'GW_CHAT'
+chat-terminal|terminal|{"command":"hermes kanban --board ck complete t_1"}|block
+chat-complete|kanban_complete|{"task_id":"t_1"}|block
+chat-harmless|terminal|{"command":"echo ok"}|pass
+GW_CHAT
+    _gw_run_table "$CHAT_SESSION" '{}' 0 "$g"
+    _gw_run_table '{"HERMES_SESSION_PLATFORM":"discord"}' '{}' 0 "$g"
+    _gw_run_table '{}' '{}' 1 "$g"
+    # HERMES_PLATFORM names the surface when the session does not.
+    _gw_run_table '{}' '{"HERMES_PLATFORM":"telegram"}' 0 "$g"
+  }
+  gwd=""; _gw_c_spares
+  mnot=""
+  _gw_caught _gw_c_spares plugin guards-workers __init__.py 'if os.environ.get("HERMES_KANBAN_TASK"):' 'if False:' || mnot="$mnot guards-workers"
+  _gw_caught _gw_c_spares plugin guards-every-surface __init__.py '        return platform not in _NON_MESSAGING' '        return True' || mnot="$mnot guards-every-surface"
+  _gw_caught _gw_c_spares plugin unbound-turn-is-spared __init__.py '    return _gateway_engaged()' '    return False' || mnot="$mnot unbound-turn-is-spared"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-spares-workers (a dispatched worker's terminator, hand-off and writes pass under any surface, and so do the CLI, TUI, API server, kanban and webhook surfaces and a CLI process with no session; a messaging session that is not a worker, and an unbound turn in a gateway process, are guarded; three mutants caught)"
+  else bad "guard-spares-workers" "the guard applies to chat turns only, never to a lane's or the verifier's terminator:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # guard-covers-the-other-routes
+  # ======================================================================
+  _gw_c_routes() {
+    local h="$root/gh-routes" t="$root/guard-routes.tbl" envj
+    rm -rf "$h"; mkdir -p "$h/.hermes/scripts" "$h/.hermes/plugins" "$h/.hermes/profiles/p" "$h/.hermes/kanban/boards/ck" "$h/.hermes/cron" "$h/.hermes/memories" \
+                          "$h/.forge" "$h/dev/forge-runtime/scripts" "$h/notes"
+    ln -s "$h/dev/forge-runtime" "$h/.forge/repo"
+    # Symlinks that are NOT themselves a protected root, so only following them (realpath) reveals the target. On macOS
+    # /var -> /private/var made the realpath mutant look caught; on Linux nothing else did (CI, run 42856059988).
+    ln -s "$h/.forge" "$h/notes/lnk-state"; ln -s "$h/dev/forge-runtime" "$h/notes/lnk-runtime"; ln -s "$h/.hermes/scripts" "$h/notes/lnk-scripts"
+    envj="$(jq -nc --arg h "$h" '{HOME:$h, HERMES_HOME:($h + "/.hermes"), FORGE_STATE_ROOT:($h + "/.forge"), FORGE_REPO:($h + "/.forge/repo")}')"
+    cat > "$t" <<GW_ROUTES
+state-armed|write_file|{"path":"$h/.forge/checkpoint/armed/ck--GATE-M1","content":"mode=apply"}|block
+state-tilde|write_file|{"path":"~/.forge/checkpoint/armed/ck--GATE-M1","content":"x"}|block
+state-traversal|write_file|{"path":"$h/notes/../.forge/checkpoint/armed/x","content":"x"}|block
+symlinked-into-state|write_file|{"path":"$h/notes/lnk-state/checkpoint/armed/x","content":"mode=apply"}|block
+symlinked-into-the-runtime|write_file|{"path":"$h/notes/lnk-runtime/scripts/x.sh","content":"x"}|block
+symlinked-into-hermes-scripts|patch|{"path":"$h/notes/lnk-scripts/x.sh","old_string":"a","new_string":"b"}|block
+relative-path-cannot-be-placed-here|write_file|{"path":"notes/a.md","content":"x"}|block
+relative-protected-path|write_file|{"path":"../.forge/checkpoint/armed/x","content":"x"}|block
+relative-patch-path|patch|{"path":"scripts/x.sh","old_string":"a","new_string":"b"}|block
+repo-through-the-symlink|write_file|{"path":"$h/.forge/repo/scripts/checkpoint-cron.sh","content":"x"}|block
+repo-real-path|write_file|{"path":"$h/dev/forge-runtime/scripts/gate-accept.sh","content":"x"}|block
+hermes-scripts|write_file|{"path":"$h/.hermes/scripts/x.sh","content":"x"}|block
+hermes-plugins|patch|{"path":"$h/.hermes/plugins/forge-gateway/__init__.py","old_string":"a","new_string":"b"}|block
+hermes-config|write_file|{"path":"$h/.hermes/config.yaml","content":"x"}|block
+hermes-profile|write_file|{"path":"$h/.hermes/profiles/p/config.yaml","content":"x"}|block
+hermes-board-file|write_file|{"path":"$h/.hermes/kanban/boards/ck/kanban.db","content":"x"}|block
+hermes-default-board|write_file|{"path":"$h/.hermes/kanban.db","content":"x"}|block
+hermes-cron|write_file|{"path":"$h/.hermes/cron/jobs.json","content":"x"}|block
+patch-text-names-it|patch|{"patch":"*** Begin Patch\n*** Update File: $h/.hermes/config.yaml\n@@\n-a\n+b\n*** End Patch"}|block
+cron-with-script|cronjob_manage|{"action":"create","schedule":"every 1m","script":"x.sh","no_agent":true}|block
+cron-monitor-script|cronjob_manage|{"action":"update","job_id":"j","monitor_script":"m.sh"}|block
+cron-list|cronjob_manage|{"action":"list"}|pass
+cron-plain-prompt|cronjob_manage|{"action":"create","schedule":"every 1h","prompt":"say hi"}|pass
+cron-run-now|cronjob_manage|{"action":"run","job_id":"j"}|pass
+casefold-state|write_file|{"path":"$h/.FORGE/checkpoint/armed/x","content":"x"}|block
+casefold-hermes-scripts|write_file|{"path":"$h/.Hermes/SCRIPTS/x.sh","content":"x"}|block
+casefold-runtime|write_file|{"path":"$h/DEV/Forge-Runtime/scripts/x.sh","content":"x"}|block
+v4a-update|patch|{"patch":"*** Begin Patch\n*** Update File: $h/.forge/checkpoint/armed/x\n@@\n-a\n+b\n*** End Patch"}|block
+v4a-no-space-after-the-stars|patch|{"patch":"***Update File: $h/.forge/checkpoint/armed/x\n@@\n-a\n+b"}|block
+v4a-add|patch|{"patch":"*** Begin Patch\n*** Add File: $h/.hermes/scripts/x.sh\n+echo hi\n*** End Patch"}|block
+v4a-delete|patch|{"patch":"*** Begin Patch\n*** Delete File: $h/.hermes/config.yaml\n*** End Patch"}|block
+v4a-move-source|patch|{"patch":"*** Begin Patch\n*** Move File: $h/.hermes/config.yaml -> $h/notes/copy.yaml\n*** End Patch"}|block
+v4a-move-destination|patch|{"patch":"*** Begin Patch\n*** Move File: $h/notes/a.md -> $h/.hermes/scripts/x.sh\n*** End Patch"}|block
+v4a-unreadable|patch|{"patch":"*** Begin Patch\n*** Update File: $h/notes/a.md\n*** End Patch"}|block
+notes|write_file|{"path":"$h/notes/a.md","content":"x"}|pass
+notes-tilde|write_file|{"path":"~/notes/a.md","content":"x"}|pass
+memories|write_file|{"path":"$h/.hermes/memories/m.md","content":"x"}|pass
+other-repo|patch|{"path":"$h/dev/other/file.py","old_string":"a","new_string":"b"}|pass
+tmp|write_file|{"path":"/tmp/x.txt","content":"x"}|pass
+lookalike-dir|write_file|{"path":"$h/.forge2/x","content":"x"}|pass
+read-file|read_file|{"path":"$h/.hermes/config.yaml"}|pass
+GW_ROUTES
+    _gw_run_table "$CHAT_SESSION" "$envj" 0 "$t"
+  }
+  gwd=""; _gw_c_routes
+  mnot=""
+  _gw_caught _gw_c_routes plugin files-pass __init__.py '        if verdict == "protected":' '        if False:' || mnot="$mnot files-pass"
+  _gw_caught _gw_c_routes plugin cron-scripts-pass __init__.py '        return block if (args.get("script") or args.get("monitor_script")) else None' '        return None' 'cron-with-script' || mnot="$mnot cron-scripts-pass"
+  _gw_caught _gw_c_routes plugin case-is-trusted __init__.py '    return path.casefold()' '    return path' 'casefold-' || mnot="$mnot case-is-trusted"
+  _gw_caught _gw_c_routes plugin patch-text-is-not-read __init__.py '    if isinstance(patch, str) and patch.strip():' '    if False:' 'v4a-' || mnot="$mnot patch-text-is-not-read"
+  _gw_caught _gw_c_routes plugin an-unreadable-patch-passes __init__.py '            verdicts.append("unparsed")' '            pass' 'v4a-' || mnot="$mnot an-unreadable-patch-passes"
+  _gw_caught _gw_c_routes plugin symlinks-are-not-followed __init__.py '        candidates = [os.path.abspath(expanded), os.path.realpath(expanded)]' '        candidates = [os.path.abspath(expanded)]' 'symlinked-into-' || mnot="$mnot symlinks-are-not-followed"
+  _gw_caught _gw_c_routes plugin relative-paths-are-trusted __init__.py '        if resolved is None:
+            return "unplaced"' '        if resolved is None:
+            resolved = os.path.abspath(path)' 'relative-' || mnot="$mnot relative-paths-are-trusted"
+  _gw_caught _gw_c_routes plugin prefix-match-is-loose __init__.py 'folded.startswith(root.rstrip(os.sep) + os.sep)' 'folded.startswith(root.rstrip(os.sep))' || mnot="$mnot prefix-match-is-loose"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-covers-the-other-routes (file tools aimed at forge's state root, the runtime (through its symlink and by its real path), Hermes' scripts, plugins, profiles, config, cron and board files, a patch that names one, and cronjob_manage with a script are blocked; ordinary paths, a lookalike directory, reads and a plain cron job pass; five mutants caught)"
+  else bad "guard-covers-the-other-routes" "with a shell gone, the file tools and cron are the remaining routes to a board write:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # guard-never-raises-or-blocks-the-innocent
+  # ======================================================================
+  _gw_c_guard_errors() {
+    local t="$root/guard-err.tbl" mode
+    cat > "$t" <<'GW_ERR'
+terminal|terminal|{"command":"echo ok"}|block
+execute_code|execute_code|{"code":"print(1)"}|block
+process|process_manage|{"action":"list"}|block
+write|write_file|{"path":"/tmp/x","content":"y"}|block
+patch|patch|{"path":"/tmp/x"}|block
+cron|cronjob_manage|{"action":"list"}|block
+kanban-complete|kanban_complete|{"task_id":"t"}|block
+kanban-show|kanban_show|{"task_id":"t"}|block
+web|web_search|{"query":"x"}|pass
+read|read_file|{"path":"/tmp/x"}|pass
+memory|memory|{}|pass
+todo|todo_list|{}|pass
+GW_ERR
+    # Both internal failures: while deciding whether the guard applies, and while deciding on the call.
+    for mode in applies decide; do
+      local calls="[]" id tool args want row rest
+      while IFS= read -r row || [ -n "$row" ]; do
+        [ -n "$row" ] || continue
+        id="${row%%|*}"; rest="${row#*|}"; tool="${rest%%|*}"; rest="${rest#*|}"; want="${rest##*|}"; args="${rest%|*}"
+        calls="$(printf '%s' "$calls" | jq -c --arg t "$tool" --argjson a "$args" '. + [{tool:$t, args:$a}]')"
+      done < "$t"
+      _gw_guard "$CHAT_SESSION" "$calls" --break "$mode"
+      local got want_all
+      got="$(printf '%s' "$gdec" | jq -r '[.decisions[]?] | join(",")' 2>/dev/null)"
+      # an internal error blocks exactly the tools that can write a board, and passes the rest; kanban_show is
+      # a reader, but on an internal error it is a kanban_* tool and is blocked with the others.
+      want_all="block,block,block,block,block,block,block,block,pass,pass,pass,pass"
+      [ "$got" = "$want_all" ] || gwd="$gwd break-$mode:$got"
+      printf '%s' "$gdec" | grep -q 'raised' && gwd="$gwd break-$mode-raised"
+    done
+  }
+  gwd=""; _gw_c_guard_errors
+  mnot=""
+  _gw_caught _gw_c_guard_errors plugin guard-raises __init__.py '    except Exception as exc:  # noqa: BLE001
+        logger.warning("forge-gateway guard' '    except KeyboardInterrupt as exc:
+        logger.warning("forge-gateway guard' || mnot="$mnot guard-raises"
+  _gw_caught _gw_c_guard_errors plugin error-passes-everything __init__.py '        if _could_write_a_board(tool_name):
+            return {"action"' '        if False:
+            return {"action"' || mnot="$mnot error-passes-everything"
+  _gw_caught _gw_c_guard_errors plugin error-blocks-everything __init__.py '        if _could_write_a_board(tool_name):
+            return {"action"' '        if True:
+            return {"action"' || mnot="$mnot error-blocks-everything"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-never-raises-or-blocks-the-innocent (an internal failure in either half of the guard returns a decision and never raises; it blocks the shell, code, process, file, cron and kanban tools and passes search, read, memory and todo; three mutants caught)"
+  else bad "guard-never-raises-or-blocks-the-innocent" "a raising pre_tool_call hook blocks EVERY tool, so the guard must catch its own errors and fail closed only where a board could be written:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # guard-forge-gate-blocks-everything
+  # ======================================================================
+  local GATE_SESSION='{"HERMES_SESSION_PLATFORM":"telegram","HERMES_SESSION_CHAT_TYPE":"dm","HERMES_SESSION_USER_ID":"424242","HERMES_SESSION_CHAT_ID":"424242","HERMES_SESSION_MESSAGE_ID":"1","HERMES_SESSION_PROFILE":"forge-gate"}'
+  _gw_c_gateguard() {
+    local t="$root/guard-gate.tbl"
+    cat > "$t" <<'GW_GATE'
+echo|terminal|{"command":"echo ok"}|block
+listing|terminal|{"command":"ls"}|block
+code|execute_code|{"code":"print(1)"}|block
+process|process_manage|{"action":"list"}|block
+write|write_file|{"path":"/tmp/x","content":"y"}|block
+patch|patch|{"path":"/tmp/x","old_string":"a","new_string":"b"}|block
+read|read_file|{"path":"/tmp/x"}|block
+search|web_search|{"query":"x"}|block
+extract|web_extract|{"urls":["https://example.com"]}|block
+memory|memory|{"action":"add","content":"x"}|block
+todo|todo_list|{}|block
+skill|skill_manage|{"action":"create"}|block
+skills|skills_list|{}|block
+delegate|delegate_task|{"goal":"x"}|block
+browser|browser_navigate|{"url":"https://example.com"}|block
+cron-list|cronjob_manage|{"action":"list"}|block
+cron-create|cronjob_manage|{"action":"create","prompt":"x"}|block
+send|send_message|{}|block
+speech|text_to_speech|{"text":"x"}|block
+image|image_generate|{"prompt":"x"}|block
+computer|computer_use|{"action":"screenshot"}|block
+mcp|mcp__github__create_issue|{}|block
+unknown|frobnicate|{}|block
+uppercase|TERMINAL|{"command":"echo ok"}|block
+kanban-complete|kanban_complete|{"task_id":"t"}|block
+kanban-comment|kanban_comment|{"task_id":"t","body":"x"}|block
+kanban-create|kanban_create|{"title":"x"}|block
+kanban-show|kanban_show|{"task_id":"t"}|pass
+kanban-list|kanban_list|{}|pass
+kanban-attachments|kanban_attachments|{"task_id":"t"}|pass
+GW_GATE
+    # an ordinary messaging session; a worker's environment does not spare the gate profile; neither does a CLI surface
+    _gw_run_table "$GATE_SESSION" '{}' 0 "$t"
+    _gw_run_table "$GATE_SESSION" '{"HERMES_KANBAN_TASK":"t_1"}' 0 "$t"
+    _gw_run_table "$(printf '%s' "$GATE_SESSION" | jq -c '.HERMES_SESSION_PLATFORM = "cli"')" '{}' 0 "$t"
+    # the same calls from the owner's main bot are NOT the gate's business (it is only the tripwire there)
+    local m="$root/guard-main.tbl"
+    cat > "$m" <<'GW_MAIN'
+main-echo|terminal|{"command":"echo ok"}|pass
+main-search|web_search|{"query":"x"}|pass
+main-memory|memory|{"action":"add","content":"x"}|pass
+main-complete|terminal|{"command":"hermes kanban complete t_1"}|block
+GW_MAIN
+    _gw_run_table "$CHAT_SESSION" '{}' 0 "$m"
+    # The main agent's tripwire is the owner's to switch off; the gate profile is not theirs to switch off by that route.
+    local off="$root/guard-off.tbl"
+    cat > "$off" <<'GW_OFF'
+off-complete|terminal|{"command":"hermes kanban complete t_1"}|pass
+off-kanban-tool|kanban_complete|{"task_id":"t"}|pass
+GW_OFF
+    _gw_run_table "$CHAT_SESSION" '{"FORGE_GATEWAY_MAIN_GUARD":"off"}' 0 "$off"
+    _gw_run_table "$GATE_SESSION" '{"FORGE_GATEWAY_MAIN_GUARD":"off"}' 0 "$t"
+    local v
+    for v in 0 false no OFF " off "; do   # every spelling the switch accepts, for the main bot only
+      _gw_run_table "$CHAT_SESSION" "$(jq -nc --arg v "$v" '{FORGE_GATEWAY_MAIN_GUARD:$v}')" 0 "$off"
+      _gw_run_table "$GATE_SESSION" "$(jq -nc --arg v "$v" '{FORGE_GATEWAY_MAIN_GUARD:$v}')" 0 "$t"
+    done
+    # The default is ON: none, an empty value and any other value leave the tripwire on the main bot.
+    local on="$root/guard-on.tbl"
+    cat > "$on" <<'GW_ON'
+on-complete|terminal|{"command":"hermes kanban complete t_1"}|block
+on-kanban-tool|kanban_complete|{"task_id":"t"}|block
+GW_ON
+    _gw_run_table "$CHAT_SESSION" '{}' 0 "$on"
+    for v in "" on 1 true yes maybe offf; do
+      _gw_run_table "$CHAT_SESSION" "$(jq -nc --arg v "$v" '{FORGE_GATEWAY_MAIN_GUARD:$v}')" 0 "$on"
+    done
+  }
+  gwd=""; _gw_c_gateguard
+  mnot=""
+  _gw_caught _gw_c_gateguard plugin gate-is-ordinary __init__.py '        if _is_gate_session():' '        if False:' 'echo-was' || mnot="$mnot gate-is-ordinary"
+  _gw_caught _gw_c_gateguard plugin the-switch-is-ignored __init__.py '        if os.environ.get("FORGE_GATEWAY_MAIN_GUARD", "").strip().lower() in ("off", "0", "false", "no"):
+            return None' '        if False:
+            return None' 'off-complete-was' || mnot="$mnot the-switch-is-ignored"
+  _gw_caught _gw_c_gateguard plugin the-switch-spares-the-gate __init__.py '        if _is_gate_session():
+            return _decide_gate(tool_name)
+        # The owner' '        if os.environ.get("FORGE_GATEWAY_MAIN_GUARD", "").strip().lower() in ("off", "0", "false", "no"):
+            return None
+        if _is_gate_session():
+            return _decide_gate(tool_name)
+        # The owner' 'echo-was' || mnot="$mnot the-switch-spares-the-gate"
+  _gw_caught _gw_c_gateguard plugin the-switch-defaults-off __init__.py '.strip().lower() in ("off", "0", "false", "no"):' '.strip().lower() not in ("on", "1", "true", "yes"):' 'on-complete-was' || mnot="$mnot the-switch-defaults-off"
+  _gw_caught _gw_c_gateguard plugin any-value-switches-it-off __init__.py '.strip().lower() in ("off", "0", "false", "no"):' '.strip() != "":' 'on-complete-was' || mnot="$mnot any-value-switches-it-off"
+  _gw_caught _gw_c_gateguard plugin the-allowlist-grows __init__.py '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS)' '_GATE_READONLY = frozenset(_KANBAN_READ_TOOLS | {"web_search"})' 'search-was' || mnot="$mnot the-allowlist-grows"
+  _gw_caught _gw_c_gateguard plugin a-denylist-instead __init__.py 'return None if (tool_name or "").lower() in _GATE_READONLY else {"action": "block", "message": GATE_BLOCK_MESSAGE}' 'return {"action": "block", "message": GATE_BLOCK_MESSAGE} if (tool_name or "").lower() in _TEXT_TOOLS else None' 'unknown-was' || mnot="$mnot a-denylist-instead"
+  _gw_caught _gw_c_gateguard plugin a-worker-env-spares-the-gate __init__.py '    try:
+        if _is_gate_session():
+            return _decide_gate(tool_name)' '    try:
+        if os.environ.get("HERMES_KANBAN_TASK"):
+            return None
+        if _is_gate_session():
+            return _decide_gate(tool_name)' 'echo-was' || mnot="$mnot a-worker-env-spares-the-gate"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "guard-forge-gate-blocks-everything (on a forge-gate turn every tool call is refused (the shell, code, process, files, patch, search, memory, todo, skills, delegation, browser, cron even to list, messaging, speech, images, desktop, an MCP tool and a tool nobody has heard of) except a board read; a worker's environment or a CLI surface does not spare it; the main bot's calls are left to the tripwire, which its owner may switch off with FORGE_GATEWAY_MAIN_GUARD=off (it is on by default and for any other value) and which never spares the gate; eight mutants caught)"
+  else bad "guard-forge-gate-blocks-everything" "forge-gate has an empty toolset and the guard is the second wall:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # forge-gate-soul-says-what-the-plugin-does
+  # ======================================================================
+  _gw_c_soul() {
+    local soul="${GW_SOUL:-$REPO_ROOT/hermes/profiles/forge-gate.SOUL.md}" j v hint script="$REPO_ROOT/scripts"
+    [ -f "$soul" ] || { gwd="$gwd no-soul"; return; }
+    j="$(python3 -I "$drive" table --plugin "$plug" 2>/dev/null)"
+    # the syntax it teaches is the plugin's own hint, verbatim, for each verb
+    for v in accept redirect park; do
+      hint="$(printf '%s' "$j" | jq -r --arg v "$v" '.hints[$v] // empty')"
+      [ -n "$hint" ] && grep -qF -- "/$v $hint" "$soul" || gwd="$gwd soul-does-not-teach-/$v-$hint"
+    done
+    grep -qF 'You have NO tools' "$soul" || gwd="$gwd soul-does-not-say-it-has-no-tools"
+    grep -qF 'You never act' "$soul" || gwd="$gwd soul-does-not-say-it-never-acts"
+    grep -qF '/stop' "$soul" || gwd="$gwd soul-does-not-teach-stop-first"
+    grep -qF 'own message' "$soul" || gwd="$gwd soul-does-not-say-own-message"
+    # it names no tool and no program: a SOUL that names one is a promise to run it
+    if grep -qE 'kanban_|terminal|execute_code|process_manage|\.forge/repo|scripts/|hermes kanban' "$soul"; then gwd="$gwd soul-names-a-tool-or-a-program"; fi
+    # what it says about the answers and about /accept is true of the plugin and of the script
+    grep -qF 'outcome unknown:' "$soul" && grep -qF 'outcome unknown:' "$plug/__init__.py" && grep -qF 'refused:' "$soul" && grep -qF 'refused:' "$plug/__init__.py" \
+      || gwd="$gwd the-answers-it-describes-are-not-the-plugins"
+    grep -qF 'armed' "$soul" && grep -q 'GR_ARM_MODE" = apply' "$script/gate-accept.sh" && grep -q 'gr_require_pending' "$script/gate-accept.sh" \
+      || gwd="$gwd what-it-says-about-accept-is-not-gate-accepts"
+    # the bootstrap gives the profile no tools
+    grep -q '"forge-gate|[^|]*|"$' "$REPO_ROOT/hermes/profiles-bootstrap.sh" || gwd="$gwd the-bootstrap-gives-forge-gate-tools"
+  }
+  gwd=""; _gw_c_soul
+  mnot=""
+  local sm="$root/mut-soul"; rm -rf "$sm"; mkdir -p "$sm"
+  while IFS='|' read -r mk old new; do
+    cp "$REPO_ROOT/hermes/profiles/forge-gate.SOUL.md" "$sm/soul.md"
+    _gw_mut "$sm/soul.md" "$old" "$new" || { gwd="$gwd mutant-$mk-did-not-apply"; continue; }
+    local keep="$gwd"; gwd=""; GW_SOUL="$sm/soul.md" _gw_c_soul; [ -n "$gwd" ] || mnot="$mnot $mk"; gwd="$keep"
+  done <<'GW_SOULMUT'
+claims-tools|You have NO tools|You have a terminal
+claims-to-act|You never act|You act
+wrong-syntax|/park <board> <GATE-id> [why]|/park <GATE-id>
+no-stop|send `/stop` first|send a message first
+names-a-program|`<board>` is a board name|run scripts/gate-accept.sh for the board name
+GW_SOULMUT
+  GW_SOUL=""
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "forge-gate-soul-says-what-the-plugin-does (the SOUL teaches each verb's syntax exactly as the plugin states it, says it has no tools and never acts, teaches /stop first and one command per message, names no tool or program, and what it says about the answers and about /accept is true of the plugin and of gate-accept.sh; the bootstrap gives the profile no tools; five mutants caught)"
+  else bad "forge-gate-soul-says-what-the-plugin-does" "a SOUL is read by a model that must not promise what the gateway cannot do (ADR-0003):${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # park-and-redirect-disarm-before-they-write
+  # ======================================================================
+  _gw_c_order() {
+    local W v dis
+    for v in park redirect; do
+      GW_ALLOW="complete comment"
+      W="$(_gw_world order-$v)"; _gw_arm "$W" apply; _gw_pend "$W" 1; : > "$W/wlog.log.armed"
+      GW_ARMED_PROBE="$W/state/checkpoint/armed/ck--GATE-M1"
+      _gw_s "$W" "gate-$v.sh" --board ck --gate GATE-M1 --text "stop" --apply
+      GW_ARMED_PROBE=""
+      [ "$grc" = 0 ] || gwd="$gwd $v-rc$grc($gout)"
+      [ "$(cat "$W/wlog.log.armed")" = disarmed ] || gwd="$gwd $v-was-still-armed-when-it-wrote($(cat "$W/wlog.log.armed" | tr '\n' ' '))"
+      jq -e --arg v "$v" '.verb == $v and .hold == 1' "$W/state/checkpoint/decided/ck--GATE-M1.json" >/dev/null 2>&1 || gwd="$gwd $v-recorded-no-decision"
+      # and when the board refuses the comment, the gate stays disarmed and decided, and the reply says so
+      GW_ALLOW=""
+      W="$(_gw_world order-fail-$v)"; _gw_arm "$W" apply; _gw_pend "$W" 1
+      _gw_s "$W" "gate-$v.sh" --board ck --gate GATE-M1 --text "stop" --apply
+      [ "$grc" = 2 ] && printf '%s' "$gout" | grep -q 'DISARMED' || gwd="$gwd $v-refused-comment(rc=$grc,$gout)"
+      [ ! -e "$W/state/checkpoint/armed/ck--GATE-M1" ] && [ -e "$W/state/checkpoint/decided/ck--GATE-M1.json" ] || gwd="$gwd $v-refused-comment-left-the-gate-armed"
+    done
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_order
+  mnot=""
+  _gw_caught _gw_c_order scripts park-writes-first gate-park.sh 'gr_mark_decided "$GR_BOARD" "$GR_GATE" park
+OUT=' 'OUT=' 'park-was-still-armed' || mnot="$mnot park-writes-first"
+  _gw_caught _gw_c_order scripts redirect-writes-first gate-redirect.sh 'gr_mark_decided "$GR_BOARD" "$GR_GATE" redirect
+OUT=' 'OUT=' 'redirect-was-still-armed' || mnot="$mnot redirect-writes-first"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "park-and-redirect-disarm-before-they-write (the stub looks at the arming file at the moment of the comment: it is already gone and the decision recorded; when the board refuses the comment the gate stays disarmed and decided and the reply says so; two mutants caught)"
+  else bad "park-and-redirect-disarm-before-they-write" "a still-armed check made while the comment is being written must already see the decision:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # Real Hermes, isolated HERMES_HOME
+  # ======================================================================
+  local hermes_ok=1
+  [ -x "$hpy" ] && command -v hermes >/dev/null 2>&1 || hermes_ok=0
+
+  # An isolated HERMES_HOME with the plugin linked in and enabled by the operator's own command.
+  # Sets GW_HH. $2 is the plugin directory to link ('' = no plugin).
+  _gw_hhome() { # name plugin-dir
+    GW_HH="$root/hh-$1"
+    rm -rf "$GW_HH"; mkdir -p "$GW_HH/plugins"
+    if [ -n "$2" ]; then
+      ln -s "$2" "$GW_HH/plugins/forge-gateway"
+      HERMES_HOME="$GW_HH" hermes plugins enable forge-gateway >/dev/null 2>&1 || return 1
+    fi
+    return 0
+  }
+
+  # ======================================================================
+  # real-hermes-loads-the-plugin-and-routes-only-three-verbs
+  # ======================================================================
+  _gw_c_real_load() {
+    local j names="accept,redirect,park,complete,gate-accept,gate_accept,Accept,unblock,merge"
+    _gw_hhome load "${GW_PLUG:-$plug}" || { gwd="$gwd hermes-plugins-enable-failed"; return; }
+    j="$(HERMES_HOME="$GW_HH" "$hpy" -I "$hdrive" registry --names "$names" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '.commands.accept and .commands.redirect and .commands.park
+        and (.commands.complete | not) and (.commands["gate-accept"] | not) and (.commands.gate_accept | not)
+        and (.commands.Accept | not) and (.commands.unblock | not) and (.commands.merge | not)
+        and .loaded == ["accept","park","redirect"] and .hooks == 1' >/dev/null 2>&1 \
+      || gwd="$gwd registry($(printf '%s' "$j" | head -c 300))"
+    # The control: the same plugin, linked but never enabled, registers nothing (the enable step is not decoration).
+    _gw_hhome load-off "" && mkdir -p "$GW_HH/plugins" && ln -s "${GW_PLUG:-$plug}" "$GW_HH/plugins/forge-gateway"
+    j="$(HERMES_HOME="$GW_HH" "$hpy" -I "$hdrive" registry --names "accept" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.commands.accept | not) and .hooks == 0' >/dev/null 2>&1 || gwd="$gwd not-enabled-but-loaded($(printf '%s' "$j" | head -c 200))"
+    # Plugins are PER PROFILE: a manager is keyed by the profile's home (hermes_cli/plugins.py get_plugin_manager). Enabled in
+    # forge-gate's home and not in the root's, only forge-gate's scope has the commands. (That the multiplexed gateway enters
+    # that scope for a forge-gate message is read from gateway/run_adapters.py, not run here.)
+    _gw_hhome perprofile ""
+    mkdir -p "$GW_HH/plugins" "$GW_HH/profiles/forge-gate/plugins"
+    ln -s "${GW_PLUG:-$plug}" "$GW_HH/plugins/forge-gateway"
+    ln -s "${GW_PLUG:-$plug}" "$GW_HH/profiles/forge-gate/plugins/forge-gateway"
+    printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$GW_HH/profiles/forge-gate/config.yaml"
+    j="$(HERMES_HOME="$GW_HH/profiles/forge-gate" "$hpy" -I "$hdrive" registry --names "accept,redirect,park" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '.commands.accept and .commands.redirect and .commands.park and .hooks == 1' >/dev/null 2>&1 || gwd="$gwd forge-gate-scope-lacks-the-commands($(printf '%s' "$j" | head -c 200))"
+    j="$(HERMES_HOME="$GW_HH" "$hpy" -I "$hdrive" registry --names "accept" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.commands.accept | not) and .hooks == 0' >/dev/null 2>&1 || gwd="$gwd the-root-scope-has-them-though-it-did-not-enable-them($(printf '%s' "$j" | head -c 200))"
+  }
+  if [ "$hermes_ok" = 1 ]; then
+    gwd=""; _gw_c_real_load
+    mnot=""
+    _gw_caught _gw_c_real_load plugin fourth-verb-in-real-hermes __init__.py '"park": "gate-park.sh",' '"park": "gate-park.sh", "complete": "gate-accept.sh",' || mnot="$mnot fourth-verb-in-real-hermes"
+    # The substrate's own fail mode, which the guard relies on: a plugin hook that RAISES blocks every tool.
+    local raiser="$root/mut-raiser"; rm -rf "$raiser"; mkdir -p "$raiser"; cp -R "$plug" "$raiser/forge-gateway"
+    _gw_mut "$raiser/forge-gateway/__init__.py" '    ctx.register_hook("pre_tool_call", _guard)' '    def _raiser(tool_name="", args=None, **_):
+        raise RuntimeError("boom")
+    ctx.register_hook("pre_tool_call", _raiser)' || gwd="$gwd raiser-mutant-did-not-apply"
+    _gw_hhome raiser "$raiser/forge-gateway" || gwd="$gwd raiser-enable-failed"
+    local rj
+    rj="$(cd / && HERMES_HOME="$GW_HH" "$hpy" -I "$hdrive" calls --session '{"platform":"telegram","chat_type":"dm","user_id":"1","chat_id":"1","message_id":"1"}' \
+            --calls '[{"tool":"terminal","args":{"command":"echo ok"}}]' 2>/dev/null)"
+    printf '%s' "$rj" | jq -e '.results[0] | fromjson | .error | test("raised RuntimeError")' >/dev/null 2>&1 \
+      || gwd="$gwd substrate-did-not-fail-closed-on-a-raising-hook($(printf '%s' "$rj" | head -c 300))"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "real-hermes-loads-the-plugin-and-routes-only-three-verbs (a plugin dir symlinked into an isolated HERMES_HOME and enabled with 'hermes plugins enable' registers /accept, /redirect and /park and one pre_tool_call hook; complete, gate-accept, gate_accept, Accept, unblock and merge have no handler; linked but not enabled it registers nothing; a hook that raises blocks every tool, which is why the guard catches its own errors; one mutant caught)"
+    else bad "real-hermes-loads-the-plugin-and-routes-only-three-verbs" "the gateway's own lookup must find three commands and nothing else:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "real-hermes-loads-the-plugin-and-routes-only-three-verbs" "needs the Hermes venv at ~/.hermes/hermes-agent and hermes on PATH"
+  fi
+
+  # ======================================================================
+  # busy-text-never-writes-a-gate
+  # ======================================================================
+  _gw_c_busy() {
+    local H gate stub log hash0 hash1 j i err calls wantn
+    _gw_hhome busy "${GW_PLUG:-$plug}" || { gwd="$gwd hermes-plugins-enable-failed"; return; }
+    H="$GW_HH"
+    HERMES_HOME="$H" hermes kanban boards create ck >/dev/null 2>&1 || { gwd="$gwd board-create-failed"; return; }
+    gate="$(HERMES_HOME="$H" hermes kanban --board ck create "GATE-M1: held" --initial-status blocked --json 2>/dev/null | jq -r '.id // empty')"
+    [ -n "$gate" ] || { gwd="$gwd gate-create-failed"; return; }
+    mkdir -p "$H/stub"; stub="$H/stub/hermes"; log="$H/stub/log"; : > "$log"
+    printf '#!/bin/sh\necho "$*" >> "%s"\nexit 0\n' "$log" > "$stub"; chmod +x "$stub"
+    _bh() { ( cd "$H/kanban/boards/ck" && for f in kanban.db kanban.db-wal kanban.db-shm; do [ -f "$f" ] && { printf '%s ' "$f"; shasum -a 256 "$f" | cut -d' ' -f1; }; done ) | shasum -a 256 | cut -d' ' -f1; }
+    hash0="$(_bh)"
+    # A messaging turn: the session is bound as a ContextVar, the way the gateway binds it, never in os.environ.
+    cat > "$H/calls.jq" <<'GW_JQ'
+[
+  {tool:"terminal", args:{command: ($s + " kanban --board ck complete " + $g)}},
+  {tool:"terminal", args:{command: ($s + " kanban --board ck comment " + $g + " words")}},
+  {tool:"terminal", args:{command: ($s + " kanban --board ck list; " + $s + " kanban --board ck complete " + $g)}},
+  {tool:"terminal", args:{command: ("sqlite3 " + $db + " \"update tasks set status='done'\"")}},
+  {tool:"execute_code", args:{code: ("import subprocess\nsubprocess.run(['" + $s + "','kanban','--board','ck','complete','" + $g + "'])")}},
+  {tool:"kanban_complete", args:{task_id:$g, summary:"x", result:"x"}},
+  {tool:"kanban_comment", args:{task_id:$g, body:"hello"}},
+  {tool:"kanban_unblock", args:{task_id:$g}},
+  {tool:"kanban_block", args:{task_id:$g, reason:"x"}},
+  {tool:"kanban_create", args:{title:"a new card"}}
+]
+GW_JQ
+    calls="$(jq -nc --arg s "$stub" --arg g "$gate" --arg db "$H/kanban/boards/ck/kanban.db" -f "$H/calls.jq")"
+    j="$(cd / && HERMES_HOME="$H" HERMES_KANBAN_BOARD=ck "$hpy" -I "$hdrive" calls \
+          --session '{"platform":"telegram","chat_type":"dm","user_id":"424242","chat_id":"424242","message_id":"55"}' --calls "$calls" 2>"$H/drive.err")"
+    [ "$(printf '%s' "$j" | jq -r '.env_session_vars | length' 2>/dev/null)" = 0 ] || gwd="$gwd session-was-bound-in-os.environ-so-this-proves-the-wrong-thing"
+    wantn=10
+    [ "$(printf '%s' "$j" | jq -r '.results | length' 2>/dev/null)" = "$wantn" ] || { gwd="$gwd driver-gave-$(printf '%s' "$j" | head -c 300)"; return; }
+    for i in 0 1 2 3 4 5 6 7 8 9; do
+      # The guard's own message, not merely "no write": a tool that does not exist also writes nothing.
+      printf '%s' "$j" | jq -e --argjson i "$i" '.results[$i] | fromjson | .error | startswith("forge-gateway: refused.")' >/dev/null 2>&1 \
+        || gwd="$gwd call-$i-was-not-refused($(printf '%s' "$j" | jq -r --argjson i "$i" '.results[$i]' | head -c 160))"
+    done
+    [ ! -s "$log" ] || gwd="$gwd the-hermes-stub-was-called($(head -c 200 "$log"))"
+    hash1="$(_bh)"
+    [ "$hash1" = "$hash0" ] || gwd="$gwd the-board-changed"
+    [ "$(HERMES_HOME="$H" hermes kanban --board ck show "$gate" 2>/dev/null | sed -n 's/^  status: *//p')" = blocked ] || gwd="$gwd the-gate-is-not-blocked-any-more"
+    # Positive controls on the same session: the guard is on and it is not blind to harmless work.
+    calls="$(jq -nc --arg s "$stub" --arg g "$gate" '[
+      {tool:"terminal", args:{command:"echo ok"}},
+      {tool:"terminal", args:{command: ($s + " kanban --board ck list --json")}},
+      {tool:"kanban_show", args:{task_id:$g}}]')"
+    j="$(cd / && HERMES_HOME="$H" HERMES_KANBAN_BOARD=ck "$hpy" -I "$hdrive" calls \
+          --session '{"platform":"telegram","chat_type":"dm","user_id":"424242","chat_id":"424242","message_id":"56"}' --calls "$calls" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.results[0] | fromjson | .output == "ok")' >/dev/null 2>&1 || gwd="$gwd echo-was-blocked($(printf '%s' "$j" | head -c 200))"
+    [ "$(cat "$log" 2>/dev/null)" = "kanban --board ck list --json" ] || gwd="$gwd a-read-did-not-reach-the-stub($(head -c 200 "$log"))"
+    printf '%s' "$j" | jq -e --arg g "$gate" '(.results[2] | fromjson | .task.id == $g)' >/dev/null 2>&1 || gwd="$gwd kanban_show-was-blocked"
+    # File tools put a RELATIVE path where Hermes puts it: against the task's workspace root (TERMINAL_CWD here), which is
+    # not this process's cwd. The workspace is the Hermes home, so `scripts/x.sh` is Hermes' scripts directory; the
+    # process sits elsewhere, where the same text would be harmless.
+    mkdir -p "$root/hh-proc-cwd"
+    j="$(cd "$root/hh-proc-cwd" && HERMES_HOME="$H" TERMINAL_CWD="$H" HERMES_KANBAN_BOARD=ck "$hpy" -I "$hdrive" calls \
+          --session '{"platform":"telegram","chat_type":"dm","user_id":"424242","chat_id":"424242","message_id":"57"}' \
+          --calls '[{"tool":"write_file","args":{"path":"scripts/x.sh","content":"echo hi"}},{"tool":"write_file","args":{"path":"notes/a.md","content":"hello"}}]' 2>/dev/null)"
+    printf '%s' "$j" | jq -e '.results[0] | fromjson | .error | startswith("forge-gateway: refused.")' >/dev/null 2>&1 \
+      && [ ! -e "$H/scripts/x.sh" ] && [ ! -e "$root/hh-proc-cwd/scripts/x.sh" ] || gwd="$gwd relative-protected-was-not-refused($(printf '%s' "$j" | jq -r '.results[0]' 2>/dev/null | head -c 160))"
+    [ "$(cat "$H/notes/a.md" 2>/dev/null)" = hello ] || gwd="$gwd relative-benign-was-not-written($(printf '%s' "$j" | jq -r '.results[1]' 2>/dev/null | head -c 160))"
+    # V4A patches are read with Hermes' own parser: a Move File names two paths, and the stars may stand without a space.
+    printf '*** Begin Patch\n*** Move File: %s/notes/a.md -> %s/scripts/moved.sh\n*** End Patch' "$H" "$H" > "$H/p-move.txt"
+    printf '***Update File: %s/scripts/x.sh\n@@\n-a\n+b' "$H" > "$H/p-nospace.txt"
+    printf '*** Begin Patch\n*** Update File: %s/notes/a.md\n@@\n-hello\n+bye\n*** End Patch' "$H" > "$H/p-benign.txt"
+    calls="$(jq -nc --rawfile a "$H/p-move.txt" --rawfile b "$H/p-nospace.txt" --rawfile c "$H/p-benign.txt" '[{tool:"patch",args:{mode:"patch",patch:$a}},{tool:"patch",args:{mode:"patch",patch:$b}},{tool:"patch",args:{mode:"patch",patch:$c}}]')"
+    j="$(cd "$root/hh-proc-cwd" && HERMES_HOME="$H" HERMES_KANBAN_BOARD=ck "$hpy" -I "$hdrive" calls \
+          --session '{"platform":"telegram","chat_type":"dm","user_id":"424242","chat_id":"424242","message_id":"58"}' --calls "$calls" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.results[0] | fromjson | .error | startswith("forge-gateway: refused.")) and (.results[1] | fromjson | .error | startswith("forge-gateway: refused."))' >/dev/null 2>&1 \
+      && [ ! -e "$H/scripts/moved.sh" ] && [ ! -e "$H/scripts/x.sh" ] || gwd="$gwd v4a-protected-patch-was-not-refused($(printf '%s' "$j" | jq -c '[.results[0], .results[1]]' 2>/dev/null | head -c 220))"
+    [ "$(cat "$H/notes/a.md" 2>/dev/null)" = bye ] || gwd="$gwd v4a-benign-patch-was-not-applied($(printf '%s' "$j" | jq -r '.results[2]' 2>/dev/null | head -c 160))"
+    # The forge-gate profile's turn: NOTHING but a board read gets through, and the refusal is the gate's own.
+    calls="$(jq -nc --arg g "$gate" --arg w "$H/forge-gate-x" '[{tool:"terminal",args:{command:"echo ok"}},{tool:"web_search",args:{query:"x"}},{tool:"write_file",args:{path:$w,"content":"y"}},{tool:"kanban_show",args:{task_id:$g}}]')"
+    j="$(cd / && HERMES_HOME="$H" HERMES_KANBAN_BOARD=ck "$hpy" -I "$hdrive" calls \
+          --session '{"platform":"telegram","chat_type":"dm","user_id":"424242","chat_id":"424242","message_id":"59","profile":"forge-gate"}' --calls "$calls" 2>/dev/null)"
+    printf '%s' "$j" | jq -e '(.results[0:3] | map(fromjson | .error | startswith("forge-gate: refused.")) | all) and (.results[3] | fromjson | .task.id != null)' >/dev/null 2>&1 \
+      && [ ! -e "$H/forge-gate-x" ] || gwd="$gwd forge-gate-turn-was-not-refused-whole($(printf '%s' "$j" | jq -c '.results' 2>/dev/null | head -c 260))"
+  }
+  if [ "$hermes_ok" = 1 ]; then
+    gwd=""; _gw_c_busy
+    mnot=""
+    _gw_caught _gw_c_busy plugin guard-cut __init__.py '        return _decide(tool_name, args, task_id)' '        return None' 'the-board-changed' || mnot="$mnot guard-cut"
+    _gw_caught _gw_c_busy plugin relative-uses-the-process-cwd __init__.py '        return str(_resolve_path_for_task(path, task_id or "default"))' '        return os.path.abspath(path)' 'relative-protected-was-not-refused' || mnot="$mnot relative-uses-the-process-cwd"
+    _gw_caught _gw_c_busy plugin v4a-move-destination-unread __init__.py '        if getattr(op, "new_path", None):' '        if False:' 'v4a-protected-patch-was-not-refused' || mnot="$mnot v4a-move-destination-unread"
+    _gw_caught _gw_c_busy plugin the-gate-profile-is-ordinary __init__.py '        if _is_gate_session():' '        if False:' 'forge-gate-turn-was-not-refused-whole' || mnot="$mnot the-gate-profile-is-ordinary"
+    _gw_caught _gw_c_busy plugin guard-is-off-for-telegram __init__.py '        return platform not in _NON_MESSAGING' '        return False' 'the-board-changed' || mnot="$mnot guard-is-off-for-telegram"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "busy-text-never-writes-a-gate (in an isolated HERMES_HOME with the plugin enabled and the session bound as a ContextVar, ten calls a model could make with a verb's text in hand — terminal and execute_code naming the hermes CLI and the board file, and five kanban_* tools — each come back as the guard's own refusal, the stub is never called and a real board is byte-identical; echo, a read and kanban_show still work; two mutants caught: with the guard cut the same calls reach the stub and complete the gate)"
+    else bad "busy-text-never-writes-a-gate" "a verb that reaches the agent as text must not become a board write on a gate card:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "busy-text-never-writes-a-gate" "needs the Hermes venv at ~/.hermes/hermes-agent and hermes on PATH"
+  fi
+
+  # ======================================================================
+  # forge-gate-profile-has-no-tools  (the real bootstrap into a scratch root, then Hermes' own resolver)
+  # ======================================================================
+  _gw_probe() { # home -> JSON on stdout
+    HERMES_HOME="$1" "$hpy" -I "${GW_PROBE:-$REPO_ROOT/scripts/gateway-toolset-probe.py}" --platform telegram 2>/dev/null
+  }
+  # The bootstrap, for forge-gate alone, into a scratch Hermes root AND a scratch HOME (so `hermes profile create` writes no
+  # wrapper into the real ~/.local/bin). $1 = the bootstrap to run, $2 = the scratch name. Sets GP_HOME (the root).
+  _gw_gate_boot() {
+    GP_HOME="$root/gp-$2"; rm -rf "$GP_HOME" "$root/gph-$2"; mkdir -p "$GP_HOME" "$root/gph-$2"
+    HOME="$root/gph-$2" HERMES_HOME="$GP_HOME" FORGE_PROFILES_ONLY=forge-gate bash "$1" >"$root/gp-$2.out" 2>&1
+  }
+  _gw_c_gateprofile() {
+    local boot="${GW_BOOT:-$REPO_ROOT/hermes/profiles-bootstrap.sh}" j f cfg
+    _gw_gate_boot "$boot" real || gwd="$gwd bootstrap-failed($(tail -3 "$root/gp-real.out" | tr '\n' ' ' | head -c 300))"
+    j="$(_gw_probe "$GP_HOME")"
+    f='.forge_gate'
+    printf '%s' "$j" | jq -e "$f != null and $f.explicit == true and ($f.tools | length) == 0 and ($f.write_tools | length) == 0
+          and ($f.toolsets | length) == 0 and $f.mcp_servers == 0 and $f.plugin_enabled == true and $f.plugin_link == true
+          and $f.unauthorized_dm_behavior == \"ignore\" and $f.own_token == false and $f.allowed_users == \"none\"" >/dev/null 2>&1 \
+      || gwd="$gwd forge-gate-as-hermes-resolves-it($(printf '%s' "$j" | jq -c '.forge_gate' 2>/dev/null | head -c 400))"
+    cmp -s "$GP_HOME/profiles/forge-gate/SOUL.md" "$REPO_ROOT/hermes/profiles/forge-gate.SOUL.md" || gwd="$gwd the-soul-was-not-installed"
+    [ ! -e "$root/gph-real/.local/bin/forge-gate" ] || gwd="$gwd a-wrapper-was-created"
+    ! grep -q 'TELEGRAM_BOT_TOKEN\|TELEGRAM_ALLOWED_USERS' "$GP_HOME/profiles/forge-gate/.env" 2>/dev/null || gwd="$gwd the-script-wrote-a-secret"
+    [ "$(readlink "$GP_HOME/profiles/forge-gate/plugins/forge-gateway")" = "$(cd "$(dirname "$boot")/.." && pwd)/hermes/plugins/forge-gateway" ] || gwd="$gwd the-plugin-link-points-elsewhere"
+    grep -q '"forge-gate|[^|]*|"$' "$boot" || gwd="$gwd the-bootstrap-gives-forge-gate-a-toolset"
+    # Controls: the same profile with one thing changed. Each must be SEEN by the probe, or "empty" proves nothing.
+    cfg="$GP_HOME/profiles/forge-gate/config.yaml"
+    cp "$cfg" "$cfg.good"
+    sed '/^platform_toolsets:/,/^  telegram: \[\]/d' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.explicit == false and (.forge_gate.write_tools | length) > 0' >/dev/null 2>&1 || gwd="$gwd no-entry-is-not-the-default-bundle($(printf '%s' "$j" | jq -c '.forge_gate' | head -c 160))"
+    sed 's/^  telegram: \[\]/  telegram: [hermes-telegram]/' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.explicit == true and (.forge_gate.write_tools | length) > 0' >/dev/null 2>&1 || gwd="$gwd the-bundle-form-is-not-seen"
+    sed 's/^  telegram: \[\]/  telegram: [clarify]/' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '(.forge_gate.tools | length) > 0' >/dev/null 2>&1 || gwd="$gwd one-harmless-tool-is-not-seen"
+    sed 's/^  telegram: \[\]/  telegram: [web]/' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '(.forge_gate.tools | length) > 0 and (.forge_gate.write_tools | length) == 0' >/dev/null 2>&1 || gwd="$gwd a-read-only-tool-is-not-told-from-a-write"
+    { cat "$cfg.good"; printf 'mcp_servers:\n  github:\n    command: x\n'; } > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.mcp_servers == 1' >/dev/null 2>&1 || gwd="$gwd an-mcp-server-is-not-seen"
+    grep -v '^unauthorized_dm_behavior' "$cfg.good" > "$cfg"
+    j="$(_gw_probe "$GP_HOME")"; printf '%s' "$j" | jq -e '.forge_gate.unauthorized_dm_behavior == null' >/dev/null 2>&1 || gwd="$gwd pairing-codes-are-not-seen"
+    cp "$cfg.good" "$cfg"
+    # Another profile with the gate verbs enabled and tools of its own is seen too (the preflight FAILs it), and a token or
+    # allowlist is reported as a fact and never as a value.
+    mkdir -p "$GP_HOME/profiles/p9"
+    printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$GP_HOME/profiles/p9/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=tok-fake-0123456789\nTELEGRAM_ALLOWED_USERS=1,*\n' > "$GP_HOME/profiles/p9/.env"
+    printf 'TELEGRAM_BOT_TOKEN=tok-fake-0123456789\n' > "$GP_HOME/.env"
+    j="$(_gw_probe "$GP_HOME")"
+    printf '%s' "$j" | jq -e '.profiles.p9.plugin_enabled == true and (.profiles.p9.write_tools | length) > 0 and .profiles.p9.explicit == false
+          and .profiles.p9.own_token == true and .profiles.p9.token_shared_with_root == true and .profiles.p9.allowed_users == "star"' >/dev/null 2>&1 \
+      || gwd="$gwd another-profile-with-the-verbs-and-tools-is-not-seen($(printf '%s' "$j" | jq -c '.profiles.p9' | head -c 300))"
+    printf '%s' "$j" | grep -q 'tok-fake' && gwd="$gwd the-probe-printed-a-token"
+    rm -rf "$GP_HOME" "$root/gph-real"
+  }
+  if [ "$hermes_ok" = 1 ]; then
+    gwd=""; _gw_c_gateprofile
+    mnot=""
+    local bm="$root/mut-boot"; rm -rf "$bm"; mkdir -p "$bm/hermes/profiles" "$bm/scripts" "$bm/skills" "$bm/hermes/plugins"
+    cp "$REPO_ROOT/scripts/model-pins.sh" "$bm/scripts/"; cp "$REPO_ROOT"/hermes/profiles/*.SOUL.md "$bm/hermes/profiles/"
+    cp -R "$REPO_ROOT/hermes/plugins/forge-gateway" "$bm/hermes/plugins/"; rm -rf "$bm/hermes/plugins/forge-gateway/__pycache__"
+    local s2; for s2 in $(cd "$REPO_ROOT/skills" && ls -d */ 2>/dev/null | tr -d '/'); do mkdir -p "$bm/skills/$s2"; done
+    local mk
+    for mk in no-platform-toolsets no-ignore-for-strangers plugin-not-enabled makes-a-wrapper; do
+      cp "$REPO_ROOT/hermes/profiles-bootstrap.sh" "$bm/hermes/profiles-bootstrap.sh"
+      case "$mk" in
+        no-platform-toolsets)     _gw_mut "$bm/hermes/profiles-bootstrap.sh" '      echo "platform_toolsets:"
+      echo "  telegram: []"' '      echo "# nothing here"';;
+        no-ignore-for-strangers)  _gw_mut "$bm/hermes/profiles-bootstrap.sh" '      echo "unauthorized_dm_behavior: ignore"' '      echo "# default"';;
+        plugin-not-enabled)       _gw_mut "$bm/hermes/profiles-bootstrap.sh" '      echo "    - forge-gateway"' '      echo "    - nothing"';;
+        makes-a-wrapper)          _gw_mut "$bm/hermes/profiles-bootstrap.sh" 'hermes profile create "$name" --no-alias --no-skills' 'hermes profile create "$name" --no-skills';;
+      esac || { gwd="$gwd mutant-$mk-did-not-apply"; continue; }
+      local keep="$gwd"; gwd=""
+      GW_BOOT="$bm/hermes/profiles-bootstrap.sh" _gw_c_gateprofile
+      [ -n "$gwd" ] || mnot="$mnot $mk"
+      gwd="$keep"
+    done
+    GW_BOOT=""
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "forge-gate-profile-has-no-tools (the real bootstrap into a scratch root: forge-gate resolves, through Hermes' own resolver, to an explicit EMPTY Telegram toolset, no MCP server, the plugin linked and enabled, strangers ignored, its SOUL installed, no wrapper, no secret written; a missing entry (the default bundle), the bundle form, one harmless tool, an MCP server and pairing codes are each seen; a read-only tool is told from a write; another profile with the verbs and tools is seen; no token is printed; four mutants caught)"
+    else bad "forge-gate-profile-has-no-tools" "the dedicated gate bot must resolve to no tools at all, as Hermes resolves it:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "forge-gate-profile-has-no-tools" "needs the Hermes venv at ~/.hermes/hermes-agent and hermes on PATH"
+  fi
+
+  # ======================================================================
+  # deployed-forge-gate-has-no-tools  (the live host; pending until the operator's steps)
+  # ======================================================================
+  if [ "$hermes_ok" != 1 ] || [ ! -f "$HOME/.hermes/config.yaml" ]; then
+    skip "deployed-forge-gate-has-no-tools" "no installed Hermes with a config to read"
+  else
+    local lj lbad lverbs; lj="$(_gw_probe "$HOME/.hermes")"
+    if ! printf '%s' "$lj" | jq -e '.platform == "telegram"' >/dev/null 2>&1; then
+      bad "deployed-forge-gate-has-no-tools" "the probe could not ask Hermes about the live Telegram toolsets: $(printf '%s' "$lj" | head -c 300)"
+    else
+      # live = the gate verbs are enabled anywhere; bad = forge-gate is unsafe; verbs = a profile OTHER than forge-gate that has them and tools
+      lbad="$(printf '%s' "$lj" | jq -r 'if .forge_gate == null then "" else
+              ([ (if .forge_gate.explicit then empty else "no-explicit-toolset" end),
+                 (if (.forge_gate.tools | length) == 0 then empty else "holds:" + (.forge_gate.tools | join(",")) end),
+                 (if .forge_gate.mcp_servers == 0 then empty else "mcp-servers" end),
+                 (if .forge_gate.unauthorized_dm_behavior == "ignore" then empty else "answers-strangers" end) ] | join(" ")) end')"
+      lverbs="$(printf '%s' "$lj" | jq -r '[.profiles | to_entries[] | select(.key != "forge-gate" and .value.plugin_enabled and (.value.write_tools | length) > 0) | .key] | join(", ")')"
+      if [ -n "$lbad" ] || [ -n "$lverbs" ]; then
+        bad "deployed-forge-gate-has-no-tools" "the gate bot must have no tools and the verbs must be on it alone: forge-gate [${lbad}]; other profiles with the verbs and tools [${lverbs}]"
+      elif [ "$(printf '%s' "$lj" | jq -r '.forge_gate != null')" = true ]; then
+        ok "deployed-forge-gate-has-no-tools (the live forge-gate profile has an explicit, empty Telegram toolset, no MCP server and ignores strangers; no other profile has the gate verbs and tools)"
+      elif [ "$(printf '%s' "$lj" | jq -r '.plugin_enabled or ([.profiles[]?.plugin_enabled] | any)')" = true ]; then
+        bad "deployed-forge-gate-has-no-tools" "the gate verbs are enabled but the forge-gate profile does not exist: the plugin must never be live before forge-gate is"
+      else
+        skip "deployed-forge-gate-has-no-tools" "operator step pending: there is no forge-gate profile yet and the gate verbs are not enabled anywhere"
+      fi
+    fi
+  fi
+
+  # ======================================================================
+  # The cron job and its arming file
+  # ======================================================================
+  # The product project the checkpoint probes: the checkpoint group's plan, frozen by the real acceptance-freeze,
+  # as a git checkout on main (the cron refuses anything else). Variants are copies with one edit to src/reader.py.
+  _gw_proj_base() {
+    local p="$root/proj-base"
+    rm -rf "$p"; mkdir -p "$p/docs/chunks" "$p/tests/features" "$p/tests/probes/m1" "$p/src"
+    cat > "$p/docs/chunks/graph.json" <<'GW_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"claude-interactive","tier":"human","depends_on":[]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1"]}
+]
+GW_GRAPH
+    cat > "$p/docs/chunks/CHUNK-1.md" <<'GW_CHUNK'
+### CHUNK-1: Read records
+- **Goal:** Read a record file and stop on a relabelled record.
+- **Milestone:** M1 · **Depends on:** none
+- **Scenarios:**
+  - Given three records, When the reader runs, Then it advances.
+- **Real sources:** none
+- **Acceptance:** tests/features/chunk_1.feature
+- **Lane:** claude-interactive · **Risk:** low
+GW_CHUNK
+    printf 'Feature: CHUNK-1 acceptance\n\n  Scenario: Read records\n    Given three records\n    When the reader runs\n    Then it advances\n' > "$p/tests/features/chunk_1.feature"
+    printf '### GATE-M1: Milestone 1\n- **Milestone:** M1\n- **Probe:** tests/probes/gate_m1.json\n- **Estimate:** 1 chunk\n- **Lane:** claude-interactive\n' > "$p/docs/chunks/GATE-M1.md"
+    cat > "$p/src/reader.py" <<'GW_READER'
+import sys
+
+records = open(sys.argv[1]).read().split()
+foreign = [r for r in records if r == "foreign"]
+if foreign:
+    print("stop: " + foreign[0])
+    sys.exit(3)
+print("advance %d" % len(records))
+GW_READER
+    printf 'a\nb\nc\n' > "$p/tests/probes/m1/corpus.txt"
+    printf 'a\nforeign\nc\n' > "$p/tests/probes/m1/relabelled.txt"
+    cat > "$p/tests/probes/gate_m1.json" <<'GW_PROBE'
+{
+  "probe": "forge.probe.v1",
+  "milestone": "M1",
+  "cases": [
+    {"name": "three records advance", "kind": "realistic", "records": 3,
+     "input": "tests/probes/m1",
+     "run": ["python3", "src/reader.py", "{input}/corpus.txt"],
+     "expect": {"exit": 0, "stdout": "advance 3"}},
+    {"name": "a relabelled record is stopped", "kind": "adversarial",
+     "input": "tests/probes/m1",
+     "run": ["python3", "src/reader.py", "{input}/relabelled.txt"],
+     "expect": {"exit": 3, "stdout": "stop: foreign"}}
+  ]
+}
+GW_PROBE
+    "$REPO_ROOT/scripts/acceptance-freeze.sh" "$p" >"$p.freeze.log" 2>&1
+  }
+  _gw_proj() { # name [sed expression on src/reader.py]: a committed checkout on main
+    local d="$root/proj-$1"
+    rm -rf "$d"; cp -R "$root/proj-base" "$d"
+    [ -z "${2:-}" ] || { sed -i.bak "$2" "$d/src/reader.py"; rm -f "$d/src/reader.py.bak"; }
+    ( cd "$d" && git init -q -b main . && git add -A && git -c user.email=gw@forge -c user.name=gw commit -qm fixture ) >/dev/null 2>&1
+  }
+  _gw_proj_with() { # name prelude: a committed checkout whose reader.py (the probe runs it) begins with the prelude
+    local d="$root/proj-$1"
+    rm -rf "$d"; cp -R "$root/proj-base" "$d"
+    { printf '%s\n' "$2"; cat "$root/proj-base/src/reader.py"; } > "$d/src/reader.py"
+    ( cd "$d" && git init -q -b main . && git add -A && git -c user.email=gw@forge -c user.name=gw commit -qm fixture ) >/dev/null 2>&1
+  }
+  # The cron under test (the real one, or the mutant in GW_REPO) in a directory of its own, beside a checkpoint.sh
+  # that counts the runs it is asked for and then hands over to the real one ($2 = an exit code to return instead).
+  _gw_cronrepo() { # name [fault-exit-code]
+    local src="${GW_REPO:-$REPO_ROOT}" d="$root/cr-$1" f
+    rm -rf "$d"; mkdir -p "$d/scripts"
+    for f in checkpoint-cron checkpoint-arm gate-reply forge-state board-snapshot; do cp "$src/scripts/$f.sh" "$d/scripts/"; done
+    : > "$d/runs.log"
+    if [ -n "${2:-}" ]; then
+      printf '#!/bin/sh\necho "$*" >> "%s/runs.log"\necho "boom" >&2\nexit %s\n' "$d" "$2" > "$d/scripts/checkpoint.sh"
+    else
+      printf '#!/bin/sh\necho "$*" >> "%s/runs.log"\nexec "%s/scripts/checkpoint.sh" "$@"\n' "$d" "$src" > "$d/scripts/checkpoint.sh"
+    fi
+    chmod +x "$d/scripts/"*.sh
+    printf '%s' "$d"
+  }
+  _gw_tick() { # world cronrepo -> cout, crc
+    cout="$(cd / && env HERMES_HOME="$1/home" FORGE_STATE_ROOT="$1/state" GW_STUB_LOG="$1/stub.log" GW_WLOG="$1/wlog.log" \
+              GW_STUB_ALLOW="${GW_ALLOW:-}" PATH="$root/bin:$PATH" bash "$2/scripts/checkpoint-cron.sh" 2>"$1/cron.err")"; crc=$?
+  }
+  _gw_armit() { # world project mode [extra flag] -> the real checkpoint-arm.sh
+    ( cd / && env FORGE_STATE_ROOT="$1/state" bash "${GW_REPO:-$REPO_ROOT}/scripts/checkpoint-arm.sh" arm --board ck --gate GATE-M1 --project "$2" --mode "$3" ${4:+"$4"} ) >"$1/arm.out" 2>&1
+  }
+  _gw_runs() { wc -l < "$1/runs.log" | tr -d ' '; }
+  local cron_ok=1
+  if _gw_proj_base && command -v git >/dev/null 2>&1; then
+    _gw_proj pass ''
+    _gw_proj find 's/if foreign:/if False:/'
+  else
+    cron_ok=0
+  fi
+
+  # ======================================================================
+  # unarmed-gate-never-completes
+  # ======================================================================
+  _gw_c_unarmed() {
+    local W cr h0 n
+    GW_ALLOW="complete comment"
+    # A: nobody armed it. The probe would pass (5 of 5 chunks done, the cost within its estimate), and nothing happens.
+    W="$(_gw_world un-a)"; cr="$(_gw_cronrepo un-a)"; h0="$(_gw_hash "$W")"
+    _gw_tick "$W" "$cr"
+    [ -z "$cout" ] && [ "$crc" = 0 ] && [ ! -s "$W/stub.log" ] && [ "$(_gw_runs "$cr")" = 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd unarmed-did-something(rc=$crc,out=$cout,runs=$(_gw_runs "$cr"))"
+    # B: armed rehearse. It probes, says what it would do, and completes nothing.
+    W="$(_gw_world un-b)"; cr="$(_gw_cronrepo un-b)"; h0="$(_gw_hash "$W")"
+    _gw_armit "$W" "$root/proj-pass" rehearse || gwd="$gwd arm-rehearse-failed($(cat "$W/arm.out"))"
+    _gw_tick "$W" "$cr"
+    printf '%s' "$cout" | grep -q 'checkpoint: GATE-M1 passes' && printf '%s' "$cout" | grep -q 'rehearsal: nothing was written to the board' && [ "$crc" = 0 ] \
+      || gwd="$gwd rehearse-said($crc:$(printf '%s' "$cout" | head -c 200))"
+    [ "$(_gw_runs "$cr")" = 1 ] && grep -q -- ' --rehearse --before-complete ' "$cr/runs.log" || gwd="$gwd rehearse-ran-$(cat "$cr/runs.log")"
+    _gw_nowrites "$W" "$h0" && [ "$(_gw_status "$W")" = blocked ] || gwd="$gwd rehearse-completed-the-gate"
+    # C: armed apply. The same pass completes the gate: exactly one write, and the file goes.
+    W="$(_gw_world un-c)"; cr="$(_gw_cronrepo un-c)"
+    _gw_armit "$W" "$root/proj-pass" apply
+    [ "$?" = 2 ] && [ ! -e "$W/state/checkpoint/armed/ck--GATE-M1" ] || gwd="$gwd apply-armed-without---confirm-release"
+    _gw_armit "$W" "$root/proj-pass" apply --confirm-release || gwd="$gwd arm-apply-failed($(cat "$W/arm.out"))"
+    printf '%s' "$(cat "$W/arm.out")" | grep -q '^ARMED APPLY: GATE-M1' || gwd="$gwd arm-apply-did-not-shout"
+    _gw_tick "$W" "$cr"
+    n="$(wc -l < "$W/wlog.log" | tr -d ' ')"
+    [ "$crc" = 0 ] && [ "$n" = 1 ] && grep -q '^hermes WRITE complete kanban --board ck complete t_g1 --result checkpoint pass: ' "$W/wlog.log" && [ "$(_gw_status "$W")" = done ] \
+      || gwd="$gwd apply-did-not-complete-exactly-once(rc=$crc,writes=$n,status=$(_gw_status "$W"))"
+    printf '%s' "$cout" | grep -q 'completed t_g1' || gwd="$gwd apply-said-nothing-about-completing"
+    [ ! -e "$W/state/checkpoint/armed/ck--GATE-M1" ] || gwd="$gwd the-gate-stayed-armed-after-completing"
+    _gw_tick "$W" "$cr"
+    [ -z "$cout" ] && [ "$(_gw_runs "$cr")" = 1 ] || gwd="$gwd a-second-tick-did-something"
+    # D: a malformed arming file reads as not armed, whatever it says.
+    W="$(_gw_world un-d)"; cr="$(_gw_cronrepo un-d)"; h0="$(_gw_hash "$W")"
+    printf 'mode=apply\nproject=%s\nextra=1\n' "$root/proj-pass" > "$W/state/checkpoint/armed/ck--GATE-M1"
+    _gw_tick "$W" "$cr"
+    printf '%s' "$cout" | grep -q 'malformed, so the gate is NOT armed' && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] && _gw_nowrites "$W" "$h0" \
+      || gwd="$gwd malformed-arming-acted(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 160))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] || gwd="$gwd malformed-arming-said-it-twice"
+    # E: another gate's arming does nothing to this one; and a disarmed gate is not looked at.
+    W="$(_gw_world un-e)"; cr="$(_gw_cronrepo un-e)"; h0="$(_gw_hash "$W")"
+    printf 'mode=apply\nproject=%s\n' "$root/proj-pass" > "$W/state/checkpoint/armed/ck--GATE-M2"
+    _gw_tick "$W" "$cr"
+    [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd another-gates-arming-acted"
+    rm -f "$W/state/checkpoint/armed/ck--GATE-M2"; _gw_armit "$W" "$root/proj-pass" apply --confirm-release
+    ( cd / && env FORGE_STATE_ROOT="$W/state" bash "$REPO_ROOT/scripts/checkpoint-arm.sh" disarm --board ck --gate GATE-M1 ) >/dev/null 2>&1
+    _gw_tick "$W" "$cr"
+    [ -z "$cout" ] && [ "$(_gw_runs "$cr")" = 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd a-disarmed-gate-was-looked-at"
+    GW_ALLOW=""
+  }
+  if [ "$cron_ok" = 1 ]; then
+    gwd=""; _gw_c_unarmed
+    mnot=""
+    _gw_caught _gw_c_unarmed scripts rehearse-runs-apply checkpoint-cron.sh 'flag=--rehearse; [ "$mode" = apply ] && flag=--apply' 'flag=--apply' 'rehearse-completed-the-gate' || mnot="$mnot rehearse-runs-apply"
+    _gw_caught _gw_c_unarmed scripts malformed-arming-acts gate-reply.sh 'if [ "$(cat "$f"; printf x)" != "$(printf '"'"'mode=%s\nproject=%s\n'"'"' "$GR_ARM_MODE" "$GR_ARM_PROJECT"; printf x)" ]; then' 'if false; then' 'malformed-arming-acted' || mnot="$mnot malformed-arming-acts"
+    _gw_caught _gw_c_unarmed scripts apply-needs-no-confirmation checkpoint-arm.sh 'if [ "$MODE" = apply ] && [ "$CONFIRM" != 1 ]; then' 'if false; then' 'apply-armed-without---confirm-release' || mnot="$mnot apply-needs-no-confirmation"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "unarmed-gate-never-completes (the probe passes and the cost is within its estimate: unarmed, nothing runs or is written; armed rehearse runs the rehearsal and writes nothing; armed apply, which needs --confirm-release, completes exactly once and goes; a malformed or another gate's arming, and a disarmed gate, do nothing; three mutants caught)"
+    else bad "unarmed-gate-never-completes" "only a gate armed apply may be completed by the cron:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "unarmed-gate-never-completes" "the fixture project could not be built (git or the real acceptance-freeze is missing)"
+  fi
+
+  # ======================================================================
+  # cron-silent-and-exit-0
+  # ======================================================================
+  _gw_c_silent() {
+    local W cr h0 n
+    GW_ALLOW="complete comment"
+    # World A: the accept path end to end. Before the cron has reported a block there is nothing to answer.
+    W="$(_gw_world si-a)"; cr="$(_gw_cronrepo si-a)"
+    _gw_armit "$W" "$root/proj-find" apply --confirm-release
+    h0="$(_gw_hash "$W")"
+    _gw_s "$W" gate-accept.sh --board ck --gate GATE-M1 --apply
+    [ "$grc" = 1 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd accept-before-any-report-got-rc$grc"
+    _gw_tick "$W" "$cr"
+    printf '%s' "$cout" | grep -q "^checkpoint: GATE-M1's probe found a failing case: a relabelled record is stopped" && [ "$crc" = 0 ] \
+      || gwd="$gwd block-not-delivered(rc=$crc,out=$(printf '%s' "$cout" | head -c 200))"
+    printf '%s' "$cout" | grep '^Reply: ' | grep -Fq '`/accept ck GATE-M1 [why]`' || gwd="$gwd reply-does-not-name-accept"
+    [ ! -s "$W/wlog.log" ] || gwd="$gwd a-block-wrote-to-the-board"
+    jq -e '.schema == "forge.checkpoint-pending.v1" and .board == "ck" and .gate == "GATE-M1" and .hold == 1 and .outcome == "block"' "$W/state/checkpoint/pending/ck--GATE-M1.json" >/dev/null 2>&1 \
+      || gwd="$gwd pending-record-wrong($(head -c 200 "$W/state/checkpoint/pending/ck--GATE-M1.json" 2>/dev/null))"
+    _gw_s "$W" gate-accept.sh --board ck --gate GATE-M1 --text "seen it" --apply
+    [ "$grc" = 0 ] && [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] && [ "$(_gw_status "$W")" = done ] || gwd="$gwd accept-after-the-report-got-rc$grc($gout)"
+    # World B: the standing conditions, each said once.
+    W="$(_gw_world si-b)"; cr="$(_gw_cronrepo si-b)"
+    _gw_proj b-live 's/if foreign:/if False:/'
+    _gw_armit "$W" "$root/proj-b-live" apply --confirm-release
+    h0="$(_gw_hash "$W")"
+    _gw_tick "$W" "$cr"; [ -n "$cout" ] && [ "$crc" = 0 ] || gwd="$gwd first-tick(rc=$crc)"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] || gwd="$gwd second-tick-spoke(rc=$crc,$(printf '%s' "$cout" | head -c 100))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] || gwd="$gwd third-tick-spoke"
+    [ "$(_gw_runs "$cr")" = 1 ] || gwd="$gwd probed-$(_gw_runs "$cr")-times-for-one-gate-hold-and-HEAD"
+    _gw_nowrites "$W" "$h0" || gwd="$gwd a-block-tick-wrote"
+    # A new HEAD within the same hold is probed again; the same failing text is not said again.
+    ( cd "$root/proj-b-live" && echo "# note" > NOTES.md && git add NOTES.md && git -c user.email=gw@forge -c user.name=gw commit -qm "a new head" ) >/dev/null 2>&1
+    _gw_tick "$W" "$cr"
+    [ "$(_gw_runs "$cr")" = 2 ] && [ -z "$cout" ] && [ "$crc" = 0 ] || gwd="$gwd new-head(runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 100),rc=$crc)"
+    # A dirty or non-main checkout is said once and not probed.
+    echo x > "$root/proj-b-live/untracked.txt"
+    _gw_tick "$W" "$cr"; printf '%s' "$cout" | grep -q 'has uncommitted changes' && [ "$crc" = 0 ] || gwd="$gwd dirty-not-said(rc=$crc,$(printf '%s' "$cout" | head -c 100))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] || gwd="$gwd dirty-said-twice"
+    rm -f "$root/proj-b-live/untracked.txt"
+    ( cd "$root/proj-b-live" && git checkout -q -b feature ) >/dev/null 2>&1
+    _gw_tick "$W" "$cr"; printf '%s' "$cout" | grep -q "not main" && [ "$crc" = 0 ] || gwd="$gwd non-main-not-said(rc=$crc,$(printf '%s' "$cout" | head -c 100))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] || gwd="$gwd non-main-said-twice"
+    ( cd "$root/proj-b-live" && git checkout -q main ) >/dev/null 2>&1
+    [ "$(_gw_runs "$cr")" = 2 ] || gwd="$gwd a-bad-checkout-was-probed"
+    # A park stops it for this hold; arming again starts over.
+    _gw_s "$W" gate-park.sh --board ck --gate GATE-M1 --text "not now" --apply
+    [ "$grc" = 0 ] || gwd="$gwd park-got-rc$grc($gout)"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$(_gw_runs "$cr")" = 2 ] && [ "$crc" = 0 ] || gwd="$gwd after-a-park(runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 100))"
+    # The decision is a wall of its own: an arming file put back by hand (not through checkpoint-arm.sh, which
+    # starts the gate over) must not bring the cron back for a hold that was decided.
+    ( cd "$root/proj-b-live" && echo "# later" >> NOTES.md && git add NOTES.md && git -c user.email=gw@forge -c user.name=gw commit -qm "after the park" ) >/dev/null 2>&1
+    printf 'mode=rehearse\nproject=%s\n' "$root/proj-b-live" > "$W/state/checkpoint/armed/ck--GATE-M1"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$(_gw_runs "$cr")" = 2 ] && [ "$crc" = 0 ] || gwd="$gwd after-a-park-and-a-hand-written-arming(runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 100))"
+    _gw_armit "$W" "$root/proj-b-live" rehearse
+    _gw_tick "$W" "$cr"; [ -n "$cout" ] && [ "$(_gw_runs "$cr")" = 3 ] && [ "$crc" = 0 ] || gwd="$gwd after-arming-again(runs=$(_gw_runs "$cr"),rc=$crc)"
+    # World C: an unfinished milestone, and a gate that is not held, are silent forever.
+    W="$(_gw_world si-c "UPDATE tasks SET status='ready' WHERE id='t_c5';")"; cr="$(_gw_cronrepo si-c)"
+    _gw_armit "$W" "$root/proj-pass" apply --confirm-release; h0="$(_gw_hash "$W")"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd unfinished-milestone(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 100))"
+    W="$(_gw_world si-d "UPDATE tasks SET status='done' WHERE id='t_g1';")"; cr="$(_gw_cronrepo si-d)"
+    _gw_armit "$W" "$root/proj-pass" apply --confirm-release; h0="$(_gw_hash "$W")"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] && _gw_nowrites "$W" "$h0" || gwd="$gwd gate-not-held(rc=$crc,runs=$(_gw_runs "$cr"))"
+    # World E: only the job's own faults are non-zero, and they go to stderr.
+    W="$(_gw_world si-e)"; cr="$(_gw_cronrepo si-e 9)"
+    _gw_armit "$W" "$root/proj-pass" rehearse
+    _gw_tick "$W" "$cr"
+    [ "$crc" = 2 ] && [ -z "$cout" ] && grep -q 'checkpoint.sh exited 9' "$W/cron.err" && [ ! -e "$W/state/checkpoint/pending/ck--GATE-M1.json" ] \
+      || gwd="$gwd a-fault-was-not-a-fault(rc=$crc,out=$(printf '%s' "$cout" | head -c 100),err=$(head -c 160 "$W/cron.err"))"
+    GW_ALLOW=""
+  }
+  if [ "$cron_ok" = 1 ]; then
+    gwd=""; _gw_c_silent
+    mnot=""
+    _gw_caught _gw_c_silent scripts probes-every-tick checkpoint-cron.sh '  [ ! -e "$probed" ] || continue' '  :' 'probed-' || mnot="$mnot probes-every-tick"
+    _gw_caught _gw_c_silent scripts says-it-every-tick checkpoint-cron.sh '  [ "$(cat "$f" 2>/dev/null)" != "$now" ] || return 0' '  :' || mnot="$mnot says-it-every-tick"
+    _gw_caught _gw_c_silent scripts ignores-a-decision checkpoint-arm.sh "    if jq -e --argjson h \"\$HOLD\" '.hold == \$h' \"\$STATE/decided/\$(gr_key \"\$BOARD\" \"\$GATE\").json\" >/dev/null 2>&1; then exit 1; fi" '    :' 'after-a-park' || mnot="$mnot ignores-a-decision"
+    _gw_caught _gw_c_silent scripts probes-an-unfinished-milestone checkpoint-cron.sh '  [ "$open" = 0 ] && [ "${total:-0}" -gt 0 ] 2>/dev/null || continue' '  :' 'unfinished-milestone' || mnot="$mnot probes-an-unfinished-milestone"
+    _gw_caught _gw_c_silent scripts a-fault-exits-zero checkpoint-cron.sh '[ "$FAULT" = 0 ] || exit 2' ':' 'a-fault-was-not-a-fault' || mnot="$mnot a-fault-exits-zero"
+    _gw_caught _gw_c_silent scripts no-block-record checkpoint-cron.sh '        && mv -f "$STATE/pending/$key.json.tmp" "$STATE/pending/$key.json" \' '        && true \' 'pending-record-wrong' || mnot="$mnot no-block-record"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "cron-silent-and-exit-0 (a block is delivered once with the three replies and recorded for its hold, /accept refuses before it and completes after it; repeat ticks say nothing and probe nothing; a new HEAD is probed and a dirty or non-main checkout is said once; a park stops the hold and arming again starts over; an unfinished milestone and a gate that is not held are silent; every tick exits 0 and only the job's own fault does not; six mutants caught)"
+    else bad "cron-silent-and-exit-0" "under --no-agent stdout is the message and any non-zero exit an alert, so the job speaks once and fails only for itself:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "cron-silent-and-exit-0" "the fixture project could not be built (git or the real acceptance-freeze is missing)"
+  fi
+
+  # ======================================================================
+  # arming-is-explicit
+  # ======================================================================
+  _gw_c_arming() {
+    local W st out rc A="${GW_REPO:-$REPO_ROOT}/scripts/checkpoint-arm.sh"
+    W="$(_gw_world arm)"; st="$W/state"
+    _a() { out="$(cd / && env FORGE_STATE_ROOT="$st" bash "$A" "$@" 2>&1)"; rc=$?; }
+    _a arm --board ck --gate GATE-M1 --project "$root/proj-pass"; [ "$rc" = 2 ] && [ ! -e "$st/checkpoint/armed/ck--GATE-M1" ] || gwd="$gwd arm-with-no-mode(rc=$rc)"
+    _a arm --board ck --gate GATE-M1 --project "$root/proj-pass" --mode both; [ "$rc" = 2 ] || gwd="$gwd arm-with-a-bad-mode(rc=$rc)"
+    _a arm --board ck --gate GATE-M1 --project "$root/proj-pass" --mode apply; [ "$rc" = 2 ] && [ ! -e "$st/checkpoint/armed/ck--GATE-M1" ] || gwd="$gwd apply-without-confirmation(rc=$rc)"
+    _a arm --board ck --gate GATE-M1 --project "relative/dir" --mode rehearse; [ "$rc" = 2 ] || gwd="$gwd relative-project(rc=$rc)"
+    _a arm --board ck --gate GATE-M1 --project "$root/does-not-exist" --mode rehearse; [ "$rc" = 2 ] || gwd="$gwd missing-project(rc=$rc)"
+    _a arm --board 'a--b' --gate GATE-M1 --project "$root/proj-pass" --mode rehearse; [ "$rc" = 2 ] || gwd="$gwd ambiguous-board(rc=$rc)"
+    _a arm --board ck --gate CHUNK-1 --project "$root/proj-pass" --mode rehearse; [ "$rc" = 2 ] || gwd="$gwd not-a-gate(rc=$rc)"
+    # A record of an earlier hold does not survive arming.
+    mkdir -p "$st/checkpoint/pending" "$st/checkpoint/decided" "$st/checkpoint/probed" "$st/checkpoint/reported"
+    echo '{}' > "$st/checkpoint/pending/ck--GATE-M1.json"; echo '{}' > "$st/checkpoint/decided/ck--GATE-M1.json"
+    : > "$st/checkpoint/probed/ck--GATE-M1--1--abc123"; : > "$st/checkpoint/reported/ck--GATE-M1.block.1"; : > "$st/checkpoint/probed/ck--GATE-M2--1--keep"
+    _a arm --board ck --gate GATE-M1 --project "$root/proj-pass" --mode rehearse
+    [ "$rc" = 0 ] && [ "$(wc -l < "$st/checkpoint/armed/ck--GATE-M1" | tr -d ' ')" = 2 ] && [ "$(sed -n 1p "$st/checkpoint/armed/ck--GATE-M1")" = "mode=rehearse" ] \
+      && [ ! -e "$st/checkpoint/pending/ck--GATE-M1.json" ] && [ ! -e "$st/checkpoint/decided/ck--GATE-M1.json" ] \
+      && [ ! -e "$st/checkpoint/probed/ck--GATE-M1--1--abc123" ] && [ ! -e "$st/checkpoint/reported/ck--GATE-M1.block.1" ] \
+      && [ -e "$st/checkpoint/probed/ck--GATE-M2--1--keep" ] || gwd="$gwd arm-rehearse(rc=$rc,$out)"
+    _a list; printf '%s' "$out" | grep -qx "ck GATE-M1 rehearse $root/proj-pass" && [ "$rc" = 0 ] || gwd="$gwd list($out)"
+    printf 'mode=apply\n' > "$st/checkpoint/armed/ck--GATE-M2"
+    _a list; [ "$rc" = 1 ] && printf '%s' "$out" | grep -q 'MALFORMED .*ck--GATE-M2 (not armed)' || gwd="$gwd list-malformed(rc=$rc,$out)"
+    rm -f "$st/checkpoint/armed/ck--GATE-M2"
+    _a disarm --board ck --gate GATE-M1; [ "$rc" = 0 ] && [ ! -e "$st/checkpoint/armed/ck--GATE-M1" ] || gwd="$gwd disarm(rc=$rc)"
+    _a list; printf '%s' "$out" | grep -q 'no gate is armed' || gwd="$gwd list-empty($out)"
+  }
+  if [ "$cron_ok" = 1 ]; then
+    gwd=""; _gw_c_arming
+    mnot=""
+    _gw_caught _gw_c_arming scripts mode-defaults checkpoint-arm.sh 'case "$MODE" in rehearse|apply) ;; "") die' 'case "$MODE" in rehearse|apply) ;; "") MODE=rehearse;; "x") die' || mnot="$mnot mode-defaults"
+    _gw_caught _gw_c_arming scripts arming-keeps-old-records checkpoint-arm.sh '    rm -f "$STATE/pending/$KEY.json" "$STATE/decided/$KEY.json" "$STATE/reported/$KEY".* "$STATE/probed/$KEY"--* 2>/dev/null' '    :' || mnot="$mnot arming-keeps-old-records"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "arming-is-explicit (no mode, a bad mode, apply without --confirm-release, a relative or missing project, a '--' board and a non-gate are refused; arming writes exactly two lines and clears an earlier hold's records; list shows a malformed file as not armed with exit 1; disarm removes it; two mutants caught)"
+    else bad "arming-is-explicit" "the switch must be explicit and fail closed:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "arming-is-explicit" "the fixture project could not be built (git or the real acceptance-freeze is missing)"
+  fi
+
+  # ======================================================================
+  # gate-scripts-run-under-the-minis-bash
+  # ======================================================================
+  # The mini has no Homebrew bash: a gateway on launchd runs `bash` = /bin/bash 3.2.57, and CI runs bash 5. The two parse
+  # the backslash-quote substitution idiom differently (3.2 keeps the backslashes), so `/park sq GATE-M1 don't proceed` was a
+  # SQL syntax error, the read-back failed, exit 3, and the decision was never recorded (the gate stayed armed and
+  # undecided). CI cannot see that by running; so this reads the scripts for the idiom, and runs the verbs under /bin/bash.
+  _gw_c_bash3() {
+    local f file hits W h0 v q
+    cat > "$root/bash4.pat" <<'GW_PAT'
+\$\{[A-Za-z_0-9@*]*//[^}]*\\'
+\$\{[A-Za-z_0-9]*(,,|\^\^)
+declare -A
+mapfile
+readarray
+&>>
+\|&
+GW_PAT
+    for f in gate-reply gate-accept gate-redirect gate-park checkpoint-cron checkpoint-arm checkpoint; do
+      file="${GW_REPO:-$REPO_ROOT}/scripts/$f.sh"
+      hits="$(grep -nE -f "$root/bash4.pat" "$file" | grep -v '^[0-9]*:[[:space:]]*#' || true)"
+      [ -z "$hits" ] || gwd="$gwd $f-uses-a-bash-4-idiom($(printf '%s' "$hits" | head -1 | cut -c1-90))"
+      if [ -x /bin/bash ]; then /bin/bash -n "$file" 2>/dev/null || gwd="$gwd $f-does-not-parse-under-/bin/bash"; fi
+    done
+    # The verbs with text that holds every character a phone can send and SQL, the shell or argparse could mind.
+    local texts=("don't proceed: it's wrong" 'say "no" & stop; `echo x` $HOME \\ 100% sure' "--not-an-option 'quoted'")
+    for v in park redirect; do
+      for q in 0 1 2; do
+        W="$(_gw_world bash3)"; _gw_arm "$W" apply; _gw_pend "$W" 1; h0="$(_gw_hash "$W")"
+        GW_ALLOW="complete comment"
+        if [ -x /bin/bash ]; then GW_BASH=/bin/bash; else GW_BASH=bash; fi
+        _gw_s "$W" "gate-$v.sh" --board ck --gate GATE-M1 --text "${texts[$q]}" --apply
+        GW_BASH=""
+        if [ "$grc" != 0 ] || [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" != 1 ]; then
+          gwd="$gwd $v-text$q-rc$grc($(printf '%s' "$gout$gerr" | head -c 120))"; GW_ALLOW=""; continue
+        fi
+        grep -qF -- "${texts[$q]}" "$W/wlog.log" || gwd="$gwd $v-text$q-was-altered($(head -c 150 "$W/wlog.log"))"
+        [ ! -e "$W/state/checkpoint/armed/ck--GATE-M1" ] && jq -e --arg v "$v" '.verb == $v and .hold == 1' "$W/state/checkpoint/decided/ck--GATE-M1.json" >/dev/null 2>&1 \
+          || gwd="$gwd $v-text$q-was-not-decided"
+        GW_ALLOW=""
+      done
+    done
+    # And through the handler, whose child is the `bash` on PATH.
+    GW_ALLOW="complete comment"
+    W="$(_gw_world bash3h)"; _gw_arm "$W" apply; _gw_pend "$W" 1
+    _gw_h "$W" park "ck GATE-M1 don't proceed" 6900
+    case "$(_gw_reply)" in "parked: GATE-M1"*) ;; *) gwd="$gwd handler-park-with-an-apostrophe($(_gw_reply))";; esac
+    GW_ALLOW=""
+  }
+  gwd=""; _gw_c_bash3
+  mnot=""
+  _gw_caught _gw_c_bash3 scripts the-bash-4-idiom gate-reply.sh 'gr_sql_escape() { local q="'"'"'"; printf '"'"'%s'"'"' "${1//$q/$q$q}"; }' 'gr_sql_escape() { printf '"'"'%s'"'"' "${1//\'"'"'/\'"'"'\'"'"'}"; }' 'uses-a-bash-4-idiom' || mnot="$mnot the-bash-4-idiom"
+  _gw_caught _gw_c_bash3 scripts no-escaping gate-reply.sh 'gr_sql_escape() { local q="'"'"'"; printf '"'"'%s'"'"' "${1//$q/$q$q}"; }' 'gr_sql_escape() { printf '"'"'%s'"'"' "$1"; }' '-rc3' || mnot="$mnot no-escaping"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "gate-scripts-run-under-the-minis-bash (no bash-4 idiom in the gate, arming, cron or checkpoint scripts and each parses under /bin/bash; /park and /redirect with an apostrophe, quotes, an ampersand, a backtick, a dollar sign, a backslash and a leading '--' complete, record their decision and disarm under /bin/bash and through the handler; two mutants caught)"
+  else bad "gate-scripts-run-under-the-minis-bash" "the gateway runs these under the mini's /bin/bash 3.2, which CI's bash 5 hides:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # a-decision-during-the-probe-wins
+  # ======================================================================
+  _gw_c_during() {
+    local W cr armed dec k
+    GW_ALLOW="complete comment"
+    # A probe can take minutes. A /park or a disarm that lands while it runs must win: the gate is NOT completed and
+    # the cron says nothing. The probe here is the product's own code, so it can do what the operator does mid-run.
+    for k in disarm decide; do
+      W="$(_gw_world during-$k)"; cr="$(_gw_cronrepo during-$k)"
+      armed="$W/state/checkpoint/armed/ck--GATE-M1"; dec="$W/state/checkpoint/decided/ck--GATE-M1.json"
+      if [ "$k" = disarm ]; then
+        _gw_proj_with "during-$k" "$(printf 'import os\ntry:\n    os.remove("%s")\nexcept OSError:\n    pass' "$armed")"
+      else
+        _gw_proj_with "during-$k" "$(printf 'import os\nos.makedirs("%s", exist_ok=True)\nopen("%s", "w").write("{\\"hold\\": 1}")' "$(dirname "$dec")" "$dec")"
+      fi
+      _gw_armit "$W" "$root/proj-during-$k" apply --confirm-release
+      _gw_tick "$W" "$cr"
+      [ "$(_gw_runs "$cr")" = 1 ] || gwd="$gwd $k-did-not-probe-$(_gw_runs "$cr")"
+      [ ! -s "$W/wlog.log" ] || gwd="$gwd $k-completed-while-disarmed($(head -c 120 "$W/wlog.log"))"
+      [ "$(_gw_status "$W")" = blocked ] || gwd="$gwd $k-the-gate-is-$(_gw_status "$W")"
+      [ -z "$cout" ] && [ "$crc" = 0 ] || gwd="$gwd $k-spoke(rc=$crc,$(printf '%s' "$cout" | head -c 100))"
+    done
+    # The control: the same probe with nothing in its way completes the gate (so the refusals above are about the decision).
+    W="$(_gw_world during-ctl)"; cr="$(_gw_cronrepo during-ctl)"
+    _gw_armit "$W" "$root/proj-pass" apply --confirm-release
+    _gw_tick "$W" "$cr"
+    [ "$(wc -l < "$W/wlog.log" | tr -d ' ')" = 1 ] && [ "$(_gw_status "$W")" = done ] || gwd="$gwd control-did-not-complete"
+    GW_ALLOW=""
+  }
+  if [ "$cron_ok" = 1 ]; then
+    gwd=""; _gw_c_during
+    mnot=""
+    _gw_caught _gw_c_during scripts no-last-look checkpoint.sh '      if [ "${#BEFORE[@]}" -gt 0 ]; then' '      if false; then' 'completed-while-disarmed' || mnot="$mnot no-last-look"
+    _gw_caught _gw_c_during scripts cron-does-not-ask checkpoint-cron.sh '--before-complete "$HERE/checkpoint-arm.sh" still-armed --board "$board" --gate "$gate" --mode "$mode" --hold "$hold" \' '\' 'completed-while-disarmed' || mnot="$mnot cron-does-not-ask"
+    _gw_caught _gw_c_during scripts still-armed-ignores-the-file checkpoint-arm.sh '    gr_read_armed "$BOARD" "$GATE" && [ "$GR_ARM_MODE" = "$MODE" ] || exit 1' '    :' 'disarm-completed-while-disarmed' || mnot="$mnot still-armed-ignores-the-file"
+    _gw_caught _gw_c_during scripts still-armed-ignores-a-decision checkpoint-arm.sh "    if jq -e --argjson h \"\$HOLD\" '.hold == \$h' \"\$STATE/decided/\$(gr_key \"\$BOARD\" \"\$GATE\").json\" >/dev/null 2>&1; then exit 1; fi" '    :' 'decide-completed-while-disarmed' || mnot="$mnot still-armed-ignores-a-decision"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "a-decision-during-the-probe-wins (a probe that removes the arming file, or records a decision for the hold, while it runs: the gate is not completed and the cron says nothing; the same probe left alone completes it; four mutants caught)"
+    else bad "a-decision-during-the-probe-wins" "a /park or a disarm that lands during a minutes-long probe must beat the completion:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "a-decision-during-the-probe-wins" "the fixture project could not be built (git or the real acceptance-freeze is missing)"
+  fi
+
+  # ======================================================================
+  # every-hermes-kanban-call-carries-board
+  # ======================================================================
+  _gw_c_boardflag() {
+    local f file bare n
+    for f in gate-accept gate-redirect gate-park gate-reply checkpoint-cron checkpoint-arm; do
+      file="${GW_REPO:-$REPO_ROOT}/scripts/$f.sh"
+      [ -f "$file" ] || { gwd="$gwd $f-missing"; continue; }
+      bare="$(grep -n 'hermes kanban' "$file" | grep -v -- '--board' | grep -v '^[0-9]*:[[:space:]]*#' || true)"
+      [ -z "$bare" ] || gwd="$gwd $f:$(printf '%s' "$bare" | head -1 | cut -c1-80)"
+    done
+    for f in gate-accept gate-redirect gate-park; do
+      n="$(grep -c 'OUT="\$(hermes kanban --board "\$GR_BOARD" ' "${GW_REPO:-$REPO_ROOT}/scripts/$f.sh")"
+      [ "$n" = 1 ] || gwd="$gwd $f-has-$n-board-calls"
+    done
+  }
+  gwd=""; _gw_c_boardflag
+  mnot=""
+  _gw_caught _gw_c_boardflag scripts accept-without-board gate-accept.sh 'OUT="$(hermes kanban --board "$GR_BOARD" complete' 'OUT="$(hermes kanban complete' || mnot="$mnot accept-without-board"
+  _gw_caught _gw_c_boardflag scripts a-second-bare-call gate-reply.sh 'gr_cleanup() {' 'gr_probe_board() { hermes kanban list; }
+gr_cleanup() {' || mnot="$mnot a-second-bare-call"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "every-hermes-kanban-call-carries-board (no hermes kanban call in the gate, arming or cron scripts is without --board, and each verb script makes exactly one board call; two mutants caught)"
+  else bad "every-hermes-kanban-call-carries-board" "a call that omitted --board would land on whatever board is current:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+  # ======================================================================
+  # state-root-agrees-with-forge-state
+  # ======================================================================
+  _gw_c_stateroot() {
+    local fh="$root/fakehome" v py br
+    mkdir -p "$fh"
+    for v in "" "$root/custom-state"; do
+      py="$(cd / && env -u FORGE_STATE_ROOT HOME="$fh" ${v:+FORGE_STATE_ROOT="$v"} python3 -I "$drive" table --plugin "${GW_PLUG:-$plug}" 2>/dev/null | jq -r '.state_root // empty')"
+      br="$(cd / && env -u FORGE_STATE_ROOT HOME="$fh" ${v:+FORGE_STATE_ROOT="$v"} bash -c '. "$1"; forge_state_root' _ "$REPO_ROOT/scripts/forge-state.sh" 2>/dev/null)"
+      [ -n "$py" ] && [ "$py" = "$br" ] || gwd="$gwd python[$py]-bash[$br]-for-'${v:-unset}'"
+    done
+  }
+  gwd=""; _gw_c_stateroot
+  mnot=""
+  _gw_caught _gw_c_stateroot plugin another-default __init__.py 'os.path.join(_home(), ".forge")' 'os.path.join(_home(), ".forge2")' || mnot="$mnot another-default"
+  if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "state-root-agrees-with-forge-state (the plugin's ledger root and forge-state.sh's forge_state_root are the same path with FORGE_STATE_ROOT unset and set; one mutant caught)"
+  else bad "state-root-agrees-with-forge-state" "the plugin and the scripts must keep the ledger and the arming under one root:${gwd}; mutants not caught:${mnot:- none}"; fi
+
+
+  # ======================================================================
+  # preflight-asks-the-gateway  (section 14 EXECUTED against scratch hosts; the real host is the operator's `make preflight`)
+  # ======================================================================
+  # The section is cut out of preflight.sh and run with its helpers stubbed, against a scratch HOME whose ~/.hermes is a scratch
+  # Hermes root (the real checkout linked in so the probe can import it). Each scenario is a host the operator might have.
+  _gw_pf_host() { # name -> PFH: a scratch HOME with a bare root
+    PFH="$root/pf-$1"; rm -rf "$PFH"; mkdir -p "$PFH/.hermes/profiles" "$PFH/.hermes/plugins"
+    ln -s "$HOME/.hermes/hermes-agent" "$PFH/.hermes/hermes-agent"
+    : > "$PFH/.hermes/config.yaml"
+  }
+  _gw_pf_gate() { # PFH, then the facts to change: a good forge-gate profile
+    local d="$PFH/.hermes/profiles/forge-gate"
+    mkdir -p "$d/plugins"; ln -s "$plug" "$d/plugins/forge-gateway"
+    printf 'toolsets: []\nplatform_toolsets:\n  telegram: []\nplugins:\n  enabled:\n    - forge-gateway\nunauthorized_dm_behavior: ignore\n' > "$d/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=gate-token-0001\nTELEGRAM_ALLOWED_USERS=424242\n' > "$d/.env"
+  }
+  _gw_pf_root() { # PFH: the root side of a finished deploy
+    mkdir -p "$PFH/.hermes/plugins"; ln -s "$plug" "$PFH/.hermes/plugins/forge-gateway"
+    printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$PFH/.hermes/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=main-token-0002\nFORGE_OPERATOR_TELEGRAM_ID=424242\n' > "$PFH/.hermes/.env"
+    mkdir -p "$PFH/.hermes/scripts"
+    printf '#!/usr/bin/env bash\nexec bash "$HOME/.forge/repo/scripts/checkpoint-cron.sh" "$@"\n' > "$PFH/.hermes/scripts/forge-checkpoint.sh"
+  }
+  _gw_pf_run() { # PFH -> pfout: preflight section 14 as that host reads it
+    local pf="${GW_REPO:-$REPO_ROOT}/scripts/preflight.sh" sec="$root/pf-section.sh"
+    python3 -I - "$pf" "$sec" <<'GW_PFCUT'
+import sys
+src = open(sys.argv[1]).read()
+a = src.index('sect "14. ')
+b = src.index('# ---------------------------------------------------------------------------\nsay ""\nsay "## Summary"')
+open(sys.argv[2], "w").write(src[a:b])
+GW_PFCUT
+    cat > "$root/pf-harness.sh" <<'GW_PFH'
+set -u
+say()  { printf '%s\n' "$*"; }
+sect() { say "## $*"; }
+pass() { say "PASS  $*"; }
+fail() { say "FAIL  $*"; }
+warn() { say "WARN  $*"; }
+info() { say "info  $*"; }
+PIPED=0
+PF_SELF_REPO="$1"; PF_PY="$2"
+. "$3"
+GW_PFH
+    pfout="$(cd / && env HOME="$PFH" bash "$root/pf-harness.sh" "${GW_REPO:-$REPO_ROOT}" "$hpy" "$sec" 2>&1)"
+  }
+  _gw_c_preflight() {
+    local pf="${GW_REPO:-$REPO_ROOT}/scripts/preflight.sh" sec loop s sc
+    # static: what the scenarios cannot reach (the runtime's own scripts do not exist in a scratch HOME)
+    loop="$(sed -n '/^for _lscript in /,/; do$/p' "$pf")"
+    for s in gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do
+      printf '%s' "$loop" | grep -Fq " $s" || gwd="$gwd $s-is-not-resolved-through-the-runtime"
+    done
+    sec="$(sed -n '/^sect "14\. /,/^say ""$/p' "$pf")"
+    [ -n "$sec" ] || { gwd="$gwd section-14-is-missing"; return; }
+    printf '%s' "$sec" | grep -Fq 'PATH="/usr/bin:/bin"' && printf '%s' "$sec" | grep -Fq -- '--check' || gwd="$gwd the-scripts-check-is-not-run-under-a-bare-path"
+    printf '%s' "$sec" | grep -Fq 'is a symlink: Hermes cron refuses' || gwd="$gwd does-not-refuse-a-symlinked-cron-script"
+    printf '%s' "$sec" | grep -Fq '*" GATE-M1 apply "*) warn "GATE-M1 is armed APPLY' || gwd="$gwd no-warn-for-gate-m1-armed-apply"
+    printf '%s' "$sec" | grep -Fq 'checkpoint-arm.sh" list' || gwd="$gwd does-not-list-what-is-armed"
+    local W st line
+    W="$(_gw_world pf)"; st="$W/state"; mkdir -p "$st/checkpoint/armed"
+    printf 'mode=apply\nproject=/p\n' > "$st/checkpoint/armed/ck--GATE-M1"
+    line="$(cd / && env FORGE_STATE_ROOT="$st" bash "$REPO_ROOT/scripts/checkpoint-arm.sh" list 2>&1)"
+    case "$line" in *" GATE-M1 apply "*) ;; *) gwd="$gwd list-shape($line)";; esac
+    [ "$hermes_ok" = 1 ] || return 0
+    # executed: nothing deployed yet (WARN only), then the ways a deploy goes wrong (FAIL), then a good one (no WARN, no FAIL)
+    _gw_pf_host s0; _gw_pf_run
+    ! printf '%s' "$pfout" | grep -q '^FAIL' && printf '%s' "$pfout" | grep -q '^WARN  operator step pending: the forge-gate profile does not exist' \
+      || gwd="$gwd nothing-deployed-should-only-warn($(printf '%s' "$pfout" | grep '^FAIL' | head -2 | tr '\n' ' ' | head -c 200))"
+    _gw_pf_host s1; _gw_pf_root; _gw_pf_run
+    printf '%s' "$pfout" | grep -q '^FAIL  operator step pending\|^FAIL  the forge-gate profile does not exist' \
+      || gwd="$gwd the-plugin-live-before-forge-gate-is-not-a-fail"
+    _gw_pf_host s2; _gw_pf_gate; _gw_pf_root; _gw_pf_run
+    ! printf '%s' "$pfout" | grep -q '^FAIL\|^WARN' && printf '%s' "$pfout" | grep -q '^PASS  forge-gate has an explicit, EMPTY Telegram toolset' \
+      && printf '%s' "$pfout" | grep -q "^PASS  forge-gate has a bot token of its own" \
+      || gwd="$gwd a-good-deploy-should-be-clean($(printf '%s' "$pfout" | grep '^FAIL\|^WARN' | head -3 | tr '\n' ' ' | head -c 300))"
+    # each bad host and the line it must draw
+    local sc_name sc_change sc_want
+    while IFS='|' read -r sc_name sc_change sc_want; do
+      [ -n "$sc_name" ] || continue
+      _gw_pf_host "$sc_name"; _gw_pf_gate; _gw_pf_root
+      eval "$sc_change"
+      _gw_pf_run
+      printf '%s' "$pfout" | grep -q "^FAIL  .*$sc_want" || gwd="$gwd $sc_name-should-FAIL($sc_want)"
+    done <<'GW_PFSCEN'
+a-tool|sed -i.bak 's/^  telegram: \[\]/  telegram: [web]/' "$PFH/.hermes/profiles/forge-gate/config.yaml"|forge-gate holds tools
+the-default-bundle|sed -i.bak '/^platform_toolsets:/,/^  telegram: \[\]/d' "$PFH/.hermes/profiles/forge-gate/config.yaml"|forge-gate has no platform_toolsets.telegram entry
+an-mcp-server|printf 'mcp_servers:\n  github:\n    command: x\n' >> "$PFH/.hermes/profiles/forge-gate/config.yaml"|lists 1 MCP server
+pairing-codes|sed -i.bak '/^unauthorized_dm_behavior/d' "$PFH/.hermes/profiles/forge-gate/config.yaml"|does not ignore a stranger
+the-mains-token|printf 'TELEGRAM_BOT_TOKEN=gate-token-0001\n' > "$PFH/.hermes/.env"; printf 'FORGE_OPERATOR_TELEGRAM_ID=424242\n' >> "$PFH/.hermes/.env"|is the main bot's
+a-star-allowlist|printf 'TELEGRAM_BOT_TOKEN=gate-token-0001\nTELEGRAM_ALLOWED_USERS=1,*\n' > "$PFH/.hermes/profiles/forge-gate/.env"|holds \*
+another-bot-with-the-verbs|mkdir -p "$PFH/.hermes/profiles/p9"; printf 'plugins:\n  enabled:\n    - forge-gateway\n' > "$PFH/.hermes/profiles/p9/config.yaml"; printf 'TELEGRAM_BOT_TOKEN=other-0003\n' > "$PFH/.hermes/profiles/p9/.env"|profile p9 has the gate verbs enabled
+no-operator-id|printf 'TELEGRAM_BOT_TOKEN=main-token-0002\n' > "$PFH/.hermes/.env"|FORGE_OPERATOR_TELEGRAM_ID is not a number
+GW_PFSCEN
+  }
+  gwd=""; _gw_c_preflight
+  mnot=""
+  # The first three mutants live in the EXECUTED scenarios, which ask Hermes' own resolver (gateway-toolset-probe.py runs under the
+  # Hermes venv python). A host without Hermes (CI) cannot catch them, so they are only judged where that resolver exists.
+  _gw_caught _gw_c_preflight scripts no-gate-m1-warning preflight.sh '*" GATE-M1 apply "*) warn "GATE-M1 is armed APPLY' '*" GATE-M1 apply "*) info "GATE-M1 is armed APPLY' || mnot="$mnot no-gate-m1-warning"
+  _gw_caught _gw_c_preflight scripts new-script-not-resolved preflight.sh '                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do' '                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh; do' || mnot="$mnot new-script-not-resolved"
+  if [ "$hermes_ok" = 1 ]; then
+    _gw_caught _gw_c_preflight scripts a-tool-is-only-a-warning preflight.sh 'fail "forge-gate holds tools: ' 'warn "forge-gate holds tools: ' 'forge-gate holds tools' || mnot="$mnot a-tool-is-only-a-warning"
+    _gw_caught _gw_c_preflight scripts the-order-is-not-checked preflight.sh '        if [ "$PF_GW_LIVE" = 1 ]; then fail "$*"; else warn "operator step pending: $*"; fi' '        warn "operator step pending: $*"' 'plugin-live-before-forge-gate' || mnot="$mnot the-order-is-not-checked"
+    _gw_caught _gw_c_preflight scripts other-bots-are-not-judged preflight.sh 'fail "profile ${_gwp%%|*} has the gate verbs enabled' 'info "profile ${_gwp%%|*} has the gate verbs enabled' 'another-bot-with-the-verbs' || mnot="$mnot other-bots-are-not-judged"
+  fi
+  if [ -n "$gwd" ] || [ -n "$mnot" ]; then bad "preflight-asks-the-gateway" "the host check must ask what the unit tests cannot:${gwd}; mutants not caught:${mnot:- none}"
+  elif [ "$hermes_ok" != 1 ]; then skip "preflight-asks-the-gateway" "hermes (and its venv python) not installed: section 14's static checks and two mutants held, but its executed scenarios and the other three mutants need Hermes' own toolset resolver"
+  else ok "preflight-asks-the-gateway (section 14, run against scratch hosts: nothing deployed only warns; the plugin live before forge-gate exists, a tool, the default bundle, an MCP server, pairing codes, the main bot's token, a * allowlist, another bot with the verbs and no operator id each FAIL; a good deploy is clean; the six new scripts are resolved through ~/.forge/repo and run under a bare PATH; five mutants caught)"
+  fi
+}
+wants gateway && run_gateway_group
 
 # ---------------------------------------------------------------------------
 # gate/ — the merge gate, asked as a program.
