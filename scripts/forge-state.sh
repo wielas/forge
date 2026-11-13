@@ -12,6 +12,11 @@
 #   scripts/prejudge-review.sh reads that envelope; writes verdicts/<board>-<task>.json
 #   scripts/merge-watcher.sh   reads verdicts/<board>-<task>.json
 #
+# A fourth thing is kept here that is not a worker's output but the OPERATOR's act: merge authority.
+#
+#   scripts/merge-authority.sh   writes and deletes merge-authority/<board>.json (grant / revoke / status)
+#   scripts/prejudge-review.sh   reads it when it reaches the merge decision
+#
 # The root is `$HOME/.forge`, which is what `lane.sh` has always resolved for
 # `lane-sessions` (and what `~/.forge/repo/scripts/...`, the only path that
 # resolves from a project worktree, already depends on). It is the same for
@@ -32,6 +37,7 @@ forge_lane_session_root() { printf '%s' "${FORGE_LANE_SESSION_ROOT:-$(forge_stat
 forge_verdict_root()      { printf '%s' "${FORGE_VERDICT_ROOT:-$(forge_state_root)/verdicts}"; }
 # The liveness watchdog (scripts/watchdog.sh, scripts/watchdog-install.sh) keeps its alert state and its launchd log here.
 forge_watchdog_root()     { printf '%s' "${FORGE_WATCHDOG_ROOT:-$(forge_state_root)/watchdog}"; }
+forge_merge_authority_root() { printf '%s' "${FORGE_MERGE_AUTHORITY_ROOT:-$(forge_state_root)/merge-authority}"; }
 
 # ---------------------------------------------------------------------------
 # THE PENDING CALL (P34). A program decides the one lifecycle call the driver must make and
@@ -99,5 +105,69 @@ forge_pending_write() {
     return 0
   fi
   rm -f "$tmp" 2>/dev/null
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# MERGE AUTHORITY, PER BOARD. One file per board, <merge-authority root>/<board>.json, written by
+# `scripts/merge-authority.sh grant` and deleted by `revoke`. The verifier merges a PR on its own only on
+# `FORGE_VERIFIER_MERGE=1` (the old, host-wide switch) or when forge_merge_authority_read says its board is granted.
+#
+# ONE READER, SO THE OPERATOR'S "IS IT GRANTED?" AND THE VERIFIER'S DECISION CANNOT DISAGREE: both
+# `merge-authority.sh status` and `prejudge-review.sh`'s merge_mode call it. It FAILS CLOSED: 0 only for a file
+# that is, all at once,
+#   * for a board whose name is a Hermes slug (forge_board_slug_ok: no path is built from anything else),
+#   * a regular file (not a directory, not a symlink) that can be read,
+#   * exactly ONE JSON document (a stream of several, or trailing text, is not a grant: jq would otherwise answer
+#     for every document in it, and a non-grant first document followed by a valid one must not read as granted),
+#     an object with schema forge.merge-authority.v1,
+#   * whose inner `board` is BYTE-IDENTICAL to the board asked about. The host volume is case-insensitive APFS,
+#     so `Vlab.json` and `vlab.json` are one file there and the file NAME proves nothing,
+#   * with a `granted_by` and a `granted_at`, each one printable, non-blank line (`granted_by` ends up on a
+#     card's result, so it must be one line).
+# Anything else (no file, unreadable, malformed, another board's, no grantor, an unknown schema) is "not granted".
+# It prints nothing: prejudge-review.sh's stdout is ONE envelope line. On 0 it leaves FORGE_MA_BY, FORGE_MA_AT and
+# FORGE_MA_REASON set; on 1 they are empty.
+# ---------------------------------------------------------------------------
+# Hermes's own rule, hermes_cli/kanban_db.py _BOARD_SLUG_RE: ^[a-z0-9][a-z0-9_-]{0,63}$. Spelled out as a
+# character list on purpose: a bash range like [a-z] follows the locale's collation on bash 3.2.
+forge_board_slug_ok() {   # board -> 0 iff it is a Hermes board slug
+  local s="${1:-}" LC_ALL=C
+  [ -n "$s" ] && [ "${#s}" -le 64 ] || return 1
+  case "$s" in
+    [_-]*|*[!abcdefghijklmnopqrstuvwxyz0123456789_-]*) return 1;;
+  esac
+  return 0
+}
+forge_merge_authority_path() { printf '%s/%s.json' "$(forge_merge_authority_root)" "$1"; }   # board -> its file
+forge_merge_authority_text_ok() {   # text max-length -> 0 iff non-blank, one printable line, short enough
+  local t="${1:-}" max="${2:-0}"
+  [ -n "$t" ] && [ "${#t}" -le "$max" ] || return 1
+  case "$t" in *[[:cntrl:]]*) return 1;; esac
+  case "$t" in *[![:space:]]*) return 0;; esac
+  return 1
+}
+forge_merge_authority_read() {   # board -> 0 iff granted; sets FORGE_MA_BY / _AT / _REASON
+  local board="${1:-}" file out
+  FORGE_MA_BY=""; FORGE_MA_AT=""; FORGE_MA_REASON=""
+  forge_board_slug_ok "$board" || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  file="$(forge_merge_authority_path "$board")"
+  [ -f "$file" ] && [ ! -L "$file" ] && [ -r "$file" ] || return 1
+  # Every test is jq's. It prints three lines only when all of them held; no output at all is "no".
+  out="$(jq -rn --arg b "$board" '
+      def line($max): type == "string" and length > 0 and length <= $max
+                      and (explode | all(. >= 32 and . != 127))
+                      and (explode | any(. != 32 and . != 160));
+      [inputs] | if length == 1 then .[0] else empty end
+      | if type == "object" and .schema == "forge.merge-authority.v1" and .board == $b
+           and (.granted_by | line(128)) and (.granted_at | line(64))
+           and ((.reason // "") | (. == "" or line(500)))
+        then .granted_by, .granted_at, (.reason // "") else empty end' "$file" 2>/dev/null)" || return 1
+  [ -n "$out" ] || return 1
+  { IFS= read -r FORGE_MA_BY; IFS= read -r FORGE_MA_AT; IFS= read -r FORGE_MA_REASON; } <<MA_READ || :
+$out
+MA_READ
+  [ -n "$FORGE_MA_BY" ] && [ -n "$FORGE_MA_AT" ] || { FORGE_MA_BY=""; FORGE_MA_AT=""; FORGE_MA_REASON=""; return 1; }
   return 0
 }
