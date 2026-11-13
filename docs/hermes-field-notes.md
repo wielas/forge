@@ -295,6 +295,34 @@ a positive integer and silently falls through for `0`, negatives and non-numeric
 `kanban.max_in_progress_per_profile` bounds one lane rather than the machine.
 Preflight §4 checks this.
 
+**`kanban.auto_decompose` defaults to `true`, and it turns every `triage` card on every board into
+new cards.** Measured 2026-11-10 after a host config change (07:44 local) gave Hermes's auxiliary
+decomposer a working model: within a minute seven parked `triage` cards on two older product boards
+became 19 new cards, the dispatcher spawned about 17 workers on them, and two "decision" cards were
+completed by an LLM, none of it through Forge's plan-and-contract flow. Most of those workers failed
+safe, and no check had said the feature was on. With no working model `auto_decompose_tick`
+(`gateway/kanban_watchers_dispatcher.py`) skips each card with only a `debug`-level log line, so the
+setting was armed and invisible. Each dispatcher tick it walks all boards, takes up to
+`auto_decompose_per_tick` (3) `triage` cards and calls `decompose_task(..., author="auto-decomposer")`,
+and the children go straight to the dispatcher. The default is `True` (`config_defaults.py`), it is `true` in
+this host's `config.yaml`, and an **absent key reads true too** (`kanban_diagnostics.py`).
+
+The setting is **re-read on every dispatcher tick** (`_resolve_auto_decompose_settings`), so
+`hermes config set kanban.auto_decompose false` stops it on the next tick with no gateway restart, and a
+config read error fails to *off*. The reader is `bool(kcfg.get("auto_decompose", True))`; what
+`_resolve_auto_decompose_settings` returns for each form, measured on the installed code:
+
+```
+False -> off     None (YAML null) -> off     0 -> off
+True -> on       key absent -> on            "false" (quoted) -> ON     "no" (quoted) -> ON
+```
+
+so only an unquoted boolean false is off. `hermes config get kanban.auto_decompose` prints `false` for the boolean
+**and** for the quoted string, and `true` for an absent key (it prints the resolved default); `--json` prints
+`false` against `"false"`, which is how preflight tells them apart. `hermes config set` coerces `false` to a
+boolean. Preflight §4 FAILs unless it reads `false`; `scripts/watchdog.sh` reads the same key from the file
+(Hermes may be the thing that is broken) and alerts if it turns back on.
+
 **`triage` is a terminal column for anything you need to finish.** A second
 `block` of the *same kind* on one card routes it to `triage` instead of `blocked`
 (`_route_block`, `BLOCK_RECURRENCE_LIMIT = 2`), and `block_kind` /
