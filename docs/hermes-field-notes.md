@@ -669,6 +669,126 @@ though the code path was not pinned down). Useful here, because it is exactly
 what a hand-run worker needs. Worth knowing because the same mechanism would
 propagate a metered `ANTHROPIC_API_KEY` into every profile just as quietly.
 
+## The paired gateway (GW3, S8d)
+
+Read from Hermes 0.21.5 source at `~/.hermes/hermes-agent`; each line says whether `make verify` executes it
+(`gateway/`, under an isolated `HERMES_HOME`, never `~/.hermes`) or whether it is read and not run.
+
+**A verb typed while the agent is busy is not a command.** A plugin command sent mid-turn does not run: it
+interrupts the turn and reaches the model as plain text (`hermes_cli/commands.py:425-438`,
+`gateway/run_busy.py:767-788`, `gateway/run_turn.py:3895`). `pre_gateway_dispatch` is not called on that path
+(`run_busy.py:788`), so nothing in a plugin can veto or rewrite it before the model sees it. *Read, not
+run.* **The operator's rule is: send `/stop` first, then the verb as its own message.** With
+`display.busy_input_mode: interrupt` (the live value) the verb is the message that interrupts the turn, and it
+reaches the model as text; it never runs as a command. `checkpoint.sh`'s reply says so. A verb that did run answers
+on the chat with `refused:`, the script's outcome, or `outcome unknown:`, so no reply means it did not run as a command.
+
+**What stops that text becoming a board write is a bot with no tools, and the guard is only a tripwire.** A tripwire is
+a text match: `sqlite3` on a path built in pieces, `python -c` with a string assembled at run time, a backslash-newline
+splitting the word `kanban`, and a sub-process defeat it. So the gate verbs are typed to a DEDICATED Telegram bot, bound to the
+profile `forge-gate` (owner decision 14, 2026-11-11), whose toolset is empty: `toolsets: []` for its own runs and
+`platform_toolsets.telegram: []` for the bot, which Hermes reads as none (`hermes_cli/tools_config.py`
+`_get_platform_tools`: "an explicit EMPTY list means none"; *executed*: `model_tools.get_tool_definitions(enabled_toolsets=[])`
+returns no tool, and the probe resolves the bootstrap's `forge-gate` to `tools: []`). An agent turn with that list takes
+the "no tools loaded" path (`agent/agent_init.py` ~1105); a real turn was *not run*. The owner's MAIN Telegram agent keeps its
+`terminal`, `code_execution`, `cronjob` and file tools; the first draft of this slice stripped them from the main toolset and
+was superseded. `forge-gate`'s guard refuses every tool call but a board read. On any other messaging session that is not a
+kanban worker the guard blocks `terminal`, `execute_code` and `process_manage` text that names `kanban` with a verb outside the
+read list (list, show, runs, log, tail, stats, context, `boards list`) or names the board file, every `kanban_*` tool but
+`kanban_show`, `kanban_list` and `kanban_attachments`, the file tools aimed at forge's state, the runtime, and Hermes'
+scripts, plugins, profiles, config, cron and board files (compared case-insensitively, because APFS is; a relative path is
+placed where Hermes' own resolver, `tools.file_tools_paths._resolve_path_for_task`, puts it against the task's workspace, or
+refused when Hermes cannot say; a symlink is followed; a V4A patch is read with Hermes' own parser,
+`tools/patch_parser.py` `parse_v4a_patch`, whose grammar takes `***Update File:` with or without a space and
+`*** Move File: a -> b` (two paths), and is refused when it cannot be read), and `cronjob_manage` with a script. *Executed* in
+`gateway/guard-covers-the-other-routes` and, through the real `handle_function_call`, `gateway/busy-text-never-writes-a-gate`.
+The tripwire on the main agent has one switch, the owner's: `FORGE_GATEWAY_MAIN_GUARD=off` in `~/.hermes/.env` (read from the
+gateway's environment). It is ON by default and for every value but `off`, `0`, `false` and `no`; it is tested after the
+forge-gate check, so no value spares a forge-gate turn; and it is an operator switch, not a security boundary (an agent that
+can write that file and restart the gateway can set it). Executed in `gateway/guard-forge-gate-blocks-everything`.
+**The arming file is an operator switch, not a security boundary.** Any agent running as the owner's user with a shell or a
+file tool, the main Telegram agent and a Claude Code session among them, can write `checkpoint/armed/*`; so can anything that
+can write `~/.local/bin/hermes`, `~/.hermes/hermes-agent/**` or `~/Library/LaunchAgents`, which the guard does not cover and
+could not. What the dedicated bot guarantees is narrower and true: a verb that reaches an agent as text is only ever read by
+an agent with no tool to act on it. Also open, and each an act of the owner's own agents: the gateway's built-in `/kanban
+complete <gate>` (`hermes_cli/commands.py`, `gateway/slash_commands.py` `_handle_kanban_command` -> `hermes_cli.kanban
+.run_slash`), available to anyone `TELEGRAM_ALLOWED_USERS` lets into a bot, which runs while an agent is busy and bypasses
+arming; `computer_use` and MCP servers on the main agent. `delegate_task` is not a route: a child gets the parent's toolsets
+and never `cronjob_manage` or `kanban` (`tools/delegate_tool_toolsets.py`).
+
+**How the multiplexed gateway binds a Telegram bot to a profile** (read from 0.21.5 source; the live gateway has
+`gateway.multiplex_profiles: true`; *not executed*, because a real run needs a bot token and a Telegram message).
+`_start_secondary_profile_adapters` (`gateway/run_adapters.py` 864) walks `profiles_to_serve(True)` (`hermes_cli/profiles.py`
+1050: the default plus every live named profile under `profiles/`) and `_start_one_profile_adapters` (1062) loads each
+profile's OWN gateway config under `_profile_runtime_scope` (`_load_secondary_profile_config`, 1067). A platform is enabled
+for a profile by the credential in that profile's scope: Telegram is a plugin platform enabled "when credentials are configured"
+(`gateway/config_env.py` 441), the credential is `TELEGRAM_BOT_TOKEN` (`gateway/config.py` 405), and a profile without one
+is skipped (`_platform_has_bot_credential`, `run_adapters.py` 1086). So the files are `~/.hermes/profiles/forge-gate/.env`
+holding `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USERS` (read through `platform_gate_env`, `gateway/platforms/_shared.py` 69, which under
+multiplexing answers from the profile's scope and never falls through to another profile's value). A second profile with the same
+token is refused (`_refuse_duplicate_claim`, 1122), so the main bot and forge-gate need two bots. The adapter is told which
+profile owns it (`set_owner_profile`, 1185-1187), `build_source` stamps `source.profile` with it
+(`gateway/platforms/base.py` 4654-4655), `_set_session_env` binds it as `HERMES_SESSION_PROFILE`
+(`gateway/run.py` 4289), and the message handler enters the profile's scope before the message is handled
+(`_make_profile_message_handler`, `run_adapters.py` 1499-1509). **Plugins are per profile:** `get_plugin_manager`
+(`hermes_cli/plugins.py` 1591) is keyed by the active home, and `plugins.enabled` is read from that profile's config, so the
+plugin is linked into `~/.hermes/profiles/forge-gate/plugins/` and enabled in that profile's config (the bootstrap does both),
+and ALSO enabled in the root profile, where its handlers only refuse (a verb typed to the main bot is answered, not read by a
+model that has a shell). *Executed* (`gateway/real-hermes-loads-the-plugin-and-routes-only-three-verbs`): enabled in forge-gate's
+home and not in the root's, only forge-gate's scope has the commands. A handler learns its profile from
+`HERMES_SESSION_PROFILE` (`get_session_env`), which `_hm_dispatch_quick_and_plugin_commands` (`run_inbound.py` 1024-1077)
+binds before it runs the handler. A stranger who messages the gate bot is ignored, not sent a pairing code, because the profile
+sets `unauthorized_dm_behavior: ignore` (`gateway/config_loader.py` 102; `run_inbound.py` 240); a user must also `/start` the bot.
+
+**The gate scripts run under the mini's `/bin/bash` 3.2.57, and CI runs bash 5.** The mini has no Homebrew
+bash, and a launchd gateway's PATH finds `/bin/bash`. bash 3.2 does not take a backslash-quote inside
+`${var//.../...}` (it keeps the backslashes), so `/park sq GATE-M1 don't proceed` was a SQL syntax error, the
+read-back failed, the script exited 3 and never recorded the decision. Put the quote in a variable
+(`gr_sql_escape`). `gateway/gate-scripts-run-under-the-minis-bash` reads every new script for bash-4 idioms,
+parses each under `/bin/bash -n`, and runs `/park` and `/redirect` with an apostrophe and every other character
+a phone can send under `/bin/bash`. **`make verify` is not run in `~/dev/forge-runtime`:** its mutation
+harnesses edit files in place and the live cron executes from there; the runtime gets `git pull --ff-only` and
+`make preflight`, and `make verify` runs on `main` after the merge.
+
+**`registry.dispatch` does not look at a tool's `check_fn`.** A tool absent from the model's schema because its
+toolset is off can still run if something names it: `kanban_complete` on a gate, called through
+`model_tools.handle_function_call` in a process where no `kanban` toolset is enabled and `HERMES_KANBAN_TASK`
+is unset, completes it. *Executed* (`gateway/busy-text-never-writes-a-gate`, with the guard cut). That is why the
+guard names `kanban_*` although the Telegram toolset does not list `kanban`.
+
+**Plugin hooks fail closed; the dispatch machinery around them does not.** A `pre_tool_call` callback that raises
+or times out blocks the call (`plugins_dispatch.py:49`, `_policy_error_block_directive`). *Executed:* a plugin
+whose hook raises blocks even `echo ok` (`gateway/real-hermes-loads-the-plugin-and-routes-only-three-verbs`).
+So a raising guard blocks every tool, and the forge guard catches its own errors and blocks only the tools that
+could write a board. Config shell hooks fail open. An error in `_pre_dispatch_guards` itself, outside any
+callback, is logged at debug level and the call proceeds (`model_tools.py:784`). *Read, not run.*
+
+**A symlinked plugin directory loads.** `scan_directory` follows a symlink (`child.is_dir()`), and
+`hermes plugins enable forge-gateway` against an isolated `HERMES_HOME` whose `plugins/forge-gateway` is a
+symlink to the checkout registers the three commands and one hook. *Executed* (same case). A plugin is opt-in:
+linked and not enabled it registers nothing. Not exercised: a real multiplexed turn entering the forge-gate scope (above). The operator's write-nothing smoke test
+settles that.
+
+**What a plugin command handler sees.** `run_inbound.py:1060-1072` binds the session as `ContextVar`s around the
+call (`gateway/session_context.py`: platform `telegram`, chat type `dm`, `USER_ID` and `CHAT_ID` both the
+user's id in a direct message, `MESSAGE_ID`) and runs a sync handler on the gateway's pool with those variables
+copied, so `get_session_env` answers and `os.environ` does not hold them. The command name goes through
+`.replace("_", "-")` before the lookup, so a registered hyphenated name would be reached by its underscore form
+while `allow_admin_from` matches the typed name exactly; the three forge names are single words for that
+reason. An exception from a handler is logged and the text falls through to the agent, so a handler must never
+raise; a handler returning a string replies with it. *Executed* for the lookup (`registry`); *read* for the
+dispatch.
+
+**Hermes and forge disagree about `HERMES_KANBAN_HOME`.** Hermes' `kanban_home()` is the root, and a named board
+lives at `<root>/kanban/boards/<slug>/kanban.db`. Forge's scripts (`checkpoint.sh`, `metrics.sh`, `digest.sh`,
+`triage.sh`, and now `gate-reply.sh`) read `${HERMES_KANBAN_HOME:-$HERMES_HOME/kanban}/boards/<slug>/kanban.db`.
+They agree only while the variable is unset, which is the live state; the fixtures set it for the scripts and not
+for Hermes. P43 holds it.
+
+**`hermes cron --no-agent` runs a script, not an agent, and any non-zero exit is an alert.** The job's script must
+be a real file under `~/.hermes/scripts` (a symlink is refused, P22). `scripts/checkpoint-cron.sh` is silent
+until it has a decision to deliver, because its stdout is the message, and exits non-zero only for its own faults.
+
 ## Codex
 
 **There is no `--full-auto` in codex-cli 0.145.0.** The sandbox flag is
