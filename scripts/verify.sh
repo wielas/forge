@@ -89,6 +89,13 @@
 #   quota/      the usage-limit park: which window a run waits on, and that the
 #               lane resumes the same Codex session rather than restarting it.
 #               Fixtures and a stubbed codex only — spends nothing   (ADR-0016)
+#   watchdog/   the liveness watchdog as a program: a healthy pass pings the heartbeat and says nothing;
+#               a dead gateway, a stale cron ticker, a missed digest or auto_decompose left on each fail
+#               on their own line; one alert per state change, a reminder only after the interval and one
+#               recovery; the token and the heartbeat URL reach curl on stdin and nowhere else; a missing
+#               token is said and health still decides the exit; the LaunchAgent installer; and the two
+#               preflight checks (auto_decompose, the watchdog loaded). Stubbed launchctl and curl, a
+#               pinned clock, temp directories only                                   (S8e, liveness)
 #   manifest/   `--list` names every case the suite actually runs. Compares the
 #               catalogue against what THIS run emitted, so a check added
 #               without a catalogue entry is caught. Full runs only    (F65/F66)
@@ -121,11 +128,11 @@ while [ $# -gt 0 ]; do
     --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|sync|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|sync|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|watchdog|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap sync commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap sync commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -3080,6 +3087,12 @@ verifier/merge-mode-refuses-a-head-that-moved  P9: the PR's head is not the verd
 verifier/merge-nonzero-exit-reads-back  P10(4): gh pr merge lands the squash and exits 1; GitHub is asked, MERGED takes rc 4 and a merge-pending hold the watcher finishes; an exit that merged nothing stays substrate
 verifier/head-drift-refusal-then-hand-merge-is-flagged  P9: a refused moved head is held merge-pending, so the operator's hand merge is completed by the watcher and flagged HEAD DRIFT, not stranded
 verifier/failed-hold-write-keeps-merge-pending-prefix  P10(5): merged-held's hold is refused by the real kernel; the fallback block still starts merge-pending: and the watcher completes the card
+verifier/merge-authority-script-round-trip  scripts/merge-authority.sh: grant/status/list/revoke; a Hermes slug and --by are required (rc 2, nothing written); a second grant renames over the first; a failing rename keeps the old grant; one path formula in forge-state.sh (no Hermes needed)
+verifier/merge-authority-fails-closed  merge_mode (lifted) opens only on FORGE_VERIFIER_MERGE=1 or a valid grant whose inner board equals this one byte for byte; no file, another board, malformed, unreadable, revoked, no grantor, a case-only difference stay recommend-only; one JSON document only; under a grant only the exact lane profile merges, a person's, another profile's or an unrecorded implementer is held (no Hermes needed)
+verifier/merge-authority-opens-merge-mode-per-board  a grant for this board takes the merge route with FORGE_VERIFIER_MERGE=0, and the same board with no grant is held
+verifier/merge-authority-stays-recommend-only-when-it-must  another board's grant, a truncated file, a non-grant document before a valid one, no grantor, an inner board that differs only by case, a revoked grant: unchanged recommend-only hold, nothing merged
+verifier/merge-authority-never-merges-a-human-chunk  real kernel: under a grant a chunk whose recorded implementer is forge-operator-handoff, or some other profile, is held; the hold says the board has merge authority but the merge is the operator's
+verifier/merge-authority-is-named-on-the-merge  the completion's result and summary, and the merge-pending hold of an unconfirmed merge, name who granted the authority and when; metrics.sh still counts a verifier merge; the env switch's text is unchanged
 verifier/merged-tree-keeps-its-tree-for-the-probe  --keep-at leaves the green union (HEAD the merge of head and base, clean) for the probe; an existing path is refused
 verifier/mutation-probe-finds-unobserved-lines  CI-green fixtures of t_624586d7, a hollow Then, C21's unreached config and an unpinned message bounce on exactly their unobserved lines; a well-tested change passes (FL5)
 verifier/mutation-probe-mutation-is-caught  keeping the project's addopts lets --cov-fail-under turn a surviving mutant into a kill, and the unobserved line disappears
@@ -3272,6 +3285,15 @@ gateway/state-root-agrees-with-forge-state  the plugin's ledger root and forge-s
 gateway/gate-scripts-run-under-the-minis-bash  no bash-4 idiom in the gate, arming, cron or checkpoint scripts, each parses under /bin/bash, and /park and /redirect with an apostrophe or any shell, SQL or option character complete under it (CI's bash 5 hides this)
 gateway/a-decision-during-the-probe-wins  a probe that removes the arming file or records a decision while it runs: the gate is not completed and the cron is silent; checkpoint.sh --before-complete is the last look
 gateway/preflight-asks-the-gateway        preflight section 14, executed against scratch hosts: nothing deployed warns, the plugin live before forge-gate exists / a tool / the default bundle / an MCP server / pairing codes / a shared token / another bot with the verbs fail, a good deploy is clean
+watchdog/healthy-pings-the-heartbeat-and-stays-quiet  a healthy host: four OK lines, exit 0, one heartbeat per healthy pass (also under launchd's bare PATH), no alert, state healthy
+watchdog/gateway-down-alerts-once-and-recovers  a dead gateway: exit 1 and one alert; no repeat, a reminder only after the interval, exactly one recovery message, no heartbeat while down
+watchdog/gateway-states-and-stale-cron-output-fail-on-their-own-lines  loaded-not-running, stateless and not-loaded gateways; a ticker over its limit and a digest over 26h each fail alone; a missing job and an empty output directory are named
+watchdog/secrets-reach-curl-on-stdin-only  the bot token and the heartbeat URL are on curl's stdin and in no argv, environment, output, trace, state file or launchctl call; --dry-run redacts; --no-alert and --dry-run send, ping and write nothing
+watchdog/a-missing-token-is-said-and-health-still-decides  no token, no chat id and no .env are reported, call nothing and exit by health; an owed alert goes out once; a refused send is retried and then not repeated
+watchdog/auto-decompose-must-be-a-bare-false  only an unquoted false inside the kanban block passes; true, an absent key, a quoted "false", flow style, another block's key and a missing file each fail
+watchdog/preflight-judges-auto-decompose-and-the-watchdog  preflight FAILs kanban.auto_decompose unless it reads false (with the fix command) and WARNs when ai.forge.watchdog is not loaded; the installed Hermes agrees on throwaway configs
+watchdog/install-prints-the-runtime-plist-and-touches-nothing  watchdog-install.sh --print renders the runtime-path plist and touches nothing; install and --uninstall drive launchctl bootout/bootstrap
+watchdog/watchdog-scripts-are-executable-and-share-the-state-root  both scripts are 100755 in git and forge_watchdog_root is <state root>/watchdog
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -11087,6 +11109,244 @@ CTSTUB
   fi
 
   # -------------------------------------------------------------------------
+  # 2b. MERGE AUTHORITY, per board. Pure bash and jq, so the next two cases run where Hermes is not installed.
+  #
+  # The verifier squash-merges on its own on FORGE_VERIFIER_MERGE=1 (every board on the host at once) or on a
+  # per-board GRANT: one file, written by scripts/merge-authority.sh, read by the one fail-closed reader in
+  # forge-state.sh. These are the script (round trip, validation, atomic write, one path formula) and the DECISION
+  # (merge_mode, lifted out of the program that makes it). The cases in the real-kernel lab below run the program.
+  # Nothing here may touch the real ~/.forge: every call is aimed at a throwaway state root.
+  # -------------------------------------------------------------------------
+  local ma=scripts/merge-authority.sh mad="$TMPROOT/merge-authority" madetail="" mab mak marc
+  rm -rf "$mad"; mkdir -p "$mad/bin"
+  _ma()  { env -u FORGE_MERGE_AUTHORITY_ROOT FORGE_STATE_ROOT="$mad/state" "$REPO_ROOT/$ma" "$@"; }
+  _maf() { printf '%s/state/merge-authority/%s.json' "$mad" "$1"; }
+  _mafiles() { find "$mad/state" -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+  # ---- the script: a round trip, strict input, an atomic write, one path formula -----------------------------
+  _ma status > "$mad/o" 2>&1; marc=$?
+  { [ "$marc" = 0 ] && grep -q 'no board has merge authority' "$mad/o"; } \
+    || madetail="$madetail an-empty-host-did-not-say-so(rc=$marc)"
+  _ma status vlab > "$mad/o" 2>&1; marc=$?
+  [ "$marc" = 1 ] || madetail="$madetail status-of-an-ungranted-board-was-not-1(rc=$marc)"
+  _ma grant vlab --by operator-test --reason "round trip" > "$mad/o" 2>&1; marc=$?
+  [ "$marc" = 0 ] || madetail="$madetail grant-rc=$marc($(head -c 120 "$mad/o"))"
+  jq -e '.schema == "forge.merge-authority.v1" and .board == "vlab" and .granted_by == "operator-test"
+         and .reason == "round trip" and (.granted_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' \
+    "$(_maf vlab)" >/dev/null 2>&1 || madetail="$madetail the-grant-file-lacks-schema-board-granted_by-granted_at-reason"
+  _ma status vlab > "$mad/o" 2>&1; marc=$?
+  { [ "$marc" = 0 ] && grep -q 'operator-test' "$mad/o"; } || madetail="$madetail status-of-a-granted-board-was-not-0(rc=$marc)"
+  _ma status othr > /dev/null 2>&1; marc=$?
+  [ "$marc" = 1 ] || madetail="$madetail another-board-read-as-granted(rc=$marc)"
+  _ma status > "$mad/o" 2>&1; marc=$?
+  { [ "$marc" = 0 ] && grep -q '^vlab — by operator-test at ' "$mad/o"; } || madetail="$madetail the-list-does-not-show-the-grant(rc=$marc)"
+  # A second grant REPLACES the first, by a rename (the inode changes) and leaves no temp file behind.
+  mab="$(ls -i "$(_maf vlab)" | awk '{print $1}')"
+  _ma grant vlab --by someone-else > /dev/null 2>&1
+  mak="$(ls -i "$(_maf vlab)" | awk '{print $1}')"
+  { [ -n "$mab" ] && [ "$mab" != "$mak" ] && [ "$(jq -r .granted_by "$(_maf vlab)")" = someone-else ]; } \
+    || madetail="$madetail a-second-grant-was-not-a-rename-over-the-first"
+  [ -z "$(ls -A "$mad/state/merge-authority" | grep '^\.tmp\.')" ] || madetail="$madetail a-temp-file-was-left-behind"
+  _ma revoke vlab > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 0 ] && [ ! -e "$(_maf vlab)" ]; } || madetail="$madetail revoke-left-the-file(rc=$marc)"
+  _ma status vlab > /dev/null 2>&1; marc=$?
+  [ "$marc" = 1 ] || madetail="$madetail a-revoked-board-still-reads-as-granted(rc=$marc)"
+  _ma revoke vlab > /dev/null 2>&1; marc=$?
+  [ "$marc" = 0 ] || madetail="$madetail revoking-nothing-was-an-error(rc=$marc)"
+  # A board is a Hermes slug (kanban_db.py: ^[a-z0-9][a-z0-9_-]{0,63}$): nothing else becomes a path.
+  for mab in '../x' 'a/b' '.hid' '-x' 'a b' 'Vlab' 'VLAB' 'x.y' '' 'a*' "$(printf 'x%.0s' $(seq 1 65))" "$(printf 'a\nb')"; do
+    _ma grant "$mab" --by operator-test > /dev/null 2>&1; marc=$?
+    [ "$marc" = 2 ] || madetail="$madetail slug-[${mab:0:12}]-was-not-refused(rc=$marc)"
+    _ma revoke "$mab" > /dev/null 2>&1; marc=$?
+    [ "$marc" = 2 ] || madetail="$madetail revoke-of-slug-[${mab:0:12}]-was-not-refused(rc=$marc)"
+  done
+  [ "$(_mafiles)" = 0 ] || madetail="$madetail a-refused-grant-left-a-file($(_mafiles))"
+  # --by names whoever grants, and it is required.
+  _ma grant vlab > /dev/null 2>&1; marc=$?;                           [ "$marc" = 2 ] || madetail="$madetail no-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by > /dev/null 2>&1; marc=$?;                      [ "$marc" = 2 ] || madetail="$madetail by-with-no-value-was-accepted(rc=$marc)"
+  _ma grant vlab --by '' > /dev/null 2>&1; marc=$?;                   [ "$marc" = 2 ] || madetail="$madetail an-empty-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by '   ' > /dev/null 2>&1; marc=$?;                [ "$marc" = 2 ] || madetail="$madetail a-blank-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by "$(printf 'a\nb')" > /dev/null 2>&1; marc=$?;   [ "$marc" = 2 ] || madetail="$madetail a-multi-line-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by x --bogus > /dev/null 2>&1; marc=$?;            [ "$marc" = 2 ] || madetail="$madetail an-unknown-flag-was-accepted(rc=$marc)"
+  _ma frobnicate vlab > /dev/null 2>&1; marc=$?;                      [ "$marc" = 2 ] || madetail="$madetail an-unknown-command-was-accepted(rc=$marc)"
+  [ "$(_mafiles)" = 0 ] || madetail="$madetail a-refused-grant-left-a-file($(_mafiles))"
+  # ATOMIC: the grant is written to a temp file in the SAME directory and renamed over the old one. A rename that
+  # fails (a `mv` that refuses) leaves the earlier grant byte for byte as it was and no temp file; a first grant
+  # that fails leaves no file at all.
+  cat > "$mad/bin/mv" <<MAMV
+#!/bin/sh
+printf '%s\n' "\$@" > "$mad/mv.args"
+exit 1
+MAMV
+  chmod +x "$mad/bin/mv"
+  _ma grant vlab --by first > /dev/null 2>&1
+  cp "$(_maf vlab)" "$mad/before.json"
+  PATH="$mad/bin:$PATH" _ma grant vlab --by second > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && cmp -s "$mad/before.json" "$(_maf vlab)"; } || madetail="$madetail a-failed-rename-damaged-the-earlier-grant(rc=$marc)"
+  { [ "$(sed -n 1p "$mad/mv.args")" = -f ] && [ "$(dirname "$(sed -n 2p "$mad/mv.args")")" = "$(dirname "$(sed -n 3p "$mad/mv.args")")" ] \
+    && [ "$(sed -n 3p "$mad/mv.args")" = "$(_maf vlab)" ] && case "$(basename "$(sed -n 2p "$mad/mv.args")")" in .tmp.*) true;; *) false;; esac; } \
+    || madetail="$madetail the-write-was-not-a-temp-file-renamed-in-the-same-directory($(tr '\n' ' ' < "$mad/mv.args"))"
+  PATH="$mad/bin:$PATH" _ma grant othr --by second > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && [ ! -e "$(_maf othr)" ]; } || madetail="$madetail a-failed-first-grant-left-a-file(rc=$marc)"
+  [ -z "$(ls -A "$mad/state/merge-authority" | grep '^\.tmp\.')" ] || madetail="$madetail a-failed-rename-left-a-temp-file"
+  _ma revoke vlab > /dev/null 2>&1
+  # ONE FORMULA FOR THE PATH, in forge-state.sh: the default sits under the state root, the override moves it, and
+  # neither the script nor the verifier spells the directory out.
+  [ "$(env -u FORGE_STATE_ROOT -u FORGE_MERGE_AUTHORITY_ROOT HOME=/h bash -c '. "$1"; forge_merge_authority_root' _ "$REPO_ROOT/scripts/forge-state.sh")" = /h/.forge/merge-authority ] \
+    || madetail="$madetail the-default-root-is-not-HOME/.forge/merge-authority"
+  env FORGE_STATE_ROOT="$mad/state" FORGE_MERGE_AUTHORITY_ROOT="$mad/elsewhere" "$REPO_ROOT/$ma" grant vlab --by operator-test > /dev/null 2>&1
+  { [ -f "$mad/elsewhere/vlab.json" ] && [ ! -e "$(_maf vlab)" ]; } || madetail="$madetail FORGE_MERGE_AUTHORITY_ROOT-did-not-move-the-file"
+  grep -Ehv '^[[:space:]]*#' "$ma" "$review" | grep -Fq '/merge-authority' && madetail="$madetail a-second-formula-for-the-path-is-spelled-out"
+  { grep -q 'forge_merge_authority_root' "$ma" && grep -q 'forge_merge_authority_read' "$ma" && grep -q 'forge_merge_authority_read' "$review"; } \
+    || madetail="$madetail the-script-and-the-verifier-do-not-both-use-forge-state.sh"
+  [ -x "$ma" ] || madetail="$madetail merge-authority.sh-is-not-executable"
+  # A WORKER NEVER GRANTS: the verifier's driver reads a PR's text, and a grant is the one act that would let it
+  # merge that PR. The fence's marker refuses grant and revoke (status stays open); the earlier grant is untouched.
+  _ma grant vlab --by operator-test > /dev/null 2>&1
+  HERMES_DELEGATED_CHILD_CONTEXT=/some/board/root _ma grant othr --by a-worker > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && [ ! -e "$(_maf othr)" ]; } || madetail="$madetail a-fenced-worker-granted(rc=$marc)"
+  HERMES_DELEGATED_CHILD_CONTEXT=/some/board/root _ma revoke vlab > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && [ -f "$(_maf vlab)" ]; } || madetail="$madetail a-fenced-worker-revoked(rc=$marc)"
+  HERMES_DELEGATED_CHILD_CONTEXT=/some/board/root _ma status vlab > /dev/null 2>&1; marc=$?
+  [ "$marc" = 0 ] || madetail="$madetail status-is-closed-to-a-fenced-worker(rc=$marc)"
+  _ma revoke vlab > /dev/null 2>&1
+  [ -z "$madetail" ] \
+    && ok "merge-authority-script-round-trip (grant, status, list and revoke; a board is a Hermes slug and --by is required, each refused with rc 2 and nothing written; a second grant renames over the first; a failing rename leaves the earlier grant and no temp file; one path formula in forge-state.sh)" \
+    || bad "merge-authority-script-round-trip" \
+        "merge-authority.sh must grant, revoke and report one file per board, strictly and atomically —$madetail"
+
+  # ---- the decision: merge_mode, lifted out of prejudge-review.sh and run on files --------------------------
+  # `merge_mode` is the one place the verifier decides whether it may merge. It is lifted by name so a case can
+  # aim it at a board, a grant file and a card without a kernel; an empty lift is a RED case, not a skip (F65).
+  local mmsrc mmdetail="" mmgot mmlane mmhuman mmwant mmstep
+  mmsrc="$(awk '/^merge_mode\(\) \{/{p=1} p{print} p && /^}$/{exit}' "$review")"
+  mmlane='{"events":[{"kind":"created","payload":{}},{"kind":"review_requested","payload":{"implementer":"forge-codex-lane","reviewer":"forge-verifier"}}]}'
+  mmhuman='{"events":[{"kind":"review_requested","payload":{"implementer":"forge-operator-handoff","reviewer":"forge-verifier"}}]}'
+  _mm() {   # board card-json [VAR=value ...] -> merge|<clause> · hold · hold-granted (a grant exists and this chunk is held anyway)
+    local b="$1" card="$2" kv; shift 2
+    ( unset FORGE_VERIFIER_MERGE FORGE_MERGE_AUTHORITY_ROOT FORGE_HANDOFF_SENTINEL
+      export FORGE_STATE_ROOT="$mad/state"
+      for kv in "$@"; do export "$kv"; done
+      . "$REPO_ROOT/scripts/forge-state.sh"
+      eval "$mmsrc"
+      BOARD="$b"; CARD0="$card"
+      if merge_mode; then printf 'merge|%s' "$MERGE_AUTHORITY_CLAUSE"
+      elif [ -n "$MERGE_HOLD_HEADLINE" ]; then printf 'hold-granted'
+      else printf 'hold'; fi ) 2>/dev/null
+  }
+  _mmw() {   # <jq filter over the grant file>: replace vlab's grant by that edit of a good one
+    _ma grant vlab --by operator-test > /dev/null 2>&1
+    jq -c "$1" "$(_maf vlab)" > "$mad/edit.json" && mv "$mad/edit.json" "$(_maf vlab)"
+  }
+  _mmexpect() {   # step-name want got
+    [ "$3" = "$2" ] || mmdetail="$mmdetail $1(want:$2,got:${3:0:40})"
+  }
+  if [ -z "$mmsrc" ]; then
+    bad "merge-authority-fails-closed" "no merge_mode function found in $review — it was renamed or deleted, and this check must fail rather than skip (F65)"
+  else
+    rm -rf "$mad/state" "$mad/elsewhere"
+    mmwant="merge|board merge authority granted by operator-test at "
+    # nothing granted anywhere
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect no-file hold "$mmgot"
+    mmgot="$(_mm '' "$mmlane")";    _mmexpect no-board hold "$mmgot"
+    _ma grant othr --by operator-test > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-grant-for-another-board hold "$mmgot"
+    # a valid grant for THIS board, and the control for everything below
+    _ma grant vlab --by operator-test --reason "case" > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmlane")"
+    case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail a-valid-grant-did-not-open-merge-mode(got:${mmgot:0:60})";; esac
+    mmgot="$(_mm VLAB "$mmlane")";  _mmexpect an-uppercase-spelling-of-the-board hold "$mmgot"
+    mmgot="$(_mm 'vlab/../othr' "$mmlane")"; _mmexpect a-board-that-is-a-path hold "$mmgot"
+    # FORGE_VERIFIER_MERGE keeps its exact-1 rule: 0, true and empty neither disable a grant nor enable merging.
+    for mmstep in 0 true yes ''; do
+      mmgot="$(_mm vlab "$mmlane" FORGE_VERIFIER_MERGE="$mmstep")"
+      case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail FORGE_VERIFIER_MERGE=[$mmstep]-disabled-a-grant(got:${mmgot:0:40})";; esac
+    done
+    rm -f "$(_maf vlab)"
+    for mmstep in 0 true yes ''; do
+      mmgot="$(_mm vlab "$mmlane" FORGE_VERIFIER_MERGE="$mmstep")"; _mmexpect "FORGE_VERIFIER_MERGE=[$mmstep]-with-no-grant" hold "$mmgot"
+    done
+    mmgot="$(_mm vlab "$mmlane" FORGE_VERIFIER_MERGE=1)"; _mmexpect the-host-wide-switch-with-no-grant 'merge|' "$mmgot"
+    # a file that is not a grant of this board
+    _mmw '.'                                    ; mmgot="$(_mm vlab "$mmlane")"; case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail the-control-grant-did-not-open-merge-mode";; esac
+    _mmw '.board = "VLAB"'                      ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect inner-board-differs-by-case hold "$mmgot"
+    _mmw '.board = "vlab "'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect inner-board-has-a-trailing-space hold "$mmgot"
+    _mmw '.board = "othr"'                      ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect inner-board-is-another-board hold "$mmgot"
+    _mmw 'del(.board)'                          ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-inner-board hold "$mmgot"
+    _mmw 'del(.granted_by)'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-granted_by hold "$mmgot"
+    _mmw '.granted_by = ""'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-empty-granted_by hold "$mmgot"
+    _mmw '.granted_by = "  "'                   ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-blank-granted_by hold "$mmgot"
+    _mmw '.granted_by = ["operator"]'           ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-granted_by-that-is-not-a-string hold "$mmgot"
+    _mmw 'del(.granted_at)'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-granted_at hold "$mmgot"
+    _mmw '.schema = "forge.merge-authority.v2"' ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-unknown-schema hold "$mmgot"
+    _mmw 'del(.schema)'                         ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-schema hold "$mmgot"
+    printf '{"schema":"forge.merge-authority.v1","board":"vlab","granted_by"' > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-truncated-file hold "$mmgot"
+    : > "$(_maf vlab)";             mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-empty-file hold "$mmgot"
+    echo '[]' > "$(_maf vlab)";     mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-json-array hold "$mmgot"
+    echo '"vlab"' > "$(_maf vlab)"; mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-json-string hold "$mmgot"
+    # EXACTLY ONE DOCUMENT: jq answers for every document in a stream, so a first document that is no grant followed
+    # by a valid one used to read as granted. The control (the valid document alone) must open merge mode first.
+    _ma grant vlab --by operator-test > /dev/null 2>&1; cp "$(_maf vlab)" "$mad/good.json"
+    mmgot="$(_mm vlab "$mmlane")"; case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail the-one-document-control-did-not-open-merge-mode";; esac
+    { echo '{"schema":"not-a-grant"}'; cat "$mad/good.json"; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-non-grant-document-then-a-valid-grant hold "$mmgot"
+    { echo '"vlab"'; cat "$mad/good.json"; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-string-then-a-valid-grant hold "$mmgot"
+    { cat "$mad/good.json"; echo '{"schema":"not-a-grant"}'; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-valid-grant-then-a-non-grant-document hold "$mmgot"
+    { cat "$mad/good.json"; cat "$mad/good.json"; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect two-valid-grants-in-one-file hold "$mmgot"
+    { cat "$mad/good.json"; echo 'trailing text'; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-valid-grant-then-trailing-text hold "$mmgot"
+    rm -f "$(_maf vlab)"; mkdir "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-directory-in-the-way hold "$mmgot"
+    rmdir "$(_maf vlab)"
+    _ma grant othr --by operator-test > /dev/null 2>&1; ln -s othr.json "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-symlink-to-another-boards-grant hold "$mmgot"
+    rm -f "$(_maf vlab)"
+    _ma grant vlab --by operator-test > /dev/null 2>&1; chmod 000 "$(_maf vlab)"
+    if [ -r "$(_maf vlab)" ]; then :   # root reads anything: the case cannot be built here, and says nothing about it
+    else mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-unreadable-file hold "$mmgot"; fi
+    chmod 644 "$(_maf vlab)"
+    # revoked
+    _ma grant vlab --by operator-test > /dev/null 2>&1; _ma revoke vlab > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-revoked-grant hold "$mmgot"
+    # A GRANT MERGES ONLY A CHUNK THE LANE BUILT: an ALLOWLIST on the implementer the kernel recorded at the last
+    # hand-off, exactly `forge-codex-lane`. Everything else is held, whether it is a person's or merely not the lane's.
+    _ma grant vlab --by operator-test > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmhuman")"; _mmexpect a-human-chunk-under-a-grant hold-granted "$mmgot"
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":"claude-interactive"}}]}')"
+    _mmexpect an-interactive-chunk-under-a-grant hold-granted "$mmgot"
+    mmgot="$(_mm vlab "$mmhuman" FORGE_HANDOFF_SENTINEL=somewhere-else)"; _mmexpect the-literal-sentinel-with-FORGE_HANDOFF_SENTINEL-overridden hold-granted "$mmgot"
+    mmgot="$(_mm vlab "$mmhuman" FORGE_HANDOFF_SENTINEL=forge-operator-handoff)"; _mmexpect the-literal-sentinel-with-FORGE_HANDOFF_SENTINEL-set-to-it hold-granted "$mmgot"
+    for mmstep in forge-verifier some-other-profile forge-codex-lane-2 forge-codex Forge-Codex-Lane ' forge-codex-lane' 'forge-codex-lane '; do
+      mmgot="$(_mm vlab "{\"events\":[{\"kind\":\"review_requested\",\"payload\":{\"implementer\":\"$mmstep\"}}]}")"
+      _mmexpect "a-card-held-by-[$mmstep]-is-not-the-lane" hold-granted "$mmgot"
+    done
+    mmgot="$(_mm vlab '{"events":[{"kind":"created","payload":{}}]}')";   _mmexpect no-hand-off-event hold-granted "$mmgot"
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{}}]}')"; _mmexpect no-implementer-recorded hold-granted "$mmgot"
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":""}}]}')"; _mmexpect an-empty-implementer hold-granted "$mmgot"
+    mmgot="$(_mm vlab 'not json')"; _mmexpect an-unreadable-card hold-granted "$mmgot"
+    mmgot="$(_mm vlab '')";         _mmexpect no-card-at-all hold-granted "$mmgot"
+    # the LAST hand-off decides: a person's chunk the lane took over merges, a lane's chunk a person took over does not
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":"forge-operator-handoff"}},{"kind":"review_requested","payload":{"implementer":"forge-codex-lane"}}]}')"
+    case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail the-last-hand-off-did-not-decide(got:${mmgot:0:40})";; esac
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":"forge-codex-lane"}},{"kind":"review_requested","payload":{"implementer":"forge-operator-handoff"}}]}')"
+    _mmexpect the-last-hand-off-is-a-persons hold-granted "$mmgot"
+    # DECIDED AT THE MERGE, NOT AT THE START: the one call to merge_mode comes after the scorer's call, so a revoke
+    # made while a review runs is seen. (A structural check; the lifted function above is what it decides with.)
+    mmgot="$(grep -n 'claude -p --model opus' "$review" | tail -1 | cut -d: -f1)"
+    mmstep="$(grep -nE '^[[:space:]]*if merge_mode; then' "$review" | cut -d: -f1 | tr '\n' ' ')"
+    { [ -n "$mmgot" ] && [ "$(printf '%s' "$mmstep" | wc -w | tr -d ' ')" = 1 ] && [ "${mmstep% }" -gt "$mmgot" ]; } \
+      || mmdetail="$mmdetail merge_mode-is-not-called-once-after-the-scorer(scorer-line:$mmgot,calls:$mmstep)"
+    [ -z "$mmdetail" ] \
+      && ok "merge-authority-fails-closed (merge_mode opens only on FORGE_VERIFIER_MERGE=1 or a well-formed grant whose inner board equals this one byte for byte; no file, another board's, a malformed, truncated, multi-document, unreadable, symlinked or revoked file, a missing grantor, an unknown schema and a case-only difference all stay recommend-only; 0/true/empty never disable a grant; under a grant only the exact lane profile merges: a person's chunk, another profile's and an unrecorded implementer are held)" \
+      || bad "merge-authority-fails-closed" \
+          "merge mode must fail closed to recommend-only unless THIS board holds a valid grant, and a grant must merge only a chunk the lane built —$mmdetail"
+  fi
+
+  # -------------------------------------------------------------------------
   # 3. The routing, on the REAL kernel, in an isolated HERMES_HOME.
   #
   # `gh`, `claude` and the merged-tree check are stubs that log every call; the
@@ -11110,6 +11370,8 @@ CTSTUB
              merge-mode-survives-a-failed-completion merge-watcher-reports-once \
              watcher-flags-head-drift merge-mode-refuses-a-head-that-moved \
              merge-nonzero-exit-reads-back failed-hold-write-keeps-merge-pending-prefix \
+             merge-authority-opens-merge-mode-per-board merge-authority-stays-recommend-only-when-it-must \
+             merge-authority-never-merges-a-human-chunk merge-authority-is-named-on-the-merge \
              head-drift-refusal-then-hand-merge-is-flagged \
              mutation-probe-bounces-only-behind-its-switch \
              the-hook-restores-the-handoff the-hook-restores-the-verifiers-calls \
@@ -13041,6 +13303,187 @@ VGHX
       && ok "failed-hold-write-keeps-merge-pending-prefix (merged-held's hold refused by the real kernel: the fallback block lands starting merge-pending:, and the merge-watcher finds it and completes the card)" \
       || bad "failed-hold-write-keeps-merge-pending-prefix" \
           "a hold that fails to write must fall back to a block the merge-watcher can still find —$vdetail"
+
+    # ---- merge authority: a board grant opens merge mode for THAT board ----------------------------------------
+    # Until now nothing but a host-wide environment variable turned merge mode on. A grant is one file per board
+    # (scripts/merge-authority.sh, read by the fail-closed reader in forge-state.sh); the decision itself is
+    # merge-authority-fails-closed above, and these four run the REAL program on the real kernel. `_vboard`
+    # wipes $vstate, so every grant is written after it.
+    local vma="$REPO_ROOT/scripts/merge-authority.sh" vmaf vhpr vgat vres vres2 vsum vnsk="$vbin/ma-kanban"
+    _vma()     { env -u FORGE_MERGE_AUTHORITY_ROOT FORGE_STATE_ROOT="$vstate" "$vma" "$@"; }
+    _vmafile() { printf '%s/merge-authority/%s.json' "$vstate" "$1"; }
+    _vmaedit() { jq -c "$1" "$(_vmafile vlab)" > "$vbin/ma.tmp" && mv "$vbin/ma.tmp" "$(_vmafile vlab)"; }
+
+    # ---- a grant opens merge mode; no grant holds, as before ----
+    # FORGE_VERIFIER_MERGE=0 on the grant run: a grant merges with the variable at 0, so the variable is not what
+    # turned it on and 0 does not turn it off.
+    vdetail=""; _vboard
+    _vma grant vlab --by operator-test --reason "case" > /dev/null 2>&1 || vdetail="$vdetail the-grant-was-refused"
+    vrc="$(_vrun FORGE_VERIFIER_MERGE=0)"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc($(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 120))"
+    jq -e '.action == "merged"' "$vbin/out.json" >/dev/null 2>&1 || vdetail="$vdetail envelope-not-merged($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    grep -q "^pr merge --squash --delete-branch --match-head-commit $(jq -r '.headRefOid' "$REPO_ROOT/$prs/pr-9/pr.json")" \
+      "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail not-squash-delete-and-pinned-head($(grep '^pr merge' "$vbin/gh.log" 2>/dev/null))"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail card-not-done($(_vst "$vP"))"
+    [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released($(_vst "$vC"))"
+    # CONTROL: the same board with no grant, the variable unset, is recommend-only.
+    _vboard; vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ] \
+      && ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null; } \
+      || vdetail="$vdetail no-grant-did-not-hold(rc=$vrc,$(_vst "$vP"))"
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-opens-merge-mode-per-board (a grant for this board takes the merge route with FORGE_VERIFIER_MERGE=0: squash, delete the branch, the verified head pinned, card done, child released; the same board with no grant is held)" \
+      || bad "merge-authority-opens-merge-mode-per-board" \
+          "a board grant must open merge mode for that board, with the host-wide variable unset or 0 —$vdetail"
+
+    # ---- everything that is not a valid grant for THIS board stays recommend-only ----
+    vdetail=""
+    for vmaf in another-board malformed-file non-grant-document-then-a-valid-grant no-grantor inner-board-differs-by-case revoked; do
+      _vboard; mkdir -p "$vstate/merge-authority"
+      case "$vmaf" in
+        another-board)  _vma grant othr --by operator-test > /dev/null 2>&1
+                        [ -f "$(_vmafile othr)" ] && [ ! -e "$(_vmafile vlab)" ] || vdetail="$vdetail $vmaf:fixture-not-built";;
+        malformed-file) printf '{"schema":"forge.merge-authority.v1","board":"vlab","granted_by":"operator-te' > "$(_vmafile vlab)";;
+        non-grant-document-then-a-valid-grant)
+                        # jq answers for every document in a file: a first one that is no grant must not hide behind a valid second
+                        _vma grant vlab --by operator-test > /dev/null 2>&1
+                        { echo '{"schema":"not-a-grant"}'; cat "$(_vmafile vlab)"; } > "$vbin/ma.tmp" && mv "$vbin/ma.tmp" "$(_vmafile vlab)"
+                        [ "$(jq -s length "$(_vmafile vlab)" 2>/dev/null)" = 2 ] || vdetail="$vdetail $vmaf:fixture-not-built";;
+        no-grantor)     _vma grant vlab --by operator-test > /dev/null 2>&1; _vmaedit 'del(.granted_by)'
+                        jq -e 'has("granted_by") | not' "$(_vmafile vlab)" >/dev/null 2>&1 || vdetail="$vdetail $vmaf:fixture-not-built";;
+        inner-board-differs-by-case)
+                        # the file is vlab.json, as the verifier opens it, and says VLAB inside: on a case-insensitive
+                        # volume the NAME proves nothing, which is why the inner field is compared byte for byte
+                        _vma grant vlab --by operator-test > /dev/null 2>&1; _vmaedit '.board = "VLAB"'
+                        [ "$(jq -r .board "$(_vmafile vlab)")" = VLAB ] || vdetail="$vdetail $vmaf:fixture-not-built";;
+        revoked)        _vma grant vlab --by operator-test > /dev/null 2>&1
+                        [ -f "$(_vmafile vlab)" ] || vdetail="$vdetail $vmaf:fixture-not-built"
+                        _vma revoke vlab > /dev/null 2>&1;;
+      esac
+      vrc="$(_vrun)"
+      { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+        || vdetail="$vdetail $vmaf:not-a-recommendation(rc=$vrc,$(jq -r '.action' "$vbin/out.json" 2>/dev/null))"
+      ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail $vmaf:MERGED"
+      { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+        || vdetail="$vdetail $vmaf:card-not-held($(_vst "$vP"),$(_vst "$vC"))"
+      _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+          | startswith("merge-pending: ") and test("the verifier may only recommend")' >/dev/null 2>&1 \
+        || vdetail="$vdetail $vmaf:hold-is-not-the-recommend-only-hold"
+    done
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-stays-recommend-only-when-it-must (a grant for another board, a truncated file, a non-grant document followed by a valid grant, one with no grantor, one whose inner board is VLAB under the name vlab.json, and a revoked grant: each is the unchanged recommend-only hold, no gh pr merge, child held)" \
+      || bad "merge-authority-stays-recommend-only-when-it-must" \
+          "merge mode must stay off unless this board holds a valid grant —$vdetail"
+
+    # ---- a grant merges only what the lane built: a person's chunk, or any other profile's, is held ----
+    # The card as a person's chunk really is: created on the non-spawnable sentinel and handed off, unfenced, by
+    # lane-handoff.sh, so the kernel records `forge-operator-handoff` as its implementer (bounce.sh reads the same
+    # field). The control is the case above: the same grant merges a lane's chunk. The last row is a card held by
+    # SOME OTHER profile: it is not a person's chunk by name, and the allowlist holds it all the same.
+    vdetail=""
+    vhpr="$(jq -r .pr "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json")"
+    _vhuman_board() {   # [assignee]: the card's implementer once lane-handoff.sh hands it off (default: the sentinel)
+      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/claude.auth" "$vbin/mc.log" "$vbin/mp.log" \
+             "$vbin/merged" "$vbin/closed" "$vbin/base" "$vbin/state-down"
+      mkdir -p "$vhome"
+      jq -r '.headRefOid' "$REPO_ROOT/$prs/pr-9/pr.json" > "$vbin/head"
+      HERMES_HOME="$vhome" hermes kanban boards create vlab >/dev/null 2>&1
+      vP="$(_v create "CHUNK-7: Sync engine" --assignee "${1:-forge-operator-handoff}" --body "$contract" --json 2>/dev/null | jq -r '.id')"
+      vC="$(_v create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$vP" --json 2>/dev/null | jq -r '.id')"
+      env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/scripts/lane-handoff.sh" "$vP" --board vlab \
+        --summary "CHUNK-7, by hand" --metadata "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json" > "$vbin/hand.out" 2>&1
+    }
+    _vhuman_board || vdetail="$vdetail the-hand-off-was-refused($(tail -1 "$vbin/hand.out"))"
+    _v show "$vP" --json | jq -e '[.events[] | select(.kind == "review_requested")] | last | .payload.implementer == "forge-operator-handoff"' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-kernel-did-not-record-the-sentinel-as-the-implementer"
+    _vma grant vlab --by operator-test > /dev/null 2>&1
+    vrc="$(VPRURL="$vhpr" _vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail not-a-recommendation(rc=$vrc,$(jq -r '.action // .reason' "$vbin/out.json" 2>/dev/null | head -c 100))"
+    ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail A-PERSONS-CHUNK-WAS-MERGED-UNDER-A-GRANT"
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+      || vdetail="$vdetail card-not-held($(_vst "$vP"),$(_vst "$vC"))"
+    # The hold is the merge-pending hold the watcher completes on the operator's merge, and it says why.
+    _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last
+        | (.payload.kind == "needs_input") and (.payload.reason
+          | startswith("merge-pending: ") and test("Decision needed: merge the PR")
+            and test("this board has merge authority, but this chunk was built by a person, so the merge is yours")
+            and test("recorded implementer: forge-operator-handoff") and test("granted by operator-test at "))' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-hold-does-not-say-the-board-has-authority-and-a-person-built-it($(_v show "$vP" --json | jq -r '[.events[]|select(.kind=="blocked")]|last|.payload.reason' | head -c 160))"
+    # SOME OTHER PROFILE: the same hand-off, with the card held by a profile that is neither the lane nor the sentinel
+    _vhuman_board some-other-profile || vdetail="$vdetail other-profile:the-hand-off-was-refused($(tail -1 "$vbin/hand.out"))"
+    _v show "$vP" --json | jq -e '[.events[] | select(.kind == "review_requested")] | last | .payload.implementer == "some-other-profile"' >/dev/null 2>&1 \
+      || vdetail="$vdetail other-profile:the-kernel-did-not-record-the-profile-as-the-implementer"
+    _vma grant vlab --by operator-test > /dev/null 2>&1
+    vrc="$(VPRURL="$vhpr" _vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail other-profile:not-a-recommendation(rc=$vrc,$(jq -r '.action // .reason' "$vbin/out.json" 2>/dev/null | head -c 100))"
+    ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail other-profile:A-CHUNK-THE-LANE-DID-NOT-BUILD-WAS-MERGED-UNDER-A-GRANT"
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+      || vdetail="$vdetail other-profile:card-not-held($(_vst "$vP"),$(_vst "$vC"))"
+    _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+        | startswith("merge-pending: ") and test("this board has merge authority, but this chunk was not built by the lane, so the merge is yours")
+          and test("recorded implementer is some-other-profile, not the lane \\(forge-codex-lane\\)")' >/dev/null 2>&1 \
+      || vdetail="$vdetail other-profile:the-hold-does-not-say-it-was-not-the-lane($(_v show "$vP" --json | jq -r '[.events[]|select(.kind=="blocked")]|last|.payload.reason' | head -c 160))"
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-never-merges-a-human-chunk (on a board with a grant, a chunk whose recorded implementer is forge-operator-handoff, and one held by some other profile, each take the merge-pending recommend-only hold: no gh pr merge, child held, and the hold says the board has merge authority but the merge is yours and why)" \
+      || bad "merge-authority-never-merges-a-human-chunk" \
+          "a board grant must merge only a chunk the lane built —$vdetail"
+
+    # ---- the merge's own record names the authority ----
+    # `merged by forge-verifier:` is the prefix metrics.sh keys on; the clause is ADDED after it. The merge-pending
+    # hold a merge that GitHub would not confirm leaves names it too, because the watcher's own completion does not.
+    vdetail=""; _vboard
+    _vma grant vlab --by operator-test --reason "case" > /dev/null 2>&1
+    vgat="$(jq -r .granted_at "$(_vmafile vlab)")"
+    vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "merged"' "$vbin/out.json" >/dev/null 2>&1 && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
+      || vdetail="$vdetail not-merged(rc=$vrc,$(_vst "$vP"))"
+    vres="$(_v show "$vP" --json | jq -r '.task.result')"
+    case "$vres" in
+      "merged by forge-verifier: "*" (board merge authority granted by operator-test at $vgat)") ;;
+      *) vdetail="$vdetail the-result-does-not-name-the-authority('$vres')";;
+    esac
+    jq -e --arg c "board merge authority granted by operator-test at $vgat" '
+        .terminate.tool == "kanban_complete" and (.terminate.args.result | contains($c)) and (.terminate.args.summary | contains($c))
+        and (.terminate.args.metadata.schema == "forge.judge.v1")' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail the-named-completion-lacks-the-clause-or-lost-its-metadata"
+    # the completion metadata is still the contracted envelope, untouched by the clause
+    _v show "$vP" --json | jq -r '[ .runs[] | select(.outcome == "completed") ] | last | .metadata // empty' > "$vbin/completed-meta.json" 2>/dev/null
+    { jq -e '.schema == "forge.judge.v1"' "$vbin/completed-meta.json" >/dev/null 2>&1 \
+      && ./scripts/validate-metadata.py --profile forge-verifier "$vbin/completed-meta.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail the-completion-metadata-no-longer-validates"
+    # metrics.sh still reads it as a merge BY THE VERIFIER (its LIKE 'merged by forge-verifier:%' is a prefix)
+    rm -rf "$vnsk"; mkdir -p "$vnsk/boards/vlab"
+    cp "$(HERMES_HOME="$vhome" "$REPO_ROOT/scripts/board-snapshot.sh" "$vhome/kanban/boards/vlab/kanban.db" "$vbin/ma-snap" 2>/dev/null)" \
+       "$vnsk/boards/vlab/kanban.db" 2>/dev/null
+    HERMES_HOME="$vhome" HERMES_KANBAN_HOME="$vnsk" "$REPO_ROOT/scripts/metrics.sh" vlab --json > "$vbin/ma-metrics.json" 2>/dev/null
+    jq -e '.north_star.merged.by_verifier == 1 and .north_star.merged.by_operator == 0' "$vbin/ma-metrics.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail metrics-no-longer-reads-it-as-a-verifier-merge($(jq -c '.north_star.merged' "$vbin/ma-metrics.json" 2>/dev/null))"
+    # CONTROL: under the host-wide variable the text is what it always was, with no clause (byte for byte the
+    # grant's text minus the clause).
+    _vboard; vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
+    vres2="$(_v show "$vP" --json | jq -r '.task.result')"
+    { [ "$vrc" = 4 ] && [ "$vres2" = "${vres% (board merge authority granted by operator-test at $vgat)}" ] \
+      && case "$vres2" in *authority*) false;; *) true;; esac; } \
+      || vdetail="$vdetail the-env-switch-text-changed(rc=$vrc,'$vres2')"
+    # THE SAME NAMING ON THE HOLD: GitHub would not confirm the merge, so the card is held merge-pending and the
+    # merge-watcher writes the completion later; the board's record must say what authority the merge ran under.
+    _vboard; _vma grant vlab --by operator-test > /dev/null 2>&1; touch "$vbin/state-down"
+    vgat="$(jq -r .granted_at "$(_vmafile vlab)")"
+    vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "merged-held" and (.terminate.args.reason | startswith("merge-pending: "))' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail merged-held-rc=$vrc($(jq -r '.action // .reason' "$vbin/out.json" 2>/dev/null | head -c 100))"
+    _v show "$vP" --json | jq -e --arg c "under board merge authority granted by operator-test at $vgat" '
+        [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+        | startswith("merge-pending: ") and contains("merge attempted by the verifier; GitHub did not confirm either way") and contains($c)' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-merge-pending-hold-does-not-name-the-authority($(_v show "$vP" --json | jq -r '[.events[]|select(.kind=="blocked")]|last|.payload.reason' | head -c 100))"
+    rm -f "$vbin/state-down"
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-is-named-on-the-merge (the completion's result and summary read 'merged by forge-verifier: <verdict> (board merge authority granted by <who> at <when>)', its metadata is untouched and still validates, metrics.sh still counts a verifier merge, the merge-pending hold of an unconfirmed merge names it, and under FORGE_VERIFIER_MERGE=1 the text is what it was)" \
+      || bad "merge-authority-is-named-on-the-merge" \
+          "a merge made under a board grant must say on the board's own record who granted it and when, without rewording what other programs parse —$vdetail"
   fi
 }
 wants verifier  && run_verifier_group
@@ -21623,6 +22066,398 @@ CRON_STUB
   rm -rf "$root/dormant"
 }
 wants digest    && run_digest_group
+
+# ---------------------------------------------------------------------------
+# watchdog/ — the liveness watchdog (scripts/watchdog.sh) as a program, its installer, and the two preflight checks
+# that came with it.
+#
+# Two things went wrong in November 2026 and nothing reported either: the gateway was down for days (and nothing on the
+# host can report that, FileVault being on), and the kernel's auto-decomposer woke up and turned parked triage cards
+# into dispatched workers (docs/hermes-field-notes.md). Every case here runs the real script against a stubbed
+# launchctl and a stubbed curl, in a temp HERMES_HOME and a temp state root, under a PINNED clock: the output files are
+# touched to fixed times and FORGE_WATCHDOG_NOW is set from their real mtimes, never from the wall clock. Nothing here
+# reaches Telegram, a heartbeat URL, the operator's ~/.hermes or ~/.forge, or a real launchd.
+#
+# WD_SCRIPTS and WD_PREFLIGHT aim the group at a COPY of the scripts, which is how each case was made to fail once
+# against a deliberately broken script without editing a tracked file.
+# ---------------------------------------------------------------------------
+run_watchdog_group() {
+  group watchdog
+  command -v jq >/dev/null 2>&1 || { skip "healthy-pings-the-heartbeat-and-stays-quiet" "jq not on PATH"; return; }
+  local wds="${WD_SCRIPTS:-$REPO_ROOT/scripts}" wdp="${WD_PREFLIGHT:-$REPO_ROOT/scripts/preflight.sh}" root="$TMPROOT/watchdog"
+  local TOK="7000001:TEST-token_ABCdef" HB="https://hc.example.test/ping/00000000-test-heartbeat-secret"
+  local W NOW wdout wdrc WD_X="" WD_BASHFLAGS="" WD_BARE=0
+  mkdir -p "$root"
+
+  _wd_mtime() { local m; m="$(stat -c %Y "$1" 2>/dev/null)" || m=""; case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)";; esac; printf '%s' "$m"; }
+  _wd_n() { local n; n="$(grep -c "^$1\$" "$W/stub/curl.log" 2>/dev/null)"; printf '%s' "${n:-0}"; }
+  # A host: a Hermes home whose cron has run (the digest at 09:00, the ticker at 13:00 on 2026-11-13), the kernel
+  # setting off, a bot token, a heartbeat URL, a gateway that is up and a Telegram that answers. NOW is ten minutes
+  # after the ticker's last output.
+  _wd_world() { # name
+    local h
+    W="$root/$1"; h="$W/hermes"; rm -rf "$W"
+    mkdir -p "$W/home" "$h/cron/output/mw1" "$h/cron/output/dg1" "$W/state" "$W/bin" "$W/stub"
+    printf '{"jobs":[{"id":"zz9","name":"hermes-daily-watch"},{"id":"mw1","name":"forge-merge-watcher"},{"id":"dg1","name":"forge-digest"}]}\n' > "$h/cron/jobs.json"
+    : > "$h/cron/output/mw1/2026-11-13_13-00-00.md"; : > "$h/cron/output/dg1/2026-11-13_09-00-00.md"
+    touch -t 202611131300 "$h/cron/output/mw1/2026-11-13_13-00-00.md"; touch -t 202611130900 "$h/cron/output/dg1/2026-11-13_09-00-00.md"
+    printf 'kanban:\n  dispatch_in_gateway: true\n  auto_decompose: false\n  max_in_progress: 1\n' > "$h/config.yaml"
+    printf 'TELEGRAM_BOT_TOKEN=%s\nTELEGRAM_HOME_CHANNEL=-1001234567\n' "$TOK" > "$h/.env"
+    printf 'FORGE_HEARTBEAT_URL=%s\n' "$HB" > "$W/state/watchdog.env"
+    cat > "$W/bin/launchctl" <<'WD_LAUNCHCTL'
+#!/bin/sh
+# stub: records every call; answers `print` from the mode file
+echo "$*" >> "$WD_STUB_DIR/launchctl.calls"
+case "$1" in
+  print)
+    case "$(cat "$WD_STUB_DIR/launchctl.mode" 2>/dev/null || echo running)" in
+      running) printf 'gui/501/ai.hermes.gateway = {\n\tactive count = 1\n\tstate = running\n}\n';;
+      stopped) printf 'gui/501/ai.hermes.gateway = {\n\tactive count = 0\n\tstate = not running\n}\n';;
+      nostate) printf 'gui/501/ai.hermes.gateway = {\n\tactive count = 0\n}\n';;
+      *) echo 'Could not find service "ai.hermes.gateway" in domain for user gui: 501' >&2; exit 113;;
+    esac;;
+  bootstrap) [ "$(cat "$WD_STUB_DIR/launchctl.bootstrap" 2>/dev/null || echo ok)" = ok ] || { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; };;
+esac
+exit 0
+WD_LAUNCHCTL
+    cat > "$W/bin/curl" <<'WD_CURL'
+#!/bin/sh
+# stub: records argv, environment and stdin of every call apart; tells a Telegram send from a heartbeat by its stdin
+d="$WD_STUB_DIR"
+n=$(cat "$d/count" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$d/count"
+printf '%s\n' "$@" > "$d/call.$n.argv"
+env > "$d/call.$n.env"
+cat > "$d/call.$n.stdin"
+if grep -q 'sendMessage' "$d/call.$n.stdin"; then
+  echo telegram >> "$d/curl.log"
+  case "$(cat "$d/telegram.mode" 2>/dev/null || echo ok)" in
+    ok) printf '{"ok":true,"result":{}}\n200';;
+    401) printf '{"ok":false,"error_code":401}\n401';;
+    *) exit 6;;
+  esac
+else
+  echo heartbeat >> "$d/curl.log"
+  [ "$(cat "$d/heartbeat.mode" 2>/dev/null || echo ok)" = ok ] || exit 22
+fi
+exit 0
+WD_CURL
+    chmod +x "$W/bin/launchctl" "$W/bin/curl"
+    echo running > "$W/stub/launchctl.mode"; echo ok > "$W/stub/telegram.mode"
+    NOW=$(( $(_wd_mtime "$h/cron/output/mw1/2026-11-13_13-00-00.md") + 600 ))
+    WD_X=""; WD_BASHFLAGS=""; WD_BARE=0
+  }
+  _wd_run() { # args for watchdog.sh; WD_X holds extra NAME=value words -> wdout, wdrc (stdout and stderr both kept, appended)
+    local pathv="$PATH"
+    [ "$WD_BARE" = 1 ] && pathv=/usr/bin:/bin
+    if [ "$WD_BARE" = 1 ]; then
+      wdout="$(env -i PATH="$pathv" HOME="$W/home" HERMES_HOME="$W/hermes" FORGE_STATE_ROOT="$W/state" FORGE_WATCHDOG_NOW="$NOW" \
+        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" WD_STUB_DIR="$W/stub" $WD_X \
+        /bin/bash $WD_BASHFLAGS "$wds/watchdog.sh" "$@" 2>>"$W/stderr")"; wdrc=$?
+    else
+      wdout="$(env -u FORGE_WATCHDOG_TICK_MAX_MIN -u FORGE_WATCHDOG_REMIND_HOURS -u FORGE_WATCHDOG_ROOT -u HERMES_KANBAN_BOARD \
+        HOME="$W/home" HERMES_HOME="$W/hermes" FORGE_STATE_ROOT="$W/state" FORGE_WATCHDOG_NOW="$NOW" \
+        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" WD_STUB_DIR="$W/stub" $WD_X \
+        /bin/bash $WD_BASHFLAGS "$wds/watchdog.sh" "$@" 2>>"$W/stderr")"; wdrc=$?
+    fi
+    printf '%s\n' "$wdout" >> "$W/stdout.txt"
+  }
+  _wd_line() { printf '%s\n' "$wdout" | grep -E "^$1 +$2 " | head -n 1; }
+  _wd_state() { jq -r '[.observed, .alerted, (.alerted_at | tostring)] | join(" ")' "$W/state/watchdog/state.json" 2>/dev/null; }
+  _wd_leaks() { # needle -> the places it appears that it must not
+    local needle="$1" f out=""
+    for f in "$W"/stub/call.*.argv "$W"/stub/call.*.env "$W/stub/launchctl.calls" "$W/state/watchdog/state.json" "$W/stdout.txt" "$W/stderr"; do
+      [ -f "$f" ] && grep -qF -- "$needle" "$f" && out="$out ${f##*/}"
+    done
+    printf '%s' "$out"
+  }
+  local d
+
+  # --- healthy: exit 0, one heartbeat, no alert -----------------------------------------------------------------------
+  d=""; _wd_world healthy
+  _wd_run
+  [ "$wdrc" = 0 ] || d="$d exit=$wdrc"
+  [ "$(printf '%s\n' "$wdout" | grep -c '^OK ')" = 4 ] || d="$d not-four-OK-lines"
+  ! printf '%s\n' "$wdout" | grep -q '^FAIL' || d="$d a-FAIL-line"
+  [ "$(_wd_n heartbeat)" = 1 ] || d="$d heartbeats=$(_wd_n heartbeat)"
+  [ "$(_wd_n telegram)" = 0 ] || d="$d alerts=$(_wd_n telegram)"
+  [ "$(_wd_state | cut -d' ' -f1,2)" = "healthy healthy" ] || d="$d state=$(_wd_state)"
+  # The same pass under the PATH launchd gives a LaunchAgent (jq is found in the Homebrew dirs the script appends).
+  if [ -x /usr/bin/jq ] || [ -x /bin/jq ] || [ -x /opt/homebrew/bin/jq ] || [ -x /usr/local/bin/jq ]; then
+    WD_BARE=1; _wd_run; WD_BARE=0
+    { [ "$wdrc" = 0 ] && [ "$(_wd_n heartbeat)" = 2 ] && [ "$(_wd_n telegram)" = 0 ]; } || d="$d bare-path(exit=$wdrc heartbeats=$(_wd_n heartbeat))"
+  fi
+  [ -z "$d" ] && ok "healthy-pings-the-heartbeat-and-stays-quiet (four OK lines, exit 0, one heartbeat per healthy pass including under launchd's bare PATH, no alert, state healthy)" \
+    || bad "healthy-pings-the-heartbeat-and-stays-quiet" "a healthy host exits 0, pings once and says nothing —$d (output: $(printf '%s' "$wdout" | head -12 | tr '\n' '|' | cut -c1-500))"
+
+  # --- a dead gateway: one alert, no repeat, a reminder after the interval, one recovery, no ping while down ----------
+  d=""; _wd_world lifecycle
+  local t0="$NOW"
+  WD_X="FORGE_WATCHDOG_TICK_MAX_MIN=2000"
+  echo down > "$W/stub/launchctl.mode"
+  _wd_run
+  [ "$wdrc" = 1 ] || d="$d first-exit=$wdrc"
+  [ -n "$(_wd_line FAIL gateway)" ] || d="$d no-FAIL-gateway-line"
+  [ "$(_wd_n telegram)" = 1 ] || d="$d first-pass-alerts=$(_wd_n telegram)"
+  grep -q 'UNHEALTHY' "$W"/stub/call.*.stdin 2>/dev/null && grep -q 'gateway' "$W"/stub/call.*.stdin 2>/dev/null || d="$d alert-does-not-name-the-gateway"
+  [ "$(_wd_state | cut -d' ' -f1,2)" = "unhealthy unhealthy" ] || d="$d state-after-first=$(_wd_state)"
+  NOW=$((t0 + 60)); _wd_run
+  [ "$wdrc" = 1 ] && [ "$(_wd_n telegram)" = 1 ] || d="$d immediate-second-run(exit=$wdrc alerts=$(_wd_n telegram))"
+  NOW=$((t0 + 6 * 3600 - 60)); _wd_run
+  [ "$(_wd_n telegram)" = 1 ] || d="$d one-minute-before-the-interval(alerts=$(_wd_n telegram))"
+  NOW=$((t0 + 6 * 3600)); _wd_run
+  [ "$(_wd_n telegram)" = 2 ] || d="$d at-the-interval(alerts=$(_wd_n telegram))"
+  grep -q 'still UNHEALTHY' "$W"/stub/call.2.stdin 2>/dev/null || d="$d reminder-is-not-worded-as-one"
+  NOW=$((t0 + 6 * 3600 + 60)); _wd_run
+  [ "$(_wd_n telegram)" = 2 ] || d="$d after-the-reminder(alerts=$(_wd_n telegram))"
+  [ "$(_wd_n heartbeat)" = 0 ] || d="$d heartbeat-while-unhealthy($(_wd_n heartbeat))"
+  echo running > "$W/stub/launchctl.mode"
+  NOW=$((t0 + 6 * 3600 + 120)); _wd_run
+  [ "$wdrc" = 0 ] || d="$d recovery-exit=$wdrc"
+  [ "$(_wd_n telegram)" = 3 ] || d="$d recovery-alerts=$(_wd_n telegram)"
+  grep -q 'healthy again' "$W"/stub/call.3.stdin 2>/dev/null || d="$d recovery-is-not-worded-as-one"
+  [ "$(_wd_n heartbeat)" = 1 ] || d="$d heartbeat-at-recovery($(_wd_n heartbeat))"
+  NOW=$((t0 + 6 * 3600 + 180)); _wd_run
+  [ "$wdrc" = 0 ] && [ "$(_wd_n telegram)" = 3 ] && [ "$(_wd_n heartbeat)" = 2 ] || d="$d after-recovery(alerts=$(_wd_n telegram) heartbeats=$(_wd_n heartbeat))"
+  [ -z "$d" ] && ok "gateway-down-alerts-once-and-recovers (exit 1 and one alert; the next run, and one a minute short of 6h, send nothing; the run at 6h sends one reminder; recovery sends exactly one message; no heartbeat while down, one per healthy pass after)" \
+    || bad "gateway-down-alerts-once-and-recovers" "alerts follow state changes, not passes —$d"
+
+  # --- a stopped or stateless gateway is not a running one -------------------------------------------------------------
+  d=""; _wd_world gwstate
+  echo stopped > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && _wd_line FAIL gateway | grep -q 'not running'; } || d="$d loaded-not-running-was-not-a-fail(exit=$wdrc)"
+  echo nostate > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && _wd_line FAIL gateway | grep -q 'no state'; } || d="$d loaded-with-no-state-was-not-a-fail(exit=$wdrc)"
+  echo down > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && _wd_line FAIL gateway | grep -q 'not loaded'; } || d="$d not-loaded-was-not-a-fail(exit=$wdrc)"
+
+  # --- a stale ticker and a stale digest each fail on their own line ---------------------------------------------------
+  _wd_world stale
+  local tick_m; tick_m="$(_wd_mtime "$W/hermes/cron/output/mw1/2026-11-13_13-00-00.md")"
+  NOW=$((tick_m + 29 * 60)); _wd_run --no-alert
+  { [ "$wdrc" = 0 ] && [ -n "$(_wd_line OK ticker)" ]; } || d="$d ticker-29m-old-failed(exit=$wdrc)"
+  NOW=$((tick_m + 31 * 60)); _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && [ -n "$(_wd_line FAIL ticker)" ] && [ -n "$(_wd_line OK digest)" ] && [ -n "$(_wd_line OK gateway)" ] \
+    && [ "$(printf '%s\n' "$wdout" | grep -c '^FAIL')" = 1 ]; } || d="$d stale-ticker(exit=$wdrc: $(printf '%s' "$wdout" | grep '^FAIL' | tr '\n' '|' | cut -c1-200))"
+  WD_X="FORGE_WATCHDOG_TICK_MAX_MIN=60"; NOW=$((tick_m + 31 * 60)); _wd_run --no-alert
+  [ -n "$(_wd_line OK ticker)" ] || d="$d the-ticker-limit-is-not-read-from-FORGE_WATCHDOG_TICK_MAX_MIN"
+  WD_X=""
+  touch -t 202611120700 "$W/hermes/cron/output/dg1/2026-11-13_09-00-00.md"
+  NOW=$((tick_m + 600)); _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && [ -n "$(_wd_line FAIL digest)" ] && [ -n "$(_wd_line OK ticker)" ] && [ "$(printf '%s\n' "$wdout" | grep -c '^FAIL')" = 1 ]; } \
+    || d="$d stale-digest(exit=$wdrc: $(printf '%s' "$wdout" | grep '^FAIL' | tr '\n' '|' | cut -c1-200))"
+  touch -t 202611121400 "$W/hermes/cron/output/dg1/2026-11-13_09-00-00.md"
+  _wd_run --no-alert
+  [ -n "$(_wd_line OK digest)" ] || d="$d a-digest-23h-old-failed"
+  # a job the cron does not have, and one that never wrote anything, are failures with their own words
+  jq 'del(.jobs[] | select(.name == "forge-digest"))' "$W/hermes/cron/jobs.json" > "$W/jobs.tmp" && mv "$W/jobs.tmp" "$W/hermes/cron/jobs.json"
+  _wd_run --no-alert
+  _wd_line FAIL digest | grep -q 'no cron job named forge-digest' || d="$d a-missing-job-was-not-named"
+  rm -f "$W/hermes/cron/output/mw1/"*
+  _wd_run --no-alert
+  _wd_line FAIL ticker | grep -q 'never written' || d="$d an-empty-output-directory-was-not-named"
+  [ -z "$d" ] && ok "gateway-states-and-stale-cron-output-fail-on-their-own-lines (loaded-not-running, stateless and not-loaded gateways; a ticker 31m old fails and 29m passes, FORGE_WATCHDOG_TICK_MAX_MIN moves the limit; a digest 30h old fails and 23h passes; a missing job and an empty output directory are named)" \
+    || bad "gateway-states-and-stale-cron-output-fail-on-their-own-lines" "each failing check is its own FAIL line and exit 1 —$d"
+
+  # --- secrets: stdin only --------------------------------------------------------------------------------------------
+  d=""; _wd_world secrets
+  echo down > "$W/stub/launchctl.mode"
+  WD_BASHFLAGS="-x"; _wd_run; WD_BASHFLAGS=""
+  echo running > "$W/stub/launchctl.mode"
+  NOW=$((NOW + 60)); WD_BASHFLAGS="-x"; _wd_run; WD_BASHFLAGS=""
+  { [ "$(_wd_n telegram)" = 2 ] && [ "$(_wd_n heartbeat)" = 1 ]; } || d="$d the-calls-did-not-happen(alerts=$(_wd_n telegram) heartbeats=$(_wd_n heartbeat))"
+  grep -qF -- "$TOK" "$W"/stub/call.1.stdin 2>/dev/null || d="$d token-never-reached-curl-on-stdin"
+  grep -qF -- "$HB" "$W"/stub/call.3.stdin 2>/dev/null || d="$d heartbeat-url-never-reached-curl-on-stdin"
+  [ -z "$(_wd_leaks "$TOK")" ] || d="$d token-leaked-into:$(_wd_leaks "$TOK")"
+  [ -z "$(_wd_leaks "${TOK#*:}")" ] || d="$d token-secret-half-leaked-into:$(_wd_leaks "${TOK#*:}")"
+  [ -z "$(_wd_leaks "$HB")" ] || d="$d heartbeat-url-leaked-into:$(_wd_leaks "$HB")"
+  [ -z "$(_wd_leaks "${HB##*/}")" ] || d="$d heartbeat-secret-leaked-into:$(_wd_leaks "${HB##*/}")"
+  [ "$(cat "$W"/stub/call.1.argv)" = "$(printf -- '-q\n--config\n-')" ] || d="$d curl-argv-is-not-just--q---config--($(tr '\n' ' ' < "$W"/stub/call.1.argv))"
+  # --dry-run prints the request with the token redacted and sends, pings and writes nothing; --no-alert likewise
+  _wd_world dry
+  echo down > "$W/stub/launchctl.mode"
+  _wd_run --dry-run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'bot<redacted>/sendMessage'; } || d="$d dry-run-did-not-print-a-redacted-request(exit=$wdrc)"
+  { [ ! -e "$W/stub/curl.log" ] && [ ! -e "$W/state/watchdog" ] && [ -z "$(_wd_leaks "$TOK")" ]; } || d="$d dry-run-sent-wrote-or-leaked"
+  _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && [ ! -e "$W/stub/curl.log" ] && [ ! -e "$W/state/watchdog" ]; } || d="$d no-alert-sent-or-wrote(exit=$wdrc)"
+  echo running > "$W/stub/launchctl.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 0 ] && [ ! -e "$W/stub/curl.log" ] && printf '%s\n' "$wdout" | grep -q '^heartbeat: skipped'; } || d="$d no-alert-pinged-the-heartbeat"
+  [ -z "$d" ] && ok "secrets-reach-curl-on-stdin-only (the token and the heartbeat URL are on curl's stdin and in no argv, environment, output, stderr, bash -x trace, state file or launchctl call; curl's argv is only -q --config -; --dry-run redacts, --no-alert and --dry-run send, ping and write nothing)" \
+    || bad "secrets-reach-curl-on-stdin-only" "a secret must be on curl's stdin and nowhere else —$d"
+
+  # --- a missing token or chat id is said, health still decides, nothing crashes; a failed send stays owed -------------
+  d=""; _wd_world notoken
+  grep -v '^TELEGRAM_BOT_TOKEN=' "$W/hermes/.env" > "$W/env.tmp"; mv "$W/env.tmp" "$W/hermes/.env"
+  echo down > "$W/stub/launchctl.mode"; : > "$W/stderr"
+  _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'TELEGRAM_BOT_TOKEN is not set'; } || d="$d no-token-unhealthy(exit=$wdrc)"
+  printf '%s\n' "$wdout" | grep -q 'alert: alert NOT sent' || d="$d no-token-claimed-a-send"
+  { [ ! -e "$W/stub/curl.log" ] && [ ! -s "$W/stderr" ]; } || d="$d no-token-called-curl-or-wrote-stderr"
+  [ "$(_wd_state | cut -d' ' -f1,2)" = "unhealthy healthy" ] || d="$d the-owed-alert-was-recorded-as-sent($(_wd_state))"
+  echo running > "$W/stub/launchctl.mode"; NOW=$((NOW + 60)); _wd_run
+  { [ "$wdrc" = 0 ] && [ "$(_wd_n telegram)" = 0 ] && [ "$(_wd_n heartbeat)" = 1 ]; } || d="$d no-token-healthy(exit=$wdrc)"
+  printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TOK" >> "$W/hermes/.env"
+  echo down > "$W/stub/launchctl.mode"; NOW=$((NOW + 60)); _wd_run
+  { [ "$wdrc" = 1 ] && [ "$(_wd_n telegram)" = 1 ]; } || d="$d the-owed-alert-was-not-sent-once-the-token-came(alerts=$(_wd_n telegram))"
+  _wd_world nochat
+  grep -v '^TELEGRAM_HOME_CHANNEL=' "$W/hermes/.env" > "$W/env.tmp"; mv "$W/env.tmp" "$W/hermes/.env"
+  echo down > "$W/stub/launchctl.mode"; _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'TELEGRAM_HOME_CHANNEL is not set' && [ ! -e "$W/stub/curl.log" ]; } || d="$d no-chat-id(exit=$wdrc)"
+  _wd_world noenv
+  rm -f "$W/hermes/.env"; echo down > "$W/stub/launchctl.mode"; _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'is not readable' && [ ! -e "$W/stub/curl.log" ]; } || d="$d no-env-file(exit=$wdrc)"
+  _wd_world refused
+  echo down > "$W/stub/launchctl.mode"; echo 401 > "$W/stub/telegram.mode"; _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'NOT sent: HTTP 401' && [ "$(_wd_state | cut -d' ' -f2)" = healthy ]; } || d="$d a-401-was-taken-for-a-send(exit=$wdrc state=$(_wd_state))"
+  echo ok > "$W/stub/telegram.mode"; NOW=$((NOW + 60)); _wd_run
+  { [ "$(_wd_n telegram)" = 2 ] && printf '%s\n' "$wdout" | grep -q 'alert: alert sent'; } || d="$d the-refused-alert-was-not-retried(alerts=$(_wd_n telegram))"
+  NOW=$((NOW + 60)); _wd_run
+  [ "$(_wd_n telegram)" = 2 ] || d="$d the-delivered-alert-was-sent-again"
+  [ -z "$d" ] && ok "a-missing-token-is-said-and-health-still-decides (no token, no chat id and no .env each print their reason, make no curl call, write nothing to stderr and exit by health; the owed alert goes out once the token exists; a refused send (HTTP 401) is not recorded as delivered and is retried, then not repeated)" \
+    || bad "a-missing-token-is-said-and-health-still-decides" "a watchdog that cannot alert still reports and still exits by health —$d"
+
+  # --- the kernel setting, read from the file ---------------------------------------------------------------------------
+  d=""; _wd_world cfg
+  local row label text want
+  while IFS='|' read -r label text want; do
+    [ -n "$label" ] || continue
+    printf '%b' "$text" > "$W/hermes/config.yaml"
+    _wd_run --no-alert
+    if [ "$want" = OK ]; then
+      [ -n "$(_wd_line OK auto_decompose)" ] || d="$d $label(wanted-OK)"
+    else
+      [ -n "$(_wd_line FAIL auto_decompose)" ] || d="$d $label(wanted-FAIL)"
+    fi
+  done <<'WD_CFGS'
+false|kanban:\n  auto_decompose: false\n|OK
+false-with-a-comment|kanban:\n  auto_decompose: false   # stop the fan-out\n|OK
+False-capitalised|kanban:\n  auto_decompose: False\n|OK
+off-reads-as-false|kanban:\n  auto_decompose: off\n|OK
+true|kanban:\n  auto_decompose: true\n|FAIL
+key-absent-so-the-kernel-default-true|kanban:\n  dispatch_in_gateway: true\n  max_in_progress: 1\n|FAIL
+no-kanban-block|terminal:\n  timeout: 1800\n|FAIL
+quoted-false-is-a-string-the-kernel-reads-as-true|kanban:\n  auto_decompose: "false"\n|FAIL
+single-quoted-false|kanban:\n  auto_decompose: 'false'\n|FAIL
+flow-style-cannot-be-read|kanban: {auto_decompose: false}\n|FAIL
+another-block-has-the-key-and-kanban-does-not|agent:\n  auto_decompose: false\nkanban:\n  max_in_progress: 1\n|FAIL
+a-later-block-has-it-true-and-kanban-has-it-false|kanban:\n  max_in_progress: 1\n  auto_decompose: false\nprompt_caching:\n  auto_decompose: true\n|OK
+a-nested-key-is-not-the-setting|kanban:\n  dispatch:\n    auto_decompose: false\n|FAIL
+a-key-that-only-starts-with-the-name|kanban:\n  auto_decompose_per_tick: false\n|FAIL
+WD_CFGS
+  rm -f "$W/hermes/config.yaml"; _wd_run --no-alert
+  [ -n "$(_wd_line FAIL auto_decompose)" ] || d="$d a-missing-config-passed"
+  [ -z "$d" ] && ok "auto-decompose-must-be-a-bare-false (false, False, off and a commented false pass; true, an absent key, no kanban block, a quoted \"false\", flow style, another block's key, a nested key, a key that only shares a prefix and a missing file each fail; a later block's value is not read)" \
+    || bad "auto-decompose-must-be-a-bare-false" "only an unquoted false in the kanban block passes —$d"
+
+  # --- preflight: auto_decompose FAILs unless false; the watchdog's absence WARNs -----------------------------------------
+  local pf_ad pf_wl pf_loop pf_n=0 pf_row
+  pf_ad="$(awk '/^pf_check_auto_decompose\(\) \{/{f=1} f{print} f && /^}$/{exit}' "$wdp")"
+  pf_wl="$(awk '/^pf_check_watchdog_loaded\(\) \{/{f=1} f{print} f && /^}$/{exit}' "$wdp")"
+  pf_loop="$(sed -n '/^for _lscript in /,/; do$/p' "$wdp")"
+  d=""
+  if [ -z "$pf_ad" ] || [ -z "$pf_wl" ] || [ -z "$pf_loop" ]; then
+    bad "preflight-judges-auto-decompose-and-the-watchdog" "could not cut pf_check_auto_decompose (${#pf_ad} bytes), pf_check_watchdog_loaded (${#pf_wl}) or the script loop (${#pf_loop}) out of $wdp: the check went blind (F65)"
+  else
+    _pf_ad() { # hermes-json-answer hcfg-answer have-hermes -> what the check prints
+      ( pass() { echo "PASS $*"; }; fail() { echo "FAIL $*"; }; say() { echo "say $*"; }
+        HAVE_HERMES="$3"; PF_J="$1"; PF_H="$2"
+        hermes() { printf '%s\n' "$PF_J"; }
+        hcfg() { printf '%s' "$PF_H"; }
+        eval "$pf_ad"; pf_check_auto_decompose ) 2>/dev/null
+    }
+    pf_row="$(_pf_ad false x 1)";               case "$pf_row" in "PASS kanban.auto_decompose is false"*) ;; *) d="$d false-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_ad true x 1)";                case "$pf_row" in "FAIL kanban.auto_decompose is not false: it reads true."*"hermes config set kanban.auto_decompose false"*) ;; *) d="$d true-did-not-fail-with-the-fix($(printf '%s' "$pf_row" | tr '\n' '|' | cut -c1-200))";; esac
+    pf_row="$(_pf_ad '"false"' x 1)";           case "$pf_row" in FAIL*) ;; *) d="$d a-quoted-false-passed($pf_row)";; esac
+    pf_row="$(_pf_ad null x 1)";                case "$pf_row" in FAIL*) ;; *) d="$d null-passed($pf_row)";; esac
+    pf_row="$(_pf_ad '' true 1)";               case "$pf_row" in FAIL*) ;; *) d="$d unreadable-cli-with-true-in-the-file-passed($pf_row)";; esac
+    pf_row="$(_pf_ad '' '' 0)";                 case "$pf_row" in "FAIL kanban.auto_decompose is not false: it reads (not set; the kernel default is true)."*) ;; *) d="$d an-absent-key-did-not-fail($pf_row)";; esac
+    pf_row="$(_pf_ad '' false 0)";              case "$pf_row" in "PASS kanban.auto_decompose is false"*) ;; *) d="$d false-from-the-file-without-hermes-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_ad '' '"false"' 0)";          case "$pf_row" in FAIL*) ;; *) d="$d a-quoted-false-from-the-file-passed($pf_row)";; esac
+    # the same check against the INSTALLED Hermes, in a throwaway home: absent reads true, false reads false, a quoted "false" reads quoted
+    if command -v hermes >/dev/null 2>&1; then
+      local pfh="$root/pf-real" pf_cfg
+      for pf_cfg in 'kanban:\n  auto_decompose: false\n|PASS' 'kanban:\n  auto_decompose: "false"\n|FAIL' 'kanban:\n  max_in_progress: 1\n|FAIL' 'kanban:\n  auto_decompose: true\n|FAIL'; do
+        rm -rf "$pfh"; mkdir -p "$pfh"; printf '%b' "${pf_cfg%|*}" > "$pfh/config.yaml"
+        pf_row="$( ( pass() { echo "PASS $*"; }; fail() { echo "FAIL $*"; }; say() { :; }
+                     HAVE_HERMES=1; export HERMES_HOME="$pfh"; hcfg() { :; }
+                     eval "$pf_ad"; pf_check_auto_decompose ) 2>/dev/null )"
+        case "$pf_row" in "${pf_cfg##*|} "*) ;; *) d="$d real-hermes(${pf_cfg%|*}: $pf_row)";; esac
+        pf_n=$((pf_n+1))
+      done
+    fi
+    _pf_wl() { # exit status of launchctl print -> what the check prints
+      ( pass() { echo "PASS $*"; }; warn() { echo "WARN $*"; }; say() { echo "say $*"; }
+        PF_RC="$1"; launchctl() { return "$PF_RC"; }
+        eval "$pf_wl"; pf_check_watchdog_loaded ) 2>/dev/null
+    }
+    pf_row="$(_pf_wl 0)"; case "$pf_row" in "PASS the liveness watchdog LaunchAgent ai.forge.watchdog is loaded"*) ;; *) d="$d a-loaded-watchdog-did-not-pass($pf_row)";; esac
+    pf_row="$(_pf_wl 113)"; case "$pf_row" in "WARN the liveness watchdog LaunchAgent ai.forge.watchdog is not loaded"*"watchdog-install.sh"*) ;; *) d="$d an-unloaded-watchdog-did-not-warn($(printf '%s' "$pf_row" | tr '\n' '|' | cut -c1-200))";; esac
+    { printf '%s' "$pf_loop" | grep -Fq ' watchdog.sh' && printf '%s' "$pf_loop" | grep -Fq ' watchdog-install.sh'; } || d="$d the-script-loop-does-not-resolve-both-scripts-through-the-runtime"
+    local pf_real="the installed CLI rows were skipped (no hermes here)"
+    [ "$pf_n" = 0 ] || pf_real="the installed Hermes agrees on $pf_n throwaway configs"
+    local pf_sec4; pf_sec4="$(sed -n '/^sect "4\. /,/^sect "4b\. /p' "$wdp")"
+    printf '%s' "$pf_sec4" | grep -q '^pf_check_auto_decompose$' || d="$d section-4-never-calls-the-auto-decompose-check"
+    local pf_sec7; pf_sec7="$(sed -n '/^sect "7\. /,/^sect "8\. /p' "$wdp")"
+    printf '%s' "$pf_sec7" | grep -q '^pf_check_watchdog_loaded$' || d="$d section-7-never-calls-the-watchdog-check"
+    [ -z "$d" ] && ok "preflight-judges-auto-decompose-and-the-watchdog (cut out of preflight.sh: false passes; true, an absent key, null, a quoted \"false\" and an unreadable CLI each FAIL with the fix command; $pf_real; a loaded watchdog passes, an unloaded one WARNs with the installer; both scripts are resolved through ~/.forge/repo; sections 4 and 7 call the checks)" \
+      || bad "preflight-judges-auto-decompose-and-the-watchdog" "preflight FAILs a kernel that decomposes triage cards on its own and WARNs on a missing watchdog —$d"
+  fi
+
+  # --- the installer: --print touches nothing; install and uninstall drive launchctl ------------------------------------
+  d=""; _wd_world install
+  local H="$W/home" ipl lc="$W/stub/launchctl.calls" uid; uid="$(id -u)"
+  _wd_inst() { # args -> wdout, wdrc
+    wdout="$(env -u FORGE_STATE_ROOT -u FORGE_WATCHDOG_ROOT HOME="$H" FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" WD_STUB_DIR="$W/stub" /bin/bash "$wds/watchdog-install.sh" "$@" 2>&1)"; wdrc=$?
+  }
+  _wd_inst --print
+  printf '%s\n' "$wdout" > "$W/plist.xml"
+  [ "$wdrc" = 0 ] || d="$d print-exit=$wdrc"
+  [ -z "$(ls -A "$H")" ] || d="$d print-created:$(ls -A "$H" | tr '\n' ' ')"
+  [ ! -e "$lc" ] || d="$d print-called-launchctl"
+  if command -v plutil >/dev/null 2>&1; then plutil -lint "$W/plist.xml" >/dev/null 2>&1 || d="$d plutil-lint-failed"; fi
+  ipl="$(python3 -I - "$W/plist.xml" "$H" <<'WD_PLIST' 2>&1
+import plistlib, sys
+d = plistlib.load(open(sys.argv[1], "rb")); home = sys.argv[2]
+want = {"Label": "ai.forge.watchdog", "StartInterval": 600, "RunAtLoad": True,
+        "ProgramArguments": ["/bin/bash", home + "/.forge/repo/scripts/watchdog.sh"]}
+bad = [k for k, v in want.items() if d.get(k) != v]
+logs = {d.get("StandardOutPath"), d.get("StandardErrorPath")}
+if logs != {home + "/.forge/watchdog/watchdog.log"}: bad.append("logs=%r" % sorted(map(str, logs)))
+print(" ".join(bad))
+WD_PLIST
+)"
+  [ -z "$ipl" ] || d="$d plist-wrong:$ipl"
+  _wd_inst
+  { [ "$wdrc" = 2 ] && printf '%s\n' "$wdout" | grep -q 'does not exist' && [ -z "$(ls -A "$H")" ] && [ ! -e "$lc" ]; } || d="$d install-without-the-runtime-script(exit=$wdrc)"
+  mkdir -p "$H/.forge/repo/scripts"; : > "$H/.forge/repo/scripts/watchdog.sh"
+  _wd_inst
+  [ "$wdrc" = 0 ] || d="$d install-exit=$wdrc($(printf '%s' "$wdout" | head -2 | tr '\n' '|'))"
+  [ -f "$H/Library/LaunchAgents/ai.forge.watchdog.plist" ] && [ -d "$H/.forge/watchdog" ] || d="$d install-did-not-write-the-plist-and-the-log-directory"
+  [ "$(sed -n 1p "$lc")" = "bootout gui/$uid/ai.forge.watchdog" ] && [ "$(sed -n 2p "$lc")" = "bootstrap gui/$uid $H/Library/LaunchAgents/ai.forge.watchdog.plist" ] \
+    || d="$d install-launchctl-calls($(tr '\n' '|' < "$lc"))"
+  _wd_inst
+  [ "$(grep -c '^bootout ' "$lc")" = 2 ] && [ "$(grep -c '^bootstrap ' "$lc")" = 2 ] || d="$d a-reinstall-did-not-unload-first"
+  _wd_inst --uninstall
+  { [ "$wdrc" = 0 ] && [ ! -e "$H/Library/LaunchAgents/ai.forge.watchdog.plist" ] && [ -d "$H/.forge/watchdog" ] && [ "$(tail -n 1 "$lc")" = "bootout gui/$uid/ai.forge.watchdog" ]; } || d="$d uninstall(exit=$wdrc)"
+  echo bad > "$W/stub/launchctl.bootstrap"; _wd_inst
+  [ "$wdrc" = 1 ] || d="$d a-refused-bootstrap-was-not-exit-1($wdrc)"
+  [ -z "$d" ] && ok "install-prints-the-runtime-plist-and-touches-nothing (--print: a plist naming ai.forge.watchdog, StartInterval 600, RunAtLoad and /bin/bash <home>/.forge/repo/scripts/watchdog.sh with its log under the watchdog root, creating nothing and calling no launchctl; install refuses without the runtime script, then writes the plist and the log directory and calls bootout then bootstrap, again on a reinstall; --uninstall unloads, removes the plist and keeps the state; a refused bootstrap is exit 1)" \
+    || bad "install-prints-the-runtime-plist-and-touches-nothing" "the installer must render the runtime path form and only act when asked —$d"
+
+  # --- git: both scripts are executable in the index and the new function sits beside its siblings ----------------------
+  d=""
+  local s
+  for s in watchdog.sh watchdog-install.sh; do
+    case "$(git -C "$REPO_ROOT" ls-files -s "scripts/$s" 2>/dev/null | cut -c1-6)" in 100755) ;; "") ;; *) d="$d $s-not-100755-in-git";; esac
+    [ -x "$wds/$s" ] || d="$d $s-not-executable"
+  done
+  { [ "$(env -u FORGE_WATCHDOG_ROOT FORGE_STATE_ROOT=/x bash -c '. "$1"; forge_watchdog_root' _ "$wds/forge-state.sh")" = /x/watchdog ] \
+    && [ "$(env -u FORGE_WATCHDOG_ROOT -u FORGE_STATE_ROOT HOME=/h bash -c '. "$1"; forge_watchdog_root' _ "$wds/forge-state.sh")" = /h/.forge/watchdog ]; } \
+    || d="$d forge_watchdog_root-is-not-state-root-slash-watchdog"
+  [ -z "$d" ] && ok "watchdog-scripts-are-executable-and-share-the-state-root (100755 in git; forge_watchdog_root is <state root>/watchdog, \$HOME/.forge/watchdog by default)" \
+    || bad "watchdog-scripts-are-executable-and-share-the-state-root" "—$d"
+}
+wants watchdog  && run_watchdog_group
 
 # ---------------------------------------------------------------------------
 # manifest/ — `--list` is a hand-maintained catalogue, and nothing compared it

@@ -1,7 +1,7 @@
 # forge repo-level commands
 .PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check plan-check commission
 
-verify:                        ## execute this repo's own claims; SUITES="cli config ... bootstrap sync ... probe checkpoint overseer triage gateway gate docs digest quota manifest" narrows (scripts/verify.sh --help)
+verify:                        ## execute this repo's own claims; SUITES="cli config ... bootstrap sync ... probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest" narrows (scripts/verify.sh --help)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
 
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
@@ -123,13 +123,14 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/metadata-live.sh scripts/commission.sh scripts/model-pins.sh \
 	  scripts/set-model.sh scripts/acceptance-freeze.sh scripts/verdict.sh \
 	  scripts/prejudge-review.sh scripts/merge-check.sh \
-	  scripts/merge-watcher.sh scripts/bounce.sh \
+	  scripts/merge-watcher.sh scripts/bounce.sh scripts/merge-authority.sh \
 	  scripts/decision-message.sh scripts/digest.sh scripts/plan-check.sh \
 	  scripts/probe-run.sh scripts/checkpoint.sh scripts/forge-state.sh scripts/driver-call-hook.sh \
 	  scripts/overseer-guard.sh scripts/triage.sh scripts/amend-contract.sh \
 	  scripts/claude-token.sh \
 	  scripts/gate-reply.sh scripts/gate-accept.sh scripts/gate-redirect.sh scripts/gate-park.sh \
 	  scripts/checkpoint-cron.sh scripts/checkpoint-arm.sh \
+	  scripts/watchdog.sh scripts/watchdog-install.sh \
   scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which

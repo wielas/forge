@@ -115,8 +115,13 @@
 #   and hold exactly one running run. HERMES_KANBAN_BOARD names the board.
 #
 # Env:
-#   FORGE_VERIFIER_MERGE=1          merge mode. Absent = recommend-only, which
-#                                   is the default and fails closed.
+#   FORGE_VERIFIER_MERGE=1          merge mode, for EVERY board on this host. Absent =
+#                                   recommend-only, which is the default and fails closed.
+#   <state>/merge-authority/<board>.json
+#                                   merge mode for ONE board, by an explicit grant:
+#                                   `~/.forge/repo/scripts/merge-authority.sh grant <board> --by <you>`.
+#                                   Revoked by `... revoke <board>`. Merges only a chunk the
+#                                   lane (forge-codex-lane) built; any other is held.
 #   FORGE_VERIFIER_BOUNCE_BUDGET    rounds before the exception          [2]
 #   FORGE_MERGE_CHECK_BIN           stand in for scripts/merge-check.sh
 #   FORGE_MUTATION_PROBE_BOUNCE=1   the mutation probe BOUNCES. Absent = it
@@ -649,7 +654,56 @@ hold_call() {  # $1=reason, already carrying its registry class
 # back from GitHub before the card is completed. A `gh pr merge` that exits 0
 # without merging (a race, an unmergeable state) must not complete a card whose
 # work is not on `main`.
-merge_mode() { [ "${FORGE_VERIFIER_MERGE:-}" = 1 ]; }
+#
+# TWO SWITCHES, either of which opens it:
+#   * `FORGE_VERIFIER_MERGE=1`: the host-wide one, exactly as above. Nothing about a board or a chunk is asked.
+#   * A BOARD GRANT: <state>/merge-authority/<board>.json, written by `scripts/merge-authority.sh grant <board>
+#     --by <actor>` and read by forge_merge_authority_read (forge-state.sh), which fails closed: no board, no
+#     file, an unreadable or malformed one, one whose inner `board` is not byte-identical to $BOARD (the host
+#     volume is case-insensitive, so the file name proves nothing) or one that names nobody are all "no grant".
+#     `FORGE_VERIFIER_MERGE=0`, or any other value, neither disables a grant nor enables merging on its own.
+#
+# A GRANT MERGES ONLY A CHUNK THE LANE BUILT. This is an ALLOWLIST: under a grant the recorded implementer, the one
+# the kernel stored on the card's last `review_requested` event (what bounce.sh returns the card to), must be
+# exactly the lane profile `forge-codex-lane`. Anything else takes the recommend-only hold, and the hold says why:
+# the non-spawnable sentinel `forge-operator-handoff` (the literal, whatever FORGE_HANDOFF_SENTINEL says) and
+# `claude-interactive` are a person's chunk; an empty or unreadable implementer cannot be shown to be nobody's;
+# any other string (a card reassigned to another profile, a lookalike) is simply not the lane. THE ENV SWITCH IS NOT
+# GIVEN THIS RULE (it is the unchanged host-wide switch: nothing in the approve branch asked who built the chunk
+# before this), so a person's chunk still merges under FORGE_VERIFIER_MERGE=1.
+#
+# The decision is made HERE, at the one place an approval is acted on, not at the start of the run, so a revoke
+# made during a long review still wins. Called once, from the approve branch, in the shell that reads the
+# globals it sets:
+#   MERGE_AUTHORITY_CLAUSE  non-empty only for a merge made under a grant: it is said on the merge's own record
+#   MERGE_HOLD_HEADLINE / MERGE_HOLD_MEANS  non-empty only when a grant exists and this chunk is held anyway
+MERGE_AUTHORITY_CLAUSE=""; MERGE_HOLD_HEADLINE=""; MERGE_HOLD_MEANS=""
+merge_mode() {
+  # A plain assignment, never an environment override: who may be merged under a grant is not configuration.
+  local implementer lane=forge-codex-lane
+  MERGE_AUTHORITY_CLAUSE=""; MERGE_HOLD_HEADLINE=""; MERGE_HOLD_MEANS=""
+  [ "${FORGE_VERIFIER_MERGE:-}" = 1 ] && return 0
+  forge_merge_authority_read "$BOARD" || return 1
+  implementer="$(printf '%s' "${CARD0:-}" | jq -r '
+      [.events[]? | select(.kind == "review_requested")] | last | .payload.implementer // ""' 2>/dev/null)"
+  if [ "$implementer" != "$lane" ]; then
+    local grant="Board $BOARD has given the verifier merge authority (granted by $FORGE_MA_BY at $FORGE_MA_AT)"
+    case "$implementer" in
+      "")
+        MERGE_HOLD_HEADLINE="this board has merge authority, but this card names no implementer, so the merge is yours"
+        MERGE_HOLD_MEANS="$grant, but the card records no implementer, so it cannot be shown that the lane built this chunk. A grant merges only a chunk the lane ($lane) built; the merge is yours";;
+      forge-operator-handoff|claude-interactive|"${FORGE_HANDOFF_SENTINEL:-forge-operator-handoff}")
+        MERGE_HOLD_HEADLINE="this board has merge authority, but this chunk was built by a person, so the merge is yours"
+        MERGE_HOLD_MEANS="$grant, but this chunk was built by a person (recorded implementer: $implementer), and a grant merges only a chunk the lane ($lane) built; the merge is yours";;
+      *)
+        MERGE_HOLD_HEADLINE="this board has merge authority, but this chunk was not built by the lane, so the merge is yours"
+        MERGE_HOLD_MEANS="$grant, but this chunk's recorded implementer is $implementer, not the lane ($lane), and a grant merges only a chunk the lane built; the merge is yours";;
+    esac
+    return 1
+  fi
+  MERGE_AUTHORITY_CLAUSE="board merge authority granted by $FORGE_MA_BY at $FORGE_MA_AT"
+  return 0
+}
 # Three answers, never two: `merged`, `unmerged` (GitHub answered, and the PR is not merged) and
 # `unreadable` (it did not answer, twice). A read that fails once is retried once.
 pr_merge_state() {
@@ -1400,7 +1454,7 @@ $EVIDENCE")")" \
       # and the terminator itself when the merge was not confirmed.
       merged_hold="$(decision_message merge-pending \
         "${chunk_title:-this chunk}: merge attempted by the verifier; GitHub did not confirm either way, or this card could not be completed" \
-        "The verifier ran \`gh pr merge\` for $PR_URL at ${VERIFIED_HEAD:-an unread head}. GitHub did not confirm the outcome either way (the merge may have failed or the read-back was unreadable), or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged" \
+        "The verifier ran \`gh pr merge\` for $PR_URL at ${VERIFIED_HEAD:-an unread head}. GitHub did not confirm the outcome either way (the merge may have failed or the read-back was unreadable), or the completion of this card did not take. The merge-watcher completes this card once GitHub reports the PR merged${MERGE_AUTHORITY_CLAUSE:+. The merge was attempted under $MERGE_AUTHORITY_CLAUSE}" \
         "confirm $PR_URL is merged; if it is not, merge it or send it back" \
         "until the card completes, its children stay held" \
         "nothing, if the PR shows MERGED — the merge-watcher completes this card on its next sweep — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
@@ -1409,7 +1463,7 @@ $EVIDENCE")"
       if [ "$merge_rc" = 0 ]; then
         envelope merged "$SUMMARY" "$TMP/verdict.json" "" 4 \
           "$(call_json kanban_complete "$(task_args '{summary: $s, result: $s, metadata: $m[0]}' \
-              --arg s "merged by forge-verifier: $SUMMARY" --slurpfile m "$TMP/verdict.json")")" \
+              --arg s "merged by forge-verifier: $SUMMARY${MERGE_AUTHORITY_CLAUSE:+ ($MERGE_AUTHORITY_CLAUSE)}" --slurpfile m "$TMP/verdict.json")")" \
           "$(hold_call "$merged_hold")"
       fi
       # If even the hold does not land, the reason the driver blocks with verbatim
@@ -1418,10 +1472,14 @@ $EVIDENCE")"
         "$(hold_call "$merged_hold")" \
         "$(term_block "merge-pending: $PR_URL merge attempted by the verifier; GitHub did not confirm either way, and neither the completion nor the hold on this card took — the merge-watcher completes this card once GitHub reports the PR merged")"
     fi
+    # A board that HAS merge authority and still holds this chunk says why (merge_mode set these); otherwise
+    # this is the recommend-only text, unchanged.
+    rec_headline="${chunk_title:-this chunk} is verified and NOT merged — ${MERGE_HOLD_HEADLINE:-the verifier may only recommend}"
+    rec_tail="${MERGE_HOLD_MEANS:-Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)}"
     envelope recommend "$SUMMARY" "$TMP/verdict.json" "" 4 \
       "$(hold_call "$(decision_message merge-pending \
-      "${chunk_title:-this chunk} is verified and NOT merged — the verifier may only recommend" \
-      "the deterministic gate is clear, \`make check\` is green on this branch merged with $base_ref, $PROBE_CLAUSE, and the scorer reached $SUMMARY. Recommend-only is the default until the flip criterion is met (ADR-0019 D19.3)" \
+      "$rec_headline" \
+      "the deterministic gate is clear, \`make check\` is green on this branch merged with $base_ref, $PROBE_CLAUSE, and the scorer reached $SUMMARY. $rec_tail" \
       "merge the PR, or send it back" \
       "nothing is merged and this card's children stay held until it is" \
       "merge $PR_URL on GitHub — the merge-watcher completes this card — or \`~/.forge/repo/scripts/bounce.sh $CHUNK \"<reason>\" --board $BOARD\`
