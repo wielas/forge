@@ -1,0 +1,6 @@
+name: forge-gateway
+version: "1.0.0"
+description: "Forge's paired gateway (epic GW3): /accept, /redirect and /park for a milestone gate, each calling exactly one allowlisted forge script from the operator's paired Telegram chat, plus a pre_tool_call guard that keeps a chat turn from writing the board."
+author: "forge"
+provides_hooks:
+  - pre_tool_call

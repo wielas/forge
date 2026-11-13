@@ -1,7 +1,7 @@
 # forge repo-level commands
 .PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check plan-check commission
 
-verify:                        ## execute this repo's own claims; SUITES="cli config ... bootstrap sync ... probe checkpoint overseer triage gate docs digest quota manifest" narrows (scripts/verify.sh --help)
+verify:                        ## execute this repo's own claims; SUITES="cli config ... bootstrap sync ... probe checkpoint overseer triage gateway gate docs digest quota manifest" narrows (scripts/verify.sh --help)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
 
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
@@ -128,6 +128,8 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/probe-run.sh scripts/checkpoint.sh scripts/forge-state.sh scripts/driver-call-hook.sh \
 	  scripts/overseer-guard.sh scripts/triage.sh scripts/amend-contract.sh \
 	  scripts/claude-token.sh \
+	  scripts/gate-reply.sh scripts/gate-accept.sh scripts/gate-redirect.sh scripts/gate-park.sh \
+	  scripts/checkpoint-cron.sh scripts/checkpoint-arm.sh \
   scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which
@@ -145,8 +147,8 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	@# instead of silently going unchecked. (`*.py` does not match
 	@# scripts/validate-metadata.py.lock, and an empty match is an error below,
 	@# not a silent pass — a gate checking nothing must not look like a gate.)
-	@pyfiles=$$(ls scripts/*.py 2>/dev/null); \
-	 test -n "$$pyfiles" || { echo "BAD: scripts/*.py matched nothing — the Python syntax gate is checking NOTHING"; exit 1; }; \
+	@pyfiles=$$(ls scripts/*.py hermes/plugins/*/*.py 2>/dev/null); \
+	 test -n "$$pyfiles" || { echo "BAD: scripts/*.py and hermes/plugins/*/*.py matched nothing — the Python syntax gate is checking NOTHING"; exit 1; }; \
 	 for f in $$pyfiles; do \
 	   python3 -c 'import ast,sys; sys.tracebacklimit=0; ast.parse(open(sys.argv[1]).read(), filename=sys.argv[1])' "$$f" \
 	     || { echo "BAD Python syntax: $$f"; exit 1; }; \

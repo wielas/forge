@@ -64,9 +64,15 @@
 # honoured. `make verify` (checkpoint/rehearse-writes-nothing) runs every outcome
 # in --rehearse against a hermes stub that fails on any write verb.
 #
+# THE PRE-COMPLETION CHECK (S8d). A probe can take minutes, and in that time a /park or a disarm may have decided the
+# gate. `--before-complete <cmd> [args...]` (it takes the REST of the command line, so it comes last) runs `cmd`
+# immediately before the `complete` write, after the gate has been read again; a non-zero exit is no verdict and
+# nothing is completed. scripts/checkpoint-cron.sh passes `checkpoint-arm.sh still-armed`, which asks whether the
+# gate is still armed for this mode and was not decided for this hold. With no --before-complete there is no check.
+#
 # Usage:
 #   ./scripts/checkpoint.sh <project-dir> --board <slug> --gate GATE-<m> --rehearse [--timeout <seconds>]
-#   ./scripts/checkpoint.sh <project-dir> --board <slug> --gate GATE-<m> --apply [--timeout <seconds>]
+#   ./scripts/checkpoint.sh <project-dir> --board <slug> --gate GATE-<m> --apply [--timeout <seconds>] [--before-complete <cmd> [args...]]
 #
 # Exit: 0 pass (proceeds), 1 block (waiting on a decision), 2 no verdict or the
 #       checkpoint could not be run.
@@ -86,9 +92,13 @@ HERE="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" \
 # shellcheck source=decision-message.sh
 . "$HERE/decision-message.sh" || { echo "checkpoint: cannot source decision-message.sh" >&2; exit 2; }
 
-PROJECT=""; BOARD=""; GATE=""; MODE=""; TIMEOUT=600
+PROJECT=""; BOARD=""; GATE=""; MODE=""; TIMEOUT=600; BEFORE=()
 while [ $# -gt 0 ]; do
   case "$1" in
+    --before-complete)
+      shift
+      [ $# -ge 1 ] || { echo "checkpoint: --before-complete needs a command" >&2; exit 2; }
+      BEFORE=("$@"); set --; continue;;
     --board) [ $# -ge 2 ] || { echo "checkpoint: --board needs a slug" >&2; exit 2; }; BOARD="$2"; shift 2;;
     --gate)  [ $# -ge 2 ] || { echo "checkpoint: --gate needs GATE-<milestone>" >&2; exit 2; }; GATE="$2"; shift 2;;
     --timeout) [ $# -ge 2 ] || { echo "checkpoint: --timeout needs a number of seconds" >&2; exit 2; }; TIMEOUT="$2"; shift 2;;
@@ -464,7 +474,7 @@ read_gate_back() {
 }
 
 reply_text() {
-  printf '%s' "\`accept\` completes the gate as it is: \`hermes kanban --board $BOARD complete $GCARD --result \"accepted: <why>\"\`; \`redirect <text>\` says what to change, and the run waits; \`park\` leaves the gate held and the run stopped. Today only \`accept\` has a command; the others are decisions you make by editing the plan or doing nothing."
+  printf '%s' "send \`/accept $BOARD $GATE [why]\` to complete the gate as it is, \`/redirect $BOARD $GATE <text>\` to record what to change (the gate stays held and the run waits), or \`/park $BOARD $GATE [why]\` to leave it held and stop; each as its own message from your paired Telegram chat (if the bot is busy, send /stop first). /accept completes only a gate that was armed apply."
 }
 
 printf 'checkpoint %s — %s\n\n' "$GATE" "$mode_line"
@@ -482,6 +492,11 @@ case "$OUTCOME" in
         || no_verdict "$GATE ($GCARD) could not be read again just before completing it, so nothing was completed"
       NOW_STATUS="$(sqlite3 "$NOW_SNAP" "SELECT status FROM tasks WHERE id = '$GCARD';" 2>/dev/null)" # gate-reread
       [ "$NOW_STATUS" = blocked ] || no_verdict "$GATE ($GCARD) moved while the checkpoint ran: it is now '${NOW_STATUS:-gone}', not blocked (held); nothing was completed" # gate-reread
+      # (S8d) The last look before the write: a /park or a disarm during the probe must win. Nothing is written.
+      if [ "${#BEFORE[@]}" -gt 0 ]; then
+        "${BEFORE[@]}" >/dev/null 2>&1 \
+          || no_verdict "$GATE ($GCARD) was disarmed or decided while the probe ran (the pre-completion check said no), so nothing was completed" # before-complete
+      fi
       COMPLETE_OUT="$(board_write complete "$GCARD" --result "checkpoint pass: $PROBE_LAST" 2>&1)"; COMPLETE_RC=$?
       [ "$COMPLETE_RC" = 0 ] || { echo "checkpoint: completing $GCARD failed — $GATE did NOT pass and the gate is still held: $COMPLETE_OUT" >&2; exit 2; } # complete-checked
       # (#105 review, finding 5) A zero exit is the kernel's word; the board is the evidence. Read the gate
