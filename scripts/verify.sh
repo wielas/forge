@@ -31,6 +31,12 @@
 #               driving `codex exec` by hand against a live chunk (rung 2).
 #   bootstrap/  staged board creation against a stateful Hermes stub: validate
 #               the graph first, create one root, then extend idempotently.
+#   sync/       board-sync.sh against a stateful Hermes stub that writes a real board
+#               database: a dry run writes nothing; apply converges a drifted board in
+#               the one order that releases no card early (links before unlinks) and
+#               reads each step back; a release needs --allow-release; the four write
+#               verbs only; the created card is the one bootstrap makes; and the same
+#               fixture on the installed kernel, opt-in                      (board-sync)
 #   commission/ paid launch evidence against command stubs; never spends in CI.
 #   metrics/    the flywheel's review and observability signals, computed from
 #               checked-in board/profile fixtures and diffed against one exact
@@ -122,11 +128,11 @@ while [ $# -gt 0 ]; do
     --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|watchdog|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|sync|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|watchdog|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap sync commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -2918,6 +2924,14 @@ bootstrap/next-milestone-waits-for-the-gate  the next milestone's chunk is creat
 bootstrap/a-misrouted-gate-is-refused-before-any-board  a gate on the implementer lane or with no parent FATALs before init
 bootstrap/real-hermes-gate-holds-the-next-milestone  opt-in: the real kernel holds the next milestone behind a held gate
 bootstrap/real-hermes-interactive-chunk-waits-for-its-parents  opt-in: on the real kernel a held interactive chunk stays blocked through link, and the digest lists it only once its parent is done (P13)
+sync/dry-run-writes-nothing               a drifted board exits 1 naming every difference decision-first and calls Hermes not at all; an in-sync board exits 0; bad usage, an unreadable board and a graph bootstrap would refuse are exit 2
+sync/apply-converges-the-drifted-board    a reworded todo card, a reworded done card (left alone), a new chunk under a gate, a new parent for a todo card and a gate that gains a parent: create, links, edit, then unlink; a second run is a no-op
+sync/release-needs-allow-release          an unlink that would leave a card with only a done parent, and a create whose only parent is done, are refused with nothing written until --allow-release
+sync/only-the-four-verbs-reach-the-board  create, link, edit and unlink, each with --board; a title or body that begins with '-' is one argument; any other verb is refused by the executor
+sync/created-card-matches-bootstrap       the copied bootstrap functions are byte-identical; a created lane card is the card bootstrap makes; a spent branch is refused, a GitHub that cannot answer is exit 2, a wrong --branch-suffix refuses the creates
+sync/surprise-stops-the-apply             an edit that releases its card, a link or create that does nothing, and a failed create each stop the apply at that step, with nothing after it run
+sync/never-touches-what-it-does-not-own   STALE-DONE, IN-FLIGHT, MANUAL and ORPHAN are reported and never written; an archived unit is not created again; a gate it cannot create is MANUAL and exit 1
+sync/real-hermes-convergence-releases-nothing  opt-in: the same drift on the installed kernel in an isolated HERMES_HOME promotes nothing, leaves both gates as they were, and a second run is a no-op
 metrics/help-exits-zero           scripts/metrics.sh --help works with no board and no ~/.hermes
 metrics/fixture-numbers-exact     a checked-in SQL board reproduces a checked-in JSON expectation, field for field
 metrics/post-fl3-board-numbers-exact  the one-card-per-chunk board reproduces its own exact expectation, envelopes on review_requested runs included (P4)
@@ -6422,6 +6436,619 @@ REAL_HUMAN_GRAPH
   fi
 }
 wants bootstrap && run_bootstrap_group
+# ---------------------------------------------------------------------------
+# sync/ — hermes/board-sync.sh: bring an existing board back in line with a
+# plan that changed after bootstrap. The kernel facts it leans on (create is
+# atomic with its parents; unlink recomputes readiness at once; archived counts
+# as done for gating) are modelled by one stateful stub that writes a real board
+# database, so what the script did is read back from the board, not from a log.
+# Its boards are made by the REAL board-bootstrap.sh, so the card shapes under
+# test are the ones a bootstrap leaves. The opt-in case runs the same fixture on
+# the installed kernel in an isolated HERMES_HOME.
+# ---------------------------------------------------------------------------
+run_sync_group() {
+  group sync
+  local sync="${SYNC_SCRIPT:-$REPO_ROOT/hermes/board-sync.sh}" boot="$REPO_ROOT/hermes/board-bootstrap.sh"
+  local fixsql="$REPO_ROOT/scripts/fixtures/triage-board.sql"
+  local tool n detail out rc h0 names="dry-run-writes-nothing apply-converges-the-drifted-board release-needs-allow-release only-the-four-verbs-reach-the-board created-card-matches-bootstrap surprise-stops-the-apply never-touches-what-it-does-not-own real-hermes-convergence-releases-nothing"
+  for tool in sqlite3 jq python3 git; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      for n in $names; do skip "$n" "$tool is not on PATH"; done
+      return
+    fi
+  done
+  local root="$TMPROOT/sync"
+  mkdir -p "$root/bin" "$root/gh-bin"
+
+  # The board schema is the real one: the triage fixture's, emptied of its rows.
+  sqlite3 "$root/schema.db" < "$fixsql" >/dev/null 2>&1
+  sqlite3 "$root/schema.db" .schema | grep -v sqlite_sequence > "$root/schema.sql"
+
+  # The stateful stub. It models the Hermes 0.21.5 kernel rules sync depends on (kanban_db.py): create is
+  # atomic with its --parent edges and computes the status (todo unless every parent is `done`, `blocked`
+  # for --initial-status blocked), its idempotency key ignores archived cards, link demotes a ready child
+  # and refuses a running one, unlink runs recompute_ready (which skips sticky-blocked cards) so a card left
+  # with no open parent is READY before the call returns, edit changes the body only. It parses options like
+  # argparse: `--body -x` is an error, `--body=-x` is a value, `--` ends the options. It implements what the
+  # real bootstrap also asks (boards, assignees, show, list, block, assign) so the parity case can run both.
+  # Every call is logged as one JSON line. STUB_FAIL_VERB fails a verb; STUB_LIE_VERB exits 0 and does
+  # nothing; STUB_EDIT_PROMOTES makes an edit release its card.
+  cat > "$root/bin/hermes" <<'SYNC_STUB'
+#!/usr/bin/env python3
+import json, os, re, sqlite3, sys, time
+argv = sys.argv[1:]
+open(os.environ["STUB_LOG"], "a").write(json.dumps(argv) + "\n")
+def die(msg, code=1):
+    sys.stderr.write("STUB: %s\n" % msg); sys.exit(code)
+if not argv or argv[0] != "kanban":
+    die("not a kanban call", 2)
+argv = argv[1:]
+KH = os.environ["HERMES_KANBAN_HOME"]
+def dbdir(b): return os.path.join(KH, "boards", b)
+def dbpath(b): return os.path.join(dbdir(b), "kanban.db")
+
+def looks_like_option(v):
+    # argparse: a value that starts with '-' is an option unless it is a negative number or contains a space
+    return v.startswith("-") and len(v) > 1 and not re.match(r"^-\d+$|^-\d*\.\d+$", v) and " " not in v
+def parse(args, valued, flags, npos):
+    opts, pos, i, done = {}, [], 0, False
+    while i < len(args):
+        a = args[i]
+        if done: pos.append(a)
+        elif a == "--": done = True
+        elif a.startswith("--") and "=" in a and a.split("=", 1)[0] in valued:
+            k, v = a.split("=", 1); opts.setdefault(k, []).append(v)
+        elif a in valued:
+            if i + 1 >= len(args) or looks_like_option(args[i + 1]):
+                die("argument %s: expected one argument" % a, 2)
+            opts.setdefault(a, []).append(args[i + 1]); i += 1
+        elif a in flags: opts[a] = [True]
+        elif a.startswith("-") and len(a) > 1: die("unrecognized arguments: %s" % a, 2)
+        else: pos.append(a)
+        i += 1
+    if len(pos) != npos: die("expected %d positional argument(s), got %d" % (npos, len(pos)), 2)
+    return opts, pos
+def one(opts, k, d=None): return opts[k][0] if k in opts else d
+
+if argv[:1] == ["boards"]:
+    sub, rest = argv[1], argv[2:]
+    if sub == "create":
+        os.makedirs(dbdir(rest[0]), exist_ok=True)
+        if not os.path.exists(dbpath(rest[0])):
+            c = sqlite3.connect(dbpath(rest[0])); c.executescript(open(os.environ["STUB_SCHEMA"]).read()); c.execute("PRAGMA journal_mode=wal"); c.commit(); c.close()
+        sys.exit(0)
+    if sub == "set-default-workdir":
+        open(os.path.join(dbdir(rest[0]), "default_workdir"), "w").write(rest[1]); sys.exit(0)
+    if sub == "list":
+        out = []
+        for b in sorted(os.listdir(os.path.join(KH, "boards"))):
+            p = os.path.join(dbdir(b), "default_workdir")
+            out.append({"slug": b, "default_workdir": open(p).read() if os.path.exists(p) else None})
+        print(json.dumps(out)); sys.exit(0)
+    die("boards %s" % sub)
+board = None
+if argv[:1] == ["--board"]: board, argv = argv[1], argv[2:]
+verb, rest = argv[0], argv[1:]
+if verb == os.environ.get("STUB_FAIL_VERB", ""): die("injected failure on %s" % verb)
+# the real bootstrap asks `assignees` with no --board; every other verb needs one, and sync always names it
+if not board and verb != "assignees": die("refusing a kanban call with no --board", 2)
+if verb == "assignees":
+    names = os.environ.get("STUB_ASSIGNEES", "forge-codex-lane").split(",")
+    print(json.dumps([{"name": n, "on_disk": True, "counts": {}} for n in names] + [{"name": "forge-operator-handoff", "on_disk": False, "counts": {}}])); sys.exit(0)
+if not os.path.exists(dbpath(board)): die("no such board %s" % board)
+db = sqlite3.connect(dbpath(board)); db.row_factory = sqlite3.Row
+now = int(time.time())
+def status_of(t):
+    r = db.execute("SELECT status FROM tasks WHERE id=?", (t,)).fetchone()
+    return r[0] if r else None
+def event(t, kind, payload=None):
+    db.execute("INSERT INTO task_events(task_id,kind,payload,created_at) VALUES(?,?,?,?)", (t, kind, json.dumps(payload) if payload is not None else None, now))
+def sticky(t):
+    r = db.execute("SELECT kind FROM task_events WHERE task_id=? AND kind IN ('blocked','unblocked') ORDER BY id DESC LIMIT 1", (t,)).fetchone()
+    return bool(r) and r[0] == "blocked"
+def recompute_ready():
+    for r in db.execute("SELECT id,status FROM tasks WHERE status IN ('todo','blocked')").fetchall():
+        if r["status"] == "blocked" and sticky(r["id"]): continue
+        ps = [x[0] for x in db.execute("SELECT t.status FROM tasks t JOIN task_links l ON l.parent_id=t.id WHERE l.child_id=?", (r["id"],))]
+        if all(p in ("done", "archived") for p in ps):
+            db.execute("UPDATE tasks SET status='ready' WHERE id=?", (r["id"],)); event(r["id"], "promoted")
+if os.environ.get("STUB_LIE_VERB") == verb:
+    print("ok"); sys.exit(0)
+
+if verb == "create":
+    opts, pos = parse(rest, {"--body", "--body-file", "--assignee", "--parent", "--workspace", "--branch", "--project", "--tenant", "--priority",
+                              "--idempotency-key", "--max-runtime", "--created-by", "--skill", "--max-retries", "--model", "--provider",
+                              "--completion-contract", "--goal-max-turns", "--initial-status"}, {"--triage", "--goal", "--json"}, 1)
+    title, key, parents = pos[0], one(opts, "--idempotency-key"), opts.get("--parent", [])
+    if one(opts, "--branch") and one(opts, "--workspace") != "worktree": die("--branch is only valid with --workspace worktree", 2)
+    if key:
+        r = db.execute("SELECT id,status FROM tasks WHERE idempotency_key=? AND status<>'archived' ORDER BY created_at DESC LIMIT 1", (key,)).fetchone()
+        if r: print(json.dumps({"id": r[0], "status": r[1]})); sys.exit(0)
+    for p in parents:
+        if status_of(p) is None: die("unknown parent task(s): %s" % p)
+    if one(opts, "--initial-status", "running") == "blocked": st = "blocked"
+    elif "--triage" in opts: st = "triage"
+    elif any(status_of(p) != "done" for p in parents): st = "todo"
+    else: st = "ready"
+    wk = one(opts, "--workspace", "scratch"); wp = None
+    if wk == "worktree":
+        f = os.path.join(dbdir(board), "default_workdir")
+        wp = open(f).read() if os.path.exists(f) else None
+    n = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] + 1
+    while status_of("t_s%03d" % n) is not None: n += 1
+    tid = "t_s%03d" % n
+    db.execute("INSERT INTO tasks(id,title,body,assignee,status,created_by,created_at,workspace_kind,workspace_path,branch_name,idempotency_key,skills,max_retries) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+               (tid, title.strip(), one(opts, "--body", ""), one(opts, "--assignee"), st, one(opts, "--created-by", "user"), now, wk, wp, one(opts, "--branch"), key,
+                json.dumps(opts["--skill"]) if "--skill" in opts else None,
+                int(one(opts, "--max-retries")) if one(opts, "--max-retries") else None))
+    for p in parents: db.execute("INSERT OR IGNORE INTO task_links(parent_id,child_id) VALUES(?,?)", (p, tid))
+    event(tid, "created", {"status": st, "parents": parents})
+    if st == "blocked": event(tid, "blocked", {"reason": "initial_status"})
+    if st == "todo": event(tid, "dependency_wait", {"reason": "parent_not_done"})
+    db.commit(); print(json.dumps({"id": tid, "status": st})); sys.exit(0)
+if verb == "link":
+    _, (p, c) = parse(rest, set(), set(), 2)
+    if p == c: die("a task cannot depend on itself")
+    if status_of(p) is None or status_of(c) is None: die("unknown task(s)")
+    if status_of(c) == "running": die("cannot link %s -> %s: child is already running" % (p, c))
+    seen, stack = set(), [c]
+    while stack:
+        n = stack.pop()
+        if n == p: die("linking %s -> %s would create a cycle" % (p, c))
+        if n in seen: continue
+        seen.add(n); stack += [x[0] for x in db.execute("SELECT child_id FROM task_links WHERE parent_id=?", (n,))]
+    db.execute("INSERT OR IGNORE INTO task_links(parent_id,child_id) VALUES(?,?)", (p, c))
+    if status_of(p) not in ("done", "archived"):
+        if db.execute("UPDATE tasks SET status='todo' WHERE id=? AND status='ready'", (c,)).rowcount == 1:
+            event(c, "dependency_wait", {"reason": "parent_not_done", "demoted": True})
+    event(c, "linked", {"parent": p, "child": c}); db.commit(); print("Linked %s -> %s" % (p, c)); sys.exit(0)
+if verb == "unlink":
+    _, (p, c) = parse(rest, set(), set(), 2)
+    if db.execute("DELETE FROM task_links WHERE parent_id=? AND child_id=?", (p, c)).rowcount == 0: die("No such link: %s -> %s" % (p, c))
+    event(c, "unlinked", {"parent": p, "child": c}); recompute_ready(); db.commit(); print("Unlinked %s -> %s" % (p, c)); sys.exit(0)
+if verb == "edit":
+    opts, pos = parse(rest, {"--title", "--body", "--priority", "--result", "--summary", "--metadata"}, set(), 1)
+    if status_of(pos[0]) is None: die("cannot edit %s" % pos[0])
+    if "--body" in opts:
+        db.execute("UPDATE tasks SET body=? WHERE id=?", (one(opts, "--body"), pos[0])); event(pos[0], "edited", {"fields": ["body"]})
+    if os.environ.get("STUB_EDIT_PROMOTES") == "1": db.execute("UPDATE tasks SET status='ready' WHERE id=?", (pos[0],))
+    db.commit(); print("Edited %s" % pos[0]); sys.exit(0)
+if verb == "show":
+    _, (t,) = parse(rest, set(), {"--json"}, 1)
+    r = db.execute("SELECT * FROM tasks WHERE id=?", (t,)).fetchone()
+    if r is None: die("no such task")
+    print(json.dumps({"task": {k: r[k] for k in r.keys()}, "parents": [x[0] for x in db.execute("SELECT parent_id FROM task_links WHERE child_id=? ORDER BY parent_id", (t,))],
+                      "children": [x[0] for x in db.execute("SELECT child_id FROM task_links WHERE parent_id=? ORDER BY child_id", (t,))],
+                      "events": [{"kind": x[0]} for x in db.execute("SELECT kind FROM task_events WHERE task_id=? ORDER BY id", (t,))]})); sys.exit(0)
+if verb == "list":
+    print(json.dumps([{"id": r["id"], "title": r["title"], "status": r["status"], "branch_name": r["branch_name"]} for r in db.execute("SELECT * FROM tasks")])); sys.exit(0)
+if verb == "block":
+    opts, pos = parse(rest, {"--kind"}, set(), 2)
+    if status_of(pos[0]) in ("running", "ready"):
+        db.execute("UPDATE tasks SET status='blocked', block_kind=? WHERE id=?", (one(opts, "--kind"), pos[0])); event(pos[0], "blocked", {"reason": pos[1], "kind": one(opts, "--kind")}); db.commit()
+    print("Blocked %s" % pos[0]); sys.exit(0)
+if verb == "assign":
+    _, (t, who) = parse(rest, set(), set(), 2)
+    db.execute("UPDATE tasks SET assignee=? WHERE id=?", (None if who == "none" else who, t)); event(t, "assigned", {"assignee": who}); db.commit(); print("Assigned %s" % t); sys.exit(0)
+die("refusing verb %s" % verb)
+SYNC_STUB
+  chmod +x "$root/bin/hermes"
+  # gh: only `pr list`, answered from state/gh-prs.tsv (<branch> TAB <number> TAB <STATE>); state/gh-fails is a GitHub that errors.
+  cat > "$root/gh-bin/gh" <<'SYNC_GH'
+#!/usr/bin/env bash
+set -eu
+state="${STUB_STATE:?}"
+printf '%s\n' "$*" >> "$state/gh.log"
+[ "${1:-}" = pr ] && [ "${2:-}" = list ] || { echo "gh stub: only 'pr list' is answered, got: $*" >&2; exit 64; }
+shift 2; head=""
+while [ $# -gt 0 ]; do case "$1" in --head) head="$2"; shift 2;; --repo|--state|--json|--limit) shift 2;; *) shift;; esac; done
+[ ! -e "$state/gh-fails" ] || { echo "gh: HTTP 502: Bad Gateway" >&2; exit 1; }
+touch "$state/gh-prs.tsv"
+jq -R -s --arg head "$head" 'split("\n") | map(select(length > 0) | split("\t")) | map(select(.[0] == $head)) | map({number: (.[1] | tonumber), state: .[2]})' "$state/gh-prs.tsv"
+SYNC_GH
+  chmod +x "$root/gh-bin/gh"
+
+  # ---- fixtures: synthetic ids, titles and bodies; a product repo with a stub GitHub origin ----
+  _sy_project() { # $1=name: a product repo, its stub state, and an empty kanban home
+    local d="$root/$1"
+    rm -rf "$d"; mkdir -p "$d/p/docs/chunks" "$d/state" "$d/kanban" "$d/home"
+    : > "$d/stub.log"
+    git -C "$d/p" init -q
+    git init -q --bare "$d/remote.git"
+    git -C "$d/p" remote add origin "https://github.com/stub-owner/stub-repo.git"
+    git -C "$d/p" config "url.$d/remote.git.insteadOf" "https://github.com/stub-owner/stub-repo.git"
+  }
+  _sy_chunks() { # $1=name, rest = unit ids: one synthetic plan file each (a gate's has an Estimate)
+    local c="$root/$1/p/docs/chunks" id; shift
+    rm -f "$c"/*.md
+    for id in "$@"; do
+      case "$id" in
+        GATE-*) printf '### %s: Synthetic gate %s\n- **Estimate:** 2 chunks\n' "$id" "$id" > "$c/$id.md";;
+        *) printf '### %s: Synthetic title of %s\n- **Goal:** the original goal of %s\n' "$id" "$id" "$id" > "$c/$id.md";;
+      esac
+    done
+  }
+  _sy_plan() { # $1=name $2=the plan on disk. v1 is what the board is bootstrapped from; v2 is v1 amended; v3 and rel-* are smaller.
+    local c="$root/$1/p/docs/chunks"
+    case "$2" in
+      v1) _sy_chunks "$1" CHUNK-1 CHUNK-2 GATE-M1 CHUNK-4 CHUNK-5 GATE-M2
+          cat > "$c/graph.json" <<'SYNC_G'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1","CHUNK-2"]},
+  {"id":"CHUNK-4","lane":"forge-codex-lane","depends_on":["GATE-M1"]},
+  {"id":"CHUNK-5","lane":"forge-codex-lane","depends_on":["GATE-M1"]},
+  {"id":"GATE-M2","lane":"claude-interactive","depends_on":["CHUNK-4","CHUNK-5"]}
+]
+SYNC_G
+          ;;
+      v2) # the amended plan: CHUNK-1 (done) and CHUNK-4 (todo) reworded, CHUNK-6 is new and sits under GATE-M1,
+          # CHUNK-5 now waits on CHUNK-6 instead of the gate, and GATE-M2 gains CHUNK-6
+          _sy_chunks "$1" CHUNK-1 CHUNK-2 GATE-M1 CHUNK-4 CHUNK-5 CHUNK-6 GATE-M2
+          cat > "$c/graph.json" <<'SYNC_G'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1","CHUNK-2"]},
+  {"id":"CHUNK-4","lane":"forge-codex-lane","depends_on":["GATE-M1"]},
+  {"id":"CHUNK-5","lane":"forge-codex-lane","depends_on":["CHUNK-6"]},
+  {"id":"CHUNK-6","lane":"forge-codex-lane","depends_on":["GATE-M1"]},
+  {"id":"GATE-M2","lane":"claude-interactive","depends_on":["CHUNK-4","CHUNK-5","CHUNK-6"]}
+]
+SYNC_G
+          printf '### CHUNK-6: Synthetic title of CHUNK-6\n- **Goal:** a chunk the first plan did not have\n' > "$c/CHUNK-6.md"
+          printf '### CHUNK-1: Synthetic title of CHUNK-1\n- **Goal:** the amended goal of CHUNK-1\n' > "$c/CHUNK-1.md"
+          printf '### CHUNK-4: Synthetic title of CHUNK-4\n- **Goal:** the amended goal of CHUNK-4\n- **Out of scope:** CHUNK-6\n' > "$c/CHUNK-4.md"
+          ;;
+      v3) _sy_chunks "$1" CHUNK-1 CHUNK-2 GATE-M1 CHUNK-3
+          cat > "$c/graph.json" <<'SYNC_G'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1","CHUNK-2"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["GATE-M1"]}
+]
+SYNC_G
+          ;;
+      rel-0) # a chain: CHUNK-3 waits on CHUNK-2, which waits on CHUNK-1
+          _sy_chunks "$1" CHUNK-1 CHUNK-2 CHUNK-3
+          cat > "$c/graph.json" <<'SYNC_G'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-2"]}
+]
+SYNC_G
+          ;;
+      rel-a) # CHUNK-3 moves from CHUNK-2 onto CHUNK-1, which is done
+          cat > "$c/graph.json" <<'SYNC_G'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-1"]}
+]
+SYNC_G
+          ;;
+      rel-b) # a new CHUNK-4 whose only parent is CHUNK-1, which is done
+          _sy_chunks "$1" CHUNK-1 CHUNK-2 CHUNK-3 CHUNK-4
+          cat > "$c/graph.json" <<'SYNC_G'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-2"]},
+  {"id":"CHUNK-4","lane":"forge-codex-lane","depends_on":["CHUNK-1"]}
+]
+SYNC_G
+          ;;
+    esac
+  }
+  _sy_envv() { # $1=name -> the environment every run in that project gets (the HOST's boards and board variable never reach it)
+    printf '%s\n' "HERMES_HOME=$root/$1/home" "HERMES_KANBAN_HOME=$root/$1/kanban" "STUB_LOG=$root/$1/stub.log" \
+      "STUB_STATE=$root/$1/state" "STUB_SCHEMA=$root/schema.sql" "FORGE_LANE_ASSIGNEE=forge-codex-lane" "PATH=$root/bin:$root/gh-bin:$PATH"
+  }
+  _sy_run() { # $1=name, rest = board-sync.sh arguments. Sets out and rc.
+    local n="$1" e; shift
+    e=(); while IFS= read -r line; do e+=("$line"); done < <(_sy_envv "$n")
+    out="$(cd "$root/$n/p" && env -u HERMES_KANBAN_BOARD "${e[@]}" "$sync" "$@" 2>&1)"; rc=$?
+  }
+  _sy_boot() { # $1=name $2=board: the REAL board-bootstrap.sh, on the plan now on disk
+    local n="$1" e
+    e=(); while IFS= read -r line; do e+=("$line"); done < <(_sy_envv "$n")
+    (cd "$root/$n/p" && env -u HERMES_KANBAN_BOARD "${e[@]}" "$boot" "${2:-sb}" >"$root/$n/boot.out" 2>&1) || return 1
+    : > "$root/$n/stub.log"
+  }
+  _sy_db() { printf '%s' "$root/$1/kanban/boards/${2:-sb}/kanban.db"; }
+  _sy_sql() { sqlite3 "$(_sy_db "$1")" "$2" >/dev/null 2>&1; }  # a fixture edit, made by SQL on a board no Hermes is running
+  _sy_q() { # $1=name $2=sql: read a COPY of the board (a WAL board is never opened mode=ro, nor in place)
+    local c="$root/q-$1" s db; db="$(_sy_db "$1")"
+    rm -rf "$c"; mkdir -p "$c"; cp "$db" "$c/k.db"
+    for s in -wal -shm; do [ -f "$db$s" ] && cp "$db$s" "$c/k.db$s"; done
+    sqlite3 "$c/k.db" "$2"
+  }
+  _sy_hash() { ( cd "$root/$1/kanban/boards/sb" && for f in kanban.db kanban.db-wal kanban.db-shm; do [ -f "$f" ] && { printf '%s ' "$f"; shasum -a 256 "$f" | cut -d' ' -f1; }; done ) | shasum -a 256 | cut -d' ' -f1; }
+  _sy_verbs() { jq -r 'if .[1] == "--board" then .[3] else .[1] end' "$root/$1/stub.log" 2>/dev/null | paste -sd' ' -; }
+  _sy_writes() { _sy_verbs "$1" | tr ' ' '\n' | grep -Ec '^(create|link|edit|unlink)$'; }
+  _sy_card() { # $1=name $2=unit -> one line with every field a bootstrap decides, the body as hex, the parents as keys
+    _sy_q "$1" "SELECT t.title || '|' || hex(t.body) || '|' || COALESCE(t.assignee,'-') || '|' || t.status || '|' || t.workspace_kind || '|' ||
+                       replace(COALESCE(t.workspace_path,'-'), '$(cd "$root/$1/p" && pwd -P)', 'PROJECT') || '|' || COALESCE(t.branch_name,'-') || '|' ||
+                       COALESCE(t.max_retries,'-') || '|' || COALESCE(t.skills,'-') || '|' || t.idempotency_key || '|' || COALESCE(t.block_kind,'-') || '|' ||
+                       COALESCE((SELECT group_concat(p.idempotency_key) FROM (SELECT p.idempotency_key FROM task_links l JOIN tasks p ON p.id = l.parent_id
+                                                                                WHERE l.child_id = t.id ORDER BY idempotency_key) p), '-')
+                  FROM tasks t WHERE t.idempotency_key = 'sb-$2';"
+  }
+  _sy_edges() { # $1=name -> the board's edges between keyed cards, "parent>child", sorted
+    _sy_q "$1" "SELECT replace(p.idempotency_key,'sb-','') || '>' || replace(c.idempotency_key,'sb-','')
+                  FROM task_links l JOIN tasks p ON p.id = l.parent_id JOIN tasks c ON c.id = l.child_id ORDER BY 1;" | sort
+  }
+  _sy_graph_edges() { jq -r '.[] | .id as $c | (.depends_on // [])[] | "\(.)>\($c)"' "$root/$1/p/docs/chunks/graph.json" | sort; }
+  _sy_drifted() { # $1=name: a board bootstrapped from v1 with CHUNK-1 and CHUNK-2 done, and the amended plan v2 on disk
+    _sy_project "$1"; _sy_plan "$1" v1; _sy_boot "$1" || return 1
+    _sy_sql "$1" "UPDATE tasks SET status='done' WHERE idempotency_key IN ('sb-CHUNK-1','sb-CHUNK-2');"
+    _sy_plan "$1" v2
+  }
+
+  # -- dry-run-writes-nothing ---------------------------------------------------------------------
+  detail=""
+  _sy_drifted d1 || detail="$detail fixture"
+  h0="$(_sy_hash d1)"
+  _sy_run d1 sb
+  [ "$rc" = 1 ] || detail="$detail drifted-dry-run-is-exit-$rc-not-1"
+  for n in '^VERDICT  DRIFT: 5 step' '^CREATE +CHUNK-6 ' '^EDGE-ADD +CHUNK-5 +CHUNK-6 -> CHUNK-5' '^EDGE-ADD +GATE-M2 +CHUNK-6 -> GATE-M2' \
+           '^UPDATE-BODY +CHUNK-4 ' '^EDGE-REMOVE +CHUNK-5 +GATE-M1 -> CHUNK-5' '^STALE-DONE +CHUNK-1 ' '^MATCH +CHUNK-2 ' 'Commands --apply would run'; do
+    printf '%s\n' "$out" | grep -Eq -- "$n" || detail="$detail no-line($n)"
+  done
+  [ ! -s "$root/d1/stub.log" ] || detail="$detail the-dry-run-called-hermes($(_sy_verbs d1))"
+  [ "$(_sy_hash d1)" = "$h0" ] || detail="$detail the-dry-run-changed-the-board"
+  _sy_project d2; _sy_plan d2 v1; _sy_boot d2 || detail="$detail fixture-d2"
+  _sy_run d2 sb
+  [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Eq '^VERDICT  IN SYNC' && [ ! -s "$root/d2/stub.log" ] || detail="$detail in-sync-board-was-exit-$rc"
+  # exit 2: it cannot run. Each leaves the board and the stub log untouched.
+  _sy_run d1; [ "$rc" = 2 ] || detail="$detail no-board-argument-exit-$rc"
+  _sy_run d1 sb --frobnicate; [ "$rc" = 2 ] || detail="$detail unknown-flag-exit-$rc"
+  _sy_run d1 sb --branch-suffix Bad_Suffix; [ "$rc" = 2 ] || detail="$detail bad-suffix-exit-$rc"
+  _sy_run d1 nosuchboard; [ "$rc" = 2 ] && printf '%s\n' "$out" | grep -Fq 'no board database' || detail="$detail unreadable-board-exit-$rc"
+  cp "$root/d1/p/docs/chunks/graph.json" "$root/graph.keep"
+  jq '. + [.[0]]' "$root/graph.keep" > "$root/d1/p/docs/chunks/graph.json"
+  _sy_run d1 sb; [ "$rc" = 2 ] || detail="$detail duplicate-id-graph-exit-$rc"
+  jq 'map(select(.id != "CHUNK-2"))' "$root/graph.keep" > "$root/d1/p/docs/chunks/graph.json"
+  _sy_run d1 sb; [ "$rc" = 2 ] || detail="$detail dangling-dependency-graph-exit-$rc"
+  cp "$root/graph.keep" "$root/d1/p/docs/chunks/graph.json"
+  [ ! -s "$root/d1/stub.log" ] && [ "$(_sy_hash d1)" = "$h0" ] || detail="$detail an-exit-2-touched-hermes-or-the-board"
+  if [ -z "$detail" ]; then ok "dry-run-writes-nothing (a drifted board exits 1 naming every difference decision-first and calls Hermes not at all, so the board is byte-identical; an in-sync board exits 0; no argument, an unknown flag, a bad suffix, an unreadable board and two bad graphs are exit 2)"
+  else bad "dry-run-writes-nothing" "a dry run must read, report and write nothing:$detail"; fi
+
+  # -- apply-converges-the-drifted-board ----------------------------------------------------------
+  detail=""
+  _sy_drifted a1 || detail="$detail fixture"
+  _sy_run a1 sb --apply
+  [ "$rc" = 0 ] || detail="$detail apply-exit-$rc($(printf '%s' "$out" | tail -3 | tr '\n' ' '))"
+  [ "$(_sy_verbs a1)" = "assignees create link link edit unlink" ] || detail="$detail verbs-were($(_sy_verbs a1))"
+  # every link before any unlink, and the create first of the writes
+  [ "$(_sy_verbs a1 | tr ' ' '\n' | grep -E '^(create|link|edit|unlink)$' | paste -sd, -)" = "create,link,link,edit,unlink" ] || detail="$detail write-order-was($(_sy_verbs a1))"
+  [ "$(_sy_edges a1)" = "$(_sy_graph_edges a1)" ] || detail="$detail edges-differ-from-the-plan($(_sy_edges a1 | paste -sd' ' -))"
+  [ "$(_sy_q a1 "SELECT status || '/' || COALESCE(assignee,'-') FROM tasks WHERE idempotency_key='sb-CHUNK-6'")" = "todo/forge-codex-lane" ] || detail="$detail new-card-is-not-todo-on-the-lane"
+  [ "$(_sy_q a1 "SELECT body FROM tasks WHERE idempotency_key='sb-CHUNK-4'")" = "$(cat "$root/a1/p/docs/chunks/CHUNK-4.md")" ] || detail="$detail changed-todo-body-was-not-edited"
+  _sy_q a1 "SELECT body FROM tasks WHERE idempotency_key='sb-CHUNK-1'" | grep -Fq 'the original goal' || detail="$detail the-done-card-was-edited"
+  [ "$(_sy_q a1 "SELECT group_concat(replace(idempotency_key,'sb-','') || ':' || status || '/' || COALESCE(assignee,'-'), ' ') FROM (SELECT * FROM tasks WHERE idempotency_key LIKE 'sb-GATE-%' ORDER BY idempotency_key)")" = "GATE-M1:blocked/- GATE-M2:blocked/-" ] || detail="$detail a-gate-changed-status-or-assignee"
+  [ "$(_sy_q a1 "SELECT COUNT(*) FROM task_events WHERE kind='promoted' OR kind='unblocked'")" = 0 ] || detail="$detail a-card-was-promoted"
+  [ "$(_sy_q a1 "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','blocked','todo')")" = 0 ] || detail="$detail a-card-is-neither-done-held-nor-todo"
+  printf '%s\n' "$out" | grep -Fq "board 'sb' matches the plan." || detail="$detail no-converged-line"
+  : > "$root/a1/stub.log"; h0="$(_sy_hash a1)"
+  _sy_run a1 sb --apply
+  [ "$rc" = 0 ] && [ ! -s "$root/a1/stub.log" ] && [ "$(_sy_hash a1)" = "$h0" ] || detail="$detail the-second-run-was-not-a-no-op(exit $rc, verbs: $(_sy_verbs a1))"
+  if [ -z "$detail" ]; then ok "apply-converges-the-drifted-board (one create naming its parent, two links, one edit, then the unlink; the done card's reworded body, both gates and every other card untouched; edges equal the plan's; a second run exits 0 and calls Hermes not at all)"
+  else bad "apply-converges-the-drifted-board" "apply must converge the fixture in the one safe order:$detail"; fi
+
+  # -- release-needs-allow-release -----------------------------------------------------------------
+  detail=""
+  # (a) an unlink that would leave CHUNK-3 with only a done parent: CHUNK-1 is done, CHUNK-2 is running, CHUNK-3 waits on CHUNK-2
+  _sy_project r1; _sy_plan r1 rel-0; _sy_boot r1 || detail="$detail fixture-r1"
+  _sy_sql r1 "UPDATE tasks SET status='done' WHERE idempotency_key='sb-CHUNK-1'; UPDATE tasks SET status='running' WHERE idempotency_key='sb-CHUNK-2';"
+  _sy_plan r1 rel-a
+  h0="$(_sy_hash r1)"
+  _sy_run r1 sb --apply
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'CHUNK-3 would be left with no open parent' && printf '%s\n' "$out" | grep -Fq -- '--allow-release' || detail="$detail unlink-was-not-refused(exit $rc)"
+  [ "$(_sy_writes r1)" = 0 ] && [ "$(_sy_hash r1)" = "$h0" ] || detail="$detail a-refused-apply-wrote($(_sy_verbs r1))"
+  _sy_run r1 sb
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'REFUSED' || detail="$detail dry-run-does-not-say-refused"
+  _sy_run r1 sb --apply --allow-release
+  [ "$rc" = 0 ] && [ "$(_sy_verbs r1)" = "link unlink" ] || detail="$detail allowed-unlink-exit-$rc($(_sy_verbs r1))"
+  [ "$(_sy_q r1 "SELECT status FROM tasks WHERE idempotency_key='sb-CHUNK-3'")" = ready ] || detail="$detail allowed-release-did-not-release"
+  [ "$(_sy_edges r1)" = "$(_sy_graph_edges r1)" ] || detail="$detail allowed-edges-differ"
+  # (b) a create whose only parent is done
+  _sy_project r2; _sy_plan r2 rel-0; _sy_boot r2 || detail="$detail fixture-r2"
+  _sy_sql r2 "UPDATE tasks SET status='done' WHERE idempotency_key='sb-CHUNK-1'; UPDATE tasks SET status='running' WHERE idempotency_key='sb-CHUNK-2';"
+  _sy_plan r2 rel-b
+  h0="$(_sy_hash r2)"
+  _sy_run r2 sb --apply
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'CHUNK-4' && printf '%s\n' "$out" | grep -Fq 'ready at once' || detail="$detail create-was-not-refused(exit $rc)"
+  [ "$(_sy_writes r2)" = 0 ] && [ "$(_sy_hash r2)" = "$h0" ] || detail="$detail a-refused-create-wrote($(_sy_verbs r2))"
+  _sy_run r2 sb --apply --allow-release
+  [ "$rc" = 0 ] && [ "$(_sy_verbs r2)" = "assignees create" ] && [ "$(_sy_q r2 "SELECT status FROM tasks WHERE idempotency_key='sb-CHUNK-4'")" = ready ] || detail="$detail allowed-create-exit-$rc($(_sy_verbs r2))"
+  if [ -z "$detail" ]; then ok "release-needs-allow-release (an unlink that would leave CHUNK-3 with only a done parent, and a create whose only parent is done, are each refused with the card named and NOTHING written; the dry run says so; with --allow-release each runs and the card is ready)"
+  else bad "release-needs-allow-release" "a step that makes a card dispatchable must need --allow-release:$detail"; fi
+
+  # -- only-the-four-verbs-reach-the-board -----------------------------------------------------------
+  detail=""
+  _sy_drifted v1x || detail="$detail fixture"
+  # a title and a body that begin with '-': the plan file CHUNK-6 is the single line `--help`, and CHUNK-4's is `-amended`
+  printf '%s\n' '--help' > "$root/v1x/p/docs/chunks/CHUNK-6.md"
+  printf '%s\n' '-amended' > "$root/v1x/p/docs/chunks/CHUNK-4.md"
+  _sy_run v1x sb --apply
+  [ "$rc" = 0 ] || detail="$detail apply-exit-$rc($(printf '%s' "$out" | tail -3 | tr '\n' ' '))"
+  [ "$(_sy_verbs v1x | tr ' ' '\n' | grep -Evc '^(assignees|create|link|edit|unlink)$')" = 0 ] || detail="$detail a-verb-outside-the-four($(_sy_verbs v1x))"
+  [ "$(jq -s 'map(select(.[1] != "--board" or .[2] != "sb")) | length' "$root/v1x/stub.log")" = 0 ] || detail="$detail a-call-without-board-sb"
+  [ "$(_sy_q v1x "SELECT title || '|' || body FROM tasks WHERE idempotency_key='sb-CHUNK-6'")" = '--help|--help' ] || detail="$detail a-title-and-body-starting-with-a-dash-did-not-survive-create($(_sy_q v1x "SELECT title || '|' || body FROM tasks WHERE idempotency_key='sb-CHUNK-6'"))"
+  [ "$(_sy_q v1x "SELECT body FROM tasks WHERE idempotency_key='sb-CHUNK-4'")" = '-amended' ] || detail="$detail a-body-starting-with-a-dash-did-not-survive-edit"
+  # static: every `hermes kanban` call in the script carries --board, none names a verb outside the four, and the executor refuses any other
+  local code calls
+  code="$(grep -v '^[[:space:]]*#' "$sync")"
+  calls="$(printf '%s\n' "$code" | grep -E 'hermes kanban')"
+  [ -n "$calls" ] && [ -z "$(printf '%s\n' "$calls" | grep -v -- '--board')" ] || detail="$detail a-hermes-kanban-call-has-no-board-or-the-check-is-blind"
+  [ -z "$(printf '%s\n' "$calls" | grep -Ei -- '(archive|complete|unblock|promote|assign |block|specify|decompose|list|show|init|boards|dispatch)')" ] || detail="$detail a-forbidden-verb-is-called"
+  printf '%s\n' "$code" | grep -Fq 'create|link|edit|unlink) ;; *)' || detail="$detail the-executor-does-not-refuse-other-verbs"
+  printf '%s\n' "$code" | grep -Fq -- '--body=@FILE:' || detail="$detail the-body-is-no-longer-passed-as-one-argument"
+  if [ -z "$detail" ]; then ok "only-the-four-verbs-reach-the-board (create, link, edit and unlink, each with --board; a title of '--help' and a body of '-amended' survive; the executor refuses any other verb, and no call in the script omits --board)"
+  else bad "only-the-four-verbs-reach-the-board" "sync's whole write surface is create, link, edit, unlink, all pinned to the board:$detail"; fi
+
+  # -- created-card-matches-bootstrap ---------------------------------------------------------------
+  detail=""
+  # the code that is copied rather than shared is byte-identical
+  local fn fa fb
+  for fn in validate_graph branch_for finish_branch origin_slug; do
+    fa="$(awk -v f="$fn" '$0 ~ "^"f"\\(\\) \\{" {p=1} p {print} p && /^}/ {exit}' "$boot")"
+    fb="$(awk -v f="$fn" '$0 ~ "^"f"\\(\\) \\{" {p=1} p {print} p && /^}/ {exit}' "$sync")"
+    [ -n "$fa" ] && [ "$fa" = "$fb" ] || detail="$detail $fn-differs-from-board-bootstrap.sh(or-was-not-found)"
+  done
+  # the same card, made by the real bootstrap and by sync: board A is a full bootstrap; board B is that bootstrap minus two lane cards, which sync creates
+  _sy_project pa; _sy_plan pa v3; _sy_boot pa || detail="$detail fixture-pa"
+  _sy_project pb; _sy_plan pb v3; _sy_boot pb || detail="$detail fixture-pb"
+  _sy_sql pb "DELETE FROM task_links WHERE parent_id IN (SELECT id FROM tasks WHERE idempotency_key IN ('sb-CHUNK-2','sb-CHUNK-3')) OR child_id IN (SELECT id FROM tasks WHERE idempotency_key IN ('sb-CHUNK-2','sb-CHUNK-3'));
+              DELETE FROM task_events WHERE task_id IN (SELECT id FROM tasks WHERE idempotency_key IN ('sb-CHUNK-2','sb-CHUNK-3'));
+              DELETE FROM tasks WHERE idempotency_key IN ('sb-CHUNK-2','sb-CHUNK-3');"
+  _sy_run pb sb --apply
+  [ "$rc" = 0 ] || detail="$detail sync-exit-$rc($(printf '%s' "$out" | tail -3 | tr '\n' ' '))"
+  for n in CHUNK-2 CHUNK-3; do
+    [ -n "$(_sy_card pa "$n")" ] && [ "$(_sy_card pa "$n")" = "$(_sy_card pb "$n")" ] || detail="$detail $n-differs(bootstrap: $(_sy_card pa "$n" | sed 's/|[0-9A-F]*|/|body|/') / sync: $(_sy_card pb "$n" | sed 's/|[0-9A-F]*|/|body|/'))"
+  done
+  [ "$(_sy_edges pa)" = "$(_sy_edges pb)" ] || detail="$detail edges-differ"
+  [ "$(_sy_card pa GATE-M1)" = "$(_sy_card pb GATE-M1)" ] || detail="$detail the-gate-sync-did-not-touch-changed"
+  # the branch guard asks GitHub before it creates: a name with a PR is refused, a GitHub that cannot answer is not "free"
+  _sy_drifted g1 || detail="$detail fixture-g1"
+  printf 'chunk/6-synthetic-title-of-chunk-6\t7\tMERGED\n' > "$root/g1/state/gh-prs.tsv"
+  h0="$(_sy_hash g1)"
+  _sy_run g1 sb --apply
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'branch spent' && [ "$(_sy_writes g1)" = 0 ] && [ "$(_sy_hash g1)" = "$h0" ] || detail="$detail spent-branch-exit-$rc-or-wrote($(_sy_verbs g1))"
+  : > "$root/g1/state/gh-prs.tsv"; : > "$root/g1/state/gh-fails"
+  _sy_run g1 sb --apply
+  [ "$rc" = 2 ] && [ "$(_sy_writes g1)" = 0 ] || detail="$detail gh-down-exit-$rc-or-wrote"
+  rm -f "$root/g1/state/gh-fails"
+  # a suffix that is not the board's: the existing cards' branches do not match it, so the creates are refused
+  _sy_run g1 sb --apply --branch-suffix a9
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq -- '--branch-suffix' && [ "$(_sy_writes g1)" = 0 ] || detail="$detail wrong-suffix-exit-$rc-or-wrote"
+  if [ -z "$detail" ]; then ok "created-card-matches-bootstrap (validate_graph, branch_for, finish_branch and origin_slug are byte-identical to bootstrap's; a lane card sync creates has the title, body, assignee, status, workspace, branch, retries, skills, key and parents bootstrap gave it; a spent branch is refused, a GitHub that cannot answer is exit 2, a wrong --branch-suffix refuses the creates; none writes)"
+  else bad "created-card-matches-bootstrap" "a card sync creates must be the card bootstrap would have made, under the same guard:$detail"; fi
+
+  # -- surprise-stops-the-apply -----------------------------------------------------------------------
+  detail=""
+  _sy_drifted s1 || detail="$detail fixture"
+  STUB_EDIT_PROMOTES=1 _sy_run s1 sb --apply   # an edit that releases its card: the kernel lying, as an unsafe edit would
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'SURPRISE' && printf '%s\n' "$out" | grep -Fq 'CHUNK-4' || detail="$detail released-by-an-edit-exit-$rc"
+  [ "$(_sy_verbs s1)" = "assignees create link link edit" ] || detail="$detail it-went-on-after-the-surprise($(_sy_verbs s1))"
+  _sy_drifted s2 || detail="$detail fixture-s2"
+  STUB_LIE_VERB=link _sy_run s2 sb --apply     # a link that exits 0 and adds nothing
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'SURPRISE' && printf '%s\n' "$out" | grep -Fq 'edges are not what this step should leave' || detail="$detail a-lost-link-exit-$rc"
+  [ "$(_sy_verbs s2)" = "assignees create link" ] || detail="$detail it-went-on-after-the-lost-link($(_sy_verbs s2))"
+  _sy_drifted s3 || detail="$detail fixture-s3"
+  STUB_FAIL_VERB=create _sy_run s3 sb --apply  # a create that fails
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'stopped at step 1/5' && [ "$(_sy_writes s3)" = 1 ] || detail="$detail a-failed-create-exit-$rc($(_sy_verbs s3))"
+  _sy_drifted s4 || detail="$detail fixture-s4"
+  STUB_LIE_VERB=create _sy_run s4 sb --apply   # a create that exits 0 with no card
+  [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fq 'SURPRISE' && [ "$(_sy_writes s4)" = 1 ] || detail="$detail a-create-that-made-nothing-exit-$rc($(_sy_verbs s4))"
+  if [ -z "$detail" ]; then ok "surprise-stops-the-apply (an edit that releases its card, a link that adds no edge, a create that makes no card and a create that fails each stop the apply at that step with exit 1 and nothing after it is run)"
+  else bad "surprise-stops-the-apply" "apply must read each step back and stop at the first surprise:$detail"; fi
+
+  # -- never-touches-what-it-does-not-own ---------------------------------------------------------------
+  detail=""
+  _sy_project o1
+  cat > "$root/o1/p/docs/chunks/graph.json" <<'SYNC_G'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-4","lane":"forge-codex-lane","depends_on":["CHUNK-2"]},
+  {"id":"CHUNK-5","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-2","CHUNK-3"]},
+  {"id":"CHUNK-6","lane":"forge-codex-lane","depends_on":["GATE-M1"]}
+]
+SYNC_G
+  for n in 1 2 3 4 5 6; do printf '### CHUNK-%s: Synthetic title of CHUNK-%s\n- **Goal:** the plan goal of %s\n' "$n" "$n" "$n" > "$root/o1/p/docs/chunks/CHUNK-$n.md"; done
+  printf '### GATE-M1: Synthetic gate\n- **Estimate:** 2 chunks\n' > "$root/o1/p/docs/chunks/GATE-M1.md"
+  ( e=(); while IFS= read -r line; do e+=("$line"); done < <(_sy_envv o1); env "${e[@]}" "$root/bin/hermes" kanban boards create sb ) >/dev/null 2>&1
+  : > "$root/o1/stub.log"
+  ob() { local b; b="$(cat "$root/o1/p/docs/chunks/CHUNK-$1.md")"; printf '%s' "${b//\'/\'\'}"; }
+  _sy_sql o1 "INSERT INTO tasks (id,title,body,assignee,status,created_at,workspace_kind,branch_name,idempotency_key) VALUES
+      ('t_o1','CHUNK-1: Synthetic title of CHUNK-1','the first plan goal of 1','forge-verifier','done',1790000001,'worktree','chunk/1-synthetic-title-of-chunk-1','sb-CHUNK-1'),
+      ('t_o2','CHUNK-2: Synthetic title of CHUNK-2','the first plan goal of 2','forge-codex-lane','running',1790000002,'worktree','chunk/2-synthetic-title-of-chunk-2','sb-CHUNK-2'),
+      ('t_o3','CHUNK-3: Synthetic title of CHUNK-3','$(ob 3)','forge-verifier','review',1790000003,'worktree','chunk/3-synthetic-title-of-chunk-3','sb-CHUNK-3'),
+      ('t_o4','CHUNK-4: Synthetic title of CHUNK-4','$(ob 4)','someone-else','todo',1790000004,'worktree','chunk/4-synthetic-title-of-chunk-4','sb-CHUNK-4'),
+      ('t_o5','CHUNK-5: Synthetic title of CHUNK-5','the first plan goal of 5','forge-verifier','archived',1790000005,'worktree','chunk/5-synthetic-title-of-chunk-5','sb-CHUNK-5'),
+      ('t_o9','CHUNK-9: Synthetic title of a unit the plan dropped','an orphan body','forge-codex-lane','todo',1790000009,'worktree','chunk/9-dropped','sb-CHUNK-9'),
+      ('t_ox','A judge card that hangs off a chunk','a card no plan unit owns',NULL,'ready',1790000010,'scratch',NULL,NULL);
+    INSERT INTO task_links (parent_id,child_id) VALUES ('t_o1','t_o2'),('t_o1','t_o3'),('t_o2','t_o4'),('t_o1','t_o5'),('t_o9','t_o4'),('t_o3','t_ox');"
+  h0="$(_sy_hash o1)"
+  _sy_run o1 sb --apply
+  [ "$rc" = 1 ] || detail="$detail a-board-with-a-missing-gate-is-exit-$rc-not-1"
+  for n in '^MANUAL +GATE-M1 .*sync does not create a gate' '^MANUAL +CHUNK-6 .*its parent GATE-M1 has none' '^MANUAL +CHUNK-4 .*assigned to someone-else' \
+           '^STALE-DONE +CHUNK-1 \(t_o1, done\)' '^STALE-DONE +CHUNK-5 \(t_o5, archived\)' '^IN-FLIGHT +CHUNK-2 \(t_o2, running\)' \
+           '^ORPHAN +CHUNK-9 \(t_o9, todo\).*still a parent of CHUNK-4' '^MATCH +CHUNK-3 \(t_o3, review\)'; do
+    printf '%s\n' "$out" | grep -Eq -- "$n" || detail="$detail no-line($n)"
+  done
+  [ "$(_sy_writes o1)" = 0 ] && [ "$(_sy_hash o1)" = "$h0" ] || detail="$detail it-wrote($(_sy_verbs o1))"
+  [ "$(_sy_q o1 "SELECT COUNT(*) FROM tasks WHERE idempotency_key = 'sb-CHUNK-5'")" = 1 ] || detail="$detail an-archived-unit-was-created-again"
+  # the same board with the unit it cannot create dropped from the plan: nothing it owns is left to do, and the rest is information
+  jq 'map(select(.id != "GATE-M1" and .id != "CHUNK-6")) | map(.depends_on |= map(select(. != "GATE-M1")))' "$root/o1/p/docs/chunks/graph.json" > "$root/o1.graph" && cp "$root/o1.graph" "$root/o1/p/docs/chunks/graph.json"
+  _sy_run o1 sb --apply
+  [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Eq '^VERDICT  IN SYNC' && [ "$(_sy_writes o1)" = 0 ] && [ "$(_sy_hash o1)" = "$h0" ] || detail="$detail informational-lines-only-were-exit-$rc-or-wrote($(_sy_verbs o1))"
+  if [ -z "$detail" ]; then ok "never-touches-what-it-does-not-own (a done and an archived card whose body differs are STALE-DONE, a running one IN-FLIGHT, a card on another assignee MANUAL, a card the plan dropped ORPHAN with its edge left in place, a judge card's edge ignored, an archived unit not created again; a gate it cannot create is MANUAL with exit 1 and nothing written, and without it exit 0)"
+  else bad "never-touches-what-it-does-not-own" "sync reports, and does not touch, what it does not own:$detail"; fi
+
+  # -- real-hermes-convergence-releases-nothing ----------------------------------------------------------
+  if [ "$WITH_HERMES" != 1 ]; then
+    skip "real-hermes-convergence-releases-nothing" "needs --with-hermes (isolated host integration)"
+  elif ! command -v hermes >/dev/null 2>&1; then
+    skip "real-hermes-convergence-releases-nothing" "hermes not on PATH"
+  else
+    detail=""
+    local kd="$root/real" kh="$root/real/home" kdb kenv kn k_hs="${HERMES_KANBAN_HOME+set}" k_hv="${HERMES_KANBAN_HOME-}" k_bs="${HERMES_KANBAN_BOARD+set}" k_bv="${HERMES_KANBAN_BOARD-}"
+    rm -rf "$kd"; mkdir -p "$kd/p/docs/chunks" "$kd/state" "$kh"
+    git -C "$kd/p" init -q; git init -q --bare "$kd/remote.git"
+    git -C "$kd/p" remote add origin "https://github.com/stub-owner/stub-repo.git"
+    git -C "$kd/p" config "url.$kd/remote.git.insteadOf" "https://github.com/stub-owner/stub-repo.git"
+    kdb="$kh/kanban/boards/sb/kanban.db"
+    # a dispatched worker's and a cron job's environment carries HERMES_KANBAN_HOME and HERMES_KANBAN_BOARD, which outrank HERMES_HOME:
+    # poisoned here, and stripped from every call, so nothing can reach a board that is not this one
+    kenv=(env -u HERMES_KANBAN_HOME -u HERMES_KANBAN_BOARD HERMES_HOME="$kh" STUB_STATE="$kd/state" FORGE_LANE_ASSIGNEE=default PATH="$root/gh-bin:$PATH")
+    export HERMES_KANBAN_HOME="$root/ambient-kanban-home" HERMES_KANBAN_BOARD=ambient-board
+    # the plan on disk is v1 with the lane the isolated home has (`default`); the real bootstrap makes the board
+    _sy_plan_real() { sed 's/forge-codex-lane/default/' "$kd/p/docs/chunks/graph.json" > "$kd/graph.tmp" && cp "$kd/graph.tmp" "$kd/p/docs/chunks/graph.json"; }
+    _sy_project real_plan; _sy_plan real_plan v1; cp "$root/real_plan/p/docs/chunks/"* "$kd/p/docs/chunks/"; _sy_plan_real
+    out="$(cd "$kd/p" && "${kenv[@]}" "$boot" sb 2>&1)"; rc=$?
+    [ "$rc" = 0 ] || detail="$detail bootstrap-exit-$rc($(printf '%s' "$out" | tail -2 | tr '\n' ' '))"
+    for kn in CHUNK-1 CHUNK-2; do
+      "${kenv[@]}" hermes kanban --board sb complete "$(sqlite3 "$kdb" "SELECT id FROM tasks WHERE idempotency_key='sb-$kn'")" --result "merged: fixture" >/dev/null 2>&1 \
+        || detail="$detail $kn-would-not-complete"
+    done
+    local kpromoted_before gate_before
+    kpromoted_before="$(sqlite3 "$kdb" "SELECT COUNT(*) FROM task_events WHERE kind='promoted'")"
+    gate_before="$(sqlite3 "$kdb" "SELECT group_concat(idempotency_key || ':' || status || '/' || COALESCE(assignee,'-') || '/' || COALESCE(block_kind,'-') || '/' || (SELECT COUNT(*) FROM task_events e WHERE e.task_id = tasks.id AND e.kind = 'blocked'), ' ') FROM (SELECT * FROM tasks WHERE idempotency_key LIKE 'sb-GATE-%' ORDER BY idempotency_key) tasks")"
+    # the amended plan: v2, with CHUNK-6 a title that looks like a flag
+    _sy_plan real_plan v2; cp "$root/real_plan/p/docs/chunks/"* "$kd/p/docs/chunks/"; _sy_plan_real
+    printf '%s\n%s\n' '--help: a chunk the first plan did not have' '- **Goal:** its body is a list' > "$kd/p/docs/chunks/CHUNK-6.md"
+    out="$(cd "$kd/p" && "${kenv[@]}" "$sync" sb 2>&1)"; rc=$?
+    [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Eq '^VERDICT  DRIFT: 5 step' || detail="$detail real-dry-run-exit-$rc"
+    out="$(cd "$kd/p" && "${kenv[@]}" "$sync" sb --apply 2>&1)"; rc=$?
+    [ "$rc" = 0 ] || detail="$detail real-apply-exit-$rc($(printf '%s' "$out" | tail -3 | tr '\n' ' '))"
+    rm -rf "$root/q-real"; mkdir -p "$root/q-real"; cp "$kdb" "$root/q-real/k.db"
+    for kn in -wal -shm; do [ -f "$kdb$kn" ] && cp "$kdb$kn" "$root/q-real/k.db$kn"; done
+    [ "$(sqlite3 "$root/q-real/k.db" "SELECT COUNT(*) FROM task_events WHERE kind='promoted'")" = "$kpromoted_before" ] || detail="$detail a-card-was-promoted-by-the-kernel"
+    [ "$(sqlite3 "$root/q-real/k.db" "SELECT group_concat(idempotency_key || ':' || status || '/' || COALESCE(assignee,'-') || '/' || COALESCE(block_kind,'-') || '/' || (SELECT COUNT(*) FROM task_events e WHERE e.task_id = tasks.id AND e.kind = 'blocked'), ' ') FROM (SELECT * FROM tasks WHERE idempotency_key LIKE 'sb-GATE-%' ORDER BY idempotency_key) tasks")" = "$gate_before" ] || detail="$detail a-gate-changed"
+    [ "$(sqlite3 "$root/q-real/k.db" "SELECT group_concat(replace(idempotency_key,'sb-','') || ':' || status, ' ') FROM (SELECT * FROM tasks WHERE status NOT IN ('done','blocked') ORDER BY idempotency_key)")" = "CHUNK-4:todo CHUNK-5:todo CHUNK-6:todo" ] \
+      || detail="$detail an-unstarted-card-is-not-todo($(sqlite3 "$root/q-real/k.db" "SELECT group_concat(replace(idempotency_key,'sb-','') || ':' || status, ' ') FROM tasks WHERE status NOT IN ('done','blocked')"))"
+    [ "$(sqlite3 "$root/q-real/k.db" "SELECT title || '|' || assignee || '|' || workspace_kind || '|' || branch_name FROM tasks WHERE idempotency_key='sb-CHUNK-6'")" = "--help: a chunk the first plan did not have|default|worktree|chunk/6-help-a-chunk-the-first-plan-did-not-have" ] \
+      || detail="$detail the-new-card-is-not-what-bootstrap-would-make($(sqlite3 "$root/q-real/k.db" "SELECT title || '|' || assignee || '|' || workspace_kind || '|' || branch_name FROM tasks WHERE idempotency_key='sb-CHUNK-6'"))"
+    [ "$(sqlite3 "$root/q-real/k.db" "SELECT group_concat(replace(p.idempotency_key,'sb-','') || '>' || replace(c.idempotency_key,'sb-',''), ' ') FROM (SELECT * FROM task_links ORDER BY parent_id, child_id) l JOIN tasks p ON p.id = l.parent_id JOIN tasks c ON c.id = l.child_id" | tr ' ' '\n' | sort | paste -sd' ' -)" = "$(jq -r '.[] | .id as $c | (.depends_on // [])[] | "\(.)>\($c)"' "$kd/p/docs/chunks/graph.json" | sort | paste -sd' ' -)" ] || detail="$detail edges-differ-from-the-plan"
+    out="$(cd "$kd/p" && "${kenv[@]}" "$sync" sb 2>&1)"; rc=$?
+    [ "$rc" = 0 ] || detail="$detail second-run-exit-$rc"
+    [ ! -e "$HERMES_KANBAN_HOME" ] || detail="$detail the-ambient-kanban-home-was-written"
+    if [ -n "$k_hs" ]; then export HERMES_KANBAN_HOME="$k_hv"; else unset HERMES_KANBAN_HOME; fi
+    if [ -n "$k_bs" ]; then export HERMES_KANBAN_BOARD="$k_bv"; else unset HERMES_KANBAN_BOARD; fi
+    if [ -z "$detail" ]; then ok "real-hermes-convergence-releases-nothing (the installed Hermes in an isolated HERMES_HOME, the host's board variables poisoned and stripped: the drifted fixture converges, no card is promoted by the kernel, both gates keep status, assignee, block kind and block events, every unstarted card is todo, a title that looks like a flag survives, a second run is a no-op)"
+    else bad "real-hermes-convergence-releases-nothing" "on the real kernel:$detail"; fi
+  fi
+}
+wants sync && run_sync_group
 
 # ---------------------------------------------------------------------------
 # commission/ — CHUNK-9's paid launch wrapper, driven entirely through stubs.
