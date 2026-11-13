@@ -904,11 +904,13 @@ fi
 # digest.sh is the one the daily cron runs (GW2). Since epic S6d lane.sh, the verifier
 # and the watcher also source forge-state.sh beside themselves: one definition of where
 # the lane's envelope and the verifier's verdict are kept, and each refuses to run without it.
+# merge-authority.sh is the operator's grant/revoke/status command for per-board merge mode; the
+# verifier reads the same grants through forge-state.sh.
 for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh validate-metadata.py \
                 codex-run.sh quota-window.py codex-progress.py \
                 prejudge-review.sh prejudge.sh verdict.sh merge-check.sh \
                 merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
-                driver-call-hook.sh claude-token.sh \
+                driver-call-hook.sh claude-token.sh merge-authority.sh \
                 checkpoint.sh triage.sh amend-contract.sh overseer-guard.sh \
                 gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"

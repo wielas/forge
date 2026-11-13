@@ -508,6 +508,33 @@ offset — a suite name, a `bash -n` entry, a CI suite list, a ledger section
 appended against an empty base — and the resolution is always to keep **both**
 sides. Resolving one by choosing a side silently drops a slice's work.
 
+## Letting the verifier merge
+
+By default the verifier only recommends: an approved PR is held on its card and
+you merge it. A **grant** lets it squash-merge approved PRs for **one board**
+instead. It is a file you write on purpose (`merge-authority/<board>.json` under
+`~/.forge`) naming who granted it and when; a board without one never merges.
+
+```bash
+~/.forge/repo/scripts/merge-authority.sh grant <board> --by <you> [--reason "<why>"]
+~/.forge/repo/scripts/merge-authority.sh status [<board>]
+~/.forge/repo/scripts/merge-authority.sh revoke <board>     # stops it, in one command
+```
+
+Only `status <board>` is a yes/no test: exit 0 means granted, 1 means not. Plain
+`status` is a listing: it exits 0 once it has listed every grant (none is also 0),
+and 1 only if a file there is not a valid grant (shown as MALFORMED; it grants nothing).
+
+A grant merges only a chunk **the lane built** (recorded implementer
+`forge-codex-lane`). Any other chunk, above all one you handed off yourself
+(`forge-operator-handoff`), is held for you to merge, and the hold says the board
+has merge authority but the merge is yours. Only you grant; the script refuses
+inside a worker's terminal. The verifier reads the grant when it reaches the merge
+decision, so a `revoke` during a review wins; a merge already made is not recalled.
+A merge under a grant says so in the card's result: `... (board merge authority
+granted by <you> at <time>)`. The old `FORGE_VERIFIER_MERGE=1` still works, for
+every board and every chunk; do not set it as well.
+
 ## Learning to judge — the skill that makes this work
 
 The judge rubric is your curriculum. Six dimensions, but only three catch what CI

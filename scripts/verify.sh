@@ -3080,6 +3080,12 @@ verifier/merge-mode-refuses-a-head-that-moved  P9: the PR's head is not the verd
 verifier/merge-nonzero-exit-reads-back  P10(4): gh pr merge lands the squash and exits 1; GitHub is asked, MERGED takes rc 4 and a merge-pending hold the watcher finishes; an exit that merged nothing stays substrate
 verifier/head-drift-refusal-then-hand-merge-is-flagged  P9: a refused moved head is held merge-pending, so the operator's hand merge is completed by the watcher and flagged HEAD DRIFT, not stranded
 verifier/failed-hold-write-keeps-merge-pending-prefix  P10(5): merged-held's hold is refused by the real kernel; the fallback block still starts merge-pending: and the watcher completes the card
+verifier/merge-authority-script-round-trip  scripts/merge-authority.sh: grant/status/list/revoke; a Hermes slug and --by are required (rc 2, nothing written); a second grant renames over the first; a failing rename keeps the old grant; one path formula in forge-state.sh (no Hermes needed)
+verifier/merge-authority-fails-closed  merge_mode (lifted) opens only on FORGE_VERIFIER_MERGE=1 or a valid grant whose inner board equals this one byte for byte; no file, another board, malformed, unreadable, revoked, no grantor, a case-only difference stay recommend-only; one JSON document only; under a grant only the exact lane profile merges, a person's, another profile's or an unrecorded implementer is held (no Hermes needed)
+verifier/merge-authority-opens-merge-mode-per-board  a grant for this board takes the merge route with FORGE_VERIFIER_MERGE=0, and the same board with no grant is held
+verifier/merge-authority-stays-recommend-only-when-it-must  another board's grant, a truncated file, a non-grant document before a valid one, no grantor, an inner board that differs only by case, a revoked grant: unchanged recommend-only hold, nothing merged
+verifier/merge-authority-never-merges-a-human-chunk  real kernel: under a grant a chunk whose recorded implementer is forge-operator-handoff, or some other profile, is held; the hold says the board has merge authority but the merge is the operator's
+verifier/merge-authority-is-named-on-the-merge  the completion's result and summary, and the merge-pending hold of an unconfirmed merge, name who granted the authority and when; metrics.sh still counts a verifier merge; the env switch's text is unchanged
 verifier/merged-tree-keeps-its-tree-for-the-probe  --keep-at leaves the green union (HEAD the merge of head and base, clean) for the probe; an existing path is refused
 verifier/mutation-probe-finds-unobserved-lines  CI-green fixtures of t_624586d7, a hollow Then, C21's unreached config and an unpinned message bounce on exactly their unobserved lines; a well-tested change passes (FL5)
 verifier/mutation-probe-mutation-is-caught  keeping the project's addopts lets --cov-fail-under turn a surviving mutant into a kill, and the unobserved line disappears
@@ -11087,6 +11093,244 @@ CTSTUB
   fi
 
   # -------------------------------------------------------------------------
+  # 2b. MERGE AUTHORITY, per board. Pure bash and jq, so the next two cases run where Hermes is not installed.
+  #
+  # The verifier squash-merges on its own on FORGE_VERIFIER_MERGE=1 (every board on the host at once) or on a
+  # per-board GRANT: one file, written by scripts/merge-authority.sh, read by the one fail-closed reader in
+  # forge-state.sh. These are the script (round trip, validation, atomic write, one path formula) and the DECISION
+  # (merge_mode, lifted out of the program that makes it). The cases in the real-kernel lab below run the program.
+  # Nothing here may touch the real ~/.forge: every call is aimed at a throwaway state root.
+  # -------------------------------------------------------------------------
+  local ma=scripts/merge-authority.sh mad="$TMPROOT/merge-authority" madetail="" mab mak marc
+  rm -rf "$mad"; mkdir -p "$mad/bin"
+  _ma()  { env -u FORGE_MERGE_AUTHORITY_ROOT FORGE_STATE_ROOT="$mad/state" "$REPO_ROOT/$ma" "$@"; }
+  _maf() { printf '%s/state/merge-authority/%s.json' "$mad" "$1"; }
+  _mafiles() { find "$mad/state" -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+  # ---- the script: a round trip, strict input, an atomic write, one path formula -----------------------------
+  _ma status > "$mad/o" 2>&1; marc=$?
+  { [ "$marc" = 0 ] && grep -q 'no board has merge authority' "$mad/o"; } \
+    || madetail="$madetail an-empty-host-did-not-say-so(rc=$marc)"
+  _ma status vlab > "$mad/o" 2>&1; marc=$?
+  [ "$marc" = 1 ] || madetail="$madetail status-of-an-ungranted-board-was-not-1(rc=$marc)"
+  _ma grant vlab --by operator-test --reason "round trip" > "$mad/o" 2>&1; marc=$?
+  [ "$marc" = 0 ] || madetail="$madetail grant-rc=$marc($(head -c 120 "$mad/o"))"
+  jq -e '.schema == "forge.merge-authority.v1" and .board == "vlab" and .granted_by == "operator-test"
+         and .reason == "round trip" and (.granted_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' \
+    "$(_maf vlab)" >/dev/null 2>&1 || madetail="$madetail the-grant-file-lacks-schema-board-granted_by-granted_at-reason"
+  _ma status vlab > "$mad/o" 2>&1; marc=$?
+  { [ "$marc" = 0 ] && grep -q 'operator-test' "$mad/o"; } || madetail="$madetail status-of-a-granted-board-was-not-0(rc=$marc)"
+  _ma status othr > /dev/null 2>&1; marc=$?
+  [ "$marc" = 1 ] || madetail="$madetail another-board-read-as-granted(rc=$marc)"
+  _ma status > "$mad/o" 2>&1; marc=$?
+  { [ "$marc" = 0 ] && grep -q '^vlab — by operator-test at ' "$mad/o"; } || madetail="$madetail the-list-does-not-show-the-grant(rc=$marc)"
+  # A second grant REPLACES the first, by a rename (the inode changes) and leaves no temp file behind.
+  mab="$(ls -i "$(_maf vlab)" | awk '{print $1}')"
+  _ma grant vlab --by someone-else > /dev/null 2>&1
+  mak="$(ls -i "$(_maf vlab)" | awk '{print $1}')"
+  { [ -n "$mab" ] && [ "$mab" != "$mak" ] && [ "$(jq -r .granted_by "$(_maf vlab)")" = someone-else ]; } \
+    || madetail="$madetail a-second-grant-was-not-a-rename-over-the-first"
+  [ -z "$(ls -A "$mad/state/merge-authority" | grep '^\.tmp\.')" ] || madetail="$madetail a-temp-file-was-left-behind"
+  _ma revoke vlab > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 0 ] && [ ! -e "$(_maf vlab)" ]; } || madetail="$madetail revoke-left-the-file(rc=$marc)"
+  _ma status vlab > /dev/null 2>&1; marc=$?
+  [ "$marc" = 1 ] || madetail="$madetail a-revoked-board-still-reads-as-granted(rc=$marc)"
+  _ma revoke vlab > /dev/null 2>&1; marc=$?
+  [ "$marc" = 0 ] || madetail="$madetail revoking-nothing-was-an-error(rc=$marc)"
+  # A board is a Hermes slug (kanban_db.py: ^[a-z0-9][a-z0-9_-]{0,63}$): nothing else becomes a path.
+  for mab in '../x' 'a/b' '.hid' '-x' 'a b' 'Vlab' 'VLAB' 'x.y' '' 'a*' "$(printf 'x%.0s' $(seq 1 65))" "$(printf 'a\nb')"; do
+    _ma grant "$mab" --by operator-test > /dev/null 2>&1; marc=$?
+    [ "$marc" = 2 ] || madetail="$madetail slug-[${mab:0:12}]-was-not-refused(rc=$marc)"
+    _ma revoke "$mab" > /dev/null 2>&1; marc=$?
+    [ "$marc" = 2 ] || madetail="$madetail revoke-of-slug-[${mab:0:12}]-was-not-refused(rc=$marc)"
+  done
+  [ "$(_mafiles)" = 0 ] || madetail="$madetail a-refused-grant-left-a-file($(_mafiles))"
+  # --by names whoever grants, and it is required.
+  _ma grant vlab > /dev/null 2>&1; marc=$?;                           [ "$marc" = 2 ] || madetail="$madetail no-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by > /dev/null 2>&1; marc=$?;                      [ "$marc" = 2 ] || madetail="$madetail by-with-no-value-was-accepted(rc=$marc)"
+  _ma grant vlab --by '' > /dev/null 2>&1; marc=$?;                   [ "$marc" = 2 ] || madetail="$madetail an-empty-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by '   ' > /dev/null 2>&1; marc=$?;                [ "$marc" = 2 ] || madetail="$madetail a-blank-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by "$(printf 'a\nb')" > /dev/null 2>&1; marc=$?;   [ "$marc" = 2 ] || madetail="$madetail a-multi-line-by-was-accepted(rc=$marc)"
+  _ma grant vlab --by x --bogus > /dev/null 2>&1; marc=$?;            [ "$marc" = 2 ] || madetail="$madetail an-unknown-flag-was-accepted(rc=$marc)"
+  _ma frobnicate vlab > /dev/null 2>&1; marc=$?;                      [ "$marc" = 2 ] || madetail="$madetail an-unknown-command-was-accepted(rc=$marc)"
+  [ "$(_mafiles)" = 0 ] || madetail="$madetail a-refused-grant-left-a-file($(_mafiles))"
+  # ATOMIC: the grant is written to a temp file in the SAME directory and renamed over the old one. A rename that
+  # fails (a `mv` that refuses) leaves the earlier grant byte for byte as it was and no temp file; a first grant
+  # that fails leaves no file at all.
+  cat > "$mad/bin/mv" <<MAMV
+#!/bin/sh
+printf '%s\n' "\$@" > "$mad/mv.args"
+exit 1
+MAMV
+  chmod +x "$mad/bin/mv"
+  _ma grant vlab --by first > /dev/null 2>&1
+  cp "$(_maf vlab)" "$mad/before.json"
+  PATH="$mad/bin:$PATH" _ma grant vlab --by second > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && cmp -s "$mad/before.json" "$(_maf vlab)"; } || madetail="$madetail a-failed-rename-damaged-the-earlier-grant(rc=$marc)"
+  { [ "$(sed -n 1p "$mad/mv.args")" = -f ] && [ "$(dirname "$(sed -n 2p "$mad/mv.args")")" = "$(dirname "$(sed -n 3p "$mad/mv.args")")" ] \
+    && [ "$(sed -n 3p "$mad/mv.args")" = "$(_maf vlab)" ] && case "$(basename "$(sed -n 2p "$mad/mv.args")")" in .tmp.*) true;; *) false;; esac; } \
+    || madetail="$madetail the-write-was-not-a-temp-file-renamed-in-the-same-directory($(tr '\n' ' ' < "$mad/mv.args"))"
+  PATH="$mad/bin:$PATH" _ma grant othr --by second > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && [ ! -e "$(_maf othr)" ]; } || madetail="$madetail a-failed-first-grant-left-a-file(rc=$marc)"
+  [ -z "$(ls -A "$mad/state/merge-authority" | grep '^\.tmp\.')" ] || madetail="$madetail a-failed-rename-left-a-temp-file"
+  _ma revoke vlab > /dev/null 2>&1
+  # ONE FORMULA FOR THE PATH, in forge-state.sh: the default sits under the state root, the override moves it, and
+  # neither the script nor the verifier spells the directory out.
+  [ "$(env -u FORGE_STATE_ROOT -u FORGE_MERGE_AUTHORITY_ROOT HOME=/h bash -c '. "$1"; forge_merge_authority_root' _ "$REPO_ROOT/scripts/forge-state.sh")" = /h/.forge/merge-authority ] \
+    || madetail="$madetail the-default-root-is-not-HOME/.forge/merge-authority"
+  env FORGE_STATE_ROOT="$mad/state" FORGE_MERGE_AUTHORITY_ROOT="$mad/elsewhere" "$REPO_ROOT/$ma" grant vlab --by operator-test > /dev/null 2>&1
+  { [ -f "$mad/elsewhere/vlab.json" ] && [ ! -e "$(_maf vlab)" ]; } || madetail="$madetail FORGE_MERGE_AUTHORITY_ROOT-did-not-move-the-file"
+  grep -Ehv '^[[:space:]]*#' "$ma" "$review" | grep -Fq '/merge-authority' && madetail="$madetail a-second-formula-for-the-path-is-spelled-out"
+  { grep -q 'forge_merge_authority_root' "$ma" && grep -q 'forge_merge_authority_read' "$ma" && grep -q 'forge_merge_authority_read' "$review"; } \
+    || madetail="$madetail the-script-and-the-verifier-do-not-both-use-forge-state.sh"
+  [ -x "$ma" ] || madetail="$madetail merge-authority.sh-is-not-executable"
+  # A WORKER NEVER GRANTS: the verifier's driver reads a PR's text, and a grant is the one act that would let it
+  # merge that PR. The fence's marker refuses grant and revoke (status stays open); the earlier grant is untouched.
+  _ma grant vlab --by operator-test > /dev/null 2>&1
+  HERMES_DELEGATED_CHILD_CONTEXT=/some/board/root _ma grant othr --by a-worker > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && [ ! -e "$(_maf othr)" ]; } || madetail="$madetail a-fenced-worker-granted(rc=$marc)"
+  HERMES_DELEGATED_CHILD_CONTEXT=/some/board/root _ma revoke vlab > /dev/null 2>&1; marc=$?
+  { [ "$marc" = 1 ] && [ -f "$(_maf vlab)" ]; } || madetail="$madetail a-fenced-worker-revoked(rc=$marc)"
+  HERMES_DELEGATED_CHILD_CONTEXT=/some/board/root _ma status vlab > /dev/null 2>&1; marc=$?
+  [ "$marc" = 0 ] || madetail="$madetail status-is-closed-to-a-fenced-worker(rc=$marc)"
+  _ma revoke vlab > /dev/null 2>&1
+  [ -z "$madetail" ] \
+    && ok "merge-authority-script-round-trip (grant, status, list and revoke; a board is a Hermes slug and --by is required, each refused with rc 2 and nothing written; a second grant renames over the first; a failing rename leaves the earlier grant and no temp file; one path formula in forge-state.sh)" \
+    || bad "merge-authority-script-round-trip" \
+        "merge-authority.sh must grant, revoke and report one file per board, strictly and atomically —$madetail"
+
+  # ---- the decision: merge_mode, lifted out of prejudge-review.sh and run on files --------------------------
+  # `merge_mode` is the one place the verifier decides whether it may merge. It is lifted by name so a case can
+  # aim it at a board, a grant file and a card without a kernel; an empty lift is a RED case, not a skip (F65).
+  local mmsrc mmdetail="" mmgot mmlane mmhuman mmwant mmstep
+  mmsrc="$(awk '/^merge_mode\(\) \{/{p=1} p{print} p && /^}$/{exit}' "$review")"
+  mmlane='{"events":[{"kind":"created","payload":{}},{"kind":"review_requested","payload":{"implementer":"forge-codex-lane","reviewer":"forge-verifier"}}]}'
+  mmhuman='{"events":[{"kind":"review_requested","payload":{"implementer":"forge-operator-handoff","reviewer":"forge-verifier"}}]}'
+  _mm() {   # board card-json [VAR=value ...] -> merge|<clause> · hold · hold-granted (a grant exists and this chunk is held anyway)
+    local b="$1" card="$2" kv; shift 2
+    ( unset FORGE_VERIFIER_MERGE FORGE_MERGE_AUTHORITY_ROOT FORGE_HANDOFF_SENTINEL
+      export FORGE_STATE_ROOT="$mad/state"
+      for kv in "$@"; do export "$kv"; done
+      . "$REPO_ROOT/scripts/forge-state.sh"
+      eval "$mmsrc"
+      BOARD="$b"; CARD0="$card"
+      if merge_mode; then printf 'merge|%s' "$MERGE_AUTHORITY_CLAUSE"
+      elif [ -n "$MERGE_HOLD_HEADLINE" ]; then printf 'hold-granted'
+      else printf 'hold'; fi ) 2>/dev/null
+  }
+  _mmw() {   # <jq filter over the grant file>: replace vlab's grant by that edit of a good one
+    _ma grant vlab --by operator-test > /dev/null 2>&1
+    jq -c "$1" "$(_maf vlab)" > "$mad/edit.json" && mv "$mad/edit.json" "$(_maf vlab)"
+  }
+  _mmexpect() {   # step-name want got
+    [ "$3" = "$2" ] || mmdetail="$mmdetail $1(want:$2,got:${3:0:40})"
+  }
+  if [ -z "$mmsrc" ]; then
+    bad "merge-authority-fails-closed" "no merge_mode function found in $review — it was renamed or deleted, and this check must fail rather than skip (F65)"
+  else
+    rm -rf "$mad/state" "$mad/elsewhere"
+    mmwant="merge|board merge authority granted by operator-test at "
+    # nothing granted anywhere
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect no-file hold "$mmgot"
+    mmgot="$(_mm '' "$mmlane")";    _mmexpect no-board hold "$mmgot"
+    _ma grant othr --by operator-test > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-grant-for-another-board hold "$mmgot"
+    # a valid grant for THIS board, and the control for everything below
+    _ma grant vlab --by operator-test --reason "case" > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmlane")"
+    case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail a-valid-grant-did-not-open-merge-mode(got:${mmgot:0:60})";; esac
+    mmgot="$(_mm VLAB "$mmlane")";  _mmexpect an-uppercase-spelling-of-the-board hold "$mmgot"
+    mmgot="$(_mm 'vlab/../othr' "$mmlane")"; _mmexpect a-board-that-is-a-path hold "$mmgot"
+    # FORGE_VERIFIER_MERGE keeps its exact-1 rule: 0, true and empty neither disable a grant nor enable merging.
+    for mmstep in 0 true yes ''; do
+      mmgot="$(_mm vlab "$mmlane" FORGE_VERIFIER_MERGE="$mmstep")"
+      case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail FORGE_VERIFIER_MERGE=[$mmstep]-disabled-a-grant(got:${mmgot:0:40})";; esac
+    done
+    rm -f "$(_maf vlab)"
+    for mmstep in 0 true yes ''; do
+      mmgot="$(_mm vlab "$mmlane" FORGE_VERIFIER_MERGE="$mmstep")"; _mmexpect "FORGE_VERIFIER_MERGE=[$mmstep]-with-no-grant" hold "$mmgot"
+    done
+    mmgot="$(_mm vlab "$mmlane" FORGE_VERIFIER_MERGE=1)"; _mmexpect the-host-wide-switch-with-no-grant 'merge|' "$mmgot"
+    # a file that is not a grant of this board
+    _mmw '.'                                    ; mmgot="$(_mm vlab "$mmlane")"; case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail the-control-grant-did-not-open-merge-mode";; esac
+    _mmw '.board = "VLAB"'                      ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect inner-board-differs-by-case hold "$mmgot"
+    _mmw '.board = "vlab "'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect inner-board-has-a-trailing-space hold "$mmgot"
+    _mmw '.board = "othr"'                      ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect inner-board-is-another-board hold "$mmgot"
+    _mmw 'del(.board)'                          ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-inner-board hold "$mmgot"
+    _mmw 'del(.granted_by)'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-granted_by hold "$mmgot"
+    _mmw '.granted_by = ""'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-empty-granted_by hold "$mmgot"
+    _mmw '.granted_by = "  "'                   ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-blank-granted_by hold "$mmgot"
+    _mmw '.granted_by = ["operator"]'           ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-granted_by-that-is-not-a-string hold "$mmgot"
+    _mmw 'del(.granted_at)'                     ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-granted_at hold "$mmgot"
+    _mmw '.schema = "forge.merge-authority.v2"' ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-unknown-schema hold "$mmgot"
+    _mmw 'del(.schema)'                         ; mmgot="$(_mm vlab "$mmlane")"; _mmexpect no-schema hold "$mmgot"
+    printf '{"schema":"forge.merge-authority.v1","board":"vlab","granted_by"' > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-truncated-file hold "$mmgot"
+    : > "$(_maf vlab)";             mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-empty-file hold "$mmgot"
+    echo '[]' > "$(_maf vlab)";     mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-json-array hold "$mmgot"
+    echo '"vlab"' > "$(_maf vlab)"; mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-json-string hold "$mmgot"
+    # EXACTLY ONE DOCUMENT: jq answers for every document in a stream, so a first document that is no grant followed
+    # by a valid one used to read as granted. The control (the valid document alone) must open merge mode first.
+    _ma grant vlab --by operator-test > /dev/null 2>&1; cp "$(_maf vlab)" "$mad/good.json"
+    mmgot="$(_mm vlab "$mmlane")"; case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail the-one-document-control-did-not-open-merge-mode";; esac
+    { echo '{"schema":"not-a-grant"}'; cat "$mad/good.json"; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-non-grant-document-then-a-valid-grant hold "$mmgot"
+    { echo '"vlab"'; cat "$mad/good.json"; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-string-then-a-valid-grant hold "$mmgot"
+    { cat "$mad/good.json"; echo '{"schema":"not-a-grant"}'; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-valid-grant-then-a-non-grant-document hold "$mmgot"
+    { cat "$mad/good.json"; cat "$mad/good.json"; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect two-valid-grants-in-one-file hold "$mmgot"
+    { cat "$mad/good.json"; echo 'trailing text'; } > "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")"; _mmexpect a-valid-grant-then-trailing-text hold "$mmgot"
+    rm -f "$(_maf vlab)"; mkdir "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-directory-in-the-way hold "$mmgot"
+    rmdir "$(_maf vlab)"
+    _ma grant othr --by operator-test > /dev/null 2>&1; ln -s othr.json "$(_maf vlab)"
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-symlink-to-another-boards-grant hold "$mmgot"
+    rm -f "$(_maf vlab)"
+    _ma grant vlab --by operator-test > /dev/null 2>&1; chmod 000 "$(_maf vlab)"
+    if [ -r "$(_maf vlab)" ]; then :   # root reads anything: the case cannot be built here, and says nothing about it
+    else mmgot="$(_mm vlab "$mmlane")"; _mmexpect an-unreadable-file hold "$mmgot"; fi
+    chmod 644 "$(_maf vlab)"
+    # revoked
+    _ma grant vlab --by operator-test > /dev/null 2>&1; _ma revoke vlab > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmlane")";  _mmexpect a-revoked-grant hold "$mmgot"
+    # A GRANT MERGES ONLY A CHUNK THE LANE BUILT: an ALLOWLIST on the implementer the kernel recorded at the last
+    # hand-off, exactly `forge-codex-lane`. Everything else is held, whether it is a person's or merely not the lane's.
+    _ma grant vlab --by operator-test > /dev/null 2>&1
+    mmgot="$(_mm vlab "$mmhuman")"; _mmexpect a-human-chunk-under-a-grant hold-granted "$mmgot"
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":"claude-interactive"}}]}')"
+    _mmexpect an-interactive-chunk-under-a-grant hold-granted "$mmgot"
+    mmgot="$(_mm vlab "$mmhuman" FORGE_HANDOFF_SENTINEL=somewhere-else)"; _mmexpect the-literal-sentinel-with-FORGE_HANDOFF_SENTINEL-overridden hold-granted "$mmgot"
+    mmgot="$(_mm vlab "$mmhuman" FORGE_HANDOFF_SENTINEL=forge-operator-handoff)"; _mmexpect the-literal-sentinel-with-FORGE_HANDOFF_SENTINEL-set-to-it hold-granted "$mmgot"
+    for mmstep in forge-verifier some-other-profile forge-codex-lane-2 forge-codex Forge-Codex-Lane ' forge-codex-lane' 'forge-codex-lane '; do
+      mmgot="$(_mm vlab "{\"events\":[{\"kind\":\"review_requested\",\"payload\":{\"implementer\":\"$mmstep\"}}]}")"
+      _mmexpect "a-card-held-by-[$mmstep]-is-not-the-lane" hold-granted "$mmgot"
+    done
+    mmgot="$(_mm vlab '{"events":[{"kind":"created","payload":{}}]}')";   _mmexpect no-hand-off-event hold-granted "$mmgot"
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{}}]}')"; _mmexpect no-implementer-recorded hold-granted "$mmgot"
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":""}}]}')"; _mmexpect an-empty-implementer hold-granted "$mmgot"
+    mmgot="$(_mm vlab 'not json')"; _mmexpect an-unreadable-card hold-granted "$mmgot"
+    mmgot="$(_mm vlab '')";         _mmexpect no-card-at-all hold-granted "$mmgot"
+    # the LAST hand-off decides: a person's chunk the lane took over merges, a lane's chunk a person took over does not
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":"forge-operator-handoff"}},{"kind":"review_requested","payload":{"implementer":"forge-codex-lane"}}]}')"
+    case "$mmgot" in "$mmwant"*) ;; *) mmdetail="$mmdetail the-last-hand-off-did-not-decide(got:${mmgot:0:40})";; esac
+    mmgot="$(_mm vlab '{"events":[{"kind":"review_requested","payload":{"implementer":"forge-codex-lane"}},{"kind":"review_requested","payload":{"implementer":"forge-operator-handoff"}}]}')"
+    _mmexpect the-last-hand-off-is-a-persons hold-granted "$mmgot"
+    # DECIDED AT THE MERGE, NOT AT THE START: the one call to merge_mode comes after the scorer's call, so a revoke
+    # made while a review runs is seen. (A structural check; the lifted function above is what it decides with.)
+    mmgot="$(grep -n 'claude -p --model opus' "$review" | tail -1 | cut -d: -f1)"
+    mmstep="$(grep -nE '^[[:space:]]*if merge_mode; then' "$review" | cut -d: -f1 | tr '\n' ' ')"
+    { [ -n "$mmgot" ] && [ "$(printf '%s' "$mmstep" | wc -w | tr -d ' ')" = 1 ] && [ "${mmstep% }" -gt "$mmgot" ]; } \
+      || mmdetail="$mmdetail merge_mode-is-not-called-once-after-the-scorer(scorer-line:$mmgot,calls:$mmstep)"
+    [ -z "$mmdetail" ] \
+      && ok "merge-authority-fails-closed (merge_mode opens only on FORGE_VERIFIER_MERGE=1 or a well-formed grant whose inner board equals this one byte for byte; no file, another board's, a malformed, truncated, multi-document, unreadable, symlinked or revoked file, a missing grantor, an unknown schema and a case-only difference all stay recommend-only; 0/true/empty never disable a grant; under a grant only the exact lane profile merges: a person's chunk, another profile's and an unrecorded implementer are held)" \
+      || bad "merge-authority-fails-closed" \
+          "merge mode must fail closed to recommend-only unless THIS board holds a valid grant, and a grant must merge only a chunk the lane built —$mmdetail"
+  fi
+
+  # -------------------------------------------------------------------------
   # 3. The routing, on the REAL kernel, in an isolated HERMES_HOME.
   #
   # `gh`, `claude` and the merged-tree check are stubs that log every call; the
@@ -11110,6 +11354,8 @@ CTSTUB
              merge-mode-survives-a-failed-completion merge-watcher-reports-once \
              watcher-flags-head-drift merge-mode-refuses-a-head-that-moved \
              merge-nonzero-exit-reads-back failed-hold-write-keeps-merge-pending-prefix \
+             merge-authority-opens-merge-mode-per-board merge-authority-stays-recommend-only-when-it-must \
+             merge-authority-never-merges-a-human-chunk merge-authority-is-named-on-the-merge \
              head-drift-refusal-then-hand-merge-is-flagged \
              mutation-probe-bounces-only-behind-its-switch \
              the-hook-restores-the-handoff the-hook-restores-the-verifiers-calls \
@@ -13041,6 +13287,187 @@ VGHX
       && ok "failed-hold-write-keeps-merge-pending-prefix (merged-held's hold refused by the real kernel: the fallback block lands starting merge-pending:, and the merge-watcher finds it and completes the card)" \
       || bad "failed-hold-write-keeps-merge-pending-prefix" \
           "a hold that fails to write must fall back to a block the merge-watcher can still find —$vdetail"
+
+    # ---- merge authority: a board grant opens merge mode for THAT board ----------------------------------------
+    # Until now nothing but a host-wide environment variable turned merge mode on. A grant is one file per board
+    # (scripts/merge-authority.sh, read by the fail-closed reader in forge-state.sh); the decision itself is
+    # merge-authority-fails-closed above, and these four run the REAL program on the real kernel. `_vboard`
+    # wipes $vstate, so every grant is written after it.
+    local vma="$REPO_ROOT/scripts/merge-authority.sh" vmaf vhpr vgat vres vres2 vsum vnsk="$vbin/ma-kanban"
+    _vma()     { env -u FORGE_MERGE_AUTHORITY_ROOT FORGE_STATE_ROOT="$vstate" "$vma" "$@"; }
+    _vmafile() { printf '%s/merge-authority/%s.json' "$vstate" "$1"; }
+    _vmaedit() { jq -c "$1" "$(_vmafile vlab)" > "$vbin/ma.tmp" && mv "$vbin/ma.tmp" "$(_vmafile vlab)"; }
+
+    # ---- a grant opens merge mode; no grant holds, as before ----
+    # FORGE_VERIFIER_MERGE=0 on the grant run: a grant merges with the variable at 0, so the variable is not what
+    # turned it on and 0 does not turn it off.
+    vdetail=""; _vboard
+    _vma grant vlab --by operator-test --reason "case" > /dev/null 2>&1 || vdetail="$vdetail the-grant-was-refused"
+    vrc="$(_vrun FORGE_VERIFIER_MERGE=0)"
+    [ "$vrc" = 4 ] || vdetail="$vdetail rc=$vrc($(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 120))"
+    jq -e '.action == "merged"' "$vbin/out.json" >/dev/null 2>&1 || vdetail="$vdetail envelope-not-merged($(jq -r .action "$vbin/out.json" 2>/dev/null))"
+    grep -q "^pr merge --squash --delete-branch --match-head-commit $(jq -r '.headRefOid' "$REPO_ROOT/$prs/pr-9/pr.json")" \
+      "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail not-squash-delete-and-pinned-head($(grep '^pr merge' "$vbin/gh.log" 2>/dev/null))"
+    [ "$(_vst "$vP" | cut -d/ -f1)" = done ] || vdetail="$vdetail card-not-done($(_vst "$vP"))"
+    [ "$(_vst "$vC" | cut -d/ -f1)" = ready ] || vdetail="$vdetail child-not-released($(_vst "$vC"))"
+    # CONTROL: the same board with no grant, the variable unset, is recommend-only.
+    _vboard; vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1 \
+      && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ] \
+      && ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null; } \
+      || vdetail="$vdetail no-grant-did-not-hold(rc=$vrc,$(_vst "$vP"))"
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-opens-merge-mode-per-board (a grant for this board takes the merge route with FORGE_VERIFIER_MERGE=0: squash, delete the branch, the verified head pinned, card done, child released; the same board with no grant is held)" \
+      || bad "merge-authority-opens-merge-mode-per-board" \
+          "a board grant must open merge mode for that board, with the host-wide variable unset or 0 —$vdetail"
+
+    # ---- everything that is not a valid grant for THIS board stays recommend-only ----
+    vdetail=""
+    for vmaf in another-board malformed-file non-grant-document-then-a-valid-grant no-grantor inner-board-differs-by-case revoked; do
+      _vboard; mkdir -p "$vstate/merge-authority"
+      case "$vmaf" in
+        another-board)  _vma grant othr --by operator-test > /dev/null 2>&1
+                        [ -f "$(_vmafile othr)" ] && [ ! -e "$(_vmafile vlab)" ] || vdetail="$vdetail $vmaf:fixture-not-built";;
+        malformed-file) printf '{"schema":"forge.merge-authority.v1","board":"vlab","granted_by":"operator-te' > "$(_vmafile vlab)";;
+        non-grant-document-then-a-valid-grant)
+                        # jq answers for every document in a file: a first one that is no grant must not hide behind a valid second
+                        _vma grant vlab --by operator-test > /dev/null 2>&1
+                        { echo '{"schema":"not-a-grant"}'; cat "$(_vmafile vlab)"; } > "$vbin/ma.tmp" && mv "$vbin/ma.tmp" "$(_vmafile vlab)"
+                        [ "$(jq -s length "$(_vmafile vlab)" 2>/dev/null)" = 2 ] || vdetail="$vdetail $vmaf:fixture-not-built";;
+        no-grantor)     _vma grant vlab --by operator-test > /dev/null 2>&1; _vmaedit 'del(.granted_by)'
+                        jq -e 'has("granted_by") | not' "$(_vmafile vlab)" >/dev/null 2>&1 || vdetail="$vdetail $vmaf:fixture-not-built";;
+        inner-board-differs-by-case)
+                        # the file is vlab.json, as the verifier opens it, and says VLAB inside: on a case-insensitive
+                        # volume the NAME proves nothing, which is why the inner field is compared byte for byte
+                        _vma grant vlab --by operator-test > /dev/null 2>&1; _vmaedit '.board = "VLAB"'
+                        [ "$(jq -r .board "$(_vmafile vlab)")" = VLAB ] || vdetail="$vdetail $vmaf:fixture-not-built";;
+        revoked)        _vma grant vlab --by operator-test > /dev/null 2>&1
+                        [ -f "$(_vmafile vlab)" ] || vdetail="$vdetail $vmaf:fixture-not-built"
+                        _vma revoke vlab > /dev/null 2>&1;;
+      esac
+      vrc="$(_vrun)"
+      { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+        || vdetail="$vdetail $vmaf:not-a-recommendation(rc=$vrc,$(jq -r '.action' "$vbin/out.json" 2>/dev/null))"
+      ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail $vmaf:MERGED"
+      { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+        || vdetail="$vdetail $vmaf:card-not-held($(_vst "$vP"),$(_vst "$vC"))"
+      _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+          | startswith("merge-pending: ") and test("the verifier may only recommend")' >/dev/null 2>&1 \
+        || vdetail="$vdetail $vmaf:hold-is-not-the-recommend-only-hold"
+    done
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-stays-recommend-only-when-it-must (a grant for another board, a truncated file, a non-grant document followed by a valid grant, one with no grantor, one whose inner board is VLAB under the name vlab.json, and a revoked grant: each is the unchanged recommend-only hold, no gh pr merge, child held)" \
+      || bad "merge-authority-stays-recommend-only-when-it-must" \
+          "merge mode must stay off unless this board holds a valid grant —$vdetail"
+
+    # ---- a grant merges only what the lane built: a person's chunk, or any other profile's, is held ----
+    # The card as a person's chunk really is: created on the non-spawnable sentinel and handed off, unfenced, by
+    # lane-handoff.sh, so the kernel records `forge-operator-handoff` as its implementer (bounce.sh reads the same
+    # field). The control is the case above: the same grant merges a lane's chunk. The last row is a card held by
+    # SOME OTHER profile: it is not a person's chunk by name, and the allowlist holds it all the same.
+    vdetail=""
+    vhpr="$(jq -r .pr "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json")"
+    _vhuman_board() {   # [assignee]: the card's implementer once lane-handoff.sh hands it off (default: the sentinel)
+      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/claude.auth" "$vbin/mc.log" "$vbin/mp.log" \
+             "$vbin/merged" "$vbin/closed" "$vbin/base" "$vbin/state-down"
+      mkdir -p "$vhome"
+      jq -r '.headRefOid' "$REPO_ROOT/$prs/pr-9/pr.json" > "$vbin/head"
+      HERMES_HOME="$vhome" hermes kanban boards create vlab >/dev/null 2>&1
+      vP="$(_v create "CHUNK-7: Sync engine" --assignee "${1:-forge-operator-handoff}" --body "$contract" --json 2>/dev/null | jq -r '.id')"
+      vC="$(_v create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$vP" --json 2>/dev/null | jq -r '.id')"
+      env PATH="$vbin:$PATH" HERMES_HOME="$vhome" "$REPO_ROOT/scripts/lane-handoff.sh" "$vP" --board vlab \
+        --summary "CHUNK-7, by hand" --metadata "$REPO_ROOT/scripts/fixtures/metadata/chunk-valid.json" > "$vbin/hand.out" 2>&1
+    }
+    _vhuman_board || vdetail="$vdetail the-hand-off-was-refused($(tail -1 "$vbin/hand.out"))"
+    _v show "$vP" --json | jq -e '[.events[] | select(.kind == "review_requested")] | last | .payload.implementer == "forge-operator-handoff"' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-kernel-did-not-record-the-sentinel-as-the-implementer"
+    _vma grant vlab --by operator-test > /dev/null 2>&1
+    vrc="$(VPRURL="$vhpr" _vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail not-a-recommendation(rc=$vrc,$(jq -r '.action // .reason' "$vbin/out.json" 2>/dev/null | head -c 100))"
+    ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail A-PERSONS-CHUNK-WAS-MERGED-UNDER-A-GRANT"
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+      || vdetail="$vdetail card-not-held($(_vst "$vP"),$(_vst "$vC"))"
+    # The hold is the merge-pending hold the watcher completes on the operator's merge, and it says why.
+    _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last
+        | (.payload.kind == "needs_input") and (.payload.reason
+          | startswith("merge-pending: ") and test("Decision needed: merge the PR")
+            and test("this board has merge authority, but this chunk was built by a person, so the merge is yours")
+            and test("recorded implementer: forge-operator-handoff") and test("granted by operator-test at "))' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-hold-does-not-say-the-board-has-authority-and-a-person-built-it($(_v show "$vP" --json | jq -r '[.events[]|select(.kind=="blocked")]|last|.payload.reason' | head -c 160))"
+    # SOME OTHER PROFILE: the same hand-off, with the card held by a profile that is neither the lane nor the sentinel
+    _vhuman_board some-other-profile || vdetail="$vdetail other-profile:the-hand-off-was-refused($(tail -1 "$vbin/hand.out"))"
+    _v show "$vP" --json | jq -e '[.events[] | select(.kind == "review_requested")] | last | .payload.implementer == "some-other-profile"' >/dev/null 2>&1 \
+      || vdetail="$vdetail other-profile:the-kernel-did-not-record-the-profile-as-the-implementer"
+    _vma grant vlab --by operator-test > /dev/null 2>&1
+    vrc="$(VPRURL="$vhpr" _vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail other-profile:not-a-recommendation(rc=$vrc,$(jq -r '.action // .reason' "$vbin/out.json" 2>/dev/null | head -c 100))"
+    ! grep -q '^pr merge' "$vbin/gh.log" 2>/dev/null || vdetail="$vdetail other-profile:A-CHUNK-THE-LANE-DID-NOT-BUILD-WAS-MERGED-UNDER-A-GRANT"
+    { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] && [ "$(_vst "$vC" | cut -d/ -f1)" = todo ]; } \
+      || vdetail="$vdetail other-profile:card-not-held($(_vst "$vP"),$(_vst "$vC"))"
+    _v show "$vP" --json | jq -e '[ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+        | startswith("merge-pending: ") and test("this board has merge authority, but this chunk was not built by the lane, so the merge is yours")
+          and test("recorded implementer is some-other-profile, not the lane \\(forge-codex-lane\\)")' >/dev/null 2>&1 \
+      || vdetail="$vdetail other-profile:the-hold-does-not-say-it-was-not-the-lane($(_v show "$vP" --json | jq -r '[.events[]|select(.kind=="blocked")]|last|.payload.reason' | head -c 160))"
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-never-merges-a-human-chunk (on a board with a grant, a chunk whose recorded implementer is forge-operator-handoff, and one held by some other profile, each take the merge-pending recommend-only hold: no gh pr merge, child held, and the hold says the board has merge authority but the merge is yours and why)" \
+      || bad "merge-authority-never-merges-a-human-chunk" \
+          "a board grant must merge only a chunk the lane built —$vdetail"
+
+    # ---- the merge's own record names the authority ----
+    # `merged by forge-verifier:` is the prefix metrics.sh keys on; the clause is ADDED after it. The merge-pending
+    # hold a merge that GitHub would not confirm leaves names it too, because the watcher's own completion does not.
+    vdetail=""; _vboard
+    _vma grant vlab --by operator-test --reason "case" > /dev/null 2>&1
+    vgat="$(jq -r .granted_at "$(_vmafile vlab)")"
+    vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "merged"' "$vbin/out.json" >/dev/null 2>&1 && [ "$(_vst "$vP" | cut -d/ -f1)" = done ]; } \
+      || vdetail="$vdetail not-merged(rc=$vrc,$(_vst "$vP"))"
+    vres="$(_v show "$vP" --json | jq -r '.task.result')"
+    case "$vres" in
+      "merged by forge-verifier: "*" (board merge authority granted by operator-test at $vgat)") ;;
+      *) vdetail="$vdetail the-result-does-not-name-the-authority('$vres')";;
+    esac
+    jq -e --arg c "board merge authority granted by operator-test at $vgat" '
+        .terminate.tool == "kanban_complete" and (.terminate.args.result | contains($c)) and (.terminate.args.summary | contains($c))
+        and (.terminate.args.metadata.schema == "forge.judge.v1")' "$vbin/out.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail the-named-completion-lacks-the-clause-or-lost-its-metadata"
+    # the completion metadata is still the contracted envelope, untouched by the clause
+    _v show "$vP" --json | jq -r '[ .runs[] | select(.outcome == "completed") ] | last | .metadata // empty' > "$vbin/completed-meta.json" 2>/dev/null
+    { jq -e '.schema == "forge.judge.v1"' "$vbin/completed-meta.json" >/dev/null 2>&1 \
+      && ./scripts/validate-metadata.py --profile forge-verifier "$vbin/completed-meta.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail the-completion-metadata-no-longer-validates"
+    # metrics.sh still reads it as a merge BY THE VERIFIER (its LIKE 'merged by forge-verifier:%' is a prefix)
+    rm -rf "$vnsk"; mkdir -p "$vnsk/boards/vlab"
+    cp "$(HERMES_HOME="$vhome" "$REPO_ROOT/scripts/board-snapshot.sh" "$vhome/kanban/boards/vlab/kanban.db" "$vbin/ma-snap" 2>/dev/null)" \
+       "$vnsk/boards/vlab/kanban.db" 2>/dev/null
+    HERMES_HOME="$vhome" HERMES_KANBAN_HOME="$vnsk" "$REPO_ROOT/scripts/metrics.sh" vlab --json > "$vbin/ma-metrics.json" 2>/dev/null
+    jq -e '.north_star.merged.by_verifier == 1 and .north_star.merged.by_operator == 0' "$vbin/ma-metrics.json" >/dev/null 2>&1 \
+      || vdetail="$vdetail metrics-no-longer-reads-it-as-a-verifier-merge($(jq -c '.north_star.merged' "$vbin/ma-metrics.json" 2>/dev/null))"
+    # CONTROL: under the host-wide variable the text is what it always was, with no clause (byte for byte the
+    # grant's text minus the clause).
+    _vboard; vrc="$(_vrun FORGE_VERIFIER_MERGE=1)"
+    vres2="$(_v show "$vP" --json | jq -r '.task.result')"
+    { [ "$vrc" = 4 ] && [ "$vres2" = "${vres% (board merge authority granted by operator-test at $vgat)}" ] \
+      && case "$vres2" in *authority*) false;; *) true;; esac; } \
+      || vdetail="$vdetail the-env-switch-text-changed(rc=$vrc,'$vres2')"
+    # THE SAME NAMING ON THE HOLD: GitHub would not confirm the merge, so the card is held merge-pending and the
+    # merge-watcher writes the completion later; the board's record must say what authority the merge ran under.
+    _vboard; _vma grant vlab --by operator-test > /dev/null 2>&1; touch "$vbin/state-down"
+    vgat="$(jq -r .granted_at "$(_vmafile vlab)")"
+    vrc="$(_vrun)"
+    { [ "$vrc" = 4 ] && jq -e '.action == "merged-held" and (.terminate.args.reason | startswith("merge-pending: "))' "$vbin/out.json" >/dev/null 2>&1; } \
+      || vdetail="$vdetail merged-held-rc=$vrc($(jq -r '.action // .reason' "$vbin/out.json" 2>/dev/null | head -c 100))"
+    _v show "$vP" --json | jq -e --arg c "under board merge authority granted by operator-test at $vgat" '
+        [ .events[] | select(.kind == "blocked") ] | last | .payload.reason
+        | startswith("merge-pending: ") and contains("merge attempted by the verifier; GitHub did not confirm either way") and contains($c)' >/dev/null 2>&1 \
+      || vdetail="$vdetail the-merge-pending-hold-does-not-name-the-authority($(_v show "$vP" --json | jq -r '[.events[]|select(.kind=="blocked")]|last|.payload.reason' | head -c 100))"
+    rm -f "$vbin/state-down"
+    [ -z "$vdetail" ] \
+      && ok "merge-authority-is-named-on-the-merge (the completion's result and summary read 'merged by forge-verifier: <verdict> (board merge authority granted by <who> at <when>)', its metadata is untouched and still validates, metrics.sh still counts a verifier merge, the merge-pending hold of an unconfirmed merge names it, and under FORGE_VERIFIER_MERGE=1 the text is what it was)" \
+      || bad "merge-authority-is-named-on-the-merge" \
+          "a merge made under a board grant must say on the board's own record who granted it and when, without rewording what other programs parse —$vdetail"
   fi
 }
 wants verifier  && run_verifier_group
