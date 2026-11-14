@@ -6,15 +6,31 @@ reconciled against the readiness stack on 2026-08-11; re-check after a
 
 ## The front door
 
-`make install` links `~/.local/bin/forge` to `~/.forge/repo/scripts/forge.sh`. Four commands:
+`make install` links `~/.local/bin/forge` to `~/.forge/repo/scripts/forge.sh`. Six commands:
 
 ```bash
+forge new <name> [--dest <dir>] [--github <owner>/<repo> [--public]]   # a project from nothing: stamp, commit, optionally push
+forge start <project dir> [--board <slug>] [--branch-suffix <s>] [--root-only] [--commission] [--yes]   # where it stands, and the next step
 forge status [<board>]   # what is happening, and does anything need you; read-only
 forge stop <board>       # revoke merge authority and disarm every armed gate on the board
 forge rehearse           # the end-to-end smoke test on hello-forge: spends one Codex run and one judge call
-forge go <board> --project <abs dir> [--branch-suffix <s>] [--gate GATE-Mn] [--yes]   # the launch
+forge go <board> --project <abs dir> [--branch-suffix <s>] [--gate GATE-Mn]... [--ahead] [--yes]   # the launch
 forge help
 ```
+
+`new` stamps `templates/python-service` at `<dir>/<name>` (default `~/dev`), runs `git init -b main`, `make setup` and the first
+commit, and never overwrites. With `--github` it also creates the repository, pushes, runs `make protect` and says whether GitHub
+gates it (an ungated private repo on a free plan is fine). It ends by printing `next: open Claude Code in <dir> and run /scope`.
+`start` is the old launch checklist as one re-runnable command: twelve rungs, each answered by the script that owns it (git, origin,
+`.forge/` ignored, `plan-check` scope and architect, `roadmap-check` CLEAR, acceptance frozen with the committed manifest current,
+the plan pushed, the merge gate, the host, the lanes, the board). It is read-only until the last rung, stops at the first rung not met
+with one `NEXT` line, and exits 2 for a rung it could not ask. When all are met and the board does not exist it says what the
+bootstrap will do (which card starts at once), asks (`--yes`, or `y` at a terminal) and bootstraps, reading the board back.
+`--commission` also runs the paid `commission.sh` first (never against an existing board). On a project whose board already holds
+cards, `start` asks "is it still in line with its plan": a rung not met prints `warn` and the ladder goes on, and only the board's own
+rung decides (in sync: "already on board", exit 0 with a count of warnings; drift: `NEXT`). `staged-run-guide.md` remains the long form.
+`go --ahead` arms a gate whose milestone is not finished: the checkpoint cron does nothing for it until every chunk is done, then
+completes it by itself, which is what a multi-milestone run with nobody at the desk needs. `--gate` may repeat.
 
 `status` exits 0 when nothing waits on you, 1 when a card waits or the watchdog is not healthy, 2 when
 a board or the host could not be read. `stop` exits 0 only after it has asked again and found no grant

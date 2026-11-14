@@ -1,3 +1,8 @@
+> **Note.** `forge new` and `forge start` now run sections 1–4 and 6 of this guide as one re-runnable command: `forge new` stamps
+> the project, `forge start <project dir>` climbs the readiness ladder and bootstraps the board once every rung is met, and
+> `forge go` is the launch. This guide remains the long-form reference: the reasons, the stop rules, and every command by hand.
+> Run `forge start <project dir>` first; it says what to do next.
+
 # Staged unattended run
 
 This is the canonical procedure for the first genuine product run. It keeps the

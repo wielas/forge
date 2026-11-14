@@ -33,12 +33,32 @@
 #   forge rehearse --cleanup <hello-rehearsal-board>
 #                            the cleanup of a failed or --keep run; works out the branch and PR from the board
 #   forge rehearse --reset   greet.py is on main: revert the commit that added it, through a PR
-#   forge go <board> --project <abs dir> [--gate GATE-Mn] [--no-arm] [--rearm] [--by <name>] [--yes]
+#   forge go <board> --project <abs dir> [--gate GATE-Mn]... [--ahead] [--no-arm] [--rearm] [--by <name>] [--yes]
 #                            [--branch-suffix <s>]
 #                            the launch: read the situation (status, board-sync dry run, the product checkout,
 #                            the ready gate), say in plain words what it is about to put in force, ask, then
 #                            grant merge authority, arm the gate apply and resume the checkpoint cron job,
-#                            reading each back. Nothing is changed before the confirmation.
+#                            reading each back. Nothing is changed before the confirmation. --gate may be given
+#                            more than once; a gate whose milestone is not finished is refused unless --ahead:
+#                            armed apply early, the checkpoint cron does nothing for it until every chunk of its
+#                            milestone is done, and then completes it by itself when its probe passes.
+#   forge new <name> [--dest <dir>] [--github <owner>/<repo> [--public]]
+#                            a project from nothing: stamp templates/python-service at <dir>/<name> (default dir
+#                            ~/dev; scripts/new-dest.sh judges the path), git init -b main, make setup, the first
+#                            commit. With --github also create the repository, push, run the template's make
+#                            protect and say whether GitHub gates it. It never overwrites an existing target.
+#   forge start <project dir> [--board <slug>] [--branch-suffix <s>] [--root-only] [--commission] [--yes]
+#                            where the project stands, and what to do next. A ladder of twelve rungs (git, origin,
+#                            .forge/ ignored, scope, architect, roadmap, acceptance frozen, the plan pushed, the
+#                            merge gate, the host, the lanes, the board), each answered by the script that owns it. It
+#                            stops at the first rung that is not met and prints one NEXT line. READ-ONLY until
+#                            the last rung: when every rung is met and the board does not exist it says in plain words
+#                            what the bootstrap will do, asks, and runs hermes/board-bootstrap.sh, reading the board back.
+#                            Run it again after every step. --commission also runs the paid commission.sh. A project
+#                            whose board already holds cards is RUNNING: asked right after rung 2, it turns every
+#                            other rung that is not met into a `warn` line, goes on through all of them, and lets the
+#                            board's own rung decide: in sync is "already on board", exit 0 (with a count of warnings);
+#                            drift is a NEXT, exit 1. Commissioning is never run against an existing board.
 #   forge help               this text
 #
 # Exit:
@@ -58,9 +78,16 @@
 #             is printed; 2 it could not run (a precondition, nothing changed) or could not finish its cleanup
 #             (what is left behind is said). Merge authority is never left in force by any exit.
 #   go      0 in force and read back; 1 refused (not in sync, the checkout not clean on main at origin/main, a gate
-#             that is not ready, a gate that already has checkpoint state and no --rearm, the cron job missing --
-#             then the grant and the arming STAY and it says so); 2 usage or could not ask, or no confirmation
-#             (no --yes and no terminal): nothing was changed
+#             that is not ready and no --ahead, a gate that already has checkpoint state and no --rearm, the cron job
+#             missing -- then the grant and the arming STAY and it says so); 2 usage or could not ask, or no
+#             confirmation (no --yes and no terminal): nothing was changed
+#   start   0 the board exists and matches the plan (just bootstrapped, or already there; warnings do not change it);
+#             1 a rung is not met (the NEXT line says what; on a project already on its board only the board's
+#             own rung can be) or the bootstrap refused (exit 3 of the bootstrap: another --branch-suffix);
+#             2 usage, a rung that could not be asked (never a NEXT), or no confirmation (no --yes and no terminal):
+#             nothing was changed
+#   new     0 stamped, committed (and, with --github, pushed and protected); 1 a step failed (it says which, and what
+#             is left on disk); 2 usage, a target that already exists, a tool that is missing, or a path new-dest.sh refuses
 #   other   2 usage (usage on stderr); `forge help`, `-h` and no arguments print usage and exit 0
 #
 # Environment: HERMES_HOME (default ~/.hermes), HERMES_KANBAN_HOME, FORGE_STATE_ROOT and the narrower
@@ -102,9 +129,18 @@ forge — the operator's front door
                              exit 0 passed and cleaned up; 1 it ran and FAILED; 2 it could not run or finish cleaning
   forge rehearse --cleanup <hello-rehearsal-board>   clean up after a failed or --keep run
   forge rehearse --reset   revert greet.py off main through a PR
-  forge go <board> --project <abs dir> [--gate GATE-Mn] [--no-arm] [--rearm] [--by <name>] [--yes] [--branch-suffix <s>]
+  forge go <board> --project <abs dir> [--gate GATE-Mn]... [--ahead] [--no-arm] [--rearm] [--by <name>] [--yes] [--branch-suffix <s>]
                            the launch: grant merge authority, arm the ready gate apply, resume the checkpoint cron
+                           (--ahead: arm a gate whose milestone is not finished; the cron waits for its chunks)
                              exit 0 in force and read back; 1 refused; 2 usage, could not ask, or not confirmed
+  forge new <name> [--dest <dir>] [--github <owner>/<repo> [--public]]
+                           stamp a new project from the template, set it up, commit it; with --github, create the repo
+                             exit 0 done; 1 a step failed; 2 usage, the target exists, or could not ask
+  forge start <project dir> [--board <slug>] [--branch-suffix <s>] [--root-only] [--commission] [--yes]
+                           where the project stands and what to do next; once every rung is met, puts the plan on a board
+                           (a project already on its board: a rung not met is a warning, and only the board's rung decides)
+                             exit 0 the board matches the plan; 1 a rung is not met (NEXT) or the bootstrap refused;
+                             2 usage, could not ask, or not confirmed
   forge help               this text
 USAGE
 }
@@ -1119,14 +1155,19 @@ SQL
 }
 
 cmd_go() {
-  local board="" project="" gate="" no_arm=0 by="" yes=0 rearm=0 suffix="" suffix_set=0
-  local out rc sync_rc snap gates ready_n gid gtitle grow refuse=0 unasked=0 syncv db apply_cmd dry_cmd
+  local board="" project="" gate="" gates_req="" ahead=0 no_arm=0 by="" yes=0 rearm=0 suffix="" suffix_set=0
+  local out rc sync_rc snap gates ready_n gid grow refuse=0 unasked=0 syncv db apply_cmd dry_cmd
   local mode_word releases_txt cp_dir key armed_now has_decision has_pending ans repo
+  local sel="" conflict=0 armed_list="" is_ready NL=$'\n'
   while [ $# -gt 0 ]; do
     case "$1" in
       -h|--help) usage; return 0;;
       --project) [ $# -ge 2 ] || usage_err "go: --project needs the product checkout's absolute path"; project="$2"; shift 2;;
-      --gate)    [ $# -ge 2 ] || usage_err "go: --gate needs a gate id"; gate="$2"; shift 2;;
+      --gate)    [ $# -ge 2 ] || usage_err "go: --gate needs a gate id"
+                 case "$2" in ''|*[!A-Za-z0-9._-]*) usage_err "go: '$2' is not a gate id (GATE-<milestone>)";; esac
+                 printf '%s\n' "$gates_req" | grep -Fxq -- "$2" || gates_req="${gates_req:+$gates_req$NL}$2"
+                 shift 2;;
+      --ahead)   ahead=1; shift;;
       --by)      [ $# -ge 2 ] || usage_err "go: --by needs a name"; by="$2"; shift 2;;
       --branch-suffix) [ $# -ge 2 ] || usage_err "go: --branch-suffix needs the suffix the board was bootstrapped with"; suffix="$2"; suffix_set=1; shift 2;;
       --no-arm)  no_arm=1; shift;;
@@ -1141,7 +1182,9 @@ cmd_go() {
   [ -n "$project" ] || usage_err "go needs --project <absolute dir>: the product checkout the checkpoint probes"
   case "$project" in /*) ;; *) usage_err "go: --project must be an absolute path";; esac
   [ -d "$project" ] || die "no such project directory: $project"
-  [ -z "$gate" ] || [ "$no_arm" = 0 ] || usage_err "go: --gate and --no-arm contradict each other"
+  [ -z "$gates_req" ] || [ "$no_arm" = 0 ] || usage_err "go: --gate and --no-arm contradict each other"
+  [ "$ahead" = 0 ] || [ -n "$gates_req" ] || usage_err "go: --ahead arms a gate before its milestone is done, so it needs --gate GATE-<milestone> (the one it applies to)"
+  [ "$ahead" = 0 ] || [ "$no_arm" = 0 ] || usage_err "go: --ahead and --no-arm contradict each other"
   [ "$rearm" = 0 ] || [ "$no_arm" = 0 ] || usage_err "go: --rearm and --no-arm contradict each other"
   [ "$suffix_set" = 0 ] || { [[ $suffix =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] && [ "${#suffix}" -le 32 ]; } || usage_err "go: --branch-suffix is a lowercase slug of at most 32 characters"
   by="${by:-${USER:-$(id -un 2>/dev/null)}}"
@@ -1206,31 +1249,40 @@ cmd_go() {
     echo "forge go: REFUSED: the launch needs the board in sync and the product checkout on a clean main at origin/main. Nothing was changed." >&2; exit 1
   fi
 
-  # ---- 2. which gate ------------------------------------------------------------------------------------------------
-  gid=""; gtitle=""; releases_txt=""
+  # ---- 2. which gates ------------------------------------------------------------------------------------------------
+  # `sel` is one JSON row (a gate from the board) per line: the gates this run will arm. With --gate, every named gate: a
+  # ready one needs nothing more, a not-ready one needs --ahead (the checkpoint cron does nothing for an armed gate whose
+  # chunks are not all done, scripts/checkpoint-cron.sh, so arming it early is safe). Without --gate, the one ready gate.
+  # Every refusal is decided here, for every gate, before the first act.
+  sel=""; releases_txt=""; conflict=0
   if [ "$no_arm" = 1 ]; then
     go_say "  --no-arm: no gate is armed by this run"
   else
-    if [ -n "$gate" ]; then
-      grow="$(printf '%s' "$gates" | jq -c --arg g "$gate" '[.[] | select((.title | split(":")[0] | gsub("^ +| +$"; "")) == $g)] | .[0] // empty')"
-      if [ -z "$grow" ]; then
-        echo "forge go: REFUSED: $board has no blocked $gate card, so there is nothing to arm. Nothing was changed." >&2; exit 1
-      fi
-      if [ "$(printf '%s' "$grow" | jq -r '.ready')" != 1 ]; then
-        echo "forge go: REFUSED: $gate is not ready: a chunk it closes is not done yet, so its probe could not pass. Nothing was changed." >&2; exit 1
-      fi
+    if [ -n "$gates_req" ]; then
+      while IFS= read -r gate; do
+        [ -n "$gate" ] || continue
+        grow="$(printf '%s' "$gates" | jq -c --arg g "$gate" '[.[] | select((.title | split(":")[0] | gsub("^ +| +$"; "")) == $g)] | .[0] // empty')"
+        if [ -z "$grow" ]; then
+          echo "forge go: REFUSED: $board has no blocked $gate card, so there is nothing to arm. Nothing was changed." >&2; exit 1
+        fi
+        if [ "$(printf '%s' "$grow" | jq -r '.ready')" != 1 ] && [ "$ahead" = 0 ]; then
+          echo "forge go: REFUSED: $gate is not ready: a chunk it closes is not done yet, so its probe could not pass. Add --ahead to arm it now anyway (the checkpoint cron does nothing for it until every chunk is done). Nothing was changed." >&2; exit 1
+        fi
+        sel="$sel$grow"$'\n'
+      done <<GATES_REQ
+$gates_req
+GATES_REQ
     else
       ready_n="$(printf '%s' "$gates" | jq '[.[] | select(.ready == 1)] | length')"
-      if [ "$ready_n" = 1 ]; then grow="$(printf '%s' "$gates" | jq -c '[.[] | select(.ready == 1)] | .[0]')"
-      elif [ "$ready_n" = 0 ]; then grow=""
+      if [ "$ready_n" = 1 ]; then sel="$(printf '%s' "$gates" | jq -c '[.[] | select(.ready == 1)] | .[0]')"$'\n'
+      elif [ "$ready_n" = 0 ]; then sel=""
       else
         echo "forge go: $ready_n gates are ready ($(printf '%s' "$gates" | jq -r '[.[] | select(.ready == 1) | .title | split(":")[0]] | join(", ")')): name the one to arm with --gate, or --no-arm. Nothing was changed." >&2; exit 2
       fi
     fi
-    if [ -n "$grow" ]; then
-      gtitle="$(printf '%s' "$grow" | jq -r '.title')"
+    while IFS= read -r grow; do
+      [ -n "$grow" ] || continue
       gid="$(printf '%s' "$grow" | jq -r '.title | split(":")[0] | gsub("^ +| +$"; "")')"
-      releases_txt="$(printf '%s' "$grow" | jq -r '[.releases[] | .title | gsub("[[:cntrl:]]+"; " ")] | join("; ")')"
       cp_dir="$( . "$HERE/gate-reply.sh" >/dev/null 2>&1 && gr_state_dir )"
       key="$( . "$HERE/gate-reply.sh" >/dev/null 2>&1 && gr_key "$board" "$gid" )"
       if [ -z "$cp_dir" ] || [ -z "$key" ]; then echo "forge go: REFUSED (could not read): the checkpoint state directory could not be resolved. Nothing was changed." >&2; exit 2; fi
@@ -1238,6 +1290,7 @@ cmd_go() {
       has_decision=0; [ -e "$cp_dir/decided/$key.json" ] && has_decision=1
       has_pending=0;  [ -e "$cp_dir/pending/$key.json" ] && has_pending=1
       if [ "$rearm" = 0 ] && { [ -n "$armed_now" ] || [ "$has_decision" = 1 ] || [ "$has_pending" = 1 ]; }; then
+        conflict=1
         {
           echo "forge go: REFUSED: $gid on $board already has checkpoint state, and arming a gate again ERASES it:"
           [ -z "$armed_now" ] || echo "  - it is armed ($armed_now)"
@@ -1245,16 +1298,25 @@ cmd_go() {
           [ "$has_pending" = 0 ] || echo "  - a checkpoint report awaits an answer ($cp_dir/pending/$key.json)"
           echo "  Add --rearm to arm it afresh anyway, or --no-arm to grant authority without arming. Nothing was changed."
         } >&2
-        exit 1
       fi
-    fi
+    done <<SEL_STATE
+$sel
+SEL_STATE
+    [ "$conflict" = 0 ] || exit 1
   fi
-  if [ -z "$gid" ] && [ "$no_arm" = 0 ]; then
+  if [ -z "$sel" ] && [ "$no_arm" = 0 ]; then
     go_say "  no blocked gate has all of its chunks done: nothing is armed, and the run will stop at the next gate"
-  elif [ -n "$gid" ]; then
-    go_say "  $gid is ready (every chunk it closes is done)"
+  else
+    while IFS= read -r grow; do
+      [ -n "$grow" ] || continue
+      gid="$(printf '%s' "$grow" | jq -r '.title | split(":")[0] | gsub("^ +| +$"; "")')"
+      if [ "$(printf '%s' "$grow" | jq -r '.ready')" = 1 ]; then go_say "  $gid is ready (every chunk it closes is done)"
+      else go_say "  $gid is NOT ready (a chunk it closes is not done yet): armed AHEAD, because --ahead was given"; fi
+    done <<SEL_SAY
+$sel
+SEL_SAY
   fi
-  if [ -n "$gid" ]; then
+  if [ -n "$sel" ]; then
     if ! go_cron_read; then
       echo "forge go: REFUSED (could not read): $HERMES_ROOT/cron/jobs.json could not be read, or names $GO_JOB_NAME more than once, so the checkpoint job could not be asked. Nothing was changed." >&2; exit 2
     fi
@@ -1264,8 +1326,19 @@ cmd_go() {
   echo
   echo "this will put in force on $board:"
   echo "  - the verifier will MERGE approved lane-built PRs on $board (merge authority granted by $by; chunks a person built are still yours to merge)"
-  if [ -n "$gid" ]; then
-    echo "  - $gid is armed apply on the project $project: when its probe passes, the checkpoint cron completes it, which releases: ${releases_txt:-no card (nothing waits on it)}"
+  if [ -n "$sel" ]; then
+    while IFS= read -r grow; do
+      [ -n "$grow" ] || continue
+      gid="$(printf '%s' "$grow" | jq -r '.title | split(":")[0] | gsub("^ +| +$"; "")')"
+      releases_txt="$(printf '%s' "$grow" | jq -r '[.releases[] | .title | gsub("[[:cntrl:]]+"; " ")] | join("; ")')"
+      if [ "$(printf '%s' "$grow" | jq -r '.ready')" = 1 ]; then
+        echo "  - $gid is armed apply on the project $project: when its probe passes, the checkpoint cron completes it, which releases: ${releases_txt:-no card (nothing waits on it)}"
+      else
+        echo "  - $gid is armed apply AHEAD: nothing happens until every chunk of its milestone is done; then, when its probe passes, the checkpoint cron completes it by itself, which releases: ${releases_txt:-no card (nothing waits on it)}"
+      fi
+    done <<SEL_TEXT
+$sel
+SEL_TEXT
     case "$GO_JOB_STATE" in
       paused)  echo "  - the checkpoint cron job $GO_JOB_NAME ($GO_JOB_ID) is paused and will be resumed";;
       active)  echo "  - the checkpoint cron job $GO_JOB_NAME ($GO_JOB_ID) is already running";;
@@ -1298,28 +1371,37 @@ cmd_go() {
   "$HERE/merge-authority.sh" status "$board" >/dev/null 2>&1; rc=$?
   if [ "$rc" != 0 ]; then echo "forge go: the grant does not read back (status exited $rc). Withdraw anything half done with: forge stop $board" >&2; GO_DONE=1; exit 2; fi
   go_say "granted: $board may be merged by the verifier (read back: granted by $by)"
-  mode_word=""
-  if [ -n "$gid" ]; then
-    out="$("$HERE/checkpoint-arm.sh" arm --board "$board" --gate "$gid" --project "$project" --mode apply --confirm-release 2>&1)"; rc=$?
-    if [ "$rc" != 0 ]; then
-      printf '%s\n' "$out" >&2
-      echo "forge go: arming $gid failed. IN FORCE: merge authority on $board. NOT in force: the gate. To withdraw: forge stop $board" >&2
-      GO_DONE=1; exit 2
-    fi
-    if ! arm_read; then echo "forge go: the arming list could not be read back (exit $ARM_RC). Check: forge status $board" >&2; GO_DONE=1; exit 2; fi
-    mode_word="$(arm_gates "$board" | awk -v g="$gid" '$1 == g { print $2 }')"
-    if [ "$mode_word" != apply ]; then echo "forge go: $gid does not read back as armed apply (it reads '${mode_word:-not armed}'). IN FORCE: merge authority. To withdraw: forge stop $board" >&2; GO_DONE=1; exit 1; fi
-    go_say "armed: $gid on $board, apply, project $project (read back)"
+  mode_word=""; armed_list=""
+  if [ -n "$sel" ]; then
+    while IFS= read -r grow; do
+      [ -n "$grow" ] || continue
+      gid="$(printf '%s' "$grow" | jq -r '.title | split(":")[0] | gsub("^ +| +$"; "")')"
+      is_ready="$(printf '%s' "$grow" | jq -r '.ready')"
+      out="$("$HERE/checkpoint-arm.sh" arm --board "$board" --gate "$gid" --project "$project" --mode apply --confirm-release 2>&1)"; rc=$?
+      if [ "$rc" != 0 ]; then
+        printf '%s\n' "$out" >&2
+        echo "forge go: arming $gid failed. IN FORCE: merge authority on $board${armed_list:+, and $armed_list armed apply}. NOT in force: $gid. To withdraw: forge stop $board" >&2
+        GO_DONE=1; exit 2
+      fi
+      if ! arm_read; then echo "forge go: the arming list could not be read back (exit $ARM_RC). Check: forge status $board" >&2; GO_DONE=1; exit 2; fi
+      mode_word="$(arm_gates "$board" | awk -v g="$gid" '$1 == g { print $2 }')"
+      if [ "$mode_word" != apply ]; then echo "forge go: $gid does not read back as armed apply (it reads '${mode_word:-not armed}'). IN FORCE: merge authority${armed_list:+, and $armed_list armed apply}. To withdraw: forge stop $board" >&2; GO_DONE=1; exit 1; fi
+      if [ "$is_ready" = 1 ]; then go_say "armed: $gid on $board, apply, project $project (read back)"
+      else go_say "armed: $gid on $board, apply, project $project, AHEAD of its milestone (read back)"; fi
+      armed_list="${armed_list:+$armed_list, }$gid"
+    done <<SEL_ACT
+$sel
+SEL_ACT
     go_cron_read; rc=$?
     if [ "$rc" != 0 ]; then
-      echo "forge go: the cron job file could not be read. IN FORCE: merge authority and $gid armed apply. NOT confirmed: that the checkpoint job runs. Check: hermes cron list" >&2
+      echo "forge go: the cron job file could not be read. IN FORCE: merge authority and $armed_list armed apply. NOT confirmed: that the checkpoint job runs. Check: hermes cron list" >&2
       GO_DONE=1; exit 2
     fi
     case "$GO_JOB_STATE" in
       missing)
         {
-          echo "forge go: there is no cron job named $GO_JOB_NAME, so nothing will complete $gid until one exists."
-          echo "  IN FORCE (nothing was undone): merge authority on $board, and $gid armed apply."
+          echo "forge go: there is no cron job named $GO_JOB_NAME, so nothing will complete $armed_list until one exists."
+          echo "  IN FORCE (nothing was undone): merge authority on $board, and $armed_list armed apply."
           echo "  Create it (paused), then run this again with --rearm or resume it by hand:"
           echo "    hermes cron create 'every 15m' --name forge-checkpoint --no-agent --script forge-checkpoint.sh --deliver telegram --paused"
           echo "    hermes cron resume <id from: hermes cron list>"
@@ -1330,7 +1412,7 @@ cmd_go() {
         hermes cron resume "$GO_JOB_ID" >/dev/null 2>&1; rc=$?
         go_cron_read; rc=$?
         if [ "$rc" != 0 ] || [ "$GO_JOB_STATE" != active ]; then
-          echo "forge go: $GO_JOB_NAME ($GO_JOB_ID) does not read back as running after hermes cron resume (it reads '${GO_JOB_STATE:-unreadable}'). IN FORCE: merge authority and $gid armed apply. Resume it by hand: hermes cron resume $GO_JOB_ID" >&2
+          echo "forge go: $GO_JOB_NAME ($GO_JOB_ID) does not read back as running after hermes cron resume (it reads '${GO_JOB_STATE:-unreadable}'). IN FORCE: merge authority and $armed_list armed apply. Resume it by hand: hermes cron resume $GO_JOB_ID" >&2
           GO_DONE=1; if [ "$rc" != 0 ]; then exit 2; else exit 1; fi
         fi
         go_say "resumed: the checkpoint cron job $GO_JOB_NAME ($GO_JOB_ID) (read back: running)";;
@@ -1343,6 +1425,639 @@ cmd_go() {
   "$HERE/forge.sh" status "$board" 2>&1
   echo
   echo "go: $board is launched. To stop: forge stop $board"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# start
+# ---------------------------------------------------------------------------
+# A ladder, not a script. The old launch was a page of prose and ten commands in an order the operator had to remember
+# (docs/staged-run-guide.md). Here every rung asks the program that owns the answer (plan-check, roadmap-check,
+# acceptance-freeze, merge-gate, preflight, overseer-guard, board-sync) and takes ITS verdict; nothing is re-derived. The
+# ladder stops at the first rung that is not met, says in one NEXT line what to do, and shows the rest as not reached.
+# It is READ-ONLY until the last rung: the only write is the bootstrap, behind the confirmation `go` also asks for. So it
+# can be run again after every step, and a run that has nothing left to do says so and changes nothing.
+#
+# Three outcomes per rung: met (ok), not met (NEXT, exit 1), or COULD NOT ASK (??, exit 2). "Could not ask" is never
+# "not there": a checker that cannot run is not a verdict. One trap the checkers set, and the reason a rung is more than
+# `$? = 0`: plan-check and roadmap-check exit 2 when the document they read does not exist yet, which on a young project
+# is not a broken host but a rung that is not met; so the file is asked about first, and only a checker that fails on a
+# file that IS there is a rung that could not be asked.
+ST_WORK=""; ST_ACTING=0; ST_DONE=0
+ST_DIR=""; ST_BOARD=""; ST_BOARD_SET=0; ST_SUFFIX=""; ST_ROOT_ONLY=0; ST_COMMISSION=0; ST_YES=0
+ST_SLUG=""; ST_BSTATE=""; ST_BCOUNT=""
+# A project whose board already holds cards is RUNNING: start then answers "is it still in line with its plan", not "may it
+# start", so a rung that is not met warns instead of stopping the ladder, and the board's own rung decides the exit.
+ST_RUNNING=0; ST_WARNS=0; ST_WARN_AT=""
+ST_LANE="${FORGE_LANE_ASSIGNEE:-forge-codex-lane}"
+st_exit() {
+  local rc=$?
+  trap - EXIT INT TERM HUP
+  [ -z "$ST_WORK" ] || rm -rf "$ST_WORK"
+  if [ "$ST_ACTING" = 1 ] && [ "$ST_DONE" = 0 ]; then
+    echo "forge start: stopped during the bootstrap: board $ST_BOARD may hold part of the plan. forge start $ST_DIR shows where it stands" >&2
+  fi
+  exit "$rc"
+}
+st_signal() { echo "forge start: interrupted ($1)" >&2; exit 2; }
+
+st_name() {
+  case "$1" in
+    1) echo "git";; 2) echo "origin";; 3) echo "ignore";; 4) echo "scope";; 5) echo "architect";; 6) echo "roadmap";;
+    7) echo "acceptance";; 8) echo "plan";; 9) echo "merge gate";; 10) echo "host";; 11) echo "lanes";; 11+) echo "commission";; 12) echo "board";;
+  esac
+}
+st_ok()   { printf '  ok    %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"; }
+st_next() {
+  if [ "$ST_RUNNING" = 1 ] && [ "$1" != 12 ]; then
+    printf '  warn  %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"
+    ST_WARNS=$((ST_WARNS + 1)); ST_WARN_AT="${ST_WARN_AT:+$ST_WARN_AT, }$1"
+  else
+    printf '  NEXT  %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"
+  fi
+}
+st_ask()  { printf '  ??    %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"; }
+st_skip() { printf '  -     %-3s %s\n' "$1" "$(st_name "$1")"; }
+st_more() { printf '              %s\n' "$*"; }
+st_lines() {  # stdin -> indented detail lines, at most $1 of them
+  local n=0 line
+  while IFS= read -r line; do
+    n=$((n + 1))
+    [ "$n" -le "${1:-12}" ] || { printf '              ... (%s more line(s))\n' "$(( $(cat | wc -l | tr -d ' ') + 1 ))"; break; }
+    printf '              %s\n' "$line"
+  done
+}
+# The checkers print a block per finding: `  FAIL|WARN|SKIP  name`, then its evidence and its remedy. The failing blocks only.
+st_findings() {  # $1 status word, stdin the checker's output
+  awk -v w="$1" '/^  (CLEAR|FAIL|WARN) — / { show = 0; next } /^  (PASS|FAIL|WARN|SKIP)[ ]/ { show = ($1 == w) } show && NF { sub(/^ +/, ""); print }'
+}
+
+st_r1() {
+  local top rc br
+  if [ ! -d "$ST_DIR" ]; then
+    st_next 1 "$ST_DIR does not exist"
+    st_more "stamp a new project there: forge new $(basename "$ST_DIR") --dest $(dirname "$ST_DIR")"
+    return 1
+  fi
+  top="$(git -C "$ST_DIR" rev-parse --show-toplevel 2>"$ST_WORK/err")"; rc=$?
+  if [ "$rc" != 0 ]; then
+    if grep -q 'not a git repository' "$ST_WORK/err" 2>/dev/null; then
+      st_next 1 "$ST_DIR is not a git repository"
+      st_more "git -C $ST_DIR init -b main      (a new project: forge new <name> --dest <dir>)"
+      return 1
+    fi
+    st_ask 1 "git could not read $ST_DIR: $(head -n 1 "$ST_WORK/err")"; return 2
+  fi
+  if [ "$(cd "$top" && pwd -P)" != "$ST_DIR" ]; then
+    st_next 1 "$ST_DIR is inside the repository $top, not its root: give the root"; return 1
+  fi
+  br="$(git -C "$ST_DIR" symbolic-ref --short -q HEAD 2>/dev/null)" || br=""
+  if [ "$br" != main ]; then
+    st_next 1 "$ST_DIR is on '${br:-a detached HEAD}', not main"
+    st_more "git -C $ST_DIR switch main      (a repository with no commit yet: git -C $ST_DIR branch -m main)"
+    return 1
+  fi
+  st_ok 1 "a git repository on main"
+}
+
+st_r2() {
+  local out rc name
+  if ! git -C "$ST_DIR" remote get-url origin >/dev/null 2>&1; then
+    st_next 2 "$ST_DIR has no origin"
+    st_more "gh repo create $(basename "$ST_DIR") --private --source . --push      (run in $ST_DIR)"
+    return 1
+  fi
+  command -v gh >/dev/null 2>&1 || { st_ask 2 "gh is not on PATH, so origin could not be resolved"; return 2; }
+  out="$(cd "$ST_DIR" && gh repo view --json nameWithOwner 2>"$ST_WORK/err")"; rc=$?
+  ST_SLUG=""
+  [ "$rc" != 0 ] || ST_SLUG="$(printf '%s' "$out" | jq -r '.nameWithOwner // empty' 2>/dev/null)"
+  if ! [[ $ST_SLUG =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    ST_SLUG=""; st_ask 2 "gh repo view could not name the repository behind origin ($(git -C "$ST_DIR" remote get-url origin 2>/dev/null)): $(head -n 1 "$ST_WORK/err" 2>/dev/null)"; return 2
+  fi
+  # The default board is <repository>-run-1, made a Hermes slug: GitHub allows capitals and dots, a slug allows neither.
+  if [ "$ST_BOARD_SET" = 0 ]; then
+    name="${ST_SLUG#*/}"; ST_BOARD="$(printf '%s' "$name" | tr 'A-Z' 'a-z' | tr . -)-run-1"
+    if ! forge_board_slug_ok "$ST_BOARD"; then
+      st_ask 2 "the default board name '$ST_BOARD' (from $ST_SLUG) is not a Hermes board slug: run again with --board <slug>"; return 2
+    fi
+  fi
+  # Is the board already there with cards? It decides what the rungs after this one mean, so it is asked now, and read-only.
+  if ! st_board_state; then
+    st_ask 2 "GitHub $ST_SLUG, but hermes kanban boards list failed, so whether board $ST_BOARD exists could not be asked (it decides whether a rung not met stops the ladder or only warns)"; return 2
+  fi
+  [ "$ST_BSTATE" != exists ] || ST_RUNNING=1
+  st_ok 2 "GitHub $ST_SLUG"
+  if [ "$ST_RUNNING" = 1 ]; then
+    st_more "board $ST_BOARD is on the board already ($ST_BCOUNT cards): a rung not met warns and the ladder goes on; only the board's own rung decides the exit"
+  fi
+}
+
+st_r3() {
+  local rc
+  git -C "$ST_DIR" check-ignore -q .forge/x 2>/dev/null; rc=$?
+  case "$rc" in
+    0) st_ok 3 ".forge/ is ignored";;
+    1) st_next 3 ".forge/ is not ignored, so run evidence would dirty the project"
+       st_more "echo '.forge/' >> $ST_DIR/.gitignore      and commit it"
+       return 1;;
+    *) st_ask 3 "git check-ignore failed in $ST_DIR (exit $rc)"; return 2;;
+  esac
+}
+
+st_plan() {  # $1 rung  $2 stage  $3 the document it reads  $4 the skill that writes it
+  local out rc
+  if [ ! -e "$ST_DIR/$3" ]; then
+    st_next "$1" "$3 does not exist yet: open Claude Code in $ST_DIR and run /$4"; return 1
+  fi
+  out="$("$HERE/plan-check.sh" "$ST_DIR" --stage "$2" 2>"$ST_WORK/err")"; rc=$?
+  if [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^[[:space:]]*CLEAR — '; then
+    st_ok "$1" "plan-check --stage $2 is CLEAR"; return 0
+  fi
+  if [ "$rc" = 1 ]; then
+    st_next "$1" "plan-check --stage $2 found problems: open Claude Code in $ST_DIR and run /$4 (it resumes from what is there)"
+    printf '%s\n' "$out" | st_findings FAIL | st_lines 12
+    return 1
+  fi
+  st_ask "$1" "plan-check --stage $2 exited $rc without a verdict: $(head -n 1 "$ST_WORK/err" 2>/dev/null)"; return 2
+}
+
+st_r6() {
+  local out rc summary
+  if [ ! -e "$ST_DIR/docs/chunks/graph.json" ]; then
+    st_next 6 "docs/chunks/graph.json does not exist yet: open Claude Code in $ST_DIR and run /roadmap"; return 1
+  fi
+  out="$("$HERE/roadmap-check.sh" "$ST_DIR" 2>"$ST_WORK/err")"; rc=$?
+  summary="$(printf '%s\n' "$out" | grep -E '^[[:space:]]*(CLEAR|WARN) — ' | tail -n 1 | sed 's/^ *//')"
+  if [ "$rc" = 0 ]; then
+    case "$summary" in
+      "CLEAR — "*) st_ok 6 "roadmap-check is $summary"; return 0;;
+      "WARN — "*)
+        st_next 6 "roadmap-check: $summary (exit 0 with warnings is not clear): fix the plan, or run /roadmap again"
+        printf '%s\n' "$out" | st_findings WARN | st_lines 14
+        return 1;;
+    esac
+  fi
+  st_ask 6 "roadmap-check exited $rc and printed no CLEAR or WARN summary, so the plan was not checked"
+  head -n 6 "$ST_WORK/err" 2>/dev/null | st_lines 6
+  return 2
+}
+
+# Is acceptance frozen, and is the committed manifest the one the freeze would write today? acceptance-freeze.sh has one
+# non-writing mode, --check-base, and it is the wrong question: it compares an implementation against an approved base, it
+# never sees a feature that is missing from the manifest, and a stale digest is a FATAL there. So: run the real script on a
+# scratch COPY of what git can see, and compare the manifest it writes there with the committed one. The project is not
+# written.
+st_same_json() {  # two files that both parse as JSON and are the same document (whitespace and key order aside)
+  local a b
+  a="$(jq -S . "$1" 2>/dev/null)" || return 1
+  b="$(jq -S . "$2" 2>/dev/null)" || return 1
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+st_r7() {
+  local scratch="$ST_WORK/freeze" f out rc m="docs/chunks/contract-freeze.json"
+  if [ ! -e "$ST_DIR/docs/chunks/graph.json" ]; then
+    st_next 7 "docs/chunks/graph.json does not exist yet: open Claude Code in $ST_DIR and run /roadmap"; return 1
+  fi
+  rm -rf "$scratch"; mkdir -p "$scratch" || { st_ask 7 "cannot make a scratch directory"; return 2; }
+  if ! { git -C "$ST_DIR" ls-files -z -co --exclude-standard 2>/dev/null | while IFS= read -r -d '' f; do if [ -e "$ST_DIR/$f" ]; then printf '%s\0' "$f"; fi; done \
+         | tar -C "$ST_DIR" --null -T - -cf - 2>/dev/null | tar -C "$scratch" -xf - 2>/dev/null; } \
+     || [ ! -d "$scratch/docs/chunks" ]; then
+    st_ask 7 "a scratch copy of $ST_DIR could not be made, so the freeze could not be tried"; return 2
+  fi
+  out="$("$HERE/acceptance-freeze.sh" "$scratch" 2>"$ST_WORK/err")"; rc=$?
+  case "$rc" in
+    0) if [ -f "$ST_DIR/$m" ] && [ -f "$scratch/$m" ] && { cmp -s "$scratch/$m" "$ST_DIR/$m" || st_same_json "$scratch/$m" "$ST_DIR/$m"; }; then
+         st_ok 7 "acceptance is frozen and $m is current"; return 0
+       fi
+       st_next 7 "$m is $([ -f "$ST_DIR/$m" ] && echo "out of date" || echo "missing"): the plan's acceptance is not frozen as committed"
+       st_more "~/.forge/repo/scripts/acceptance-freeze.sh $ST_DIR      then commit $m"
+       return 1;;
+    1) st_next 7 "acceptance-freeze rejects the plan's contracts or features"
+       head -n 12 "$ST_WORK/err" | st_lines 12
+       st_more "fix them (open Claude Code in $ST_DIR and run /roadmap), then ~/.forge/repo/scripts/acceptance-freeze.sh $ST_DIR and commit"
+       return 1;;
+    *) st_ask 7 "acceptance-freeze exited $rc: $(head -n 1 "$ST_WORK/err" 2>/dev/null)"; return 2;;
+  esac
+}
+
+st_r8() {
+  local porc n head origin counts ahead behind
+  if ! porc="$(git -C "$ST_DIR" status --porcelain 2>/dev/null)"; then st_ask 8 "git status failed in $ST_DIR"; return 2; fi
+  if [ -n "$porc" ]; then
+    n="$(printf '%s\n' "$porc" | wc -l | tr -d ' ')"
+    st_next 8 "the working tree is not clean ($n path(s)): the plan is not committed"
+    printf '%s\n' "$porc" | st_lines 6
+    st_more "git -C $ST_DIR add -A && git -C $ST_DIR commit -m 'plan: ...'      then push it, or open the plan PR"
+    return 1
+  fi
+  if ! git -C "$ST_DIR" fetch --quiet origin 2>/dev/null; then st_ask 8 "git fetch origin failed in $ST_DIR, so whether the plan is on GitHub could not be asked"; return 2; fi
+  head="$(git -C "$ST_DIR" rev-parse HEAD 2>/dev/null)"
+  if ! origin="$(git -C "$ST_DIR" rev-parse --verify -q origin/main 2>/dev/null)"; then
+    st_next 8 "origin has no main yet: the plan is not on GitHub"
+    st_more "git -C $ST_DIR push -u origin main"
+    return 1
+  fi
+  if [ -z "$head" ]; then st_ask 8 "git rev-parse HEAD failed in $ST_DIR (no commit?)"; return 2; fi
+  if [ "$head" = "$origin" ]; then st_ok 8 "clean, and HEAD is origin/main (${head:0:8})"; return 0; fi
+  counts="$(git -C "$ST_DIR" rev-list --left-right --count "HEAD...origin/main" 2>/dev/null)" || { st_ask 8 "git rev-list failed in $ST_DIR"; return 2; }
+  read -r ahead behind <<ST_COUNTS
+$counts
+ST_COUNTS
+  if [ "${ahead:-0}" != 0 ] && [ "${behind:-0}" = 0 ]; then
+    st_next 8 "HEAD is $ahead commit(s) ahead of origin/main: the plan is not on GitHub"
+    st_more "git -C $ST_DIR push      (main is protected: push a branch, open the plan PR, merge it, then git -C $ST_DIR pull --ff-only)"
+  elif [ "${ahead:-0}" = 0 ]; then
+    st_next 8 "HEAD is $behind commit(s) behind origin/main"
+    st_more "git -C $ST_DIR pull --ff-only"
+  else
+    st_next 8 "HEAD and origin/main have diverged ($ahead ahead, $behind behind)"
+    st_more "bring them together first: git -C $ST_DIR log --oneline --left-right HEAD...origin/main"
+  fi
+  return 1
+}
+
+# The posture is merge-gate's own, asked as commission.sh asks it (the default branch, the `check` context): a repository
+# one of them calls gated and the other does not would be a launch that commissions and then does not hold.
+st_r9() {
+  local out rc
+  out="$("$HERE/merge-gate.sh" "$ST_SLUG" --branch main --require check 2>"$ST_WORK/err")"; rc=$?
+  case "$rc" in
+    0) st_ok 9 "$out";;
+    5) st_ok 9 "UNGATED (GitHub cannot gate a private repo on this plan; CI green is checked by the verifier)";;
+    3|4) st_next 9 "$ST_SLUG is not gated ($out): branch protection requiring the check is not in force"
+         st_more "make -C $ST_DIR protect"
+         return 1;;
+    *) st_ask 9 "merge-gate exited $rc, so whether $ST_SLUG is gated could not be asked: $(head -n 1 "$ST_WORK/err" 2>/dev/null)"; return 2;;
+  esac
+}
+
+st_r10() {
+  local out rc summary
+  if ! out="$(fx_gateway_running)"; then
+    st_next 10 "the Hermes gateway is not running ($out): start it, then run this again"; return 1
+  fi
+  "$HERE/preflight.sh" >"$ST_WORK/pf.out" 2>"$ST_WORK/err"; rc=$?
+  summary="$(grep -E '^PASS [0-9]+ +WARN [0-9]+ +FAIL [0-9]+' "$ST_WORK/pf.out" | tail -n 1)"
+  if [ "$rc" = 0 ] && [ -n "$summary" ] && printf '%s' "$summary" | grep -Eq 'FAIL 0$'; then
+    st_ok 10 "the gateway is running; preflight: $summary"; return 0
+  fi
+  if [ "$rc" = 1 ] && [ -n "$summary" ]; then
+    st_next 10 "preflight has failures ($summary): fix each FAIL, then run this again (make preflight shows all of it)"
+    grep '^FAIL ' "$ST_WORK/pf.out" | st_lines 12
+    return 1
+  fi
+  st_ask 10 "preflight exited $rc without a readable summary, so the host was not checked"; return 2
+}
+
+st_r11() {
+  local graph="$ST_DIR/docs/chunks/graph.json" out rc lanes assignees missing l
+  if [ ! -e "$graph" ]; then
+    st_next 11 "docs/chunks/graph.json does not exist, so the lanes of the plan cannot be read"; return 1
+  fi
+  out="$("$HERE/overseer-guard.sh" lane "$ST_LANE" 2>&1)"; rc=$?
+  case "$rc" in
+    0) ;;
+    1) st_next 11 "FORGE_LANE_ASSIGNEE names the overseer: unset it (the default lane is forge-codex-lane)"; printf '%s\n' "$out" | st_lines 4; return 1;;
+    *) st_ask 11 "overseer-guard.sh lane exited $rc"; return 2;;
+  esac
+  out="$("$HERE/overseer-guard.sh" graph "$graph" 2>&1)"; rc=$?
+  case "$rc" in
+    0) ;;
+    1) st_next 11 "the plan routes a card to the overseer, which is gate-only: edit the lane in docs/chunks/graph.json"; printf '%s\n' "$out" | st_lines 4; return 1;;
+    *) st_ask 11 "overseer-guard.sh graph exited $rc: $(printf '%s' "$out" | head -n 1)"; return 2;;
+  esac
+  lanes="$(jq -r --arg lane "$ST_LANE" '[.[] | (.lane // (if (.id | startswith("GATE-")) then "claude-interactive" else $lane end))] | unique | .[] | select(. != "claude-interactive")' "$graph" 2>/dev/null)" \
+    || { st_ask 11 "the lanes of $graph could not be read"; return 2; }
+  if ! assignees="$(hermes kanban assignees --json 2>/dev/null)" || ! printf '%s' "$assignees" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    st_ask 11 "hermes kanban assignees --json failed, so the lanes could not be asked about"; return 2
+  fi
+  missing=""
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    printf '%s' "$assignees" | jq -e --arg a "$l" 'any(.[]; .name == $a and .on_disk)' >/dev/null 2>&1 || missing="${missing:+$missing, }$l"
+  done <<ST_LANES
+$lanes
+ST_LANES
+  if [ -n "$missing" ]; then
+    st_next 11 "the plan names lane(s) that are not Hermes profiles on disk: $missing"
+    st_more "~/.forge/repo/hermes/profiles-bootstrap.sh      or correct the lane in docs/chunks/graph.json"
+    return 1
+  fi
+  st_ok 11 "every lane ($(printf '%s' "$lanes" | paste -sd, - | sed 's/,/, /g')) is a Hermes profile on disk, and no card goes to the overseer"
+}
+
+# board-sync's dry run, from the project, with the suffix: its output goes to $ST_WORK/sync.out and its exit is the verdict.
+st_sync() {
+  (cd "$ST_DIR" && "$HERE/../hermes/board-sync.sh" "$ST_BOARD" ${ST_SUFFIX:+--branch-suffix} ${ST_SUFFIX:+"$ST_SUFFIX"}) >"$ST_WORK/sync.out" 2>&1
+}
+
+# The board, asked of Hermes once: absent | empty (listed, no card: what an earlier refused bootstrap leaves behind, and
+# which bootstrap reuses) | archived | exists. 0 answered, 2 could not ask.
+st_board_state() {
+  local out row
+  [ -z "$ST_BSTATE" ] || return 0
+  out="$(hermes kanban boards list --all --json 2>/dev/null)" || return 2
+  printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || return 2
+  row="$(printf '%s' "$out" | jq -c --arg b "$ST_BOARD" '[.[] | select(.slug == $b)] | .[0] // empty' 2>/dev/null)"
+  if [ -z "$row" ]; then ST_BSTATE=absent; ST_BCOUNT=0
+  elif [ "$(printf '%s' "$row" | jq -r '.archived // false')" = true ]; then ST_BSTATE=archived; ST_BCOUNT=""
+  else
+    ST_BCOUNT="$(printf '%s' "$row" | jq -r '.total // "?"')"
+    if [ "$ST_BCOUNT" = 0 ]; then ST_BSTATE=empty; else ST_BSTATE=exists; fi
+  fi
+  return 0
+}
+
+st_r11c() {
+  local out rc report overall posture
+  if ! st_board_state; then st_ask 11+ "hermes kanban boards list failed, so whether board $ST_BOARD exists could not be asked"; return 2; fi
+  case "$ST_BSTATE" in
+    exists|archived) printf '  -     %-3s %s: not run: board %s already exists, and commissioning is the evidence taken BEFORE a first bootstrap\n' 11+ commission "$ST_BOARD"; return 0;;
+  esac
+  out="$("$HERE/commission.sh" "$ST_DIR" "$ST_BOARD" 2>"$ST_WORK/err")"; rc=$?
+  report="$(printf '%s\n' "$out" | sed -n 's/^commission report: //p' | tail -n 1)"
+  overall=""; posture=""
+  if [ -n "$report" ] && [ -f "$report" ]; then
+    overall="$(sed -n 's/^overall: //p' "$report" | tail -n 1)"; posture="$(sed -n 's/^posture: //p' "$report" | tail -n 1)"
+  fi
+  if [ "$rc" = 0 ] && [ "$overall" = PASS ]; then
+    st_ok 11+ "commissioned (this spent one paid Codex sandbox probe)"
+    st_more "overall: $overall"; st_more "posture: $posture"; st_more "report: $report"
+    return 0
+  fi
+  if [ "$rc" = 1 ] || [ "$overall" = FAIL ]; then
+    st_next 11+ "commissioning FAILED: read the report, fix what it names, and run this again (that spends again)"
+    st_more "overall: ${overall:-FAIL}"; [ -z "$posture" ] || st_more "posture: $posture"; [ -z "$report" ] || st_more "report: $report"
+    return 1
+  fi
+  st_ask 11+ "commission.sh exited $rc and left no readable report, so whether the product is commissioned is not known: $(head -n 1 "$ST_WORK/err" 2>/dev/null)"; return 2
+}
+
+# What the bootstrap is about to do, in plain words, read from the same graph the bootstrap reads. Several roots cannot
+# happen (board-bootstrap.sh refuses a graph without exactly one), but the text does not rely on that.
+st_plan_words() {
+  local graph="$ST_DIR/docs/chunks/graph.json" chunks gates started waiting hand first n
+  chunks="$(jq '[.[] | select(.id | startswith("CHUNK-"))] | length' "$graph")"
+  gates="$(jq '[.[] | select(.id | startswith("GATE-"))] | length' "$graph")"
+  started="$(jq -r --arg lane "$ST_LANE" '[.[] | select(((.depends_on // []) | length) == 0) | (.lane // (if (.id | startswith("GATE-")) then "claude-interactive" else $lane end)) as $l | select($l != "claude-interactive") | "\(.id) (\($l))"] | join(", ")' "$graph")"
+  waiting="$(jq -r '[.[] | select(((.depends_on // []) | length) == 0) | select((.lane // "") == "claude-interactive") | .id] | join(", ")' "$graph")"
+  hand="$(jq -r '[.[] | select(.id | startswith("CHUNK-")) | select((.lane // "") == "claude-interactive") | .id] | join(", ")' "$graph")"
+  first="$(jq -r '. as $g | [.[] | select(.id | startswith("GATE-")) | .id] as $gs
+      | def behind($set): [$g[] | select(any((.depends_on // [])[]; . as $d | ($gs | index($d)) != null or ($set | index($d)) != null)) | .id];
+        (reduce range(0; ($g | length)) as $i ([]; behind(.) | sort)) as $past
+      | [$gs[] | select(. as $x | ($past | index($x)) == null)] | join(", ")' "$graph" 2>/dev/null)"
+  echo "forge start will now bootstrap board $ST_BOARD from $ST_DIR${ST_SUFFIX:+ (branch suffix $ST_SUFFIX)}:"
+  if [ "$ST_ROOT_ONLY" = 1 ]; then
+    echo "  - ONE card is created now (--root-only): the root. The other $(( chunks + gates - 1 )) card(s) of the plan ($chunks chunk card(s) and $gates gate card(s), over $gates milestone(s)) come from the full bootstrap, after the root's PR has merged"
+  else
+    echo "  - $(( chunks + gates )) cards: $chunks chunk card(s) and $gates gate card(s), over $gates milestone(s) (docs/chunks/graph.json)"
+  fi
+  if [ -n "$started" ]; then
+    echo "  - it STARTS IMMEDIATELY: $started is ready the moment it is created, so the gateway's dispatcher gives it to its lane within about a minute, and the lane spends a Codex run on it"
+  else
+    echo "  - nothing starts by itself: the root is hand-built, so no lane is given a card yet"
+  fi
+  if [ -n "$waiting" ]; then echo "  - the root $waiting is hand-built (claude-interactive): nothing runs it, it waits for you"; fi
+  if [ -n "$hand" ]; then echo "  - hand-built (claude-interactive) chunks wait for you, whenever their turn comes: $hand"; fi
+  echo "  - the verifier only RECOMMENDS merges (a card blocks as merge-pending) until forge go grants it merge authority; this step grants nothing"
+  if [ -n "$first" ]; then
+    echo "  - everything behind $first waits for that gate: it is held until its milestone's chunks are done and its probe is passed (forge go arms it)"
+  else
+    echo "  - the plan has no milestone gate, so nothing is held back by one"
+  fi
+  echo "  to archive the board again: hermes kanban boards rm $ST_BOARD (a card that has already started finishes its run)"
+}
+
+st_r12() {
+  local out rc args root title cards sync_rc brc bs ans
+  if ! st_board_state; then st_ask 12 "hermes kanban boards list failed, so whether board $ST_BOARD exists could not be asked"; return 2; fi
+  bs="$ST_BOARD"
+  case "$ST_BSTATE" in
+    archived)
+      st_next 12 "board $bs exists but is archived: a board with old rows is not a clean run boundary"
+      st_more "choose another: forge start $ST_DIR --board <new slug>${ST_SUFFIX:+ --branch-suffix $ST_SUFFIX}"
+      return 1;;
+    exists)
+      st_sync; sync_rc=$?
+      case "$sync_rc" in
+        0) st_ok 12 "board $bs exists ($ST_BCOUNT cards) and matches the plan"
+           echo
+           echo "already on board $bs: nothing to start. Next: forge go $bs --project $ST_DIR${ST_SUFFIX:+ --branch-suffix $ST_SUFFIX}"
+           return 0;;
+        1) st_next 12 "board $bs exists but differs from the plan"
+           head -n 12 "$ST_WORK/sync.out" | st_lines 12
+           st_more "see it:        (cd $ST_DIR && ~/.forge/repo/hermes/board-sync.sh $bs${ST_SUFFIX:+ --branch-suffix $ST_SUFFIX})"
+           st_more "make it match: (cd $ST_DIR && ~/.forge/repo/hermes/board-sync.sh $bs${ST_SUFFIX:+ --branch-suffix $ST_SUFFIX} --apply)"
+           st_more "a board started with --root-only gets the rest from the full bootstrap, which is idempotent and reuses the root:"
+           st_more "                (cd $ST_DIR && ~/.forge/repo/hermes/board-bootstrap.sh $bs${ST_SUFFIX:+ --branch-suffix $ST_SUFFIX})"
+           return 1;;
+        *) st_ask 12 "board-sync exited $sync_rc, so whether board $bs matches the plan could not be asked"
+           head -n 4 "$ST_WORK/sync.out" | st_lines 4
+           return 2;;
+      esac;;
+  esac
+
+  # ---- the act: the board is absent (or listed with no card) ------------------------------------------------------------
+  printf '  ACT   %-3s %s: board %s %s: this is the one rung that writes\n' 12 board "$bs" "$([ "$ST_BSTATE" = empty ] && echo "exists with no card (an earlier refused bootstrap)" || echo "does not exist yet")"
+  echo
+  st_plan_words
+  if [ "$ST_YES" = 1 ]; then
+    echo "  (confirmed by --yes)"
+  elif [ -t 0 ]; then
+    printf 'proceed? type y to create the board and start the plan: '
+    ans=""; read -r ans || ans=""
+    case "$ans" in y|Y|yes) ;; *) echo "not confirmed: nothing was changed"; exit 2;; esac
+  else
+    echo "forge start: not confirmed: this is not a terminal and --yes was not given. Nothing was changed." >&2; exit 2
+  fi
+
+  ST_ACTING=1
+  args=("$bs")
+  [ "$ST_ROOT_ONLY" = 0 ] || args+=(--root-only)
+  [ -z "$ST_SUFFIX" ] || args+=(--branch-suffix "$ST_SUFFIX")
+  out="$(cd "$ST_DIR" && "$HERE/../hermes/board-bootstrap.sh" "${args[@]}" 2>&1)"; brc=$?
+  printf '%s\n' "$out" | tail -n 40 | sed 's/^/    /'
+  case "$brc" in
+    0) ;;
+    3) ST_DONE=1; echo "forge start: REFUSED (exit 3): a branch of the plan is spent (a PR or a remote branch already uses it). No card was created. Pick another --branch-suffix: forge start $ST_DIR --branch-suffix <new>" >&2; return 1;;
+    2) ST_DONE=1; echo "forge start: could not ask (exit 2): GitHub, origin or the board could not be asked, which is not the same as free. No card was created. Fix what it names and run this again" >&2; exit 2;;
+    4) ST_DONE=1; echo "forge start: REFUSED (exit 4): the board already holds a card under a different branch suffix. Use the suffix the board was started with, or another board" >&2; return 1;;
+    1) ST_DONE=1; echo "forge start: REFUSED (exit 1): the bootstrap refused the plan or its arguments (above). A refusal before the cards creates none; run forge start again to see where the board stands" >&2; return 1;;
+    *) ST_DONE=1; echo "forge start: the bootstrap could not run (exit $brc). Run forge start again to see where board $bs stands" >&2; exit 2;;
+  esac
+
+  # ---- read it back: the exit code of the bootstrap is not the answer -------------------------------------------------
+  if [ "$ST_ROOT_ONLY" = 1 ]; then
+    root="$(jq -r '[.[] | select(((.depends_on // []) | length) == 0) | .id] | .[0] // empty' "$ST_DIR/docs/chunks/graph.json" 2>/dev/null)"
+    title="$(head -n 1 "$ST_DIR/docs/chunks/$root.md" 2>/dev/null | sed 's/^#* *//')"
+    cards="$(hermes kanban --board "$bs" list --json 2>/dev/null)"; rc=$?
+    if [ "$rc" != 0 ] || [ -z "$root" ] || ! printf '%s' "$cards" | jq -e '(if type == "object" then .tasks else . end) | type == "array"' >/dev/null 2>&1; then
+      ST_DONE=1; echo "forge start: the bootstrap exited 0 but the board's cards could not be read back, so the root card is not confirmed. Check: forge status $bs" >&2; exit 2
+    fi
+    if ! printf '%s' "$cards" | jq -e --arg t "$title" '(if type == "object" then .tasks else . end) | any(.[]; .title == $t)' >/dev/null 2>&1; then
+      ST_DONE=1; echo "forge start: the bootstrap exited 0 but board $bs has no card titled '$title': the root card is not there. Check: forge status $bs" >&2; return 1
+    fi
+    echo "read back: the root card ($root) is on board $bs"
+  else
+    st_sync; sync_rc=$?
+    case "$sync_rc" in
+      0) echo "read back: board $bs is in sync with the plan (board-sync dry run)";;
+      1) ST_DONE=1; echo "forge start: the bootstrap exited 0 but the board does not match the plan:" >&2; head -n 12 "$ST_WORK/sync.out" | sed 's/^/    /' >&2; return 1;;
+      *) ST_DONE=1; echo "forge start: the bootstrap exited 0 but board-sync could not read the board back (exit $sync_rc), so it is not confirmed. Check: forge status $bs" >&2; exit 2;;
+    esac
+  fi
+  ST_DONE=1
+  echo
+  echo "== forge status $bs =="
+  "$HERE/forge.sh" status "$bs" 2>&1 || true
+  echo
+  echo "started: board $bs is on the plan. Nothing is granted yet: the verifier only recommends merges."
+  echo "next: forge go $bs --project $ST_DIR${ST_SUFFIX:+ --branch-suffix $ST_SUFFIX}      (grants merge authority, arms the first gate)"
+  echo "stop: forge stop $bs"
+  return 0
+}
+
+st_run_rung() {
+  local rc
+  case "$1" in
+    1) st_r1;; 2) st_r2;; 3) st_r3;;
+    4) st_plan 4 scope docs/REQUIREMENTS.md scope;;
+    5) st_plan 5 architect docs/feasibility.md architect;;
+    6) st_r6;; 7) st_r7;; 8) st_r8;; 9) st_r9;; 10) st_r10;;
+    11) st_r11; rc=$?
+        if [ "$rc" = 0 ] && [ "$ST_COMMISSION" = 0 ] && [ "$ST_RUNNING" = 0 ]; then
+          echo "        commissioning skipped: --commission would run scripts/commission.sh, which runs make verify WITH_CODEX=1 (one paid Codex sandbox probe, about 18 minutes) and writes a report under $ST_DIR/.forge/"
+        fi
+        return "$rc";;
+    11+) st_r11c;;
+    12) st_r12;;
+  esac
+}
+
+cmd_start() {
+  local dir="" n rc stopped=0 stopped_at="" rungs tool
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; return 0;;
+      --board)   [ $# -ge 2 ] || usage_err "start: --board needs a board slug"; ST_BOARD="$2"; ST_BOARD_SET=1; shift 2;;
+      --branch-suffix) [ $# -ge 2 ] || usage_err "start: --branch-suffix needs a suffix"; ST_SUFFIX="$2"; shift 2;;
+      --root-only)  ST_ROOT_ONLY=1; shift;;
+      --commission) ST_COMMISSION=1; shift;;
+      --yes|-y)     ST_YES=1; shift;;
+      -*) usage_err "start: unknown option '$1'";;
+      *)  [ -z "$dir" ] || usage_err "start takes one project directory: '$dir' and '$1'"; dir="$1"; shift;;
+    esac
+  done
+  [ -n "$dir" ] || usage_err "start needs the project directory"
+  [ "$ST_BOARD_SET" = 0 ] || forge_board_slug_ok "$ST_BOARD" || die "'$ST_BOARD' is not a board slug (Hermes: lowercase letters, digits, - and _, starting with a letter or digit, at most 64)"
+  [ -z "$ST_SUFFIX" ] || { [[ $ST_SUFFIX =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] && [ "${#ST_SUFFIX}" -le 32 ]; } || usage_err "start: --branch-suffix is a lowercase slug of at most 32 characters"
+  for tool in jq git hermes; do command -v "$tool" >/dev/null 2>&1 || die "$tool is not on PATH"; done
+  case "$dir" in /*) ;; *) dir="$PWD/$dir";; esac
+  if [ -d "$dir" ]; then ST_DIR="$(cd "$dir" && pwd -P)"; else ST_DIR="${dir%/}"; fi
+  ST_WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-start.XXXXXX")" || die "cannot make a temporary directory"
+  trap st_exit EXIT; trap 'st_signal INT' INT; trap 'st_signal TERM' TERM; trap 'st_signal HUP' HUP
+
+  rungs="1 2 3 4 5 6 7 8 9 10 11"
+  [ "$ST_COMMISSION" = 0 ] || rungs="$rungs 11+"
+  rungs="$rungs 12"
+  echo "forge start $ST_DIR$([ "$ST_BOARD_SET" = 1 ] && echo " (board $ST_BOARD)")"
+  for n in $rungs; do
+    if [ "$stopped" != 0 ]; then st_skip "$n"; continue; fi
+    st_run_rung "$n"; rc=$?
+    case "$rc" in
+      0) ;;
+      1) if [ "$ST_RUNNING" = 1 ] && [ "$n" != 12 ]; then :; else stopped=1; stopped_at="$n"; fi;;
+      *) stopped=2; stopped_at="$n";;
+    esac
+  done
+  case "$stopped" in
+    0) if [ "$ST_WARNS" -gt 0 ]; then
+         echo
+         echo "forge start: $ST_WARNS warning(s), at rung $ST_WARN_AT: the board matches the plan, but the project no longer meets every rung the plan was started on"
+       fi
+       return 0;;
+    1) echo
+       if [ "$ST_ACTING" = 1 ]; then echo "forge start: the bootstrap was refused at rung $stopped_at (above)"
+       else echo "forge start: stopped at rung $stopped_at ($(st_name "$stopped_at")): do the step marked above and run this again. Nothing was changed."; fi
+       [ "$ST_WARNS" = 0 ] || echo "forge start: $ST_WARNS warning(s) before it, at rung $ST_WARN_AT"
+       return 1;;
+    *) echo
+       echo "forge start: could not ask at rung $stopped_at ($(st_name "$stopped_at")): that is not the same as met. Nothing was changed." >&2
+       return 2;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# new
+# ---------------------------------------------------------------------------
+# What `make new` prints as manual steps, as a program: resolve the target through the one durable-path guard
+# (scripts/new-dest.sh), stamp templates/python-service, `git init -b main`, `make setup`, the first commit; with --github
+# also create the repository, push, run the template's `make protect` and ask merge-gate what came of it. It never
+# overwrites: new-dest.sh refuses a volatile or relative destination, not one that exists, so the existing target is
+# refused here, before anything is written.
+new_step() { printf 'new: %s\n' "$*"; }
+new_fail() {  # <step> <what is left on disk>
+  echo "forge new: FAILED at: $1. $2" >&2; exit 1
+}
+cmd_new() {
+  local name="" dest="" github="" public=0 target out rc tmpl gate_rc gate_out
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; return 0;;
+      --dest)   [ $# -ge 2 ] || usage_err "new: --dest needs a directory"; dest="$2"; shift 2;;
+      --github) [ $# -ge 2 ] || usage_err "new: --github needs <owner>/<repo>"; github="$2"; shift 2;;
+      --public) public=1; shift;;
+      -*) usage_err "new: unknown option '$1'";;
+      *)  [ -z "$name" ] || usage_err "new takes one project name: '$name' and '$1'"; name="$1"; shift;;
+    esac
+  done
+  [ -n "$name" ] || usage_err "new needs a project name"
+  [ "$public" = 0 ] || [ -n "$github" ] || usage_err "new: --public belongs to --github (a repository is only created with it)"
+  [ -z "$github" ] || [[ $github =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || usage_err "new: --github is <owner>/<repo>, not '$github'"
+  dest="${dest:-${HOME:-}/dev}"
+  [ -n "$dest" ] && [ "$dest" != /dev ] || usage_err "new: --dest is empty (and HOME gives no default)"
+  tmpl="$HERE/../templates/python-service"
+  for tool in git make uvx; do command -v "$tool" >/dev/null 2>&1 || die "$tool is not on PATH. Nothing was written."; done
+  [ -z "$github" ] || command -v gh >/dev/null 2>&1 || die "gh is not on PATH. Nothing was written."
+  [ -d "$tmpl" ] || die "the template $tmpl is not there. Nothing was written."
+  # the one guard for where a project may live; its refusal is a refusal, and it says why
+  target="$("$HERE/new-dest.sh" "$dest" --name "$name")" || exit 2
+  [ -n "$target" ] || die "new-dest.sh named no target. Nothing was written."
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    echo "forge new: $target already exists, and forge new never overwrites. Nothing was written." >&2; exit 2
+  fi
+  echo "forge new $name -> $target"
+
+  new_step "stamping templates/python-service"
+  uvx copier copy "$tmpl" "$target" --defaults --data project_name="$name"; rc=$?
+  [ "$rc" = 0 ] && [ -d "$target" ] || new_fail "stamping the template (uvx copier exited $rc)" "$target may be partly written: look at it, remove it, run again."
+  new_step "git init -b main"
+  git -C "$target" init -q -b main || new_fail "git init -b main" "$target is stamped but is not a repository."
+  new_step "make setup"
+  (cd "$target" && make setup) || new_fail "make setup" "$target is stamped and is a repository with no commit. Run make setup there when its cause is fixed, then commit."
+  new_step "the initial commit"
+  git -C "$target" add -A || new_fail "git add" "$target is stamped and set up, with nothing committed."
+  git -C "$target" commit -q -m "initial commit: stamped from forge templates/python-service" || new_fail "the initial commit" "$target is stamped and set up, with nothing committed (a hook may have refused it: read its message above)."
+
+  if [ -n "$github" ]; then
+    new_step "gh repo create $github $([ "$public" = 1 ] && echo --public || echo --private) --source . --push"
+    (cd "$target" && gh repo create "$github" "$([ "$public" = 1 ] && echo --public || echo --private)" --source . --push) \
+      || new_fail "gh repo create $github" "$target is committed locally; the GitHub repository may or may not exist: gh repo view $github. Push with: cd $target && gh repo create $github --private --source . --push"
+    new_step "make protect"
+    (cd "$target" && make protect); rc=$?
+    # make protect's own exit is not the answer: on a private repository on a free plan it fails with a 403 for a
+    # reason no configuration can fix, and that is an answer, not a failure. Ask what GitHub says, as commission does.
+    gate_out="$("$HERE/merge-gate.sh" "$github" --branch main --require check 2>/dev/null)"; gate_rc=$?
+    case "$gate_rc" in
+      0) echo "posture: GATED (branch protection requires a PR and the check: $gate_out)";;
+      5) echo "posture: UNGATED (GitHub cannot gate a private repository on this plan; CI green is checked by the verifier)";;
+      3|4) new_fail "make protect (exit $rc): $github is not gated ($gate_out)" "$target is pushed to $github. Fix the protection (cd $target && make protect) before forge start.";;
+      *) echo "forge new: the project is stamped and pushed, but whether $github is gated could not be asked (merge-gate exited $gate_rc). Ask it: $HERE/merge-gate.sh $github --branch main --require check" >&2; exit 2;;
+    esac
+  else
+    echo "next: gh repo create $name --private --source . --push      (run in $target; then make protect)"
+  fi
+  echo "next: open Claude Code in $target and run /scope — then: forge start $target"
   return 0
 }
 
