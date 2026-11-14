@@ -102,7 +102,14 @@
 #               on and 1 for one with cards waiting (the digest's own answer, compared) or a watchdog that
 #               is not healthy, 2 for what it could not read, and writes nothing; `forge stop` revokes the
 #               grant, disarms the board's gates and asks both scripts again. The real script against
-#               fixture boards, a real grant and real armed gates, a pinned clock, temp directories only
+#               fixture boards, a real grant and real armed gates, a pinned clock, temp directories only.
+#               `forge rehearse` (the end-to-end smoke test on the hello repo) refuses a failed precondition
+#               having changed nothing, passes and cleans up, revokes merge authority on a failure and on a
+#               TERM, and grants only its own board; `forge go` (the launch) refuses what is out of sync and
+#               what is unconfirmed, and puts the grant, the armed gate and the resumed cron job in force and
+#               reads each back. Stateful stubs of hermes, gh and launchctl, a real git repo with a bare origin
+#               that the stubs make real commits on, the real merge-authority.sh and checkpoint-arm.sh. NO
+#               case runs a real rehearsal: that spends a Codex run and a judge call
 #   manifest/   `--list` names every case the suite actually runs. Compares the
 #               catalogue against what THIS run emitted, so a check added
 #               without a catalogue entry is caught. Full runs only    (F65/F66)
@@ -3314,6 +3321,12 @@ front/unreadable-boards-and-usage-errors-exit-2  a missing board, a corrupt one,
 front/watchdog-reading-decides-the-exit  no log, a stale log, an UNHEALTHY or verdict-less last run exit 1 and say so; an old unhealthy run before a healthy one does not count
 front/stop-revokes-disarms-and-reads-back  a real grant and real armed gates are withdrawn and asked for again, another board's untouched, the second stop a no-op, a revoke that did not take read back as still in force (exit 1)
 front/status-is-read-only           the boards and the state root are byte-identical after status runs, and its snapshots are removed
+front/rehearse-refuses-on-a-failed-precondition  a dirty checkout, one not on main, greet.py already on main, a gateway not running and a missing profile each exit 2 naming the precondition; every write verb is refused and the repos, boards and state root are unchanged
+front/rehearse-passes-and-cleans-up  a stubbed card walks ready, running, done with a real bare origin: exit 0, REHEARSAL PASSED, the grant on the hello-rehearsal board only and gone after, the revert PR created, checked and merged before the board is archived, the hello repo back on a clean main, evidence written
+front/rehearse-failure-always-revokes  a card that ends blocked is exit 1 with every unmet condition, the block reason and the log tail, the grant revoked and read back and the board, PR and branch left; a TERM mid-wait also revokes and leaves the board
+front/rehearse-grants-only-its-own-board  --cleanup of any board not named hello-rehearsal-* is refused before hermes or gh is asked and a decoy grant survives; a whole run sees only its own board granted; merge-authority.sh grant is reached from rh_grant (guarded) and cmd_go only
+front/go-refuses-out-of-sync-and-unconfirmed  board-sync drift or failure, a dirty or behind product checkout, a gate not ready or absent, and no --yes without a terminal each change nothing (no grant, no arming, the cron job still paused)
+front/go-puts-in-force-and-reads-back  with the real merge-authority.sh and checkpoint-arm.sh: --yes grants, arms exactly the ready gate apply, names the cards it releases and resumes the paused checkpoint job, each read back; an armed or parked gate needs --rearm; a missing cron job exits 1 with the create command and keeps the grant and arming; a fenced worker is refused
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -22782,9 +22795,9 @@ WD_PLIST
 wants watchdog  && run_watchdog_group
 
 # ---------------------------------------------------------------------------
-# front/ — the operator's front door (scripts/forge.sh): `forge status` and `forge stop`.
+# front/ — the operator's front door (scripts/forge.sh): `forge status`, `forge stop`, `forge rehearse` and `forge go`.
 #
-# Six cases, each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
+# Twelve cases (the first six are status and stop; the other six are rehearse and go, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
 # from scripts/fixtures/digest-board.sql's schema (the digest and checkpoint fixtures' own), the grant and the armed
 # gates are made by the real merge-authority.sh and checkpoint-arm.sh, and the script is reached through a relative
 # symlink that points at an absolute one, in another directory: the way the operator runs it (~/.local/bin/forge).
@@ -23043,6 +23056,562 @@ SQL
   [ -z "$(ls -A "$root/tmp" 2>/dev/null)" ] || d="$d a-snapshot-was-left-behind($(ls "$root/tmp" | head -2 | tr '\n' ' '))"
   [ -z "$d" ] && ok "status-is-read-only (every file under the boards and the state root, and the directory listing, is byte-identical after three runs, and every snapshot it made is gone)" \
     || bad "status-is-read-only" "forge status must only read —$d"
+
+  # ==============================================================================================================
+  # `forge rehearse` and `forge go`. Offline: `hermes`, `gh` and `launchctl` are STATEFUL STUBS on PATH, the hello repo is
+  # a real git repo with a bare origin beside it, and the stubs make REAL git effects: when the stubbed card flips to
+  # done, a commit that adds greet.py lands on the bare origin's main and is served as the PR's merge commit, and the
+  # stub `gh pr merge` of the revert PR fast-forwards the bare main to the pushed revert branch. So the real
+  # pull / revert / push / "greet.py is absent again" steps actually run. The real merge-authority.sh, checkpoint-arm.sh and
+  # board-snapshot.sh are used; board-bootstrap.sh and board-sync.sh are stubs in a copy of the tree (kit/), because their
+  # own cases are the bootstrap and sync groups'. No case here may run a real rehearsal, which spends a Codex run.
+  # ==============================================================================================================
+  command -v git >/dev/null 2>&1 || { skip "rehearse-refuses-on-a-failed-precondition" "git not on PATH"; return; }
+  local kit="$root/kit" RS="$root/rstub" hello="$root/hello" gp="$root/gproj"
+  local origin="$root/hello/origin.git" work="$root/hello/work" lane="$root/hello/lane" board="hello-rehearsal-r202611141130" card=t_rx0001
+  mkdir -p "$root/rbin" "$root/stubs"
+
+  cat > "$root/rbin/launchctl" <<'RX_LAUNCHCTL'
+#!/usr/bin/env bash
+echo "launchctl $*" >> "$RX_STUB/calls.log"
+case "$(cat "$RX_STUB/gw.mode" 2>/dev/null)" in
+  running) printf 'gui/501/ai.hermes.gateway = {\n\tactive count = 1\n\tstate = running\n\tpid = 1643\n}\n';;
+  waiting) printf 'gui/501/ai.hermes.gateway = {\n\tstate = waiting\n}\n';;
+  *) echo "Could not find service \"ai.hermes.gateway\" in domain for user gui: 501" >&2; exit 113;;
+esac
+RX_LAUNCHCTL
+
+  cat > "$root/rbin/hermes" <<'RX_HERMES'
+#!/usr/bin/env bash
+# Stateful stub of `hermes`. Every call is logged to calls.log; a write verb is also logged as WRITE and, in a case that
+# set <stub>/readonly, REFUSED. A card walks through the scenario in <stub>/scenario, one step per `show`.
+S="${RX_STUB:?}"; H="${HERMES_HOME:?}"; KB="${HERMES_KANBAN_HOME:-$H/kanban}/boards"; ID=t_rx0001
+echo "hermes $*" >> "$S/calls.log"
+wr() { echo "WRITE hermes $*" >> "$S/calls.log"; if [ -f "$S/readonly" ]; then echo "stub hermes: a write verb in a read-only case: $*" >&2; exit 1; fi; }
+if [ "${1:-}" = cron ]; then
+  case "${2:-}" in
+    resume)
+      wr "$@"
+      [ -f "$S/resume-noop" ] || { jq --arg i "${3:-}" '(.jobs[] | select(.id == $i)) |= (.enabled = true | .state = "scheduled")' "$H/cron/jobs.json" > "$H/cron/jobs.json.new" && mv "$H/cron/jobs.json.new" "$H/cron/jobs.json"; }
+      exit 0;;
+  esac
+  exit 0
+fi
+[ "${1:-}" = kanban ] || exit 0
+shift
+board=""
+if [ "${1:-}" = --board ]; then board="$2"; shift 2; fi
+case "${1:-}" in
+  assignees) cat "$S/assignees.json"; exit 0;;
+  boards)
+    case "${2:-}" in
+      list)
+        all=0; for a in "$@"; do [ "$a" = --all ] && all=1; done
+        active="$(ls "$KB" 2>/dev/null | grep -v '^_archived$')"; arch="$(ls "$KB/_archived" 2>/dev/null)"
+        jq -nc --arg a "$active" --arg r "$arch" --argjson all "$all" '
+          [{slug:"default", archived:false}]
+          + ($a | split("\n") | map(select(length > 0)) | map({slug: ., archived: false}))
+          + (if $all == 1 then ($r | split("\n") | map(select(length > 0)) | map({slug: ., archived: true})) else [] end)'
+        exit 0;;
+      rm)
+        wr "$@"
+        if [ ! -f "$S/rm-noop" ] && [ -d "$KB/${3:-}" ]; then mkdir -p "$KB/_archived"; mv "$KB/$3" "$KB/_archived/$3-20261114-1"; fi
+        exit 0;;
+      *) wr "$@"; exit 0;;
+    esac;;
+  log) i=1; while [ "$i" -le 20 ]; do echo "log line $i"; i=$((i + 1)); done; exit 0;;
+  show)
+    n=$(( $(cat "$S/polls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$S/polls"
+    sc="$(cat "$S/scenario")"; branch="$(cat "$S/branch" 2>/dev/null)"
+    O="$RX_HELLO/origin.git"; W="$RX_HELLO/work"; L="$RX_HELLO/lane"
+    echo "state poll=$n scenario=$sc grants=[$(ls "${FORGE_STATE_ROOT:-/nonexistent}/merge-authority" 2>/dev/null | tr '\n' ' ')]" >> "$S/calls.log"
+    RL='{"profile":"forge-codex-lane","status":"running","outcome":null}'
+    RLD='{"profile":"forge-codex-lane","status":"completed","outcome":"completed"}'
+    RV='{"profile":"forge-verifier","status":"running","outcome":null}'
+    RVD='{"profile":"forge-verifier","status":"completed","outcome":"completed"}'
+    st=ready; runs='[]'; res=""; ev='[{"kind":"created","created_at":1}]'
+    effect_a() {  # the lane works: a worktree and its branch, pushed, with an open PR
+      [ -f "$S/did.a" ] && return 0; : > "$S/did.a"
+      git -C "$W" worktree add -q "$RX_HELLO/wt/$ID" -b "$branch" >/dev/null 2>&1
+      git -C "$W" push -q origin "$branch:refs/heads/$branch" >/dev/null 2>&1
+      printf '[{"number":7,"state":"OPEN","mergedAt":null,"headRefOid":"1111111aaaa","url":"https://github.com/acme/hello-forge/pull/7","mergeCommit":null}]\n' > "$S/pr.json"
+    }
+    effect_b() {  # the verifier merges: greet.py lands on the bare origin's main, the branch goes, the verdict is written
+      [ -f "$S/did.b" ] && return 0; : > "$S/did.b"
+      git -C "$L" pull -q --ff-only origin main >/dev/null 2>&1
+      mkdir -p "$L/src/hello_forge"; echo 'def greet(name): return "Hello, " + name + "!"' > "$L/src/hello_forge/greet.py"
+      git -C "$L" add -A >/dev/null 2>&1; git -C "$L" commit -q -m "CHUNK-HELLO-1: greet (#7)" >/dev/null 2>&1
+      git -C "$L" push -q origin HEAD:main >/dev/null 2>&1
+      oid="$(git -C "$L" rev-parse HEAD)"
+      git --git-dir="$O" update-ref -d "refs/heads/$branch" >/dev/null 2>&1
+      jq -nc --arg oid "$oid" '[{number:7,state:"MERGED",mergedAt:"2026-11-14T11:33:00Z",headRefOid:"1111111aaaa",url:"https://github.com/acme/hello-forge/pull/7",mergeCommit:{oid:$oid}}]' > "$S/pr.json"
+      mkdir -p "$FORGE_STATE_ROOT/verdicts"; printf '{"verdict":"approve","board":"%s","task":"%s"}\n' "$board" "$ID" > "$FORGE_STATE_ROOT/verdicts/$board-$ID.json"
+    }
+    case "$sc:$n" in
+      merge-pass:1) ;;
+      merge-pass:2|merge-pass:3) st=running; runs="[$RL]"; effect_a;;
+      merge-pass:4) st=running; runs="[$RLD,$RV]"; effect_a;;
+      merge-pass:*) st=done; runs="[$RLD,$RVD]"; effect_a; effect_b; res="merged by forge-verifier: approved (merge authority granted by forge-rehearse)";;
+      blocked:1|recommend:1|hang:1) ;;
+      blocked:2|recommend:2) st=running; runs="[$RL]"; effect_a;;
+      blocked:*) st=blocked; runs="[$RLD]"; effect_a
+        ev='[{"kind":"created","created_at":1},{"kind":"blocked","created_at":9,"payload":{"reason":"ci: the required check failed on the lane PR\nsecond line"}}]';;
+      recommend:*) st=blocked; runs="[$RLD,$RVD]"; effect_a
+        ev='[{"kind":"created","created_at":1},{"kind":"blocked","created_at":9,"payload":{"reason":"merge-pending: approved; the operator merges it"}}]';;
+      hang:*) st=running; runs="[$RL]";;
+    esac
+    jq -nc --arg id "$ID" --arg st "$st" --arg res "$res" --arg br "$branch" --arg wp "$RX_HELLO/wt/$ID" --argjson runs "$runs" --argjson ev "$ev" \
+      '{task:{id:$id, status:$st, result:(if $res == "" then null else $res end), branch_name:$br, workspace_path:$wp}, runs:$runs, events:$ev}'
+    exit 0;;
+  *) wr "$@"; exit 0;;
+esac
+RX_HERMES
+
+  cat > "$root/rbin/gh" <<'RX_GH'
+#!/usr/bin/env bash
+# Stateful stub of `gh`. Write verbs are logged WRITE and refused in a read-only case. `pr create` needs its head pushed;
+# `pr merge 8` (the revert PR) fast-forwards the bare origin's main to it; `pr merge 7` (the lane's) is never allowed.
+S="${RX_STUB:?}"; O="$RX_HELLO/origin.git"
+echo "gh $*" >> "$S/calls.log"
+wr() { echo "WRITE gh $*" >> "$S/calls.log"; if [ -f "$S/readonly" ]; then echo "stub gh: a write verb in a read-only case: $*" >&2; exit 1; fi; }
+flag() { local want="$1"; shift; while [ $# -gt 0 ]; do if [ "$1" = "$want" ]; then printf '%s' "${2:-}"; return; fi; shift; done; }
+case "${1:-} ${2:-}" in
+  "repo view") echo '{"nameWithOwner":"acme/hello-forge"}';;
+  "pr list")
+    head="$(flag --head "$@")"; state="$(flag --state "$@")"
+    case "$head" in
+      chunk/*) if [ -f "$S/branch" ] && [ "$head" = "$(cat "$S/branch")" ] && [ -f "$S/pr.json" ]; then cat "$S/pr.json"; else echo '[]'; fi;;
+      revert/*) if [ -f "$S/rv.json" ]; then if [ "$state" = open ]; then jq -c '[.[] | select(.state == "OPEN")]' "$S/rv.json"; else cat "$S/rv.json"; fi; else echo '[]'; fi;;
+      *) echo '[]';;
+    esac;;
+  "pr view")
+    case "${3:-}" in
+      7) f="$S/pr.json"; roll="$(cat "$S/checks.json")";;
+      8) f="$S/rv.json"; k=$(( $(cat "$S/rv.views" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$S/rv.views"
+         case "$k" in
+           1) roll='[]';;
+           2) roll='[{"__typename":"CheckRun","name":"validate","status":"IN_PROGRESS","conclusion":""}]';;
+           *) roll="$(cat "$S/checks.json")";;
+         esac;;
+      *) echo "stub gh: no pull request ${3:-}" >&2; exit 1;;
+    esac
+    jq -c --argjson roll "$roll" '.[0] | {state: .state, statusCheckRollup: $roll}' "$f";;
+  "pr create")
+    wr "$@"; h="$(flag --head "$@")"
+    [ "$(flag --base "$@")" = main ] || { echo "stub gh: the base must be main" >&2; exit 1; }
+    git --git-dir="$O" show-ref --verify -q "refs/heads/$h" || { echo "stub gh: $h is not on origin" >&2; exit 1; }
+    jq -nc --arg h "$h" '[{number:8, state:"OPEN", url:"https://github.com/acme/hello-forge/pull/8", headRef:$h, mergedAt:null}]' > "$S/rv.json"
+    echo "https://github.com/acme/hello-forge/pull/8";;
+  "pr merge")
+    wr "$@"
+    if [ "${3:-}" = 7 ]; then echo "WRITE-LANE gh $*" >> "$S/calls.log"; echo "stub gh: forge must never merge the lane's PR" >&2; exit 1; fi
+    h="$(jq -r '.[0].headRef' "$S/rv.json")"
+    git --git-dir="$O" update-ref refs/heads/main "refs/heads/$h" && git --git-dir="$O" update-ref -d "refs/heads/$h"
+    jq -c '.[0].state = "MERGED"' "$S/rv.json" > "$S/rv.json.new" && mv "$S/rv.json.new" "$S/rv.json";;
+  "pr close")
+    wr "$@"; [ "${3:-}" = 7 ] || exit 1
+    jq -c '.[0].state = "CLOSED"' "$S/pr.json" > "$S/pr.json.new" && mv "$S/pr.json.new" "$S/pr.json"
+    git --git-dir="$O" update-ref -d "refs/heads/$(cat "$S/branch")" >/dev/null 2>&1;;
+  *) echo "stub gh: unexpected: $*" >&2; exit 1;;
+esac
+RX_GH
+
+  cat > "$root/stubs/board-bootstrap.sh" <<'RX_BOOT'
+#!/usr/bin/env bash
+# Stub of hermes/board-bootstrap.sh <board> --hello --branch-suffix <s>: makes the board and its one card.
+S="${RX_STUB:?}"; H="${HERMES_HOME:?}"; KB="${HERMES_KANBAN_HOME:-$H/kanban}/boards"
+echo "bootstrap $* cwd=$(pwd -P)" >> "$S/calls.log"
+echo "WRITE bootstrap $*" >> "$S/calls.log"
+[ ! -f "$S/readonly" ] || { echo "stub bootstrap: a write in a read-only case" >&2; exit 1; }
+[ ! -f "$S/bootstrap.fail" ] || { echo "stub bootstrap: told to fail" >&2; exit 1; }
+b="$1"; [ "$2" = --hello ] && [ "$3" = --branch-suffix ] && [ -n "$4" ] || { echo "stub bootstrap: bad arguments: $*" >&2; exit 1; }
+mkdir -p "$KB/$b"
+sqlite3 "$KB/$b/kanban.db" "PRAGMA journal_mode=wal; CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, status TEXT, idempotency_key TEXT, branch_name TEXT, created_at INTEGER); INSERT INTO tasks VALUES ('t_rx0001', 'CHUNK-HELLO-1: Add greet(name) with a BDD scenario', 'ready', 'hello-1', 'chunk/HELLO-1-greet-$4', 1);" >/dev/null
+echo "chunk/HELLO-1-greet-$4" > "$S/branch"; echo "$b" > "$S/board"
+echo "hello card created on board '$b'."
+RX_BOOT
+
+  cat > "$root/stubs/board-sync.sh" <<'RX_SYNC'
+#!/usr/bin/env bash
+# Stub of hermes/board-sync.sh <board> [--branch-suffix s]: reports what <stub>/sync.rc says.
+S="${RX_STUB:?}"
+echo "board-sync cwd=$(pwd -P) args=$*" >> "$S/calls.log"
+rc="$(cat "$S/sync.rc" 2>/dev/null || echo 0)"
+case "$rc" in
+  0) echo "MATCH CHUNK-1"; echo "MATCH CHUNK-2"; echo "board and plan agree";;
+  1) echo "UPDATE-BODY CHUNK-3  the body differs from docs/chunks/CHUNK-3.md";;
+  *) echo "board-sync: could not ask GitHub" >&2;;
+esac
+exit "$rc"
+RX_SYNC
+  chmod +x "$root/rbin/launchctl" "$root/rbin/hermes" "$root/rbin/gh" "$root/stubs/board-bootstrap.sh" "$root/stubs/board-sync.sh"
+
+  _rxg() { env HOME="$root/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 git "$@"; }
+  _rx() { # forge from the kit; FR_X holds extra NAME=value words; RX_EXEC=1 makes it exec (so a backgrounded run IS forge)
+    ${RX_EXEC:+exec} env -u FORGE_WATCHDOG_ROOT -u FORGE_MERGE_AUTHORITY_ROOT -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_KANBAN_HOME \
+        -u FORGE_HANDOFF_SENTINEL -u FORGE_VERDICT_ROOT -u FORGE_HELLO_DIR -u FORGE_LANE_SESSION_ROOT \
+        HOME="$root/home" HERMES_HOME="$H" FORGE_STATE_ROOT="$S" FORGE_STATUS_NOW="$now" TZ=UTC TMPDIR="$root/tmp" \
+        PATH="$root/rbin:$PATH" RX_STUB="$RS" RX_HELLO="$hello" GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 \
+        FORGE_EVIDENCE_DIR="$root/evidence" FORGE_WATCHDOG_LAUNCHCTL="$root/rbin/launchctl" \
+        FORGE_REHEARSE_POLL_S=0.2 FORGE_REHEARSE_NOW=1794655800 FORGE_REHEARSE_TIMEOUT_S=60 FORGE_REHEARSE_CHECKS_TIMEOUT_S=30 \
+        $FR_X "${RX_BIN:-$kit/scripts/forge.sh}" "$@"
+  }
+  _rx_kit() { # the scripts forge.sh reaches, taken from $fs (so a mutant propagates), and the two stubs where $HERE/../hermes is
+    local f
+    rm -rf "$kit"; mkdir -p "$kit/scripts" "$kit/hermes"
+    for f in forge.sh forge-state.sh decision-message.sh board-snapshot.sh merge-authority.sh checkpoint-arm.sh gate-reply.sh; do cp "$fs/$f" "$kit/scripts/$f"; done
+    cp "$root/stubs/board-bootstrap.sh" "$root/stubs/board-sync.sh" "$kit/hermes/"
+  }
+  _rx_repo() { # <dir> <bare origin>: a repo with a seed commit, a remote and main pushed
+    rm -rf "$1" "$2"
+    _rxg init -q --bare "$2" 2>/dev/null; _rxg -C "$2" symbolic-ref HEAD refs/heads/main
+    _rxg init -q "$1" 2>/dev/null; _rxg -C "$1" symbolic-ref HEAD refs/heads/main
+    _rxg -C "$1" config user.email t@example.invalid; _rxg -C "$1" config user.name tester; _rxg -C "$1" config commit.gpgsign false
+    mkdir -p "$1/src/hello_forge"; echo seed > "$1/README.md"; : > "$1/src/hello_forge/__init__.py"
+    _rxg -C "$1" add -A; _rxg -C "$1" commit -q -m seed; _rxg -C "$1" remote add origin "$2"; _rxg -C "$1" push -q -u origin main 2>/dev/null
+    _rxg -C "$1" remote set-head origin main >/dev/null 2>&1   # a fetch would otherwise create origin/HEAD, a ref that is not a write of consequence
+  }
+  _rx_world() { # a clean world: state root, stub state, the hello repos (origin, the operator's checkout, the lane's clone), no evidence
+    _fr_world
+    rm -rf "$RS" "$hello" "$root/evidence" "$kb"/hello-rehearsal-* "$kb/_archived" "$root/tmp"; mkdir -p "$RS" "$hello" "$root/tmp"
+    echo running > "$RS/gw.mode"; echo merge-pass > "$RS/scenario"
+    printf '[{"name":"default","on_disk":true},{"name":"forge-codex-lane","on_disk":true},{"name":"forge-verifier","on_disk":true}]\n' > "$RS/assignees.json"
+    printf '[{"__typename":"CheckRun","name":"validate","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"verify","status":"COMPLETED","conclusion":"SUCCESS"}]\n' > "$RS/checks.json"
+    : > "$RS/calls.log"
+    _rx_repo "$work" "$origin"
+    _rxg clone -q "$origin" "$lane" 2>/dev/null; _rxg -C "$lane" config user.email t@example.invalid; _rxg -C "$lane" config user.name lane; _rxg -C "$lane" config commit.gpgsign false
+    _rx_kit
+  }
+  _rx_refs() { # everything a read-only rehearse must leave alone
+    _rxg --git-dir="$origin" for-each-ref; _rxg -C "$work" for-each-ref; _rxg -C "$work" status --porcelain; ls -A "$work"; ls -A "$kb"
+  }
+
+  # --- 7. rehearse refuses when a precondition fails, and changes nothing ------------------------------------------
+  d=""
+  local variant refs0 refs1
+  for variant in dirty branch greet gateway profiles; do
+    _rx_world
+    case "$variant" in
+      dirty)    echo scratch > "$work/untracked.txt";;
+      branch)   _rxg -C "$work" switch -q -c side 2>/dev/null;;
+      greet)    echo 'def greet(): pass' > "$work/src/hello_forge/greet.py"; _rxg -C "$work" add -A; _rxg -C "$work" commit -q -m "a greet that was never reset"; _rxg -C "$work" push -q origin main 2>/dev/null;;
+      gateway)  echo waiting > "$RS/gw.mode";;
+      profiles) printf '[{"name":"forge-codex-lane","on_disk":true},{"name":"forge-verifier","on_disk":false}]\n' > "$RS/assignees.json";;
+    esac
+    : > "$RS/readonly"; : > "$RS/calls.log"
+    refs0="$(_rx_refs)"
+    out="$(_rx rehearse --dir "$work" 2>"$root/err")"; rc=$?
+    refs1="$(_rx_refs)"
+    [ "$rc" = 2 ] || d="$d $variant:exit=$rc(want 2)"
+    case "$variant" in
+      dirty)    grep -q 'uncommitted changes' "$root/err" || d="$d $variant:not-named";;
+      branch)   grep -q "'side', not main" "$root/err" || d="$d $variant:not-named";;
+      greet)    grep -q 'forge rehearse --reset' "$root/err" || d="$d $variant:not-named";;
+      gateway)  grep -q 'gateway: ai.hermes.gateway is loaded but not running' "$root/err" || d="$d $variant:not-named";;
+      profiles) grep -q 'profiles: forge-codex-lane and forge-verifier are not both on disk' "$root/err" || d="$d $variant:not-named";;
+    esac
+    grep -q 'nothing was changed' "$root/err" || d="$d $variant:no-nothing-was-changed-line"
+    ! grep -q '^WRITE' "$RS/calls.log" || d="$d $variant:a-write-verb-was-called($(grep '^WRITE' "$RS/calls.log" | head -1))"
+    ! grep -q '^bootstrap' "$RS/calls.log" || d="$d $variant:it-bootstrapped"
+    [ "$refs0" = "$refs1" ] || d="$d $variant:the-repos-or-boards-changed($(diff <(printf '%s\n' "$refs0") <(printf '%s\n' "$refs1") | head -4 | tr '\n' '|'))"
+    [ -z "$(ls -A "$S/merge-authority" 2>/dev/null)" ] || d="$d $variant:a-grant-was-made"
+    [ ! -e "$root/evidence" ] || d="$d $variant:evidence-was-written"
+  done
+  [ -z "$d" ] && ok "rehearse-refuses-on-a-failed-precondition (a dirty checkout, a checkout not on main, greet.py already on main, a gateway that is loaded but not running and a profile not on disk each exit 2 naming the precondition, with every write verb of hermes and gh refused, the repos, the boards and the state root unchanged, no grant and no evidence)" \
+    || bad "rehearse-refuses-on-a-failed-precondition" "a rehearsal must refuse before it changes anything —$d"
+
+  # --- 8. a rehearsal that passes cleans up after itself ------------------------------------------------------------
+  _rx_world
+  out="$(_rx rehearse --dir "$work" 2>"$root/err")"; rc=$?
+  d=""
+  [ "$rc" = 0 ] || d="$d exit=$rc(want 0)"
+  _fr_want "$out" 'REHEARSAL PASSED in '
+  _fr_want "$out" 'https://github.com/acme/hello-forge/pull/7 — merged by forge-verifier: approved'
+  _fr_want "$out" "board $board, branch chunk/HELLO-1-greet-r202611141130"
+  [ "$(printf '%s\n' "$out" | grep -c ": card $card is ")" = 4 ] || d="$d the-wait-printed-a-line-per-change(not-4:$(printf '%s\n' "$out" | grep -c ": card $card is "))"
+  _fr_want "$out" 'equal to origin/main'
+  # the grant: on the rehearsal board and no other while the card ran, and gone after
+  [ "$(grep -c '^state ' "$RS/calls.log")" -ge 5 ] || d="$d the-card-was-not-polled"
+  [ "$(grep '^state ' "$RS/calls.log" | sed 's/.*grants=\[//; s/\]$//' | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')" = "$board.json " ] || d="$d the-grants-seen-while-the-card-ran-were-not-the-rehearsal-board-alone"
+  grep -m1 '^state ' "$RS/calls.log" | grep -qF "grants=[$board.json ]" || d="$d the-first-poll-did-not-see-the-grant"
+  _fs merge-authority.sh status "$board" >/dev/null 2>&1 && d="$d the-grant-survived"
+  [ -z "$(ls -A "$S/merge-authority" 2>/dev/null)" ] || d="$d merge-authority-is-not-empty"
+  # the board: archived, not hard-deleted
+  [ -d "$kb/_archived/$board-20261114-1" ] && [ ! -e "$kb/$board" ] || d="$d the-board-was-not-archived"
+  grep -q '^hermes kanban boards rm hello-rehearsal-r202611141130$' "$RS/calls.log" || d="$d boards-rm-was-not-called-plain"
+  # every board-scoped call names its board
+  [ -z "$(grep '^hermes kanban' "$RS/calls.log" | grep -v -e ' --board ' -e 'kanban boards ' -e 'kanban assignees')" ] || d="$d a-kanban-call-without-board($(grep '^hermes kanban' "$RS/calls.log" | grep -v -e ' --board ' -e 'kanban boards ' -e 'kanban assignees' | head -1))"
+  grep -q "^bootstrap $board --hello --branch-suffix r202611141130 cwd=$(cd "$work" && pwd -P)\$" "$RS/calls.log" || d="$d bootstrap-was-not-called-as-specified"
+  # the revert flow ran, in order, against the merge commit
+  local n_create n_merge n_rm n_views
+  n_create="$(grep -n '^gh pr create' "$RS/calls.log" | head -1 | cut -d: -f1)"; n_merge="$(grep -n '^gh pr merge 8 ' "$RS/calls.log" | head -1 | cut -d: -f1)"; n_rm="$(grep -n '^hermes kanban boards rm' "$RS/calls.log" | head -1 | cut -d: -f1)"
+  { [ -n "$n_create" ] && [ -n "$n_merge" ] && [ -n "$n_rm" ] && [ "$n_create" -lt "$n_merge" ] && [ "$n_merge" -lt "$n_rm" ]; } || d="$d the-revert-flow-was-out-of-order(create=$n_create merge=$n_merge rm=$n_rm)"
+  n_views="$(grep -n '^gh pr view 8 ' "$RS/calls.log" | cut -d: -f1 | awk -v m="${n_merge:-0}" '$1 < m' | wc -l | tr -d ' ')"
+  [ "$n_views" -ge 3 ] || d="$d the-revert-was-merged-before-its-checks-were-green(views-before-merge=$n_views)"
+  grep -q '^gh pr merge 8 --repo acme/hello-forge --squash --delete-branch$' "$RS/calls.log" || d="$d the-revert-pr-was-not-squash-merged-with-delete-branch"
+  ! grep -q '^WRITE-LANE' "$RS/calls.log" || d="$d forge-merged-the-lane-pr"
+  # the hello repo: as found
+  [ "$(_rxg -C "$work" symbolic-ref --short HEAD)" = main ] || d="$d the-checkout-is-not-on-main"
+  [ -z "$(_rxg -C "$work" status --porcelain)" ] || d="$d the-checkout-is-dirty"
+  [ ! -e "$work/src/hello_forge/greet.py" ] || d="$d greet.py-is-still-there"
+  [ "$(_rxg -C "$work" rev-parse HEAD)" = "$(_rxg --git-dir="$origin" rev-parse main)" ] || d="$d the-checkout-is-not-origin-main"
+  [ "$(_rxg --git-dir="$origin" for-each-ref --format='%(refname)')" = "refs/heads/main" ] || d="$d origin-has-a-leftover-branch($(_rxg --git-dir="$origin" for-each-ref --format='%(refname)' | tr '\n' ' '))"
+  [ "$(_rxg -C "$work" for-each-ref --format='%(refname)' refs/heads)" = "refs/heads/main" ] || d="$d a-local-branch-was-left($(_rxg -C "$work" for-each-ref --format='%(refname)' refs/heads | tr '\n' ' '))"
+  [ "$(_rxg -C "$work" worktree list | wc -l | tr -d ' ')" = 1 ] || d="$d the-card-worktree-was-left"
+  [ ! -e "$root/hello/wt/$card" ] || d="$d the-worktree-directory-is-still-there"
+  case "$(_rxg --git-dir="$origin" log -n 1 --format=%s main)" in 'Revert "CHUNK-HELLO-1: greet (#7)"'*) ;; *) d="$d origin-main-does-not-end-in-the-revert";; esac
+  # the evidence
+  local ev="$root/evidence/rehearsals/$board"
+  [ "$(jq -r '.task.status' "$ev/card.json" 2>/dev/null)" = done ] || d="$d evidence-card.json"
+  [ "$(jq -r '.verdict' "$ev/verdict.json" 2>/dev/null)" = approve ] || d="$d evidence-verdict.json"
+  [ "$(sqlite3 "$ev/board.db" "select count(*) from tasks where idempotency_key='hello-1'" 2>/dev/null)" = 1 ] || d="$d evidence-board.db"
+  { grep -q '^result: PASSED$' "$ev/result.txt" && grep -q '^mode: merge$' "$ev/result.txt" && grep -q 'pull/7' "$ev/result.txt"; } 2>/dev/null || d="$d evidence-result.txt"
+  [ -z "$(ls -A "$root/tmp" 2>/dev/null)" ] || d="$d a-temporary-directory-was-left"
+  # recommend mode: the card holds `merge-pending:` with a green, OPEN PR; nothing is ever granted; cleanup closes the PR
+  _rx_world
+  echo recommend > "$RS/scenario"
+  out="$(_rx rehearse --mode recommend --dir "$work" 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d recommend:exit=$rc(want 0)"
+  _fr_want "$out" 'REHEARSAL PASSED in '
+  _fr_want "$out" 'merge-pending: approved; the operator merges it'
+  _fr_want "$out" 'recommend mode: no merge authority is granted'
+  [ -z "$(grep '^state ' "$RS/calls.log" | grep -v 'grants=\[\]')" ] || d="$d recommend:a-grant-was-seen"
+  grep -q '^gh pr close 7 --repo acme/hello-forge --delete-branch$' "$RS/calls.log" || d="$d recommend:the-pr-was-not-closed-with-its-branch"
+  ! grep -qE '^gh pr (create|merge)' "$RS/calls.log" || d="$d recommend:a-revert-was-attempted"
+  [ -d "$kb/_archived/$board-20261114-1" ] || d="$d recommend:the-board-was-not-archived"
+  [ "$(_rxg --git-dir="$origin" for-each-ref --format='%(refname)')" = "refs/heads/main" ] || d="$d recommend:origin-has-a-leftover-branch"
+  [ "$(_rxg -C "$work" for-each-ref --format='%(refname)' refs/heads)" = "refs/heads/main" ] && [ "$(_rxg -C "$work" worktree list | wc -l | tr -d ' ')" = 1 ] || d="$d recommend:a-local-branch-or-worktree-was-left"
+  [ -z "$(_rxg -C "$work" status --porcelain)" ] && [ "$(_rxg -C "$work" rev-parse HEAD)" = "$(_rxg --git-dir="$origin" rev-parse main)" ] || d="$d recommend:the-checkout-is-not-clean-main"
+  grep -q '^mode: recommend$' "$root/evidence/rehearsals/$board/result.txt" 2>/dev/null || d="$d recommend:evidence-result"
+  [ -z "$d" ] && ok "rehearse-passes-and-cleans-up (a card walked ready, running, done on stubbed hermes and gh with a real bare origin: exit 0, REHEARSAL PASSED with the PR and the verifier's line, one wait line per change, the grant on the hello-rehearsal board only and gone afterwards, the board archived (not deleted) after the revert PR was created, checked, squash-merged; the hello repo back on a clean main == origin/main with no leftover branch or worktree, evidence written; and in recommend mode a card holding merge-pending: with an open green PR passes with no grant at all, and the cleanup closes the PR and its branch instead)" \
+    || bad "rehearse-passes-and-cleans-up" "a passing rehearsal must leave nothing behind —$d :: $(printf '%s' "$out" | tail -5 | tr '\n' '|') :: $(head -3 "$root/err" | tr '\n' '|')"
+
+  # --- 9. a rehearsal that fails, or is killed, never leaves merge authority behind ---------------------------------
+  _rx_world
+  echo blocked > "$RS/scenario"
+  printf '[{"__typename":"CheckRun","name":"validate","status":"COMPLETED","conclusion":"FAILURE"}]\n' > "$RS/checks.json"
+  out="$(_rx rehearse --dir "$work" 2>"$root/err")"; rc=$?
+  d=""
+  [ "$rc" = 1 ] || d="$d exit=$rc(want 1)"
+  _fr_want "$out" 'REHEARSAL FAILED:'
+  _fr_want "$out" "the card is 'blocked', not done"
+  _fr_want "$out" 'PR #7 is OPEN, not MERGED'
+  _fr_want "$out" '1 failing check(s) of 1'
+  _fr_want "$out" "does not start with 'merged by forge-verifier'"
+  _fr_want "$out" 'last block reason: ci: the required check failed on the lane PR'
+  _fr_want "$out" 'log line 20'; _fr_want "$out" 'log line 6'; _fr_not "$out" 'log line 5'
+  _fr_want "$out" "Clean up later with: forge rehearse --cleanup $board"
+  _fr_not "$out" 'REHEARSAL PASSED'
+  _fs merge-authority.sh status "$board" >/dev/null 2>&1 && d="$d the-grant-survived-a-failed-run"
+  _fr_want "$out" "merge authority on $board is revoked (read back: not granted)"
+  [ -d "$kb/$board" ] && ! grep -q 'boards rm' "$RS/calls.log" || d="$d the-board-was-not-left-alone"
+  ! grep -qE '^gh pr (create|merge|close)' "$RS/calls.log" || d="$d a-pr-was-touched"
+  [ "$(jq -r '.[0].state' "$RS/pr.json")" = OPEN ] && _rxg --git-dir="$origin" show-ref --verify -q "refs/heads/chunk/HELLO-1-greet-r202611141130" && [ -d "$root/hello/wt/$card" ] || d="$d the-pr-branch-or-worktree-was-not-left"
+  grep -q '^result: FAILED$' "$root/evidence/rehearsals/$board/result.txt" 2>/dev/null || d="$d evidence-result"
+  [ "$(jq -r '.task.status' "$root/evidence/rehearsals/$board/card.json" 2>/dev/null)" = blocked ] || d="$d evidence-card"
+  # a TERM while the card is still running: the grant goes, and so does nothing else
+  _rx_world
+  echo hang > "$RS/scenario"
+  ( RX_EXEC=1; _rx rehearse --dir "$work" ) >"$root/term.out" 2>"$root/term.err" &
+  local rx_pid=$! i
+  for i in $(seq 1 50); do [ -e "$S/merge-authority/$board.json" ] && break; sleep 0.2; done
+  [ -e "$S/merge-authority/$board.json" ] || d="$d the-hung-run-never-granted"
+  sleep 0.6
+  kill -TERM "$rx_pid" 2>/dev/null
+  wait "$rx_pid" 2>/dev/null; rc=$?
+  [ "$rc" = 2 ] || d="$d killed-run-exit=$rc(want 2)"
+  [ -z "$(ls -A "$S/merge-authority" 2>/dev/null)" ] || d="$d a-grant-was-left-behind-by-a-TERM"
+  grep -q 'interrupted (TERM)' "$root/term.err" || d="$d the-interruption-was-not-said"
+  [ -d "$kb/$board" ] || d="$d the-board-vanished"
+  grep -q '^result: ABORTED (TERM)$' "$root/evidence/rehearsals/$board/result.txt" 2>/dev/null || d="$d the-aborted-run-left-no-evidence"
+  [ -z "$d" ] && ok "rehearse-failure-always-revokes (a card that ends blocked: exit 1, REHEARSAL FAILED with every condition that did not hold, the block reason, the last 15 log lines and the cleanup command; the grant revoked and read back, the board, PR, branch and worktree left alone, evidence written; and a TERM while the card is still running revokes the grant, leaves the board and exits 2)" \
+    || bad "rehearse-failure-always-revokes" "merge authority must never outlive a rehearsal —$d :: $(printf '%s' "$out" | tail -4 | tr '\n' '|')"
+
+  # --- 10. a rehearsal grants its own board and no other --------------------------------------------------------------
+  _rx_world; d=""
+  _fs merge-authority.sh grant squatfather-run-a2 --by front-test --reason "decoy" >/dev/null 2>&1
+  : > "$RS/calls.log"
+  for variant in squatfather-run-a2 default hello-rehearsal- Hello-Rehearsal-x; do
+    out="$(_rx rehearse --cleanup "$variant" --dir "$work" 2>"$root/err")"; rc=$?
+    [ "$rc" = 2 ] || d="$d cleanup-of-$variant:exit=$rc(want 2)"
+    [ ! -s "$RS/calls.log" ] || d="$d cleanup-of-$variant-called-hermes-or-gh($(head -1 "$RS/calls.log"))"
+    _fs merge-authority.sh status squatfather-run-a2 >/dev/null 2>&1 || d="$d cleanup-of-$variant-revoked-the-decoy"
+  done
+  grep -q 'works only on boards named hello-rehearsal-' "$root/err" || d="$d the-refusal-does-not-say-why"
+  # a cleanup of a rehearsal board revokes that board's grant and nothing else
+  _fs merge-authority.sh grant hello-rehearsal-r1 --by front-test >/dev/null 2>&1
+  out="$(_rx rehearse --cleanup hello-rehearsal-r1 --dir "$work" 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d cleanup-of-a-rehearsal-board:exit=$rc(want 0)"
+  _fs merge-authority.sh status hello-rehearsal-r1 >/dev/null 2>&1 && d="$d the-rehearsal-grant-survived-its-cleanup"
+  _fs merge-authority.sh status squatfather-run-a2 >/dev/null 2>&1 || d="$d the-decoy-was-revoked"
+  # a whole run beside the decoy: only the rehearsal board is granted, and the decoy is untouched at the end
+  _rx_world
+  _fs merge-authority.sh grant squatfather-run-a2 --by front-test --reason "decoy" >/dev/null 2>&1
+  out="$(_rx rehearse --dir "$work" 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d run-beside-a-decoy:exit=$rc(want 0)"
+  [ "$(grep '^state ' "$RS/calls.log" | sed 's/.*grants=\[//; s/\]$//' | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')" = "$board.json squatfather-run-a2.json " ] || d="$d a-board-other-than-the-rehearsal-and-the-decoy-was-granted($(grep '^state ' "$RS/calls.log" | head -1))"
+  grep -m1 '^state ' "$RS/calls.log" | grep -qF "grants=[$board.json squatfather-run-a2.json ]" || d="$d the-first-poll-did-not-see-both-grants"
+  _fs merge-authority.sh status squatfather-run-a2 >/dev/null 2>&1 || d="$d the-run-revoked-the-decoy"
+  _fs merge-authority.sh status "$board" >/dev/null 2>&1 && d="$d the-rehearsal-grant-survived"
+  # structurally: merge-authority.sh grant is reached from exactly rh_grant (guarded) and cmd_go
+  local granters
+  granters="$(awk '/^[a-z_]+\(\) *\{/ { fn = $1 } /merge-authority\.sh" grant/ && !/^ *#/ { print fn }' "$kit/scripts/forge.sh" | sort -u | tr '\n' ' ')"
+  [ "$granters" = 'cmd_go() rh_grant() ' ] || d="$d grant-is-reached-from[$granters](want cmd_go and rh_grant)"
+  awk '/^rh_grant\(\)/,/^}/' "$kit/scripts/forge.sh" | grep -q '"\$RH_PREFIX"\*)' || d="$d rh_grant-lost-its-prefix-guard"
+  awk '/^rh_grant\(\)/,/^}/' "$kit/scripts/forge.sh" | grep -q '"\$board" != "\$RH_CREATED"' || d="$d rh_grant-lost-its-created-in-this-run-guard"
+  [ -z "$d" ] && ok "rehearse-grants-only-its-own-board (--cleanup of squatfather-run-a2, default, a bare prefix and a wrong-case name is refused with exit 2 before hermes or gh is asked, the decoy grant intact; --cleanup of a rehearsal board revokes only its grant; a whole run beside a decoy sees exactly the rehearsal board and the decoy granted and leaves the decoy; merge-authority.sh grant is reached only from rh_grant, which checks the prefix and that the run created the board, and cmd_go)" \
+    || bad "rehearse-grants-only-its-own-board" "a rehearsal may grant only a hello-rehearsal-* board it created —$d"
+
+  # ==============================================================================================================
+  # forge go
+  # ==============================================================================================================
+  _go_world() { # a prepared board `launch` with a ready gate, a product checkout in sync, a paused checkpoint job, board-sync in sync
+    _rx_world
+    _rx_repo "$gp" "$root/gproj-origin.git"
+    _fr_board launch <<SQL
+INSERT INTO tasks (id, title, assignee, status, created_at, completed_at) VALUES
+  ('t_l1', 'CHUNK-1: done',                      'forge-verifier',   'done',    $((now - 9000)), $((now - 900))),
+  ('t_l2', 'CHUNK-2: done too',                  'forge-verifier',   'done',    $((now - 9000)), $((now - 800))),
+  ('t_l3', 'GATE-M1: Milestone 1',               NULL,               'blocked', $((now - 9000)), NULL),
+  ('t_l4', 'CHUNK-3: first of milestone 2',      'forge-codex-lane', 'todo',    $((now - 9000)), NULL),
+  ('t_l5', 'CHUNK-4: also needs CHUNK-9',        'forge-codex-lane', 'todo',    $((now - 9000)), NULL),
+  ('t_l6', 'CHUNK-9: open elsewhere',            'forge-codex-lane', 'running', $((now - 9000)), NULL),
+  ('t_l7', 'GATE-M2: Milestone 2',               NULL,               'blocked', $((now - 9000)), NULL);
+INSERT INTO task_links (parent_id, child_id) VALUES ('t_l1', 't_l3'), ('t_l2', 't_l3'), ('t_l3', 't_l4'), ('t_l3', 't_l5'), ('t_l6', 't_l5'), ('t_l4', 't_l7');
+INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+  ('t_l3', 'blocked', json_object('reason', 'milestone-gate: GATE-M1 holds milestone M1'), $((now - 700))),
+  ('t_l7', 'blocked', json_object('reason', 'milestone-gate: GATE-M2 holds milestone M2'), $((now - 700)));
+SQL
+    mkdir -p "$H/cron"
+    printf '{"jobs":[{"id":"cron123","name":"forge-checkpoint","enabled":false,"state":"paused"},{"id":"dig456","name":"forge-digest","enabled":true,"state":"scheduled"}]}\n' > "$H/cron/jobs.json"
+    echo 0 > "$RS/sync.rc"
+  }
+  _go_none() { # nothing was put in force: no grant, no armed gate, the cron job still paused, no resume call
+    local what="$1"
+    _fs merge-authority.sh status launch >/dev/null 2>&1 && d="$d $what:a-grant-was-made"
+    [ "$(_fs checkpoint-arm.sh list 2>/dev/null)" = "no gate is armed" ] || d="$d $what:a-gate-was-armed"
+    ! grep -q '^WRITE hermes cron' "$RS/calls.log" || d="$d $what:the-cron-job-was-touched"
+    [ "$(jq -r '.jobs[0].state' "$H/cron/jobs.json")" = paused ] || d="$d $what:the-job-is-not-paused"
+  }
+
+  # --- 11. go refuses what it must refuse, and changes nothing ------------------------------------------------------------
+  d=""
+  _go_world
+  echo 1 > "$RS/sync.rc"; : > "$RS/calls.log"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d drift:exit=$rc(want 1)"
+  _fr_want "$out" 'NOT IN SYNC'
+  _fr_want "$out" "board-sync.sh launch --branch-suffix a2 --apply"
+  grep -q "^board-sync cwd=$(cd "$gp" && pwd -P) args=launch --branch-suffix a2\$" "$RS/calls.log" || d="$d drift:board-sync-was-not-run-from-the-project-with-the-suffix"
+  _go_none drift
+  echo 2 > "$RS/sync.rc"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d sync-could-not-run:exit=$rc(want 2)"
+  _fr_want "$out" 'COULD NOT RUN board-sync.sh'
+  _go_none sync-could-not-run
+  echo 0 > "$RS/sync.rc"
+  echo scratch > "$gp/untracked.txt"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d dirty:exit=$rc(want 1)"
+  _fr_want "$out" 'NOT CLEAN'
+  _go_none dirty
+  rm -f "$gp/untracked.txt"
+  _rxg clone -q "$root/gproj-origin.git" "$root/gproj-other" 2>/dev/null; _rxg -C "$root/gproj-other" config user.email t@example.invalid; _rxg -C "$root/gproj-other" config user.name o; _rxg -C "$root/gproj-other" config commit.gpgsign false
+  echo more > "$root/gproj-other/more.txt"; _rxg -C "$root/gproj-other" add -A; _rxg -C "$root/gproj-other" commit -q -m "a merge the checkout has not pulled"; _rxg -C "$root/gproj-other" push -q origin main 2>/dev/null
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d behind-origin:exit=$rc(want 1)"
+  _fr_want "$out" 'NOT AT origin/main'
+  _go_none behind-origin
+  rm -rf "$root/gproj-other"
+  _go_world
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d no-yes-no-tty:exit=$rc(want 2)"
+  _fr_want "$out" 'the verifier will MERGE approved lane-built PRs on launch'
+  grep -q 'not confirmed: this is not a terminal and --yes was not given' "$root/err" || d="$d no-yes-no-tty:not-said"
+  _go_none no-yes-no-tty
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --gate GATE-M2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d gate-not-ready:exit=$rc(want 1)"
+  grep -q 'GATE-M2 is not ready' "$root/err" || d="$d gate-not-ready:not-said"
+  _go_none gate-not-ready
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --gate GATE-M7 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d no-such-gate:exit=$rc(want 1)"
+  _go_none no-such-gate
+  out="$(_rx go nosuchboard --project "$gp" --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d no-such-board:exit=$rc(want 2)"
+  out="$(_rx go launch --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d no-project:exit=$rc(want 2)"
+  [ -z "$d" ] && ok "go-refuses-out-of-sync-and-unconfirmed (a board-sync dry run that reports drift (exit 1, the --apply command printed), one that could not run (2), a dirty product checkout, a checkout behind origin/main, a gate that is not ready or does not exist, and no --yes without a terminal: none puts anything in force, so no grant, no armed gate and the cron job still paused; board-sync is run from inside the project with the suffix)" \
+    || bad "go-refuses-out-of-sync-and-unconfirmed" "go must refuse before it changes anything —$d"
+
+  # --- 12. go puts it in force and reads each part back -------------------------------------------------------------------
+  d=""
+  _go_world
+  : > "$RS/calls.log"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --by tester --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d exit=$rc(want 0)"
+  _fr_want "$out" 'the board is in sync with the plan'
+  _fr_want "$out" 'on main, clean, equal to origin/main'
+  _fr_want "$out" 'GATE-M1 is ready (every chunk it closes is done)'
+  _fr_want "$out" 'the verifier will MERGE approved lane-built PRs on launch (merge authority granted by tester'
+  _fr_want "$out" 'GATE-M1 is armed apply on the project '
+  _fr_want "$out" 'which releases: CHUNK-3: first of milestone 2'
+  _fr_not  "$out" 'CHUNK-4: also needs'
+  _fr_want "$out" 'the checkpoint cron job forge-checkpoint (cron123) is paused and will be resumed'
+  _fr_want "$out" 'to stop: forge stop launch'
+  _fr_want "$out" 'resumed: the checkpoint cron job forge-checkpoint (cron123) (read back: running)'
+  _fr_want "$out" 'merge authority: granted: board launch, by tester at '
+  _fr_want "$out" 'armed gates: GATE-M1 (apply)'
+  _fs merge-authority.sh status launch >/dev/null 2>&1 || d="$d no-grant"
+  [ "$(jq -r '.granted_by + "|" + .reason' "$S/merge-authority/launch.json" 2>/dev/null)" = 'tester|forge go' ] || d="$d the-grant-does-not-say-who-and-why"
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null)" = "launch GATE-M1 apply $gp" ] || d="$d armed-list[$(_fs checkpoint-arm.sh list 2>/dev/null | tr '\n' '|')]"
+  [ "$(jq -r '.jobs[] | select(.name == "forge-checkpoint") | .enabled and .state != "paused"' "$H/cron/jobs.json")" = true ] || d="$d the-job-is-still-paused"
+  [ "$(jq -r '.jobs[] | select(.name == "forge-digest") | .state' "$H/cron/jobs.json")" = scheduled ] || d="$d the-other-job-was-touched"
+  grep -q '^hermes cron resume cron123$' "$RS/calls.log" || d="$d cron-resume-was-not-called"
+  [ "$(grep -c '^WRITE hermes' "$RS/calls.log")" = 1 ] || d="$d more-than-the-one-resume-was-written"
+  # asked again: the gate is armed and a second go will not erase that without --rearm
+  local arm_before
+  arm_before="$(cat "$S/checkpoint/armed/launch--GATE-M1")"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d already-armed:exit=$rc(want 1)"
+  grep -q 'already has checkpoint state' "$root/err" && grep -q -- '--rearm' "$root/err" || d="$d already-armed:the-refusal-does-not-name---rearm"
+  _fr_not "$out" 'granted: launch'
+  [ "$(cat "$S/checkpoint/armed/launch--GATE-M1")" = "$arm_before" ] || d="$d already-armed:the-arming-changed"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes --rearm 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d rearm:exit=$rc(want 0)"
+  _fr_want "$out" 'the checkpoint cron job forge-checkpoint (cron123) is already running'
+  # a recorded decision (a /park) is erased by arming: also needs --rearm
+  _fs checkpoint-arm.sh disarm --board launch --gate GATE-M1 >/dev/null 2>&1
+  mkdir -p "$S/checkpoint/decided"; printf '{"verb":"park","hold":1,"at":"2026-11-14T10:00:00Z"}\n' > "$S/checkpoint/decided/launch--GATE-M1.json"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d decided:exit=$rc(want 1)"
+  grep -q 'a decision is recorded for it' "$root/err" || d="$d decided:not-said"
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null)" = "no gate is armed" ] || d="$d decided:it-armed-anyway"
+  # no cron job of that name: the grant and the arming STAY, and it says how to create the job
+  _go_world
+  printf '{"jobs":[{"id":"dig456","name":"forge-digest","enabled":true,"state":"scheduled"}]}\n' > "$H/cron/jobs.json"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d no-cron-job:exit=$rc(want 1)"
+  grep -q "hermes cron create 'every 15m' --name forge-checkpoint --no-agent --script forge-checkpoint.sh --deliver telegram --paused" "$root/err" || d="$d no-cron-job:the-create-command-is-not-printed"
+  grep -q 'IN FORCE (nothing was undone): merge authority on launch, and GATE-M1 armed apply' "$root/err" || d="$d no-cron-job:it-does-not-say-what-stays-in-force"
+  _fs merge-authority.sh status launch >/dev/null 2>&1 || d="$d no-cron-job:the-grant-was-undone"
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null | cut -d' ' -f1-3)" = "launch GATE-M1 apply" ] || d="$d no-cron-job:the-arming-was-undone"
+  # --no-arm grants and touches nothing else
+  _go_world
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes --no-arm 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d no-arm:exit=$rc(want 0)"
+  _fs merge-authority.sh status launch >/dev/null 2>&1 || d="$d no-arm:no-grant"
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null)" = "no gate is armed" ] || d="$d no-arm:a-gate-was-armed"
+  [ "$(jq -r '.jobs[0].state' "$H/cron/jobs.json")" = paused ] || d="$d no-arm:the-cron-job-was-resumed"
+  # a worker terminal is fenced from granting, and go does not work around it
+  _go_world
+  FR_X="HERMES_DELEGATED_CHILD_CONTEXT=1"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --yes 2>"$root/err")"; rc=$?
+  FR_X=""
+  [ "$rc" = 1 ] || d="$d fenced:exit=$rc(want 1)"
+  grep -q 'fenced worker terminal' "$root/err" || d="$d fenced:the-fence-message-is-not-shown"
+  _go_none fenced
+  [ -z "$d" ] && ok "go-puts-in-force-and-reads-back (with the real merge-authority.sh and checkpoint-arm.sh: --yes grants by the named operator with reason 'forge go', arms exactly the one ready gate apply (not the held one), names the card it releases and not the one still waiting on another chunk, resumes the paused checkpoint job and reads each back; an already armed gate, or one with a recorded /park, needs --rearm; a missing cron job exits 1 with the create command and leaves the grant and arming in force; --no-arm only grants; a fenced worker is refused with the script's own message)" \
+    || bad "go-puts-in-force-and-reads-back" "go must put in force exactly what it says, and read it back —$d :: $(printf '%s' "$out" | tail -4 | tr '\n' '|') :: $(head -3 "$root/err" | tr '\n' '|')"
 }
 wants front     && run_front_group
 
