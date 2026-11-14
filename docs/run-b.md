@@ -67,12 +67,14 @@ is safe to stop after. Read the output of each before the next.
    per `docs/run-a.md`), grant that board merge authority, and watch one card go from
    PR to merged to done with no operator action. Revoke the grant and archive the
    board afterwards. If the card holds instead of merging, stop: that is the finding.
+   `forge rehearse` now does this in one command.
 7. **Grant merge authority to the run's board.**
    `~/.forge/repo/scripts/merge-authority.sh grant squatfather-run-a2 --by <you> --reason "run B"`.
 8. **Release milestone 2.** Arm `GATE-M1` with `--mode rehearse` first and read the
    checkpoint the cron delivers; it writes nothing. Then arm it `--mode apply
    --confirm-release`. On its next tick the cron probes M1, completes the gate, and
    CHUNK-6 and CHUNK-8 become ready. From here the run needs no one.
+   `forge go squatfather-run-a2 --project ~/dev/the-squatfather --branch-suffix a2` does 7 and 8 and resumes the cron.
 9. **Arm `GATE-M2` `apply`** when you are content for milestone 3 to start by itself,
    or leave it unarmed and the run stops at the gate.
 

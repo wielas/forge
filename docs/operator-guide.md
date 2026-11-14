@@ -6,17 +6,31 @@ reconciled against the readiness stack on 2026-08-11; re-check after a
 
 ## The front door
 
-`make install` links `~/.local/bin/forge` to `~/.forge/repo/scripts/forge.sh`. Three commands:
+`make install` links `~/.local/bin/forge` to `~/.forge/repo/scripts/forge.sh`. Four commands:
 
 ```bash
 forge status [<board>]   # what is happening, and does anything need you; read-only
 forge stop <board>       # revoke merge authority and disarm every armed gate on the board
+forge rehearse           # the end-to-end smoke test on hello-forge: spends one Codex run and one judge call
+forge go <board> --project <abs dir> [--branch-suffix <s>] [--gate GATE-Mn] [--yes]   # the launch
 forge help
 ```
 
 `status` exits 0 when nothing waits on you, 1 when a card waits or the watchdog is not healthy, 2 when
 a board or the host could not be read. `stop` exits 0 only after it has asked again and found no grant
 and no armed gate; a merge already made is not undone, and a card already running finishes its run.
+
+`rehearse` is the check to run after every deploy and tool upgrade: a throwaway board in `~/dev/hello-forge`
+goes lane, PR, CI, verifier, merge, done in about three minutes. It grants merge authority on its own
+`hello-rehearsal-*` board only and revokes it on every exit, writes evidence under `~/forge-evidence/rehearsals/`,
+and on a pass archives the board and reverts the merge through a PR. Exit 0 passed and cleaned up, 1 it ran and
+failed (a finding: it leaves everything and prints `forge rehearse --cleanup <board>`), 2 it could not run or
+finish. `--mode recommend` rehearses the holding branch instead; `--keep` skips the cleanup; `--reset` repairs a
+hello repo whose merge was never reverted. No test runs it. `go` prints the board, the board-sync dry run, the
+product checkout and the ready gate, says in plain words what it is about to put in force (merge authority, the
+armed gate and the cards it releases, the checkpoint cron job), and asks, or takes `--yes`; with no terminal and no
+`--yes` it exits 2 having changed nothing. It refuses (exit 1) a board not in sync with the plan, a checkout not on a
+clean `main` at `origin/main`, and a gate that is armed or has a recorded `/park` unless `--rearm`.
 
 ## Launch a genuine product run
 
