@@ -1,7 +1,7 @@
 # forge repo-level commands
 .PHONY: install new validate verify preflight metrics metadata-live digest prejudge worktree-sweep roadmap-check plan-check commission
 
-verify:                        ## execute this repo's own claims; SUITES="cli config ... bootstrap sync ... probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest" narrows (scripts/verify.sh --help)
+verify:                        ## execute this repo's own claims; SUITES="cli config ... bootstrap sync ... probe checkpoint overseer triage gateway gate docs digest quota watchdog front manifest" narrows (scripts/verify.sh --help)
 	./scripts/verify.sh $(if $(SUITES),$(SUITES),) $(if $(WITH_CODEX),--with-codex,)
 
 metrics:                       ## make metrics BOARD=<slug> [SINCE=..] [UNTIL=..] — the retro numbers, read-only
@@ -54,8 +54,9 @@ commission:                    ## make commission PROJECT=<abs-path> BOARD=<slug
 	@test -n "$(PROJECT)" && test -n "$(BOARD)" || { echo "usage: make commission PROJECT=<abs-path> BOARD=<slug>"; exit 1; }
 	./scripts/commission.sh "$(PROJECT)" "$(BOARD)"
 
-install:                       ## symlink skills into all harnesses
+install:                       ## symlink skills into all harnesses, and `forge` (the operator's front door) into ~/.local/bin when it exists
 	./install.sh
+	@if [ -d "$(HOME)/.local/bin" ]; then ln -sfn "$(HOME)/.forge/repo/scripts/forge.sh" "$(HOME)/.local/bin/forge"; fi
 
 # --defaults is not a convenience: without it copier demands a TTY, so this
 # target could not run from a script, a CI job or an agent (measured
@@ -130,7 +131,7 @@ validate:                      ## sanity-check skill frontmatter + shell syntax
 	  scripts/claude-token.sh \
 	  scripts/gate-reply.sh scripts/gate-accept.sh scripts/gate-redirect.sh scripts/gate-park.sh \
 	  scripts/checkpoint-cron.sh scripts/checkpoint-arm.sh \
-	  scripts/watchdog.sh scripts/watchdog-install.sh \
+	  scripts/watchdog.sh scripts/watchdog-install.sh scripts/forge.sh \
   scripts/fixtures/hook-dump.sh
 	@# This list is hand-maintained and asserted complete by
 	@# manifest/makefile-syntax-list-is-complete in scripts/verify.sh, which
