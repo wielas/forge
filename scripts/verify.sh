@@ -3279,6 +3279,7 @@ gateway/forge-gate-soul-says-what-the-plugin-does  the SOUL teaches each verb's 
 gateway/park-and-redirect-disarm-before-they-write  the gate is already disarmed and decided at the moment the comment is written, so a still-armed check cannot pass in between; a refused comment leaves it disarmed and says so
 gateway/unarmed-gate-never-completes      the cron completes nothing unarmed, nothing armed rehearse, exactly one armed apply (which needs --confirm-release); a malformed arming is no arming (decision 4)
 gateway/cron-silent-and-exit-0            a block is delivered once and recorded for its hold; repeat ticks, an unfinished milestone and a gate that is not held are silent; a dirty or non-main checkout is said once; only the job's own fault is non-zero
+gateway/cron-probes-what-was-merged       the cron fast-forwards a checkout that is behind origin/main before it probes, and probes nothing it could not bring up to date: a checkout with commits origin/main lacks, or whose origin cannot be fetched, is said once and not probed; a project with no origin is probed as before
 gateway/arming-is-explicit                checkpoint-arm.sh needs a mode, a --confirm-release for apply and an absolute project; arming clears an earlier hold's records; a malformed file lists as not armed
 gateway/every-hermes-kanban-call-carries-board  no hermes kanban call in the gate, arming or cron scripts is without --board
 gateway/state-root-agrees-with-forge-state  the plugin's ledger root and forge-state.sh's forge_state_root are one path
@@ -17215,7 +17216,7 @@ run_gateway_group() {
   local hdrive="$REPO_ROOT/scripts/fixtures/gateway-hermes-drive.py"
   local fixsql="$REPO_ROOT/scripts/fixtures/checkpoint-board.sql"
   local hpy="$HOME/.hermes/hermes-agent/venv/bin/python"
-  local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent guard-forge-gate-blocks-everything forge-gate-soul-says-what-the-plugin-does park-and-redirect-disarm-before-they-write real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate forge-gate-profile-has-no-tools deployed-forge-gate-has-no-tools unarmed-gate-never-completes cron-silent-and-exit-0 arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
+  local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent guard-forge-gate-blocks-everything forge-gate-soul-says-what-the-plugin-does park-and-redirect-disarm-before-they-write real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate forge-gate-profile-has-no-tools deployed-forge-gate-has-no-tools unarmed-gate-never-completes cron-silent-and-exit-0 cron-probes-what-was-merged arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
   local tool n
   for tool in sqlite3 jq python3 shasum; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -18818,6 +18819,94 @@ GW_PROBE
     else bad "cron-silent-and-exit-0" "under --no-agent stdout is the message and any non-zero exit an alert, so the job speaks once and fails only for itself:${gwd}; mutants not caught:${mnot:- none}"; fi
   else
     skip "cron-silent-and-exit-0" "the fixture project could not be built (git or the real acceptance-freeze is missing)"
+  fi
+
+  # ======================================================================
+  # cron-probes-what-was-merged
+  # ======================================================================
+  # A product checkout cloned from a bare `origin`, on main, one commit BEHIND it: the local tree still has the reader
+  # defect, and origin's main holds the fix, which is what a hands-free run leaves (the verifier merges on GitHub and
+  # nothing pulls). $1 = a name; builds proj-$1 and origin-$1.git.
+  _gw_originproj() {
+    local n="$1" d="$root/proj-$1" o="$root/origin-$1.git" dev="$root/dev-$1"
+    _gw_proj "$n" 's/if foreign:/if False:/'
+    rm -rf "$o" "$dev"
+    { git clone -q --bare "$d" "$o" && git -C "$d" remote add origin "$o" && git -C "$d" fetch -q origin \
+        && git clone -q "$o" "$dev"; } >/dev/null 2>&1 || return 1
+    cp "$root/proj-base/src/reader.py" "$dev/src/reader.py"
+    ( cd "$dev" && git -c user.email=gw@forge -c user.name=gw commit -qam "the merged chunk" && git push -q origin HEAD:main ) >/dev/null 2>&1
+  }
+  _gw_c_merged() {
+    local W cr h0 d o old new shape
+    GW_ALLOW="complete comment"
+    # A: origin is ahead. The cron fast-forwards the checkout and probes the tree that was merged: the pass is about
+    # the new commit, the same HEAD is not probed twice, and nothing was written to the board by a rehearsal.
+    _gw_originproj ff-a || { gwd="$gwd fixture-not-built"; GW_ALLOW=""; return; }
+    d="$root/proj-ff-a"; o="$root/origin-ff-a.git"; old="$(git -C "$d" rev-parse --short HEAD)"
+    W="$(_gw_world ff-a)"; cr="$(_gw_cronrepo ff-a)"; h0="$(_gw_hash "$W")"
+    _gw_armit "$W" "$d" rehearse
+    _gw_tick "$W" "$cr"
+    new="$(git -C "$d" rev-parse --short HEAD)"
+    [ "$(git -C "$d" rev-parse HEAD)" = "$(git -C "$o" rev-parse main)" ] && [ "$new" != "$old" ] && [ "$(git -C "$d" symbolic-ref --short HEAD)" = main ] && [ -z "$(git -C "$d" status --porcelain)" ] \
+      || gwd="$gwd checkout-not-fast-forwarded($old->$new)"
+    printf '%s' "$cout" | grep -q '^checkpoint: GATE-M1 passes' && printf '%s' "$cout" | grep -Fq "at $new" && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] && _gw_nowrites "$W" "$h0" \
+      || gwd="$gwd probed-a-tree-that-was-not-the-merged-one(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] || gwd="$gwd same-head-probed-twice(runs=$(_gw_runs "$cr"),rc=$crc)"
+    # B: the checkout has a commit origin/main lacks, whether it is also behind (diverged) or not (ahead). Nothing is
+    # probed, nothing is changed, it is said once, and a second tick is silent.
+    for shape in diverged ahead; do
+      _gw_originproj ff-b-$shape || { gwd="$gwd fixture-$shape-not-built"; continue; }
+      d="$root/proj-ff-b-$shape"; o="$root/origin-ff-b-$shape.git"
+      [ "$shape" = diverged ] || { git -C "$d" fetch -q origin && git -C "$d" merge -q --ff-only origin/main; } >/dev/null 2>&1
+      ( cd "$d" && echo "# local" > LOCAL.md && git add LOCAL.md && git -c user.email=gw@forge -c user.name=gw commit -qm "local only" ) >/dev/null 2>&1
+      old="$(git -C "$d" rev-parse HEAD)"
+      W="$(_gw_world ff-b-$shape)"; cr="$(_gw_cronrepo ff-b-$shape)"; h0="$(_gw_hash "$W")"
+      _gw_armit "$W" "$d" rehearse
+      _gw_tick "$W" "$cr"
+      printf '%s' "$cout" | grep -q "has commits on main that origin/main does not, so it was not probed" && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] \
+        && [ "$(git -C "$d" rev-parse HEAD)" = "$old" ] && _gw_nowrites "$W" "$h0" \
+        || gwd="$gwd local-commits-($shape)-not-held(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+      _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] || gwd="$gwd local-commits-($shape)-said-twice(runs=$(_gw_runs "$cr"),rc=$crc)"
+    done
+    # C: origin cannot be reached. "Could not ask" is not "up to date": nothing is probed, it is said once, exit 0 (the
+    # checkout still holds a remote-tracking main equal to its HEAD, so only the failed fetch can stop it). And it is
+    # no verdict: when origin is back, the next tick probes.
+    _gw_originproj ff-c || { gwd="$gwd fixture-c-not-built"; GW_ALLOW=""; return; }
+    d="$root/proj-ff-c"; o="$root/origin-ff-c.git"
+    git -C "$d" fetch -q origin >/dev/null 2>&1; git -C "$d" merge -q --ff-only origin/main >/dev/null 2>&1
+    git -C "$d" remote set-url origin "$root/no-such-origin.git"
+    old="$(git -C "$d" rev-parse HEAD)"
+    W="$(_gw_world ff-c)"; cr="$(_gw_cronrepo ff-c)"; h0="$(_gw_hash "$W")"
+    _gw_armit "$W" "$d" rehearse
+    _gw_tick "$W" "$cr"
+    printf '%s' "$cout" | grep -q "origin could not be fetched for $d, so GATE-M1 was not probed" && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] \
+      && [ "$(git -C "$d" rev-parse HEAD)" = "$old" ] && _gw_nowrites "$W" "$h0" \
+      || gwd="$gwd unreachable-origin-probed(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] || gwd="$gwd unreachable-origin-said-twice(runs=$(_gw_runs "$cr"),rc=$crc)"
+    git -C "$d" remote set-url origin "$o"
+    _gw_tick "$W" "$cr"; printf '%s' "$cout" | grep -q '^checkpoint: GATE-M1 passes' && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] \
+      || gwd="$gwd origin-back-not-probed(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    # D: a project with no origin remote has nothing to be behind: it is probed as it always was.
+    _gw_proj ff-d ''
+    d="$root/proj-ff-d"
+    W="$(_gw_world ff-d)"; cr="$(_gw_cronrepo ff-d)"
+    _gw_armit "$W" "$d" rehearse
+    _gw_tick "$W" "$cr"
+    printf '%s' "$cout" | grep -q '^checkpoint: GATE-M1 passes' && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] \
+      || gwd="$gwd no-origin-project-not-probed(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    GW_ALLOW=""
+  }
+  if [ "$cron_ok" = 1 ]; then
+    gwd=""; _gw_c_merged
+    mnot=""
+    _gw_caught _gw_c_merged scripts no-fast-forward checkpoint-cron.sh 'if ! git -C "$project" merge --ff-only --quiet origin/main >/dev/null 2>&1; then' 'if ! git -C "$project" status --porcelain >/dev/null 2>&1; then' 'probed-a-tree-that-was-not-the-merged-one' || mnot="$mnot no-fast-forward"
+    _gw_caught _gw_c_merged scripts fetch-failure-carries-on checkpoint-cron.sh 'fetch --quiet origin main >/dev/null 2>&1; then' 'fetch --quiet origin main >/dev/null 2>&1 && false; then' 'unreachable-origin-probed' || mnot="$mnot fetch-failure-carries-on"
+    _gw_caught _gw_c_merged scripts local-commits-carry-on checkpoint-cron.sh 'if git -C "$project" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then' 'if true; then' 'not-held' || mnot="$mnot local-commits-carry-on"
+    _gw_caught _gw_c_merged scripts no-origin-is-refused checkpoint-cron.sh 'if git -C "$project" remote get-url origin >/dev/null 2>&1; then' 'if true; then' 'no-origin-project-not-probed' || mnot="$mnot no-origin-is-refused"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "cron-probes-what-was-merged (a checkout behind origin/main is fast-forwarded and the pass names the new commit, and the same HEAD is not probed twice; a checkout with commits origin/main lacks, diverged or ahead, and one whose origin cannot be fetched are not probed, said once, exit 0, and a fetch that works again is probed; a project with no origin is probed as before; four mutants caught)"
+    else bad "cron-probes-what-was-merged" "the milestone's probe must run on what was merged, not on a checkout nobody updated:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "cron-probes-what-was-merged" "the fixture project could not be built (git or the real acceptance-freeze is missing)"
   fi
 
   # ======================================================================

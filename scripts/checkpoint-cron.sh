@@ -22,6 +22,10 @@
 #   - the gate is not blocked, or any chunk of its milestone is not done: nothing, ever, until it is;
 #   - the gate was decided for this hold (a /park or /redirect): nothing;
 #   - the product checkout is dirty or not on main: said once per reason;
+#   - the product checkout has an origin: it is fetched and fast-forwarded to origin/main first (the verifier merges
+#     on GitHub and nothing else pulls), so the probe runs on what was merged. An origin that cannot be fetched, a
+#     checkout that cannot be fast-forwarded, or one with commits origin/main lacks is said once and not probed;
+#     no verdict is recorded, so the next tick tries again. A project with no origin is probed as it stands;
 #   - a checkpoint it ran for this gate, this hold and this checkout HEAD: not run again;
 #   - a block (exit 1) is delivered once per hold per text, and recorded in <state>/checkpoint/pending/ with the
 #     hold's id, which is what /accept, /redirect answer (scripts/gate-reply.sh);
@@ -141,6 +145,26 @@ for armed in "$STATE"/armed/*; do
   if [ -n "$(git -C "$project" status --porcelain 2>/dev/null)" ]; then
     report_once "$key.project" "checkpoint: the project $project for $gate has uncommitted changes, so it was not probed (a probe of unmerged work says nothing about the milestone)."
     continue
+  fi
+  # Nothing else brings the checkout up to date: a hands-free run merges on GitHub, so local main is still where the
+  # milestone began and a probe of it judges a tree that does not hold the milestone. A project with no origin has
+  # nothing to be behind. "Could not ask" is never "up to date" (a prompt for a credential would hang the cron).
+  if git -C "$project" remote get-url origin >/dev/null 2>&1; then
+    if ! GIT_TERMINAL_PROMPT=0 git -C "$project" fetch --quiet origin main >/dev/null 2>&1; then
+      report_once "$key.project" "checkpoint: origin could not be fetched for $project, so $gate was not probed (its main may be behind what was merged)."
+      continue
+    fi
+    if [ "$(git -C "$project" rev-parse HEAD 2>/dev/null)" != "$(git -C "$project" rev-parse origin/main 2>/dev/null)" ]; then
+      if git -C "$project" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+        if ! git -C "$project" merge --ff-only --quiet origin/main >/dev/null 2>&1; then
+          report_once "$key.project" "checkpoint: the project $project for $gate could not be fast-forwarded to origin/main, so it was not probed."
+          continue
+        fi
+      else
+        report_once "$key.project" "checkpoint: the project $project for $gate has commits on main that origin/main does not, so it was not probed (a probe of unmerged work says nothing about the milestone)."
+        continue
+      fi
+    fi
   fi
   head="$(git -C "$project" rev-parse HEAD 2>/dev/null)"
   [ -n "$head" ] || { fault "cannot read HEAD of $project"; continue; }

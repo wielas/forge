@@ -14,6 +14,7 @@ of what a long one cost.
 | Who completes a gate whose probe passes | nobody (held) | the checkpoint cron, when the gate is armed `apply` |
 | How the board follows a plan change | by hand | `hermes/board-sync.sh` |
 | What reports a dead gateway or cron | nothing | `scripts/watchdog.sh` |
+| Who brings the product checkout up to date before a checkpoint | the operator, by hand | the checkpoint cron (fetch, fast-forward only) |
 
 ## What it measures
 
