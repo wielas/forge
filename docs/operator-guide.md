@@ -144,12 +144,22 @@ no gateway, no Hermes cron and no `hermes` binary. Install it from the runtime (
 script) with `~/.forge/repo/scripts/watchdog-install.sh`; `--print` shows the plist and `--uninstall`
 removes it. Read what it sees at any time, changing nothing, with `scripts/watchdog.sh --no-alert`.
 
-**Four checks**, one `OK` or `FAIL` line each: the `ai.hermes.gateway` job is running (`launchctl print`);
+**Five checks**, one `OK` or `FAIL` line each: the `ai.hermes.gateway` job is running (`launchctl print`);
 the newest output of the `forge-merge-watcher` cron job is under `FORGE_WATCHDOG_TICK_MAX_MIN` (30)
 minutes old, so the cron ticker is alive; the newest output of `forge-digest` is under 26 hours old;
-and `kanban.auto_decompose` is `false` in `~/.hermes/config.yaml` (the kernel default is `true`, so
-an absent key fails too; fix with `hermes config set kanban.auto_decompose false`).
-Exit 0 healthy, 1 unhealthy, 2 cannot run.
+`kanban.auto_decompose` is `false` in `~/.hermes/config.yaml` (the kernel default is `true`, so
+an absent key fails too; fix with `hermes config set kanban.auto_decompose false`); and the verifier's
+`claude` token still answers (below). Exit 0 healthy (a `WARN` is still healthy), 1 unhealthy, 2 cannot run.
+
+**The token check.** `make preflight` only sees that the `CLAUDE_CODE_OAUTH_TOKEN` line is *present*; a dead token passed
+it twice and every verifier run then failed with a 401. The watchdog asks a tiny `claude -p` (haiku, JSON) through
+`scripts/claude-token.sh`, so the token comes from the root `~/.hermes/.env` as a worker's does: `OK` it answered;
+`FAIL` (unhealthy, alerts like any other) the CLI said `is_error: true`; `WARN` it could not ask (no binary, no token
+line, a timeout, no JSON), which never alerts and never reads as recovered. Knobs: asked at most every
+`FORGE_WATCHDOG_TOKEN_EVERY` (21600 s), a FAIL or WARN again after `FORGE_WATCHDOG_TOKEN_RETRY` (1800 s), each bounded
+by `FORGE_WATCHDOG_TOKEN_TIMEOUT` (90 s); `FORGE_WATCHDOG_TOKEN=0` switches it off. **When it fires:** renew the token
+(`claude setup-token`) in `~/.hermes/.env`, restart the gateway, and check now with `FORGE_WATCHDOG_TOKEN_EVERY=0
+FORGE_WATCHDOG_TOKEN_RETRY=0 scripts/watchdog.sh --no-alert`; the alert clears itself.
 
 **Alerts go on a change, not on every pass.** Healthy to unhealthy sends one Telegram message naming the
 failing checks; unhealthy to healthy sends one recovery; while it stays unhealthy it repeats at most every
