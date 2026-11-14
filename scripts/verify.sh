@@ -3327,6 +3327,12 @@ front/rehearse-failure-always-revokes  a card that ends blocked is exit 1 with e
 front/rehearse-grants-only-its-own-board  --cleanup of any board not named hello-rehearsal-* is refused before hermes or gh is asked and a decoy grant survives; a whole run sees only its own board granted; merge-authority.sh grant is reached from rh_grant (guarded) and cmd_go only
 front/go-refuses-out-of-sync-and-unconfirmed  board-sync drift or failure, a dirty or behind product checkout, a gate not ready or absent, and no --yes without a terminal each change nothing (no grant, no arming, the cron job still paused)
 front/go-puts-in-force-and-reads-back  with the real merge-authority.sh and checkpoint-arm.sh: --yes grants, arms exactly the ready gate apply, names the cards it releases and resumes the paused checkpoint job, each read back; an armed or parked gate needs --rearm; a missing cron job exits 1 with the create command and keeps the grant and arming; a fenced worker is refused
+front/go-arms-ahead-only-when-asked  a gate whose milestone is not finished is refused without --ahead (the refusal names the flag; nothing changes), armed apply with it (read back from the real checkpoint-arm.sh list, the plain words say AHEAD and name the cards it releases); two --gate flags arm two gates and one refusal stops both; --ahead alone or with --no-arm is a usage error
+front/start-stops-at-the-first-unmet-rung  each of the twelve rungs made to fail in turn: exit 1, exactly one NEXT line at that rung with its remedy, the earlier rungs ok, the later ones not reached and never called, the project/Hermes/state root byte-identical and every write verb refused; a document that is not there yet is a rung not met, not exit 2 (also against the real plan-check and roadmap-check); the acceptance freeze is tried on a scratch copy
+front/start-could-not-ask-is-exit-2  a merge gate, gh, a board list, a preflight, a roadmap check, a freeze, an assignee list or a fetch that cannot answer is exit 2 at its own rung, shown as ?? and never as NEXT, nothing written
+front/start-bootstraps-only-when-confirmed  every rung ok and the board absent: no --yes and no terminal is exit 2 after the plain-words block (cards, the root that starts at once, the hand-built chunks that wait, the verifier only recommending, what waits behind GATE-M1) with nothing written; --yes runs the REAL board-bootstrap.sh on the stateful double and reads the board back; a second run says already on board and creates nothing; --root-only; a spent branch exits 1 naming --branch-suffix; a GitHub that cannot be asked is exit 2
+front/start-an-ungated-private-repo-is-allowed  merge-gate exit 5 is ok and printed as UNGATED, exit 0 as GATED, exit 4 is NEXT make protect; asked as commission asks it; --commission runs the paid commission once, only on the flag and only before the board exists
+front/new-stamps-and-stops-before-github  forge new stamps through uvx copier with the Makefile's arguments, runs init, make setup and one commit, makes no gh call, and prints the gh repo create line and the /scope next step; with --github the calls run in order and the posture is merge-gate's; an existing target, a volatile destination and bad arguments are exit 2 with nothing written; a failing step is exit 1 and names what is left on disk
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -22795,9 +22801,9 @@ WD_PLIST
 wants watchdog  && run_watchdog_group
 
 # ---------------------------------------------------------------------------
-# front/ — the operator's front door (scripts/forge.sh): `forge status`, `forge stop`, `forge rehearse` and `forge go`.
+# front/ — the operator's front door (scripts/forge.sh): `forge status`, `forge stop`, `forge rehearse`, `forge go`, `forge start` and `forge new`.
 #
-# Twelve cases (the first six are status and stop; the other six are rehearse and go, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
+# Eighteen cases (the first six are status and stop; then rehearse and go; then `go --ahead`, `forge start` and `forge new`, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
 # from scripts/fixtures/digest-board.sql's schema (the digest and checkpoint fixtures' own), the grant and the armed
 # gates are made by the real merge-authority.sh and checkpoint-arm.sh, and the script is reached through a relative
 # symlink that points at an absolute one, in another directory: the way the operator runs it (~/.local/bin/forge).
@@ -23612,6 +23618,631 @@ SQL
   _go_none fenced
   [ -z "$d" ] && ok "go-puts-in-force-and-reads-back (with the real merge-authority.sh and checkpoint-arm.sh: --yes grants by the named operator with reason 'forge go', arms exactly the one ready gate apply (not the held one), names the card it releases and not the one still waiting on another chunk, resumes the paused checkpoint job and reads each back; an already armed gate, or one with a recorded /park, needs --rearm; a missing cron job exits 1 with the create command and leaves the grant and arming in force; --no-arm only grants; a fenced worker is refused with the script's own message)" \
     || bad "go-puts-in-force-and-reads-back" "go must put in force exactly what it says, and read it back —$d :: $(printf '%s' "$out" | tail -4 | tr '\n' '|') :: $(head -3 "$root/err" | tr '\n' '|')"
+
+  # --- 13. go arms a gate ahead of its milestone only when asked ---------------------------------------------------------------
+  # `launch` has GATE-M1 ready (its chunks are done) and GATE-M2 not (CHUNK-3, which it closes, is still todo). The checkpoint
+  # cron does nothing for an armed gate whose chunks are not all done, so arming it early is safe, but go says so, and only for --ahead.
+  d=""
+  _go_world
+  sqlite3 "$kb/launch/kanban.db" "INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_l8', 'CHUNK-5: after milestone 2', 'forge-codex-lane', 'todo', $((now - 9000))); INSERT INTO task_links (parent_id, child_id) VALUES ('t_l7', 't_l8');" >/dev/null 2>&1
+  : > "$RS/calls.log"
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --gate GATE-M2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d no-ahead:exit=$rc(want 1)"
+  { grep -q 'GATE-M2 is not ready' "$root/err" && grep -q -- '--ahead' "$root/err"; } || d="$d no-ahead:the-refusal-does-not-name---ahead"
+  _go_none no-ahead
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --gate GATE-M2 --ahead --by tester --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d ahead:exit=$rc(want 0)"
+  _fr_want "$out" 'GATE-M2 is NOT ready (a chunk it closes is not done yet): armed AHEAD'
+  _fr_want "$out" 'GATE-M2 is armed apply AHEAD: nothing happens until every chunk of its milestone is done; then, when its probe passes, the checkpoint cron completes it by itself, which releases: CHUNK-5: after milestone 2'
+  _fr_not  "$out" 'GATE-M1 is armed'
+  _fr_want "$out" 'armed: GATE-M2 on launch, apply'
+  _fr_want "$out" 'AHEAD of its milestone (read back)'
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null)" = "launch GATE-M2 apply $gp" ] || d="$d ahead:armed-list[$(_fs checkpoint-arm.sh list 2>/dev/null | tr '\n' '|')]"
+  _fs merge-authority.sh status launch >/dev/null 2>&1 || d="$d ahead:no-grant"
+  # two gates: a ready one needs no --ahead, a not-ready one does, and one refusal stops the whole run before any act
+  _go_world
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --gate GATE-M1 --gate GATE-M2 --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d two-gates-no-ahead:exit=$rc(want 1)"
+  grep -q 'GATE-M2 is not ready' "$root/err" || d="$d two-gates-no-ahead:not-said"
+  _go_none two-gates-no-ahead
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --gate GATE-M1 --gate GATE-M2 --ahead --by tester --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d two-gates:exit=$rc(want 0)"
+  _fr_want "$out" 'GATE-M1 is armed apply on the project '
+  _fr_want "$out" 'GATE-M2 is armed apply AHEAD: nothing happens until every chunk'
+  _fr_not  "$out" 'GATE-M1 is armed apply AHEAD'
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null | cut -d' ' -f1-3 | sort | tr '\n' '|')" = 'launch GATE-M1 apply|launch GATE-M2 apply|' ] || d="$d two-gates:armed-list[$(_fs checkpoint-arm.sh list 2>/dev/null | tr '\n' '|')]"
+  [ "$(jq -r '.jobs[] | select(.name == "forge-checkpoint") | .enabled and .state != "paused"' "$H/cron/jobs.json")" = true ] || d="$d two-gates:the-job-is-still-paused"
+  # --ahead with a gate that is ready is not an error and does not change what it says
+  _go_world
+  out="$(_rx go launch --project "$gp" --branch-suffix a2 --gate GATE-M1 --ahead --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d ready-with-ahead:exit=$rc(want 0)"
+  _fr_not "$out" 'AHEAD:'
+  # the flag has a meaning only with a named gate, and not with --no-arm
+  _go_world
+  out="$(_rx go launch --project "$gp" --ahead --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d ahead-without-gate:exit=$rc(want 2)"
+  out="$(_rx go launch --project "$gp" --gate GATE-M2 --ahead --no-arm --yes 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d ahead-with-no-arm:exit=$rc(want 2)"
+  _go_none usage
+  [ -z "$d" ] && ok "go-arms-ahead-only-when-asked (a gate whose milestone is not finished is refused without --ahead, naming the flag, and nothing changes; with it, it is armed apply, read back from the real checkpoint-arm.sh list, and the plain words say AHEAD and name the cards it releases; two --gate flags arm two gates, a ready one without --ahead's words, and one refusal stops both; --ahead on a ready gate changes nothing; --ahead alone and --ahead with --no-arm are usage errors)" \
+    || bad "go-arms-ahead-only-when-asked" "go --ahead must arm exactly what it says, only when asked —$d :: $(printf '%s' "$out" | tail -3 | tr '\n' '|') :: $(head -3 "$root/err" | tr '\n' '|')"
+
+  # ==============================================================================================================
+  # `forge start` and `forge new`. Offline. The five checkers (plan-check, roadmap-check, acceptance-freeze, merge-gate,
+  # preflight) and commission.sh are STAND-INS in a kit of scripts, each told its verdict by a file in the stub directory, because
+  # their own groups prove their verdicts and this one proves what start does with them. What is real: forge.sh, overseer-guard.sh,
+  # and hermes/board-bootstrap.sh, which runs against the stateful `hermes` double the bootstrap group uses (taken from this file
+  # at run time, so the two cannot drift) behind a thin wrapper that adds `boards list --json` and the `assignees` list, logs every
+  # call, and REFUSES any write verb in a case that is read-only. The project is a real git repo whose origin is a local bare repo.
+  # ==============================================================================================================
+  local SS="$root/sstub" sp="$root/sproj" skit="$root/skit" sbare="$root/sproj-origin.git" sand="$root/sstand" sbd="$root/sbin"
+  local spreal
+  mkdir -p "$sand" "$sbd"
+  _st_extract() { # <heredoc marker> -> the body of that heredoc in the bootstrap group above
+    sed -n "/<<'$1'\$/,/^$1\$/p" "$REPO_ROOT/scripts/verify.sh" | sed '1d;$d'
+  }
+  _st_extract HERMES_STUB > "$sbd/hermes-real"; _st_extract BOOTSTRAP_GH_STUB > "$sbd/gh-real"
+  if ! { [ -s "$sbd/hermes-real" ] && [ -s "$sbd/gh-real" ] && grep -q 'keys.tsv' "$sbd/hermes-real" && grep -q 'gh-prs.tsv' "$sbd/gh-real"; }; then
+    bad "start-stops-at-the-first-unmet-rung" "the bootstrap group's hermes and gh doubles could not be taken from verify.sh (the markers HERMES_STUB and BOOTSTRAP_GH_STUB moved): the start cases went blind, which is not a pass"
+    return
+  fi
+  chmod +x "$sbd/hermes-real" "$sbd/gh-real"
+
+  cat > "$sbd/hermes" <<'ST_HERMES'
+#!/usr/bin/env bash
+# Wrapper over the bootstrap group's stateful hermes double. It answers `assignees` and `boards list` itself (the double has no
+# board registry), logs every call, and logs a write verb as WRITE and refuses it when <stub>/readonly exists.
+S="${ST_STUB:?}"
+echo "hermes $*" >> "$S/calls.log"
+orig=("$@")
+[ "${1:-}" = kanban ] || exit 64
+shift
+if [ "${1:-}" = --board ]; then shift 2; fi
+verb="${1:-}"
+case "$verb" in
+  assignees) [ ! -f "$S/assignees.fail" ] || { echo "hermes: assignees failed" >&2; exit 1; }; cat "$S/assignees.json"; exit 0;;
+  boards)
+    if [ "${2:-}" = list ]; then
+      [ ! -f "$S/boards.fail" ] || { echo "hermes: kanban boards list failed" >&2; exit 1; }
+      cur=""; [ -f "$STUB_STATE/board" ] && cur="$(cat "$STUB_STATE/board")"
+      n=0; [ -f "$STUB_STATE/keys.tsv" ] && n="$(wc -l < "$STUB_STATE/keys.tsv" | tr -d ' ')"
+      jq -n --slurpfile pre "$S/boards.json" --arg b "$cur" --arg w "$(cat "$STUB_STATE/workdir" 2>/dev/null)" --argjson n "$n" '
+        $pre[0] as $p | $p + (if $b != "" and (($p | map(.slug) | index($b)) == null)
+                              then [{slug: $b, default_workdir: $w, archived: false, total: $n}] else [] end)'
+      exit 0
+    fi;;
+esac
+case "$verb" in
+  list|show) ;;
+  *) echo "WRITE hermes $*" >> "$S/calls.log"
+     if [ -f "$S/readonly" ]; then echo "stub hermes: a write verb in a read-only case: $*" >&2; exit 1; fi;;
+esac
+exec "$(dirname "$0")/hermes-real" "${orig[@]}"
+ST_HERMES
+  cat > "$sbd/gh" <<'ST_GH'
+#!/usr/bin/env bash
+# `repo view` is answered here; `pr list` (the bootstrap's branch guard) by the bootstrap group's double.
+S="${ST_STUB:?}"
+echo "gh $*" >> "$S/calls.log"
+case "${1:-} ${2:-}" in
+  "repo view")
+    [ ! -f "$S/gh.fail" ] || { echo "gh: HTTP 502: Bad Gateway" >&2; exit 1; }
+    jq -nc --arg s "$(cat "$S/slug" 2>/dev/null || echo stub-owner/stub-repo)" '{nameWithOwner: $s}'; exit 0;;
+  "pr list") exec "$(dirname "$0")/gh-real" "$@";;
+esac
+echo "WRITE gh $*" >> "$S/calls.log"; echo "stub gh: unexpected: $*" >&2; exit 64
+ST_GH
+  cat > "$sbd/launchctl" <<'ST_LAUNCHCTL'
+#!/usr/bin/env bash
+case "$(cat "${ST_STUB:?}/gw.mode" 2>/dev/null)" in
+  running) printf 'gui/501/ai.hermes.gateway = {\n\tstate = running\n}\n';;
+  waiting) printf 'gui/501/ai.hermes.gateway = {\n\tstate = waiting\n}\n';;
+  *) echo "Could not find service \"ai.hermes.gateway\" in domain for user gui: 501" >&2; exit 113;;
+esac
+ST_LAUNCHCTL
+
+  cat > "$sand/plan-check.sh" <<'ST_PLAN'
+#!/usr/bin/env bash
+# Stand-in for scripts/plan-check.sh. The verdict is <stub>/plan-<stage>.rc. Like the real one it exits 2 when the stage's document is missing.
+S="${ST_STUB:?}"; echo "plan-check $*" >> "$S/calls.log"
+dir="$1"; shift; stage=""
+while [ $# -gt 0 ]; do case "$1" in --stage) stage="$2"; shift 2;; *) shift;; esac; done
+case "$stage" in scope) doc=docs/REQUIREMENTS.md;; architect) doc=docs/feasibility.md;; esac
+[ -e "$dir/$doc" ] || { echo "plan-check: no $dir/$doc — run /$stage first" >&2; exit 2; }
+rc="$(cat "$S/plan-$stage.rc" 2>/dev/null || echo 0)"
+case "$rc" in
+  0) printf 'forge plan-check — %s  (stage %s)\n\n  PASS   ambition\n         ambition: tool\n\n  CLEAR — 1 pass, 0 fail, 0 skip\n' "$dir" "$stage";;
+  1) printf 'forge plan-check — %s  (stage %s)\n\n  PASS   ambition\n         ambition: tool\n  FAIL   delight\n         no `## Delight` section with at least one item\n      -> add one\n\n  FAIL — 1 pass, 1 fail, 0 skip\n' "$dir" "$stage";;
+  *) echo "plan-check: could not run" >&2;;
+esac
+exit "$rc"
+ST_PLAN
+  cat > "$sand/roadmap-check.sh" <<'ST_ROADMAP'
+#!/usr/bin/env bash
+# Stand-in for scripts/roadmap-check.sh: exit 0 with a CLEAR or WARN summary, exit 2 with no graph. <stub>/roadmap.mode: clear | warn | silent | fatal.
+S="${ST_STUB:?}"; echo "roadmap-check $*" >> "$S/calls.log"
+dir="$1"
+[ -e "$dir/docs/chunks/graph.json" ] || { echo "no $dir/docs/chunks/graph.json — run /roadmap first" >&2; exit 2; }
+case "$(cat "$S/roadmap.mode" 2>/dev/null || echo clear)" in
+  clear) printf 'forge roadmap-check — %s  (7 chunk(s), 2 gate(s))\n\n  PASS   bijection\n\n  CLEAR — 14 pass, 0 warn, 0 skip\n' "$dir";;
+  warn)  printf 'forge roadmap-check — %s  (7 chunk(s), 2 gate(s))\n\n  PASS   bijection\n  WARN   scenarios\n         CHUNK-3 has 7 scenarios\n      -> split it\n\n  WARN — 13 pass, 1 warn, 0 skip\n  Advisory (ADR-0012): these are planning defects, and the plan is still free to edit.\n' "$dir";;
+  silent) ;;
+  fatal) echo "FATAL: $dir/docs/chunks/graph.json does not describe a checkable plan:" >&2; echo '  - entry 0 has no "id"' >&2; exit 2;;
+esac
+exit 0
+ST_ROADMAP
+  cat > "$sand/acceptance-freeze.sh" <<'ST_FREEZE'
+#!/usr/bin/env bash
+# Stand-in for scripts/acceptance-freeze.sh <dir>. <stub>/freeze.mode: same (the manifest it would write is the committed one) | reformat (the same
+# document, other whitespace) | drift | invalid | rc2.
+# Aimed at the project itself (<stub>/project) instead of a copy of it, it refuses and logs WRITE: the real one rewrites the manifest.
+S="${ST_STUB:?}"; dir="$1"; echo "acceptance-freeze $dir" >> "$S/calls.log"
+if [ "$dir" = "$(cat "$S/project")" ]; then echo "WRITE acceptance-freeze $dir (the project itself, not a copy)" >> "$S/calls.log"; echo "stub: aimed at the project itself" >&2; exit 99; fi
+case "$(cat "$S/freeze.mode" 2>/dev/null || echo same)" in
+  same) ;;
+  reformat) jq . "$dir/docs/chunks/contract-freeze.json" > "$dir/docs/chunks/.m.new" && mv "$dir/docs/chunks/.m.new" "$dir/docs/chunks/contract-freeze.json";;
+  drift) printf '{"tests/features/chunk_1.feature": "%064d"}\n' 0 > "$dir/docs/chunks/contract-freeze.json";;
+  invalid) echo "acceptance-freeze: CHUNK-3: the contract names no scenarios" >&2; exit 1;;
+  rc2) echo "acceptance-freeze: could not inspect the plan" >&2; exit 2;;
+esac
+exit 0
+ST_FREEZE
+  cat > "$sand/merge-gate.sh" <<'ST_GATE'
+#!/usr/bin/env bash
+# Stand-in for scripts/merge-gate.sh: its exit is <stub>/gate.rc (0 GATED, 3 PARTIAL, 4 NONE, 5 UNAVAILABLE, 2 could not ask).
+S="${ST_STUB:?}"; echo "merge-gate $*" >> "$S/calls.log"
+rc="$(cat "$S/gate.rc" 2>/dev/null || echo 0)"
+case "$rc" in
+  0) echo "GATED via=classic pr=yes checks=check missing=-";;
+  3) echo "PARTIAL via=classic pr=no checks=check missing=-";;
+  4) echo "NONE via=none pr=no checks=none missing=check";;
+  5) echo "UNAVAILABLE via=none pr=no checks=none missing=-";;
+  *) echo "merge-gate: HTTP 403: could not ask" >&2;;
+esac
+exit "$rc"
+ST_GATE
+  cat > "$sand/commission.sh" <<'ST_COMMISSION'
+#!/usr/bin/env bash
+# Stand-in for scripts/commission.sh <project> <board>: PAID in real life, so every run is logged SPEND. Exit and report from <stub>/commission.rc (0 PASS, 1 FAIL, 2 could not run).
+S="${ST_STUB:?}"; echo "commission $*" >> "$S/calls.log"; echo "SPEND commission $*" >> "$S/calls.log"
+rc="$(cat "$S/commission.rc" 2>/dev/null || echo 0)"; rep="$S/commission-report.md"
+case "$rc" in
+  0) printf '# Forge commissioning report\n\n## result\n\noverall: PASS\nposture: UNGATED (merge gate unavailable on this plan: stub-owner/stub-repo)\n' > "$rep"; echo "commission report: $rep";;
+  1) printf '# Forge commissioning report\n\n## result\n\noverall: FAIL\nposture: UNGATED (merge gate not established: merge-gate exit 4)\n' > "$rep"; echo "commission report: $rep"; echo "commission: one or more prerequisites failed" >&2;;
+  *) echo "commission: could not run" >&2;;
+esac
+exit "$rc"
+ST_COMMISSION
+  cat > "$sand/preflight.sh" <<'ST_PREFLIGHT'
+#!/usr/bin/env bash
+# Stand-in for scripts/preflight.sh. <stub>/preflight.mode: ok | fail | garbled.
+S="${ST_STUB:?}"; echo "preflight $*" >> "$S/calls.log"
+case "$(cat "$S/preflight.mode" 2>/dev/null || echo ok)" in
+  ok) printf '## 1. tools\n\nPASS  one\nWARN  two\n\n## Summary\n\nPASS 12   WARN 1   FAIL 0\n\nNo hard failures. Read the WARNs before the first night run.\n'; exit 0;;
+  fail) printf '## 1. tools\n\nPASS  one\nFAIL  the gateway PATH CANNOT reach codex\nFAIL  a token is dead\n\n## Summary\n\nPASS 10   WARN 1   FAIL 2\n\nNot ready for unattended work.\n'; exit 1;;
+  garbled) echo "something else entirely"; exit 0;;
+esac
+ST_PREFLIGHT
+  cat > "$sand/board-sync.sh" <<'ST_SYNC'
+#!/usr/bin/env bash
+# Stand-in for hermes/board-sync.sh <board> [--branch-suffix s]: a dry run from the project. <stub>/sync.rc forces 0 | 1 | 2; by default the
+# board is in sync when the bootstrap double holds one card per node of the graph, which is what the real one reads off a database.
+S="${ST_STUB:?}"; echo "board-sync cwd=$(pwd -P) args=$*" >> "$S/calls.log"
+rc="$(cat "$S/sync.rc" 2>/dev/null || echo auto)"
+if [ "$rc" = auto ]; then
+  have="$(wc -l < "$STUB_STATE/keys.tsv" 2>/dev/null | tr -d ' ')"; want="$(jq length docs/chunks/graph.json)"
+  if [ "${have:-0}" = "$want" ]; then rc=0; else rc=1; fi
+fi
+case "$rc" in
+  0) echo "MATCH every unit"; echo "board and plan agree";;
+  1) echo "CREATE CHUNK-3  a plan unit with no card"; echo "MANUAL GATE-M1  a gate with no card";;
+  *) echo "board-sync: could not ask GitHub" >&2;;
+esac
+exit "$rc"
+ST_SYNC
+  cat > "$sand/new-dest.sh" <<'ST_NEWDEST'
+#!/usr/bin/env bash
+# Stand-in for scripts/new-dest.sh <dest> --name <name>: accepts any destination. The real one refuses everything under $TMPDIR, which is where
+# every case here has to live; the refusal is tested with the real one in its own run.
+echo "new-dest $*" >> "${ST_STUB:?}/calls.log"
+printf '%s/%s\n' "$1" "$3"
+ST_NEWDEST
+  chmod +x "$sbd/hermes" "$sbd/gh" "$sbd/launchctl" "$sand"/*.sh
+
+  _st_kit() { # the scripts forge.sh reaches: the real ones from $fs (so a mutant propagates), the stand-ins, and the real bootstrap
+    local f
+    rm -rf "$skit"; mkdir -p "$skit/scripts" "$skit/hermes" "$skit/templates/python-service"
+    for f in forge.sh forge-state.sh decision-message.sh board-snapshot.sh merge-authority.sh checkpoint-arm.sh gate-reply.sh overseer-guard.sh; do cp "$fs/$f" "$skit/scripts/$f"; done
+    for f in plan-check roadmap-check acceptance-freeze merge-gate commission preflight new-dest; do cp "$sand/$f.sh" "$skit/scripts/$f.sh"; done
+    cp "$REPO_ROOT/hermes/board-bootstrap.sh" "$skit/hermes/board-bootstrap.sh"; cp "$sand/board-sync.sh" "$skit/hermes/board-sync.sh"
+    : > "$skit/templates/python-service/.keep"
+    chmod +x "$skit"/scripts/*.sh "$skit"/hermes/*.sh
+  }
+  _st_project() { # a repo on main with every artefact of a finished plan, pushed to a local bare origin that git maps from the stub's GitHub URL
+    local id
+    rm -rf "$sp" "$sbare"; mkdir -p "$sp/docs/chunks" "$sp/tests/features"
+    _rxg init -q --bare "$sbare" 2>/dev/null; _rxg -C "$sbare" symbolic-ref HEAD refs/heads/main
+    _rxg init -q "$sp" 2>/dev/null; _rxg -C "$sp" symbolic-ref HEAD refs/heads/main
+    _rxg -C "$sp" config user.email t@example.invalid; _rxg -C "$sp" config user.name tester; _rxg -C "$sp" config commit.gpgsign false
+    _rxg -C "$sp" remote add origin https://github.com/stub-owner/stub-repo.git
+    _rxg -C "$sp" config "url.$sbare.insteadOf" https://github.com/stub-owner/stub-repo.git
+    printf '.forge/\n' > "$sp/.gitignore"
+    printf '# requirements\n' > "$sp/docs/REQUIREMENTS.md"; printf '# feasibility\n' > "$sp/docs/feasibility.md"
+    cat > "$sp/docs/chunks/graph.json" <<'ST_GRAPH'
+[
+  {"id":"CHUNK-1","lane":"forge-codex-lane","depends_on":[]},
+  {"id":"CHUNK-2","lane":"claude-interactive","depends_on":["CHUNK-1"]},
+  {"id":"CHUNK-3","lane":"forge-codex-lane","depends_on":["CHUNK-1"]},
+  {"id":"GATE-M1","lane":"claude-interactive","depends_on":["CHUNK-1","CHUNK-2","CHUNK-3"]},
+  {"id":"CHUNK-4","lane":"forge-codex-lane","depends_on":["GATE-M1"]},
+  {"id":"CHUNK-5","lane":"forge-codex-lane","depends_on":["CHUNK-4"]},
+  {"id":"GATE-M2","lane":"claude-interactive","depends_on":["CHUNK-4","CHUNK-5"]}
+]
+ST_GRAPH
+    for id in CHUNK-1 CHUNK-2 CHUNK-3 GATE-M1 CHUNK-4 CHUNK-5 GATE-M2; do printf '### %s: fixture title\n' "$id" > "$sp/docs/chunks/$id.md"; done
+    printf '{"tests/features/chunk_1.feature": "%064d"}\n' 1 > "$sp/docs/chunks/contract-freeze.json"
+    _rxg -C "$sp" add -A; _rxg -C "$sp" commit -q -m plan; _rxg -C "$sp" push -q -u origin main 2>/dev/null
+    _rxg -C "$sp" remote set-head origin main >/dev/null 2>&1   # a fetch would otherwise create origin/HEAD
+    spreal="$(cd "$sp" && pwd -P)"
+  }
+  _st_world() { # every rung met and the board absent; the stub directory holds only defaults
+    _fr_world
+    rm -rf "$SS" "$root/tmp"; mkdir -p "$SS/bstate" "$root/tmp"
+    echo running > "$SS/gw.mode"
+    printf '[{"name":"default","on_disk":true},{"name":"forge-codex-lane","on_disk":true},{"name":"forge-verifier","on_disk":true},{"name":"forge-operator-handoff","on_disk":false}]\n' > "$SS/assignees.json"
+    echo '[]' > "$SS/boards.json"
+    : > "$SS/calls.log"
+    _st_project
+    echo "$spreal" > "$SS/project"
+    _st_kit
+    FR_X=""
+  }
+  _st() { # forge from the start kit; FR_X holds extra NAME=value words
+    env -u FORGE_WATCHDOG_ROOT -u FORGE_MERGE_AUTHORITY_ROOT -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_KANBAN_HOME \
+        -u FORGE_HANDOFF_SENTINEL -u FORGE_LANE_ASSIGNEE \
+        HOME="$root/home" HERMES_HOME="$H" FORGE_STATE_ROOT="$S" FORGE_STATUS_NOW="$now" TZ=UTC TMPDIR="$root/tmp" \
+        PATH="$sbd:$PATH" ST_STUB="$SS" STUB_STATE="$SS/bstate" FORGE_WATCHDOG_LAUNCHCTL="$sbd/launchctl" \
+        GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=tester GIT_AUTHOR_EMAIL=t@example.invalid \
+        GIT_COMMITTER_NAME=tester GIT_COMMITTER_EMAIL=t@example.invalid \
+        $FR_X "$skit/scripts/forge.sh" "$@"
+  }
+  _st_fp() { # everything a read-only start must leave alone: the project's tree and refs (not .git's own bookkeeping, which a fetch rewrites), Hermes, the state root, the double's state
+    { _fr_tree "$H"; _fr_tree "$S"; _fr_tree "$SS/bstate"
+      if [ -d "$sp" ]; then
+        ( cd "$sp" && find . -path ./.git -prune -o -type f -print | sort | while IFS= read -r f; do shasum -a 256 "$f"; done )
+        _rxg -C "$sp" for-each-ref refs/heads refs/tags; _rxg -C "$sp" status --porcelain   # not refs/remotes: the fetch rung is allowed to move origin/main
+      fi; } 2>/dev/null
+  }
+  # One run of start in a read-only world, which must stop at rung <want> with exactly one NEXT line carrying <remedy>.
+  _st_stops() { # <label> <want rung> <remedy substring>
+    local label="$1" want="$2" remedy="$3" nn at okn later fp0 fp1
+    : > "$SS/calls.log"; : > "$SS/readonly"
+    fp0="$(_st_fp)"
+    out="$(_st start "$sp" --board stub-board --branch-suffix a2 </dev/null 2>"$root/err")"; rc=$?
+    fp1="$(_st_fp)"
+    [ "$rc" = 1 ] || d="$d $label:exit=$rc(want 1)"
+    nn="$(printf '%s\n' "$out" | grep -c '^  NEXT ')"
+    [ "$nn" = 1 ] || d="$d $label:NEXT-lines=$nn(want 1)"
+    at="$(printf '%s\n' "$out" | awk '$1 == "NEXT" { print $2 }')"
+    [ "$at" = "$want" ] || d="$d $label:stopped-at=${at:-none}(want $want)"
+    okn="$(printf '%s\n' "$out" | grep -c '^  ok ')"
+    [ "$okn" = $((want - 1)) ] || d="$d $label:ok-lines=$okn(want $((want - 1)))"
+    later="$(printf '%s\n' "$out" | grep -c '^  -  ')"
+    [ "$later" = $((12 - want)) ] || d="$d $label:not-reached-lines=$later(want $((12 - want)))"
+    _fr_want "$out" "$remedy"
+    [ "$fp0" = "$fp1" ] || d="$d $label:the-project-or-the-boards-changed"
+    [ -n "$fp0" ] || d="$d $label:the-fingerprint-was-empty"
+    ! grep -q '^WRITE' "$SS/calls.log" || d="$d $label:a-write-verb-was-called($(grep '^WRITE' "$SS/calls.log" | head -1))"
+    [ -z "$(ls -A "$root/tmp" 2>/dev/null)" ] || d="$d $label:a-scratch-directory-was-left"
+    rm -f "$SS/readonly"
+  }
+  # One run in a read-only world that could not ask at rung <want>: exit 2, a `??` line, never a NEXT, nothing written.
+  _st_asks() { # <label> <want rung> <substring>
+    local label="$1" want="$2" what="$3" at fp0 fp1
+    : > "$SS/calls.log"; : > "$SS/readonly"
+    fp0="$(_st_fp)"
+    out="$(_st start "$sp" --board stub-board --branch-suffix a2 --yes </dev/null 2>"$root/err")"; rc=$?
+    fp1="$(_st_fp)"
+    [ "$rc" = 2 ] || d="$d $label:exit=$rc(want 2)"
+    ! printf '%s\n' "$out" | grep -q 'NEXT' || d="$d $label:it-says-NEXT"
+    at="$(printf '%s\n' "$out" | awk '$1 == "??" { print $2 }')"
+    [ "$at" = "$want" ] || d="$d $label:could-not-ask-at=${at:-none}(want $want)"
+    _fr_want "$out" "$what"
+    grep -q 'could not ask at rung' "$root/err" || d="$d $label:stderr-does-not-say-it"
+    [ "$fp0" = "$fp1" ] || d="$d $label:the-project-or-the-boards-changed"
+    ! grep -q '^WRITE' "$SS/calls.log" || d="$d $label:a-write-verb-was-called"
+    rm -f "$SS/readonly"
+  }
+
+  # --- 14. start climbs the ladder and stops at the first rung that is not met --------------------------------------------------
+  d=""
+  _st_world; _rxg -C "$sp" switch -q -c side;                                       _st_stops git-not-on-main 1 "git -C $spreal switch main"
+  _st_world; rm -rf "$sp/.git";                                                     _st_stops git-not-a-repository 1 "init -b main"
+  _st_world; rm -rf "$sp";                                                          _st_stops git-no-directory 1 "forge new sproj --dest $root"
+  _st_world; _rxg -C "$sp" remote remove origin;                                    _st_stops origin-none 2 "gh repo create sproj --private --source . --push"
+  _st_world; printf 'other/\n' > "$sp/.gitignore";                                   _st_stops ignore-missing 3 ".forge/' >> $spreal/.gitignore"
+  _st_world; echo 1 > "$SS/plan-scope.rc";                                          _st_stops scope-findings 4 "open Claude Code in $spreal and run /scope"
+  _fr_want "$out" 'FAIL   delight'
+  _st_world; rm "$sp/docs/REQUIREMENTS.md";                                         _st_stops scope-no-document 4 "docs/REQUIREMENTS.md does not exist yet"
+  _st_world; echo 1 > "$SS/plan-architect.rc";                                      _st_stops architect-findings 5 "run /architect"
+  _st_world; rm "$sp/docs/feasibility.md";                                          _st_stops architect-no-document 5 "docs/feasibility.md does not exist yet"
+  _st_world; echo warn > "$SS/roadmap.mode";                                        _st_stops roadmap-warns 6 "exit 0 with warnings is not clear"
+  _fr_want "$out" 'WARN   scenarios'; _fr_not "$out" 'Advisory'
+  _st_world; rm "$sp/docs/chunks/graph.json";                                       _st_stops roadmap-no-graph 6 "run /roadmap"
+  _st_world; echo drift > "$SS/freeze.mode";                                        _st_stops acceptance-drift 7 "~/.forge/repo/scripts/acceptance-freeze.sh $spreal"
+  [ "$(grep '^acceptance-freeze ' "$SS/calls.log" | tail -n 1)" != "acceptance-freeze $spreal" ] || d="$d acceptance-drift:the-freeze-was-run-on-the-project-itself"
+  _st_world; echo invalid > "$SS/freeze.mode";                                      _st_stops acceptance-invalid 7 "rejects the plan's contracts"
+  _fr_want "$out" 'names no scenarios'
+  _st_world; rm "$sp/docs/chunks/contract-freeze.json";                             _st_stops acceptance-no-manifest 7 "contract-freeze.json is missing"
+  _st_world; echo scratch > "$sp/untracked.txt";                                    _st_stops plan-dirty 8 "the working tree is not clean (1 path(s))"
+  _st_world; echo more > "$sp/more.txt"; _rxg -C "$sp" add -A; _rxg -C "$sp" commit -q -m local; _st_stops plan-ahead 8 "HEAD is 1 commit(s) ahead of origin/main"
+  _st_world; _rxg clone -q "$sbare" "$root/sother" 2>/dev/null; echo more > "$root/sother/more.txt"; _rxg -C "$root/sother" add -A
+  _rxg -C "$root/sother" -c user.email=t@example.invalid -c user.name=o commit -q -m other; _rxg -C "$root/sother" push -q origin main 2>/dev/null
+  rm -rf "$root/sother";                                                            _st_stops plan-behind 8 "HEAD is 1 commit(s) behind origin/main"
+  _st_world; echo 4 > "$SS/gate.rc";                                                _st_stops gate-none 9 "make -C $spreal protect"
+  _st_world; echo 3 > "$SS/gate.rc";                                                _st_stops gate-partial 9 "is not gated (PARTIAL"
+  _st_world; echo waiting > "$SS/gw.mode";                                          _st_stops host-gateway 10 "the Hermes gateway is not running"
+  _st_world; echo fail > "$SS/preflight.mode";                                      _st_stops host-preflight 10 "preflight has failures (PASS 10   WARN 1   FAIL 2)"
+  _fr_want "$out" 'FAIL  the gateway PATH CANNOT reach codex'; _fr_not "$out" 'PASS  one'
+  _st_world; printf '[{"name":"forge-verifier","on_disk":true}]\n' > "$SS/assignees.json"; _st_stops lanes-missing 11 "not Hermes profiles on disk: forge-codex-lane"
+  _st_world; FR_X="FORGE_LANE_ASSIGNEE=forge-overseer";                             _st_stops lanes-overseer-env 11 "FORGE_LANE_ASSIGNEE names the overseer"
+  _st_world; jq '(.[] | select(.id == "CHUNK-3") | .lane) = "forge-overseer"' "$sp/docs/chunks/graph.json" > "$sp/g.new" && mv "$sp/g.new" "$sp/docs/chunks/graph.json"
+  _rxg -C "$sp" add -A; _rxg -C "$sp" commit -q -m overseer; _rxg -C "$sp" push -q origin main 2>/dev/null; _st_stops lanes-overseer-graph 11 "routes a card to the overseer"
+  _st_world; echo '[{"slug":"stub-board","archived":false,"total":3}]' > "$SS/boards.json"; echo 1 > "$SS/sync.rc"; _st_stops board-drift 12 "board-sync.sh stub-board --branch-suffix a2 --apply"
+  _fr_want "$out" 'CREATE CHUNK-3'; _fr_want "$out" 'a board started with --root-only gets the rest from the full bootstrap'
+  _st_world; echo '[{"slug":"stub-board","archived":true,"total":3}]' > "$SS/boards.json"; _st_stops board-archived 12 "board stub-board exists but is archived"
+  # the real checkers' own output, read the way start reads it: an incomplete scope is exit 1 with a FAIL block per finding, and a plan whose
+  # chunk contracts are stubs is exit 0 WITH WARNINGS, which is not clear
+  if command -v python3 >/dev/null 2>&1; then
+    _st_world; cp "$fs/plan-check.sh" "$skit/scripts/"
+    printf '# requirements\n' > "$sp/docs/REQUIREMENTS.md"; _st_stops real-scope-incomplete 4 "open Claude Code in $spreal and run /scope"
+    _fr_want "$out" 'FAIL   ambition'; _fr_not "$out" 'Advisory'
+    _st_world; cp "$fs/roadmap-check.sh" "$fs/touches-exempt.sh" "$skit/scripts/"
+    _st_stops real-roadmap-warns 6 "exit 0 with warnings is not clear"
+  fi
+  [ -z "$d" ] && ok "start-stops-at-the-first-unmet-rung (for each of the twelve rungs made to fail in turn, and for the several ways each can fail: exit 1, exactly one NEXT line at that rung carrying its remedy, every earlier rung ok and every later one not reached, no later checker called, and the project, Hermes and the state root byte-identical with every write verb refused; a document that is not there yet is a rung that is not met, not exit 2, against the real plan-check and roadmap-check as well; the acceptance freeze is tried on a scratch copy and never the project; no scratch directory is left)" \
+    || bad "start-stops-at-the-first-unmet-rung" "start must stop at the first rung that is not met and change nothing —$d :: $(printf '%s' "$out" | head -8 | tr '\n' '|')"
+
+  # --- 15. a rung that could not be asked is exit 2, never a NEXT -------------------------------------------------------------------
+  d=""
+  _st_world; echo 2 > "$SS/gate.rc";                      _st_asks merge-gate-could-not-ask 9 "merge-gate exited 2"
+  _st_world; : > "$SS/gh.fail";                           _st_asks gh-fails 2 "gh repo view could not name the repository"
+  _st_world; : > "$SS/boards.fail";                       _st_asks board-list-unreadable 12 "hermes kanban boards list failed"
+  _st_world; echo garbled > "$SS/preflight.mode";         _st_asks preflight-without-a-summary 10 "without a readable summary"
+  _st_world; echo silent > "$SS/roadmap.mode";            _st_asks roadmap-without-a-verdict 6 "no CLEAR or WARN summary"
+  _st_world; echo fatal > "$SS/roadmap.mode";             _st_asks roadmap-graph-unreadable 6 "does not describe a checkable plan"
+  _st_world; echo rc2 > "$SS/freeze.mode";                _st_asks freeze-could-not-run 7 "acceptance-freeze exited 2"
+  _st_world; : > "$SS/assignees.fail";                    _st_asks assignees-unreadable 11 "hermes kanban assignees --json failed"
+  _st_world; _rxg -C "$sp" remote set-url origin "$root/no-such-origin.git"; _st_asks fetch-fails 8 "git fetch origin failed"
+  [ -z "$d" ] && ok "start-could-not-ask-is-exit-2 (a merge gate that cannot be asked, gh failing, a board list that cannot be read, a preflight with no summary, a roadmap check with no verdict or a graph it cannot read, a freeze that could not run, an assignee list that cannot be read and a fetch that fails: each is exit 2 at its own rung, shown as ?? and never as NEXT, with the rungs after it not reached and nothing written)" \
+    || bad "start-could-not-ask-is-exit-2" "\"could not ask\" must never read as \"not there\" or as a step to do —$d :: $(printf '%s' "$out" | head -8 | tr '\n' '|')"
+
+  # --- 16. start bootstraps only when confirmed, and only once ----------------------------------------------------------------------
+  d=""
+  _st_world
+  : > "$SS/calls.log"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d no-yes-no-tty:exit=$rc(want 2)"
+  _fr_want "$out" 'forge start will now bootstrap board stub-board from '
+  _fr_want "$out" '7 cards: 5 chunk card(s) and 2 gate card(s), over 2 milestone(s)'
+  _fr_want "$out" 'it STARTS IMMEDIATELY: CHUNK-1 (forge-codex-lane) is ready the moment it is created'
+  _fr_want "$out" 'hand-built (claude-interactive) chunks wait for you, whenever their turn comes: CHUNK-2'
+  _fr_want "$out" 'the verifier only RECOMMENDS merges'
+  _fr_want "$out" 'everything behind GATE-M1 waits for that gate'
+  _fr_not  "$out" 'everything behind GATE-M2'
+  grep -q 'not confirmed: this is not a terminal and --yes was not given' "$root/err" || d="$d no-yes-no-tty:not-said"
+  ! grep -q '^WRITE' "$SS/calls.log" || d="$d no-yes-no-tty:a-write-verb-was-called"
+  [ ! -s "$SS/bstate/keys.tsv" ] || d="$d no-yes-no-tty:a-card-was-created"
+  : > "$SS/calls.log"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 --yes </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d bootstrap:exit=$rc(want 0)"
+  [ "$(wc -l < "$SS/bstate/keys.tsv" 2>/dev/null | tr -d ' ')" = 7 ] || d="$d bootstrap:cards=$(wc -l < "$SS/bstate/keys.tsv" 2>/dev/null | tr -d ' ')(want 7)"
+  _fr_want "$out" 'ready    CHUNK-1 -> '
+  _fr_want "$out" 'read back: board stub-board is in sync with the plan'
+  _fr_want "$out" '== forge status stub-board =='
+  _fr_want "$out" "next: forge go stub-board --project $spreal --branch-suffix a2"
+  _fr_want "$out" 'stop: forge stop stub-board'
+  grep -q "^hermes kanban boards create stub-board\$" "$SS/calls.log" || d="$d bootstrap:the-real-bootstrap-did-not-run"
+  grep -q "^board-sync cwd=$spreal args=stub-board --branch-suffix a2\$" "$SS/calls.log" || d="$d bootstrap:read-back-was-not-board-sync-from-the-project"
+  [ -z "$(ls -A "$root/tmp" 2>/dev/null)" ] || d="$d bootstrap:a-scratch-directory-was-left"
+  # asked again: the board is there and matches, so there is nothing to start and nothing is created
+  : > "$SS/calls.log"; : > "$SS/readonly"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 --yes </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d second-run:exit=$rc(want 0)"
+  _fr_want "$out" "already on board stub-board: nothing to start. Next: forge go stub-board --project $spreal --branch-suffix a2"
+  ! grep -q '^WRITE' "$SS/calls.log" || d="$d second-run:a-write-verb-was-called"
+  [ "$(wc -l < "$SS/bstate/keys.tsv" | tr -d ' ')" = 7 ] || d="$d second-run:cards-changed"
+  rm -f "$SS/readonly"
+  # --root-only creates the root and reads that back, not a board that matches the whole plan
+  _st_world
+  out="$(_st start "$sp" --board stub-board --root-only --yes </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d root-only:exit=$rc(want 0)"
+  [ "$(wc -l < "$SS/bstate/keys.tsv" 2>/dev/null | tr -d ' ')" = 1 ] || d="$d root-only:cards=$(wc -l < "$SS/bstate/keys.tsv" 2>/dev/null | tr -d ' ')(want 1)"
+  _fr_want "$out" 'ONE card is created now (--root-only)'
+  _fr_want "$out" 'read back: the root card (CHUNK-1) is on board stub-board'
+  # a spent branch: nothing is created, it says which flag, and the empty board the bootstrap left behind is not "the board exists"
+  _st_world
+  printf 'chunk/1-fixture-title-a2\t5\tCLOSED\n' > "$SS/bstate/gh-prs.tsv"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 --yes </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d spent-branch:exit=$rc(want 1)"
+  grep -q 'Pick another --branch-suffix' "$root/err" || d="$d spent-branch:does-not-say-which-flag"
+  [ ! -s "$SS/bstate/keys.tsv" ] || d="$d spent-branch:a-card-was-created"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a3 --yes </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d spent-branch-then-a-new-suffix:exit=$rc(want 0)"
+  _fr_want "$out" 'exists with no card (an earlier refused bootstrap)'
+  [ "$(wc -l < "$SS/bstate/keys.tsv" 2>/dev/null | tr -d ' ')" = 7 ] || d="$d spent-branch-then-a-new-suffix:cards=$(wc -l < "$SS/bstate/keys.tsv" 2>/dev/null | tr -d ' ')(want 7)"
+  # GitHub that cannot be asked during the bootstrap is exit 2, and creates nothing
+  _st_world
+  : > "$SS/bstate/gh-fails"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 --yes </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d bootstrap-could-not-ask:exit=$rc(want 2)"
+  [ ! -s "$SS/bstate/keys.tsv" ] || d="$d bootstrap-could-not-ask:a-card-was-created"
+  [ -z "$d" ] && ok "start-bootstraps-only-when-confirmed (every rung ok and the board absent: with no --yes and no terminal it says in plain words what it will do (7 cards, the root that starts at once with its lane, the hand-built chunk that waits, the verifier only recommending, what waits behind GATE-M1), exits 2 and has written nothing; with --yes the REAL bootstrap creates the cards on the stateful double, the read-back is a board-sync dry run from the project, status and the two next commands are printed, exit 0; asked again it says already on board and creates nothing; --root-only creates one card and reads the root back; a spent branch exits 1 naming --branch-suffix, creates nothing, and the empty board it left does not stop a run with another suffix; a GitHub that cannot be asked is exit 2)" \
+    || bad "start-bootstraps-only-when-confirmed" "start writes only once, behind the confirmation —$d :: $(printf '%s' "$out" | tail -4 | tr '\n' '|') :: $(head -3 "$root/err" | tr '\n' '|')"
+
+  # --- 17. an ungated private repository is a posture, not a refusal ----------------------------------------------------------------
+  d=""
+  _st_world
+  echo 5 > "$SS/gate.rc"; echo 'Acme/My.Repo_X' > "$SS/slug"; echo 0 > "$SS/sync.rc"
+  echo '[{"slug":"my-repo_x-run-1","archived":false,"total":7}]' > "$SS/boards.json"
+  # the committed manifest is compact JSON and the freeze writes it pretty-printed: the same document, so the rung is met
+  jq -c . "$sp/docs/chunks/contract-freeze.json" > "$sp/m.new" && mv "$sp/m.new" "$sp/docs/chunks/contract-freeze.json"
+  _rxg -C "$sp" add -A; _rxg -C "$sp" commit -q -m "compact manifest"; _rxg -C "$sp" push -q origin main 2>/dev/null
+  echo reformat > "$SS/freeze.mode"
+  : > "$SS/calls.log"; : > "$SS/readonly"
+  out="$(_st start "$sp" </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d ungated:exit=$rc(want 0)"
+  _fr_want "$out" 'ok    7   acceptance: acceptance is frozen and docs/chunks/contract-freeze.json is current'
+  _fr_want "$out" 'ok    9   merge gate: UNGATED (GitHub cannot gate a private repo on this plan; CI green is checked by the verifier)'
+  _fr_want "$out" 'ok    2   origin: GitHub Acme/My.Repo_X'
+  _fr_want "$out" 'already on board my-repo_x-run-1: nothing to start. Next: forge go my-repo_x-run-1 --project '
+  grep -q '^merge-gate Acme/My.Repo_X --branch main --require check$' "$SS/calls.log" || d="$d ungated:merge-gate-was-not-asked-as-commission-asks-it"
+  echo 0 > "$SS/gate.rc"
+  out="$(_st start "$sp" </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d gated:exit=$rc(want 0)"
+  _fr_want "$out" 'ok    9   merge gate: GATED via=classic pr=yes checks=check missing=-'
+  rm -f "$SS/readonly"
+  _st_world; echo 4 > "$SS/gate.rc"; _st_stops exit-4-is-a-next 9 "make -C $spreal protect"
+  # --commission: paid, only on the flag, only before the board exists, and a FAIL is a step
+  _st_world
+  : > "$SS/calls.log"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 </dev/null 2>"$root/err")"; rc=$?
+  _fr_want "$out" 'commissioning skipped: --commission would run scripts/commission.sh'
+  ! grep -q '^SPEND' "$SS/calls.log" || d="$d no-flag:commission-was-run"
+  : > "$SS/calls.log"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 --commission </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d commission:exit=$rc(want 2: not confirmed)"
+  _fr_want "$out" 'ok    11+ commission: commissioned'
+  _fr_want "$out" 'overall: PASS'; _fr_want "$out" 'posture: UNGATED (merge gate unavailable on this plan: stub-owner/stub-repo)'
+  [ "$(grep -c '^SPEND' "$SS/calls.log")" = 1 ] || d="$d commission:spent=$(grep -c '^SPEND' "$SS/calls.log")(want 1)"
+  grep -q "^SPEND commission $spreal stub-board\$" "$SS/calls.log" || d="$d commission:wrong-arguments"
+  echo 1 > "$SS/commission.rc"; : > "$SS/calls.log"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 --commission </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d commission-fails:exit=$rc(want 1)"
+  _fr_want "$out" 'NEXT  11+ commission: commissioning FAILED'; _fr_want "$out" 'overall: FAIL'
+  _fr_want "$out" '-     12  board'
+  echo '[{"slug":"stub-board","archived":false,"total":7}]' > "$SS/boards.json"; echo 0 > "$SS/commission.rc"; echo 0 > "$SS/sync.rc"; : > "$SS/calls.log"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 --commission </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d commission-board-exists:exit=$rc(want 0)"
+  ! grep -q '^SPEND' "$SS/calls.log" || d="$d commission-board-exists:it-spent-anyway"
+  _fr_want "$out" 'not run: board stub-board already exists'
+  [ -z "$d" ] && ok "start-an-ungated-private-repo-is-allowed (merge-gate exit 5 is ok, printed as UNGATED with the sentence that CI green is checked by the verifier; exit 0 is GATED; exit 4 is NEXT make protect; merge-gate is asked as commission asks it; a repository named with capitals and a dot makes a Hermes slug; --commission runs the paid commission once, only on the flag, shows its overall and posture lines, a FAIL is NEXT, and an existing board skips it)" \
+    || bad "start-an-ungated-private-repo-is-allowed" "exit 5 of merge-gate is an answer —$d :: $(printf '%s' "$out" | head -6 | tr '\n' '|')"
+
+  # --- 18. new stamps, commits, and stops before GitHub unless asked -----------------------------------------------------------------
+  d=""
+  _nw() { # forge new from the start kit, with stand-ins for uvx, make and gh
+    env -u HERMES_DELEGATED_CHILD_CONTEXT HOME="$root/home" HERMES_HOME="$H" FORGE_STATE_ROOT="$S" TZ=UTC TMPDIR="$root/tmp" \
+        PATH="$root/nbin:$sbd:$PATH" ST_STUB="$SS" GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=tester GIT_AUTHOR_EMAIL=t@example.invalid \
+        GIT_COMMITTER_NAME=tester GIT_COMMITTER_EMAIL=t@example.invalid $FR_X "$skit/scripts/forge.sh" new "$@"
+  }
+  mkdir -p "$root/nbin"
+  cat > "$root/nbin/uvx" <<'ST_UVX'
+#!/usr/bin/env bash
+S="${ST_STUB:?}"; echo "uvx $*" >> "$S/calls.log"
+[ "$(cat "$S/uvx.rc" 2>/dev/null || echo 0)" = 0 ] || { echo "copier: stamping failed" >&2; exit 1; }
+mkdir -p "$4"; printf '.forge/\n' > "$4/.gitignore"; printf 'name = "%s"\n' "${7#project_name=}" > "$4/pyproject.toml"
+ST_UVX
+  cat > "$root/nbin/make" <<'ST_MAKE'
+#!/usr/bin/env bash
+S="${ST_STUB:?}"; echo "make $* cwd=$(pwd -P)" >> "$S/calls.log"
+case "${1:-}" in
+  setup) exit "$(cat "$S/setup.rc" 2>/dev/null || echo 0)";;
+  protect) echo "make: protect said 403" >&2; exit "$(cat "$S/protect.rc" 2>/dev/null || echo 0)";;
+esac
+ST_MAKE
+  cat > "$root/nbin/gh" <<'ST_NGH'
+#!/usr/bin/env bash
+S="${ST_STUB:?}"; echo "gh $* cwd=$(pwd -P)" >> "$S/calls.log"
+exit "$(cat "$S/gh.rc" 2>/dev/null || echo 0)"
+ST_NGH
+  chmod +x "$root/nbin/uvx" "$root/nbin/make" "$root/nbin/gh"
+  local dest="$root/dest" tgt="$root/dest/thing" ncalls
+  _nw_world() { _st_world; rm -rf "$dest"; mkdir -p "$dest"; }
+  # without --github: stamped, set up, committed, and the gh line is the next step
+  _nw_world
+  out="$(_nw thing --dest "$dest" 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d no-github:exit=$rc(want 0)"
+  [ -d "$tgt/.git" ] && [ "$(_rxg -C "$tgt" symbolic-ref --short HEAD 2>/dev/null)" = main ] || d="$d no-github:not-a-repository-on-main"
+  [ "$(_rxg -C "$tgt" rev-list --count HEAD 2>/dev/null)" = 1 ] || d="$d no-github:not-one-commit"
+  [ -z "$(_rxg -C "$tgt" status --porcelain 2>/dev/null)" ] || d="$d no-github:the-tree-is-not-clean-after-the-commit"
+  ncalls="$(grep -E '^(uvx|make|gh) ' "$SS/calls.log" | sed 's/ cwd=.*//; s#copy .* --defaults#copy <t> --defaults#' | tr '\n' '|')"
+  [ "$ncalls" = "uvx copier copy <t> --defaults --data project_name=thing|make setup|" ] || d="$d no-github:calls[$ncalls]"
+  grep -q "^uvx copier copy .*/templates/python-service $tgt --defaults --data project_name=thing\$" "$SS/calls.log" || d="$d no-github:the-stamp-is-not-the-Makefiles-call"
+  grep -q "^make setup cwd=$(cd "$tgt" && pwd -P)\$" "$SS/calls.log" || d="$d no-github:make-setup-did-not-run-in-the-project"
+  ! grep -q '^gh ' "$SS/calls.log" || d="$d no-github:gh-was-called"
+  _fr_want "$out" "next: gh repo create thing --private --source . --push"
+  [ "$(printf '%s\n' "$out" | tail -n 1)" = "next: open Claude Code in $tgt and run /scope — then: forge start $tgt" ] || d="$d no-github:the-last-line-is-not-the-next-step[$(printf '%s\n' "$out" | tail -n 1)]"
+  # an existing target is refused and nothing is written
+  : > "$SS/calls.log"; echo keep > "$tgt/keep.txt"
+  out="$(_nw thing --dest "$dest" 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d existing:exit=$rc(want 2)"
+  grep -q 'already exists, and forge new never overwrites' "$root/err" || d="$d existing:not-said"
+  ! grep -qE '^(uvx|make|gh) ' "$SS/calls.log" || d="$d existing:something-ran"
+  [ "$(cat "$tgt/keep.txt")" = keep ] || d="$d existing:the-target-changed"
+  # with --github: the calls happen in order, make protect after the push, and the posture is whatever merge-gate says
+  _nw_world
+  out="$(_nw thing --dest "$dest" --github acme/thing 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d github:exit=$rc(want 0)"
+  ncalls="$(grep -E '^(uvx|make|gh) ' "$SS/calls.log" | sed 's/ cwd=.*//; s#copy .* --defaults#copy <t> --defaults#' | tr '\n' '|')"
+  [ "$ncalls" = "uvx copier copy <t> --defaults --data project_name=thing|make setup|gh repo create acme/thing --private --source . --push|make protect|" ] || d="$d github:calls[$ncalls]"
+  grep -q "^gh repo create acme/thing --private --source . --push cwd=$(cd "$tgt" && pwd -P)\$" "$SS/calls.log" || d="$d github:gh-did-not-run-in-the-project"
+  grep -q '^merge-gate acme/thing --branch main --require check$' "$SS/calls.log" || d="$d github:posture-was-not-asked-of-merge-gate"
+  _fr_want "$out" 'posture: GATED (branch protection requires a PR and the check: GATED via=classic'
+  _fr_not  "$out" 'next: gh repo create'
+  [ "$(printf '%s\n' "$out" | tail -n 1)" = "next: open Claude Code in $tgt and run /scope — then: forge start $tgt" ] || d="$d github:the-last-line-is-not-the-next-step"
+  # make protect fails on a private free-plan repo, which merge-gate reports as UNAVAILABLE: that is a posture, not a failure
+  _nw_world; echo 1 > "$SS/protect.rc"; echo 5 > "$SS/gate.rc"
+  out="$(_nw thing --dest "$dest" --github acme/thing 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d ungated:exit=$rc(want 0)"
+  _fr_want "$out" 'posture: UNGATED (GitHub cannot gate a private repository on this plan'
+  grep -q '^gh repo create acme/thing --private --source . --push ' "$SS/calls.log" || d="$d ungated:private-was-not-the-default"
+  _nw_world
+  out="$(_nw thing --dest "$dest" --github acme/thing --public 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d public:exit=$rc(want 0)"
+  grep -q '^gh repo create acme/thing --public --source . --push ' "$SS/calls.log" || d="$d public:public-was-not-passed"
+  # a repository that is not gated after make protect is a step that failed, and says what is left on disk
+  _nw_world; echo 1 > "$SS/protect.rc"; echo 4 > "$SS/gate.rc"
+  out="$(_nw thing --dest "$dest" --github acme/thing 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d protect-did-not-gate:exit=$rc(want 1)"
+  grep -q 'FAILED at: make protect' "$root/err" && grep -q "$tgt is pushed to acme/thing" "$root/err" || d="$d protect-did-not-gate:not-said"
+  _nw_world; echo 2 > "$SS/gate.rc"
+  out="$(_nw thing --dest "$dest" --github acme/thing 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d gate-could-not-ask:exit=$rc(want 2)"
+  # a step that fails is exit 1, names the step, and says what is on disk
+  _nw_world; echo 1 > "$SS/uvx.rc"
+  out="$(_nw thing --dest "$dest" 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d stamp-fails:exit=$rc(want 1)"
+  grep -q 'FAILED at: stamping the template' "$root/err" || d="$d stamp-fails:not-said"
+  ! grep -q '^make ' "$SS/calls.log" || d="$d stamp-fails:it-went-on"
+  _nw_world; echo 1 > "$SS/setup.rc"
+  out="$(_nw thing --dest "$dest" 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d setup-fails:exit=$rc(want 1)"
+  grep -q 'FAILED at: make setup' "$root/err" && grep -q "$tgt is stamped and is a repository with no commit" "$root/err" || d="$d setup-fails:not-said"
+  [ "$(_rxg -C "$tgt" rev-list --count --all 2>/dev/null)" = 0 ] || d="$d setup-fails:it-committed-anyway"
+  _nw_world; echo 1 > "$SS/gh.rc"
+  out="$(_nw thing --dest "$dest" --github acme/thing 2>"$root/err")"; rc=$?
+  [ "$rc" = 1 ] || d="$d gh-fails:exit=$rc(want 1)"
+  grep -q 'FAILED at: gh repo create acme/thing' "$root/err" || d="$d gh-fails:not-said"
+  ! grep -q '^make protect' "$SS/calls.log" || d="$d gh-fails:it-went-on"
+  # usage, and the real durable-path guard: every path under the temp root is volatile, so the real one refuses this destination and nothing is written
+  _nw_world
+  out="$(_nw thing --dest "$dest" --public 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d public-without-github:exit=$rc(want 2)"
+  out="$(_nw thing --dest "$dest" --github notaslug 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d bad-github:exit=$rc(want 2)"
+  out="$(_nw 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d no-name:exit=$rc(want 2)"
+  cp "$fs/new-dest.sh" "$skit/scripts/new-dest.sh"; : > "$SS/calls.log"
+  FR_X="TMPDIR=$root"
+  out="$(_nw thing --dest "$dest" 2>"$root/err")"; rc=$?
+  FR_X=""
+  [ "$rc" = 2 ] || d="$d volatile-destination:exit=$rc(want 2)"
+  grep -q 'volatile root' "$root/err" || d="$d volatile-destination:the-guard's-reason-is-not-passed-through"
+  ! grep -qE '^(uvx|make|gh) ' "$SS/calls.log" || d="$d volatile-destination:something-ran"
+  [ ! -e "$tgt" ] || d="$d volatile-destination:the-target-was-created"
+  [ -z "$d" ] && ok "new-stamps-and-stops-before-github (without --github: the template is stamped through uvx copier with the Makefile's own arguments, git init -b main, make setup in the project, one commit, a clean tree, no gh call, the gh repo create line and then the /scope next step are printed; with it the calls run in order (stamp, setup, gh repo create, make protect) and the posture is merge-gate's: GATED, or UNGATED where make protect fails on a private repo on a free plan; a repository that is not gated is exit 1 and a gate that cannot be asked is 2; an existing target, a volatile destination (the real new-dest.sh) and bad arguments are exit 2 with nothing written; a failing step is exit 1, named, with what is left on disk)" \
+    || bad "new-stamps-and-stops-before-github" "forge new must stamp, commit and stop where it was told to —$d :: $(printf '%s' "$out" | tail -3 | tr '\n' '|') :: $(head -3 "$root/err" | tr '\n' '|')"
 }
 wants front     && run_front_group
 

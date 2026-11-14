@@ -67,8 +67,6 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
 
 ## Known gaps
 
-- **Starting a new project is still several commands** (below). `forge go` launches a board that
-  exists; it does not yet commission and bootstrap one.
 - **A blocked checkpoint has no phone answer** until the forge-gate bot exists (above).
 - **The suite is heavy.** `scripts/verify.sh` is about 23,000 lines and CI takes 18 minutes per
   PR. WL4 (the `verify` diet) is the answer and is not started.
@@ -78,15 +76,16 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
 ## Starting a new project
 
 ```bash
-make new NAME=my-project DEST=$HOME/dev
+forge new my-project --dest $HOME/dev [--github <owner>/<repo>]   # stamp, git init, make setup, first commit
 # in Claude Code, in the project: /scope, then /architect, then /roadmap
 PROJECT=/absolute/path/to/product
 make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
-make commission PROJECT="$PROJECT" BOARD=<slug>       # paid; optional evidence
-cd "$PROJECT" && ~/.forge/repo/hermes/board-bootstrap.sh <slug>
+forge start "$PROJECT" --branch-suffix <s>   # re-run after every step; it prints the next one, then bootstraps the board
+forge go <board> --project "$PROJECT" --branch-suffix <s>   # the launch; --gate GATE-Mn --ahead arms a later milestone
 ```
 
-[`docs/operator-guide.md`](operator-guide.md) is the long form.
+`forge start` is read-only until its last rung (add `--commission` for the paid evidence run, `--root-only` to stage the
+root first). [`docs/operator-guide.md`](operator-guide.md) is the long form.
 
 ## Where things live
 
