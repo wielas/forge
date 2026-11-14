@@ -4,6 +4,20 @@ Organised by what you want to do, not by which tool owns it. Everything here was
 reconciled against the readiness stack on 2026-08-11; re-check after a
 `hermes update`.
 
+## The front door
+
+`make install` links `~/.local/bin/forge` to `~/.forge/repo/scripts/forge.sh`. Three commands:
+
+```bash
+forge status [<board>]   # what is happening, and does anything need you; read-only
+forge stop <board>       # revoke merge authority and disarm every armed gate on the board
+forge help
+```
+
+`status` exits 0 when nothing waits on you, 1 when a card waits or the watchdog is not healthy, 2 when
+a board or the host could not be read. `stop` exits 0 only after it has asked again and found no grant
+and no armed gate; a merge already made is not undone, and a card already running finishes its run.
+
 ## Launch a genuine product run
 
 The canonical, copyable procedure is
