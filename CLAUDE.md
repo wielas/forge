@@ -46,6 +46,10 @@ between docs by reasoning about it — run the suite and believe the result.
   narrow (groups: cli, config, substrate, template, lane, bootstrap, sync, commission,
   metrics, metadata, prejudge, verifier, sweep, roadmap, probe, checkpoint, overseer,
   triage, gateway, gate, docs, digest, quota, watchdog, front, manifest).
+- `./scripts/verify.sh --shard k/n` — one weight-balanced share of the default groups, with
+  `manifest` last in every shard. CI runs three shards; `make verify` is still the whole suite in
+  one process. `LABROOT` is a fixed path, so never run two shards on one machine at once. The run
+  ends with seconds per group, slowest first.
 - `make verify WITH_CODEX=1` — **spends tokens** on live sandbox probes. Not casual.
 - `make preflight` — read-only revalidation of the mini before unattended work.
 - `make prejudge PR=<url|number>` — tier-1 stage 1. Exit 1 = block, exit 2 = the gate

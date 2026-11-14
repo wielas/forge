@@ -19,6 +19,15 @@
 #   ./scripts/verify.sh bootstrap --with-hermes  # run isolated real-Hermes bootstrap proof
 #   ./scripts/verify.sh verifier --with-replays  # replay recorded private PRs from local clones
 #   ./scripts/verify.sh --list          # list cases without running them
+#   ./scripts/verify.sh --shard 2/3     # shard 2 of 3 of the default groups: a weight-balanced partition
+#                                       # (CI runs 1/3, 2/3 and 3/3); `manifest` runs last in EVERY shard.
+#                                       # Refused (exit 2) beside explicit groups, for a malformed k/n, k<1,
+#                                       # k>n, n>16, or a shard with no group but `manifest`. One shard per
+#                                       # machine at a time: LABROOT below is a fixed path.
+#   ./scripts/verify.sh --shard 2/3 --list-groups   # name that shard's groups and exit; runs nothing
+#
+# Every run ends with seconds per group, slowest first (and, on bash 5, the ten slowest cases), printed
+# before the `N passed, N failed, N skipped` line, which stays the last line of output.
 #
 # Groups:
 #   cli/        every long flag named beside a command in skills/, hermes/, docs/
@@ -112,7 +121,9 @@
 #               case runs a real rehearsal: that spends a Codex run and a judge call
 #   manifest/   `--list` names every case the suite actually runs. Compares the
 #               catalogue against what THIS run emitted, so a check added
-#               without a catalogue entry is caught. Full runs only    (F65/F66)
+#               without a catalogue entry is caught. Any run, narrowed or
+#               sharded: every case that ran is documented holds per subset,
+#               and every shard runs it                              (F65/F66)
 #
 # Exit 0 iff every case passes. Run it in CI, and as a hard gate after every
 # `hermes update` and every codex/claude upgrade.
@@ -134,20 +145,93 @@ helptext() {
   ' "$0"
 }
 
-WITH_CODEX=0; WITH_HERMES=0; WITH_REPLAYS=0; LIST_ONLY=0; SUITES=""
+WITH_CODEX=0; WITH_HERMES=0; WITH_REPLAYS=0; LIST_ONLY=0; LIST_GROUPS=0; SUITES=""; SHARD_SPEC=""; SHARD_SET=0
+# The --shard and --list-groups arms assign SHARD_SPEC / LIST_GROUPS, never SUITES=: suite_registry_diff
+# (the cli/ group) reads the case-arm registry with `^[[:space:]]*\([^)]*\)) SUITES=`, so an arm that
+# set SUITES= here would register `--shard` as a group name and redden two cases.
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-codex) WITH_CODEX=1; shift;;
     --with-hermes) WITH_HERMES=1; shift;;
     --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
+    --list-groups) LIST_GROUPS=1; shift;;
+    --shard) [ $# -ge 2 ] || { echo "--shard needs k/n (for example --shard 2/3)" >&2; exit 2; }
+             SHARD_SPEC="$2"; SHARD_SET=1; shift 2;;
+    --shard=*) SHARD_SPEC="${1#--shard=}"; SHARD_SET=1; shift;;
     -h|--help) helptext; exit 0;;
     cli|config|substrate|template|lane|bootstrap|sync|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|watchdog|front|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 DEFAULT_SUITES="cli config substrate template lane bootstrap sync commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota watchdog front manifest"
+
+# ---------------------------------------------------------------------------
+# --shard k/n: a deterministic, weight-balanced partition of DEFAULT_SUITES, so CI can run the
+# suite as n jobs. SHARD_WEIGHTS is seconds measured on CI; a group that is not listed weighs
+# SHARD_DEFAULT_WEIGHT. A stale weight costs balance, never coverage: every group is in exactly one
+# shard whatever the table says, which cli/shards-partition-the-default-suites asserts for n = 1..6.
+# `manifest` is exempt from the partition and runs, last, in EVERY shard: it checks that every case
+# that ran is documented, which is a property of the subset it can see.
+# ---------------------------------------------------------------------------
+SHARD_WEIGHTS="cli:5 gateway:263 quota:90 lane:77 roadmap:39 sync:30 verifier:29 triage:23 front:22 checkpoint:21 metadata:19 bootstrap:15 digest:13 watchdog:11 probe:8 template:7 metrics:5 prejudge:5 overseer:4"
+SHARD_DEFAULT_WEIGHT=10
+SHARD_EXEMPT="manifest"
+SHARD_MAX=16
+
+shard_exempt() { case " $SHARD_EXEMPT " in *" $1 "*) return 0;; esac; return 1; }
+
+# $1=k $2=n -> the groups shard k of n runs, in DEFAULT_SUITES order, then the exempt group.
+# Longest-processing-time: heaviest group first (ties by name) to the least-loaded shard (ties to
+# the lowest index). `sort` runs under LC_ALL=C so macOS and Linux order ties the same way.
+shard_groups() {
+  local k="$1" n="$2" g w e i best assigned="" out="" sorted
+  local -a load=()
+  i=0; while [ "$i" -lt "$n" ]; do load[$i]=0; i=$((i+1)); done
+  # (a `case` inside $( ) does not parse on bash 3.2, which is why the exempt test is a function)
+  sorted="$(for g in $DEFAULT_SUITES; do
+    shard_exempt "$g" && continue
+    w="$SHARD_DEFAULT_WEIGHT"
+    for e in $SHARD_WEIGHTS; do [ "${e%%:*}" = "$g" ] && w="${e#*:}"; done
+    printf '%s %s\n' "$w" "$g"
+  done | LC_ALL=C sort -k1,1nr -k2,2)"
+  while read -r w g; do
+    [ -n "$g" ] || continue
+    best=0; i=1
+    while [ "$i" -lt "$n" ]; do [ "${load[$i]}" -lt "${load[$best]}" ] && best=$i; i=$((i+1)); done
+    load[$best]=$(( ${load[$best]} + w ))
+    assigned="$assigned$g:$((best+1)) "
+  done <<< "$sorted"
+  for g in $DEFAULT_SUITES; do
+    shard_exempt "$g" && continue
+    case " $assigned" in *" $g:$k "*) out="$out $g";; esac
+  done
+  printf '%s %s\n' "${out# }" "$SHARD_EXEMPT"
+}
+
+SHARD_LABEL=""
+if [ "$SHARD_SET" = 1 ]; then      # set, not non-empty: `--shard ""` is a refusal, not a full run
+  # Refusals happen here, before the temp directory and the EXIT trap exist: a refusal runs no case
+  # and removes nothing, LABROOT included.
+  shard_refuse() { echo "verify.sh: --shard $SHARD_SPEC: $1" >&2; exit 2; }
+  [ -z "$SUITES" ] || shard_refuse "a shard is a share of the DEFAULT groups; it cannot be combined with explicit groups ($(echo $SUITES))"
+  case "$SHARD_SPEC" in */*) ;; *) shard_refuse "expected k/n, for example 2/3 (got '$SHARD_SPEC')";; esac
+  shard_k="${SHARD_SPEC%%/*}"; shard_n="${SHARD_SPEC#*/}"
+  case "$shard_k$shard_n" in ""|*[!0-9]*) shard_refuse "expected k/n with k and n plain positive integers, for example 2/3";; esac
+  { [ -n "$shard_k" ] && [ -n "$shard_n" ] && [ "${#shard_k}" -le 6 ] && [ "${#shard_n}" -le 6 ]; } \
+    || shard_refuse "expected k/n with k and n plain positive integers, for example 2/3"
+  shard_k=$((10#$shard_k)); shard_n=$((10#$shard_n))
+  [ "$shard_k" -ge 1 ] || shard_refuse "k must be at least 1"
+  [ "$shard_n" -le "$SHARD_MAX" ] || shard_refuse "n must be at most $SHARD_MAX"
+  [ "$shard_k" -le "$shard_n" ] || shard_refuse "k must not exceed n"
+  shard_run="$(shard_groups "$shard_k" "$shard_n")"
+  shard_work="$(printf '%s\n' "$shard_run" | tr ' ' '\n' | grep -vxF "$SHARD_EXEMPT" | grep -c .)"
+  [ "$shard_work" -ge 1 ] || shard_refuse "shard $shard_k of $shard_n would hold no group but $SHARD_EXEMPT: n is larger than the number of groups"
+  SUITES=" $shard_run"
+  SHARD_LABEL=" [shard $shard_k/$shard_n]"
+fi
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
+if [ "$LIST_GROUPS" = 1 ]; then echo "${SUITES# }"; exit 0; fi
 
 PASS=0; FAIL=0; SKIP=0
 CURRENT_GROUP=""
@@ -155,11 +239,47 @@ CURRENT_GROUP=""
 # compare what this run actually executed against what --list claims it does.
 # The dynamic tail (" (14 flag claims …)") is stripped: it is diagnostic detail,
 # not part of the case's identity.
-_emit()  { [ -n "${TMPROOT:-}" ] && printf '%s/%s\n' "$CURRENT_GROUP" "${1%% (*}" >> "$TMPROOT/emitted.txt"; return 0; }
+_emit()  {
+  [ -n "${TMPROOT:-}" ] && printf '%s/%s\n' "$CURRENT_GROUP" "${1%% (*}" >> "$TMPROOT/emitted.txt"
+  # The slowest-case table: the gap since the previous case (or the group's start), so a case's figure
+  # includes the setup it ran before reporting. Only where the shell has a sub-second clock (bash 5
+  # EPOCHREALTIME; 3.2 on the mini has none). It is a separate file: emitted.txt is the manifest's.
+  if [ -n "${EPOCHREALTIME:-}" ] && [ -n "${TMPROOT:-}" ]; then
+    local _t="${EPOCHREALTIME/[.,]/}"      # the radix is "." or "," by locale
+    printf '%s\t%s/%s\n' "$((_t - _CASE_T0))" "$CURRENT_GROUP" "${1%% (*}" >> "$TMPROOT/case-times.txt"
+    _CASE_T0=$_t
+  fi
+  return 0
+}
 ok()    { PASS=$((PASS+1)); _emit "$1"; printf '  ok    %s/%s\n' "$CURRENT_GROUP" "$1"; }
 bad()   { FAIL=$((FAIL+1)); _emit "$1"; printf '  FAIL  %s/%s\n        %s\n' "$CURRENT_GROUP" "$1" "$2"; }
 skip()  { SKIP=$((SKIP+1)); _emit "$1"; printf '  skip  %s/%s (%s)\n' "$CURRENT_GROUP" "$1" "$2"; }
-group() { CURRENT_GROUP="$1"; printf '\n== %s ==\n' "$1"; }
+# Seconds per group, from $SECONDS (an integer, no fork, present in bash 3.2). A group is open from its
+# group() call until the next one (or the table), so cases that run between groups are charged to the
+# group before them.
+TIMING_ROWS=""; _GROUP_OPEN=""; _GROUP_T0=0; _CASE_T0=0
+_group_close() {
+  [ -n "$_GROUP_OPEN" ] || return 0
+  TIMING_ROWS="$TIMING_ROWS$((SECONDS - _GROUP_T0)) $_GROUP_OPEN"$'\n'
+  _GROUP_OPEN=""
+}
+group() {
+  _group_close
+  _GROUP_OPEN="$1"; _GROUP_T0=$SECONDS
+  [ -z "${EPOCHREALTIME:-}" ] || _CASE_T0="${EPOCHREALTIME/[.,]/}"
+  CURRENT_GROUP="$1"; printf '\n== %s ==\n' "$1"
+}
+# Printed with plain printf, never ok/bad/skip: those record into emitted.txt, and a table is not a case.
+print_timings() {
+  _group_close
+  printf '\n== timings: seconds per group, slowest first (%ss in all)%s ==\n' "$SECONDS" "$SHARD_LABEL"
+  printf '%s' "$TIMING_ROWS" | LC_ALL=C sort -k1,1nr -k2,2 | awk 'NF { printf "  %5ds  %s\n", $1, $2 }'
+  if [ -s "$TMPROOT/case-times.txt" ]; then
+    printf '  the ten slowest cases:\n'
+    LC_ALL=C sort -t "$(printf '\t')" -k1,1nr "$TMPROOT/case-times.txt" | head -10 \
+      | awk -F'\t' '{ printf "  %7.1fs  %s\n", $1 / 1000000, $2 }'
+  fi
+}
 wants() { case " $SUITES " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/forge-verify.XXXXXX")"
@@ -250,6 +370,138 @@ logical_lines() { # $1=file
   } END { if (buf != "") print buf }' "$1" \
   | sed -e 's/\$([^)]*)//g' -e 's/`[^`]*`//g' \
   | tr '|' '\n'
+}
+
+# The flag-claim extractor of cli/flags-exist: for each file, each logical line that invokes a tracked
+# command contributes `<command>\t<flag>\t<file>` per long flag to the claims file.
+#
+# The per-line loop below costs a pair of forks per line per spec. There are ~21k logical lines under
+# docs/ and ten specs, and run on every line it was 344 s on CI -- one case, `cli/flags-exist` -- to
+# find the 28 lines that match. So the loop runs only on the lines ONE grep lets through
+# (flag_claims_prefilter), and the loop, unchanged, still judges every survivor.
+#
+# Why that cannot lose a claim: the filter carries one `-e` per spec, each the very `${spec%%|*}` the
+# loop tests (never a second parse of CLI_SPECS), so a line the loop would accept always survives.
+# `-e` per spec rather than one alternation, so no spec's regex can change another's precedence. It
+# runs on LOGICAL lines (after continuations are joined and `|` splits), never raw ones.
+#
+# `-a` is load-bearing. GNU grep -- the CI runner -- treats input with a NUL byte, or an encoding
+# error in a UTF-8 locale, as binary and answers "Binary file matches" in place of the line, which
+# would drop the claim without a word. The per-line `grep -q` below never sees that (it reads only
+# the exit status), so the filter must not differ from it. BSD grep on macOS differs, and
+# flag_extractor_diagnostic feeds the filter a NUL byte for that reason: it is the one input both
+# greps refuse to print without -a.
+flag_claims_prefilter() { # stdin: logical lines -> stdout: those some spec's regex matches
+  local spec
+  local -a filter=()
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    filter+=(-e "${spec%%|*}")
+  done <<< "$CLI_SPECS"
+  [ "${#filter[@]}" -gt 0 ] || return 0
+  grep -aE "${filter[@]}"
+}
+
+# $1=mode (fast|slow)  $2=claims file (appended to)  $3...=files, relative to the cwd
+# slow runs the loop on every logical line. It is the ORACLE for
+# cli/flags-extractor-fast-path-matches-the-slow-path and nothing else takes that path.
+flag_claims() {
+  local mode="$1" claims="$2" f line spec rx cmd fl
+  shift 2
+  for f in "$@"; do
+    # The audit report itself quotes broken commands as evidence; verifying it
+    # would re-report every bug it documents as a live defect.
+    case "$f" in docs/audit-*.md) continue;; esac
+    while IFS= read -r line; do
+      case "$line" in \#*) continue;; esac          # shell comments
+      while IFS= read -r spec; do
+        [ -n "$spec" ] || continue
+        rx="${spec%%|*}"; cmd="${spec##*|}"
+        if printf '%s' "$line" | grep -qE -- "$rx"; then
+          printf '%s' "$line" | grep -oE -- '--[a-zA-Z][a-zA-Z0-9-]+' \
+            | while read -r fl; do printf '%s\t%s\t%s\n' "$cmd" "$fl" "$f" >> "$claims"; done
+          break                                      # most specific wins
+        fi
+      done <<< "$CLI_SPECS"
+    done < <(if [ "$mode" = slow ]; then logical_lines "$f"; else logical_lines "$f" | flag_claims_prefilter; fi)
+  done
+}
+
+# Replace the one occurrence of $1 with $2 in the text on stdin, literally (no regex, no escapes).
+# rc 1 unless $1 occurs on exactly one line: a mutation that missed its target proves nothing (F65).
+mutate_once() {
+  MUT_OLD="$1" MUT_NEW="$2" awk '
+    BEGIN { old = ENVIRON["MUT_OLD"]; new = ENVIRON["MUT_NEW"] }
+    { i = index($0, old)
+      if (i > 0) { n++; $0 = substr($0, 1, i - 1) new substr($0, i + length(old)) }
+      print }
+    END { exit (n == 1 ? 0 : 1) }'
+}
+
+# $1=a fixture tree (skills/ hermes/ docs/) -> what is wrong with the fast extractor against it; rc 1 if anything.
+# Compares the claims of the slow path and the fast path after `sort -u`, byte for byte, and then
+# feeds the filter the one stream that only `-a` carries through.
+flag_extractor_diagnostic() {
+  local fx="$1" slow="$TMPROOT/fx-slow.tsv" fast="$TMPROOT/fx-fast.tsv" files spec cmd bad=0 n kept
+  : > "$slow"; : > "$fast"
+  files="$(cd "$fx" && find skills hermes docs -type f \( -name '*.md' -o -name '*.sh' -o -name '*.yaml' \) 2>/dev/null | LC_ALL=C sort)"
+  # shellcheck disable=SC2086
+  ( cd "$fx" && flag_claims slow "$slow" $files )
+  # shellcheck disable=SC2086
+  ( cd "$fx" && flag_claims fast "$fast" $files )
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    cmd="${spec##*|}"
+    cut -f1 "$slow" | grep -qxF -- "$cmd" \
+      || { echo "the fixture has no line that reaches the spec for '$cmd': add one, or the oracle cannot see it"; bad=1; }
+  done <<< "$CLI_SPECS"
+  LC_ALL=C sort -u "$slow" > "$slow.u"; LC_ALL=C sort -u "$fast" > "$fast.u"
+  n="$(wc -l < "$slow.u" | tr -d ' ')"
+  [ "$n" -ge 20 ] || { echo "the slow path found $n claims in the fixture; the oracle is blind"; bad=1; }
+  cmp -s "$slow.u" "$fast.u" \
+    || { echo "the fast path's claims differ from the slow path's: $(diff "$slow.u" "$fast.u" | head -4 | tr '\n' ' ')"; bad=1; }
+  kept="$(printf 'codex exec --nulflag\0tail\ncodex exec --bad\xff\xfe\nnothing to see\n' | flag_claims_prefilter | tr -cd '\n' | wc -c | tr -d ' ')"
+  [ "$kept" = 2 ] \
+    || { echo "the pre-filter kept $kept of the 2 matching lines in a stream carrying a NUL byte and an invalid UTF-8 sequence: without grep -a a claim vanishes"; bad=1; }
+  return "$bad"
+}
+
+# A bash 3.2 `case` pattern's `)` cannot sit inside $( ), so the exempt test is a function.
+# $1=a command printing the groups of shard $1 of $2 (its arguments) -> what is wrong; rc 1 if anything.
+# For n = 1..6: the shards' groups, minus the exempt one, are DEFAULT_SUITES minus it, each exactly
+# once; every shard holds a group; the exempt group is last in every shard, once.
+shard_partition_diagnostic() {
+  local lister="$1" want got n k out work dup missing extra e g w bad=0
+  want="$(printf '%s\n' $DEFAULT_SUITES | grep -vxF "$SHARD_EXEMPT" | LC_ALL=C sort)"
+  [ -n "$want" ] || { echo "DEFAULT_SUITES names no group besides $SHARD_EXEMPT: the check went blind, which is not a pass (F65)"; return 1; }
+  n=1
+  while [ "$n" -le 6 ]; do
+    got=""; k=1
+    while [ "$k" -le "$n" ]; do
+      out="$($lister "$k" "$n" 2>&1)"
+      { [ "${out##* }" = "$SHARD_EXEMPT" ] && [ "$(printf '%s\n' $out | grep -cxF "$SHARD_EXEMPT")" = 1 ]; } \
+        || { echo "n=$n k=$k: $SHARD_EXEMPT must be this shard's last group, once (got: ${out:-nothing})"; bad=1; }
+      work="$(printf '%s\n' $out | grep -vxF "$SHARD_EXEMPT")"
+      [ -n "$work" ] || { echo "n=$n k=$k: the shard holds no group but $SHARD_EXEMPT (got: ${out:-nothing})"; bad=1; }
+      got="$got$work"$'\n'
+      k=$((k+1))
+    done
+    got="$(printf '%s' "$got" | grep . | LC_ALL=C sort)"
+    dup="$(printf '%s\n' "$got" | uniq -d | tr '\n' ' ')"
+    missing="$(comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "$got" | uniq) | tr '\n' ' ')"
+    extra="$(comm -13 <(printf '%s\n' "$want") <(printf '%s\n' "$got" | uniq) | tr '\n' ' ')"
+    [ -z "$dup$missing$extra" ] \
+      || { echo "n=$n: the shards do not partition DEFAULT_SUITES: doubled [${dup}] lost [${missing}] invented [${extra}]"; bad=1; }
+    n=$((n+1))
+  done
+  # A weight naming no group is a rename that silently fell back to the default weight.
+  for e in $SHARD_WEIGHTS; do
+    g="${e%%:*}"; w="${e#*:}"
+    case " $DEFAULT_SUITES " in *" $g "*) ;; *) echo "SHARD_WEIGHTS names '$g', which is not a default group"; bad=1;; esac
+    case "$g" in "$SHARD_EXEMPT") echo "SHARD_WEIGHTS weighs the exempt group '$g'"; bad=1;; esac
+    case "$w" in ""|*[!0-9]*|0) echo "SHARD_WEIGHTS entry '$e' is not group:positive-integer"; bad=1;; esac
+  done
+  return "$bad"
 }
 
 check_skill_section_references() { # $1=repo root; diagnostics on stdout
@@ -581,6 +833,135 @@ run_cli_group() {
         "preflight.sh --help lost its Usage or Exit section after header growth, or is line-pinned"
   fi
 
+  # THE EXTRACTOR BELOW IS FAST BECAUSE OF A FILTER, AND A FILTER THAT DROPS A SPEC LOSES A CLAIM
+  # WITHOUT A WORD: the "zero claims" guard further down catches only a totally blind extractor, not
+  # one that is blind to the ninth spec. So the fast path is held against the slow one it replaced,
+  # on a fixture with a line for every spec and the shapes that break a naive filter: a continuation
+  # that only matches once joined, a `|` that splits a line into two commands, comments, the
+  # most-specific spec winning, a command substitution that must not charge its flags, tabs, a line in
+  # a .yaml and a .sh, an audit report that is skipped, and bytes that are not UTF-8. (A spec cannot
+  # carry a `|` itself: the loop reads `${spec%%|*}` as the regex, so the format has no alternation.)
+  # Two mutants then prove the comparison is load-bearing: a filter that forgets one spec, and a
+  # filter without -a, which only grep that calls its input binary -- NUL does, on BSD and GNU alike.
+  local fx="$TMPROOT/flag-fixture" fx_src fx_mut fx_diag fx_rc fx_mdiag fx_mrc fx_missed=""
+  rm -rf "$fx"; mkdir -p "$fx/skills/a" "$fx/hermes" "$fx/docs"
+  cat > "$fx/skills/a/SKILL.md" <<'FXMD'
+# a heading that mentions codex exec --heading-flag is a comment-looking line in markdown
+hermes kanban --board x boards create --bc-flag
+hermes kanban boards set-default-workdir --wd-flag
+hermes kanban boards list --bl-flag
+hermes kanban --board x create --title t --json | jq --arg a b | codex exec --after-pipe
+hermes kanban \
+  create --joined-flag
+hermes kanban link --link-flag
+codex exec resume --resume-flag -c x
+codex exec --exec-flag -m y
+  codex exec \
+     --cont-flag \
+     --cont-flag2 "$(git rev-parse --git-common-dir)" --after-subst
+gh pr create --gh-create --title é☃ --ünïcode
+gh pr checks --gh-checks
+gh pr diff --gh-diff
+gh pr view --not-a-spec-flag
+# codex exec --commented-out
+   # codex exec --indented-comment
+text mentioning `codex exec --backtick-stripped` and more --leftover-flag
+CODEX EXEC --uppercase-no-match
+foo \
+# a comment after a continuation codex exec --weird
+codex exec --last-line-no-newline
+FXMD
+  printf 'codex exec\t--tab-sep-flag\nhermes kanban create --yaml-flag\n' > "$fx/hermes/x.yaml"
+  printf '#!/bin/sh\nhermes kanban create --sh-flag\n' > "$fx/docs/x.sh"
+  printf 'codex exec --audit-skipped\n' > "$fx/docs/audit-foo.md"
+  printf 'codex exec --bin\xff\xfe --badutf8\n' > "$fx/docs/bad.md"
+  fx_diag="$(flag_extractor_diagnostic "$fx" 2>&1)"; fx_rc=$?
+  fx_src="$(sed -n '/^flag_claims_prefilter() {/,/^}$/p' scripts/verify.sh)"
+  if fx_mut="$(printf '%s\n' "$fx_src" | mutate_once 'filter+=(-e "${spec%%|*}")' '[ "${spec%%|*}" = "gh pr diff" ] || filter+=(-e "${spec%%|*}")')"; then
+    fx_mdiag="$( eval "$fx_mut"; flag_extractor_diagnostic "$fx" 2>&1 )"; fx_mrc=$?
+    { [ "$fx_mrc" -ne 0 ] && printf '%s' "$fx_mdiag" | grep -Fq "differ from the slow path"; } || fx_missed="$fx_missed drop-a-spec(rc=$fx_mrc)"
+  else
+    fx_missed="$fx_missed drop-a-spec(did-not-apply)"
+  fi
+  if fx_mut="$(printf '%s\n' "$fx_src" | mutate_once 'grep -aE "${filter[@]}"' 'grep -E "${filter[@]}"')"; then
+    fx_mdiag="$( eval "$fx_mut"; flag_extractor_diagnostic "$fx" 2>&1 )"; fx_mrc=$?
+    { [ "$fx_mrc" -ne 0 ] && printf '%s' "$fx_mdiag" | grep -Fq "without grep -a a claim vanishes"; } || fx_missed="$fx_missed drop-grep-a(rc=$fx_mrc)"
+  else
+    fx_missed="$fx_missed drop-grep-a(did-not-apply)"
+  fi
+  if [ "$fx_rc" = 0 ] && [ -z "$fx_missed" ]; then
+    ok "flags-extractor-fast-path-matches-the-slow-path ($(wc -l < "$TMPROOT/fx-slow.tsv.u" | tr -d ' ') distinct claims from a line per spec, identical byte for byte after sort -u; a filter missing one spec and a filter without -a each caught)"
+  else
+    bad "flags-extractor-fast-path-matches-the-slow-path" \
+        "${fx_diag:-the extractor agreed with itself}; mutants not caught:${fx_missed:- none}"
+  fi
+
+  # THE PARTITION IS WHAT KEEPS A NEW GROUP IN CI. CI runs the shards, not `make verify`, so a group
+  # that lands in no shard runs nowhere, and nothing is red: the same silent shape as a group
+  # registered but never defaulted (above). For n = 1..6, asked through the real command line, the
+  # shards' groups are exactly DEFAULT_SUITES minus the exempt `manifest`, each once, and `manifest`
+  # closes every shard. Two mutants of shard_groups -- one that loses a group, one that doubles one --
+  # must each turn it red, or a green run proves only that the partition agrees with itself.
+  _shard_via_cli() { scripts/verify.sh --shard "$1/$2" --list-groups; }
+  _shard_via_fn()  { shard_groups "$1" "$2"; }
+  local sh_diag sh_rc sh_src sh_mut sh_mdiag sh_mrc sh_missed=""
+  sh_diag="$(shard_partition_diagnostic _shard_via_cli 2>&1)"; sh_rc=$?
+  sh_src="$(sed -n '/^shard_groups() {$/,/^}$/p' scripts/verify.sh)"
+  if sh_mut="$(printf '%s\n' "$sh_src" | mutate_once 'case " $assigned" in *" $g:$k "*) out="$out $g";; esac' 'case " $assigned" in *" $g:$k "*) [ "$g" = quota ] || out="$out $g";; esac')"; then
+    sh_mdiag="$( eval "$sh_mut"; shard_partition_diagnostic _shard_via_fn 2>&1 )"; sh_mrc=$?
+    { [ "$sh_mrc" -ne 0 ] && printf '%s' "$sh_mdiag" | grep -Fq 'lost [quota'; } || sh_missed="$sh_missed loses-a-group(rc=$sh_mrc)"
+  else
+    sh_missed="$sh_missed loses-a-group(did-not-apply)"
+  fi
+  if sh_mut="$(printf '%s\n' "$sh_src" | mutate_once 'case " $assigned" in *" $g:$k "*) out="$out $g";; esac' 'case " $assigned" in *" $g:$k "*) out="$out $g";; *) [ "$g" = quota ] && [ "$k" = 1 ] && out="$out $g";; esac')"; then
+    sh_mdiag="$( eval "$sh_mut"; shard_partition_diagnostic _shard_via_fn 2>&1 )"; sh_mrc=$?
+    { [ "$sh_mrc" -ne 0 ] && printf '%s' "$sh_mdiag" | grep -Fq 'doubled [quota'; } || sh_missed="$sh_missed doubles-a-group(rc=$sh_mrc)"
+  else
+    sh_missed="$sh_missed doubles-a-group(did-not-apply)"
+  fi
+  if [ "$sh_rc" = 0 ] && [ -z "$sh_missed" ]; then
+    ok "shards-partition-the-default-suites (n = 1..6: the shards hold every default group once, manifest closes each; a partition that loses a group and one that doubles a group each caught)"
+  else
+    bad "shards-partition-the-default-suites" \
+        "${sh_diag:-the partition agreed with itself}; mutants not caught:${sh_missed:- none}"
+  fi
+
+  # A REFUSED SHARD MUST RUN NOTHING. A shard that quietly ran zero groups would print `0 passed, 0
+  # failed` and exit 0, and a CI leg that checked nothing would be green. Each refusal exits 2 and
+  # prints no group banner and no case; a positive control keeps a script that simply crashes from
+  # passing as "refused". The zero-group refusal needs a copy with a short DEFAULT_SUITES, because the
+  # real one has more groups than the largest n.
+  local rf_arg rf_out rf_rc rf_bad="" rf_zero="$TMPROOT/shard-zero/scripts"
+  for rf_arg in '--shard 1/3 cli' '--shard 1/3 manifest' '--shard 0/3' '--shard 4/3' '--shard 1/17' '--shard 1/0' \
+                '--shard abc' '--shard 1' '--shard 1/' '--shard /3' '--shard 1/3/4' '--shard 1.5/3' '--shard -1/3' \
+                '--shard' '--shard=' '--shard ='; do
+    # shellcheck disable=SC2086
+    rf_out="$(scripts/verify.sh $rf_arg 2>&1)"; rf_rc=$?
+    if [ "$rf_rc" != 2 ] || printf '%s' "$rf_out" | grep -Eq '^(==|forge verify )|^  (ok|FAIL|skip) '; then
+      rf_bad="$rf_bad [$rf_arg: rc=$rf_rc]"
+    fi
+  done
+  rf_out="$(scripts/verify.sh --shard '' 2>&1)"; rf_rc=$?
+  [ "$rf_rc" = 2 ] || rf_bad="$rf_bad [--shard '': rc=$rf_rc]"
+  mkdir -p "$rf_zero"
+  sed 's/^DEFAULT_SUITES=.*/DEFAULT_SUITES="cli manifest"/' scripts/verify.sh > "$rf_zero/verify.sh"; chmod +x "$rf_zero/verify.sh"
+  if cmp -s "$rf_zero/verify.sh" scripts/verify.sh; then
+    rf_bad="$rf_bad [the zero-group copy changed nothing]"
+  else
+    rf_out="$("$rf_zero/verify.sh" --shard 2/2 2>&1)"; rf_rc=$?
+    { [ "$rf_rc" = 2 ] && printf '%s' "$rf_out" | grep -Fq 'no group but manifest' && ! printf '%s' "$rf_out" | grep -Eq '^(==|forge verify )'; } \
+      || rf_bad="$rf_bad [a shard holding only manifest: rc=$rf_rc ${rf_out:-no output}]"
+    rf_out="$("$rf_zero/verify.sh" --shard 1/2 --list-groups 2>&1)"; rf_rc=$?
+    { [ "$rf_rc" = 0 ] && [ "$rf_out" = "cli manifest" ]; } || rf_bad="$rf_bad [the control shard 1/2 of the short copy: rc=$rf_rc '$rf_out']"
+  fi
+  rf_out="$(scripts/verify.sh --shard 2/3 --list-groups 2>&1)"; rf_rc=$?
+  { [ "$rf_rc" = 0 ] && [ "${rf_out##* }" = manifest ]; } || rf_bad="$rf_bad [the control --shard 2/3 --list-groups: rc=$rf_rc]"
+  if [ -z "$rf_bad" ]; then
+    ok "shard-refusals (explicit groups, a malformed k/n, k<1, k>n, n>16 and a shard holding only manifest each exit 2 with no group banner and no case; --shard 2/3 --list-groups still answers)"
+  else
+    bad "shard-refusals" "a refused shard must exit 2 and run nothing:$rf_bad"
+  fi
+
   # No early return when hermes is missing: each command is judged (or skipped)
   # on its own, so CI still checks every tool it does have.
   local claims="$TMPROOT/claims.tsv"; : > "$claims"
@@ -594,23 +975,8 @@ run_cli_group() {
   # `codex-run-flags-exist` below, which reads the array directly.
   local files; files=$(find skills hermes docs -type f \( -name '*.md' -o -name '*.sh' -o -name '*.yaml' \) 2>/dev/null)
   local f line spec rx cmd
-  for f in $files; do
-    # The audit report itself quotes broken commands as evidence; verifying it
-    # would re-report every bug it documents as a live defect.
-    case "$f" in docs/audit-*.md) continue;; esac
-    while IFS= read -r line; do
-      case "$line" in \#*) continue;; esac          # shell comments
-      while IFS= read -r spec; do
-        [ -n "$spec" ] || continue
-        rx="${spec%%|*}"; cmd="${spec##*|}"
-        if printf '%s' "$line" | grep -qE -- "$rx"; then
-          printf '%s' "$line" | grep -oE -- '--[a-zA-Z][a-zA-Z0-9-]+' \
-            | while read -r fl; do printf '%s\t%s\t%s\n' "$cmd" "$fl" "$f" >> "$claims"; done
-          break                                      # most specific wins
-        fi
-      done <<< "$CLI_SPECS"
-    done < <(logical_lines "$f")
-  done
+  # shellcheck disable=SC2086
+  flag_claims fast "$claims" $files
 
   if [ ! -s "$claims" ]; then
     bad "flags-exist" "extracted zero flag claims — the extractor is broken, not the repo"
@@ -2757,6 +3123,9 @@ cli/verify-help-grows-with-the-group-header  appended groups remain visible with
 cli/default-suites-mutation-is-caught  a group registered but not defaulted, and one defaulted but not registered, both report
 cli/default-suites-names-every-registered-group  the case-arm registry and DEFAULT_SUITES name the same groups (F65)
 cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
+cli/flags-extractor-fast-path-matches-the-slow-path  the grep pre-filter that makes flags-exist fast yields the same claims, byte for byte after sort -u, as the loop it replaced; a filter missing one spec, and one without -a, each turn it red
+cli/shards-partition-the-default-suites  for n = 1..6 the --shard k/n groups are DEFAULT_SUITES minus manifest, each exactly once, and manifest closes every shard; a partition that loses a group and one that doubles a group each turn it red
+cli/shard-refusals  explicit groups, a malformed k/n, k<1, k>n, n>16 and a shard holding only manifest each exit 2 and run no case
 cli/no-unverified-claims-in-skills  skill bodies carry no unverified-claim markers
 cli/skill-body-budget             ceremonies <= 150 lines, the lane protocol <= 308
 cli/skill-section-references-resolve every named numeric skill section exists
@@ -3457,13 +3826,13 @@ docs/launch-docs-share-next-command            all four operator documents name 
 docs/the-open-epic-is-discoverable  CLAUDE.md and state.md both route a cold session to the epic and its § How we run this epic (Q4)
 manifest/makefile-syntax-list-is-complete  every tracked *.sh outside templates/ is named in the Makefile's bash -n list
 manifest/makefile-syntax-list-is-complete-mutation-is-caught  dropping a tracked script from the list reddens and names it
-manifest/list-matches-the-suite           every case that ran is named in this catalogue (the reverse is not asserted)
+manifest/list-matches-the-suite           every case that ran is named in this catalogue, in a full, a narrowed or a sharded run (the reverse is not asserted)
 EOF
   exit 0
 fi
 
 echo "forge verify — $(date '+%Y-%m-%d %H:%M:%S %Z')"
-echo "groups:$SUITES$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')$([ "$WITH_HERMES" = 1 ] && echo ' (+real Hermes)')$([ "$WITH_REPLAYS" = 1 ] && echo ' (+recorded replays)')"
+echo "groups:$SUITES$SHARD_LABEL$([ "$WITH_CODEX" = 1 ] && echo ' (+codex probes)')$([ "$WITH_HERMES" = 1 ] && echo ' (+real Hermes)')$([ "$WITH_REPLAYS" = 1 ] && echo ' (+recorded replays)')"
 
 wants cli       && run_cli_group
 wants config    && run_config_group
@@ -24328,9 +24697,11 @@ wants front     && run_front_group
 # that has stopped matching reality looks exactly like one that never did. The
 # repair is to make the catalogue an executable claim.
 #
-# It runs LAST because it can only judge a run that has finished, and only a
-# COMPLETE one: a narrowed `SUITES=` emits a subset, and reporting the absent
-# groups as drift would be a check that cries wolf. That case skips, loudly.
+# It runs LAST because it can only judge a run that has finished. It judges the
+# direction that holds for any subset -- every case that RAN is documented -- so
+# a narrowed or sharded run checks what it ran instead of skipping, and it never
+# reports the groups that did not run as drift (the reverse is not asserted). CI
+# runs shards, and the partition exempts this group so every shard runs it.
 #
 # `make validate`'s `bash -n` list is the same F65 shape PR #62 closed for
 # DEFAULT_SUITES: a hardcoded list of scripts, asserted against nothing. Three
@@ -24420,10 +24791,13 @@ run_manifest_group() {
     fi
   fi
 
-  if [ "$SUITES" != "$DEFAULT_SUITES" ]; then
-    skip "list-matches-the-suite" "narrowed run (SUITES='$SUITES'); the emitted set is a subset by construction"
-    return
-  fi
+  # Any run, not only the full one. "every case that ran is named in this catalogue" is a property of
+  # whatever subset ran, and it used to be skipped on a narrowed run on the grounds that the emitted
+  # set is a subset by construction -- which is the reason it CAN be checked, not a reason to skip.
+  # It matters since CI runs shards: each shard runs this group (the partition exempts it), so the
+  # union of the shards' checks is the full run's check. Nothing relied on the skip: it was the only
+  # branch on $SUITES here, and the group's own two cases above emit before this point, so the
+  # recorder is never empty on a healthy run.
   local emitted="$TMPROOT/emitted.txt"
   if [ ! -s "$emitted" ]; then
     bad "list-matches-the-suite" "no case names were recorded — the recorder is broken, not the manifest"
@@ -24493,6 +24867,8 @@ run_manifest_group() {
 }
 wants manifest  && run_manifest_group
 
+
+print_timings
 
 printf '\n---\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" = 0 ] || exit 1
