@@ -6,9 +6,10 @@ the only progress record is [`docs/epic-hands-free.md`](epic-hands-free.md) (its
 plan* table, and *§ How we run this epic* for how a session is run). If this page and
 another file disagree, `make verify` arbitrates.
 
-**As of 2026-11-14.** `main` and the live runtime (`~/dev/forge-runtime`) are at `46d8eb8`.
-`make preflight` in the runtime reads PASS 143 / WARN 5 / FAIL 0; the five WARNs are the
-optional global lefthook and the four forge-gate bot steps (below).
+**As of 2026-11-14 (evening).** `main` and the live runtime (`~/dev/forge-runtime`) are in step
+through #116; `git -C ~/dev/forge-runtime log -1` is the truth. `make preflight` in the runtime
+reads PASS 143 / WARN 5 / FAIL 0; the five WARNs are the optional global lefthook and the four
+forge-gate bot steps (below).
 
 ## What Forge is
 
@@ -24,17 +25,18 @@ probe. The operator reads a daily digest and answers holds.
 Run B is milestone 2 of The Squatfather (CHUNK-6, 7, 8, then `GATE-M2`) on board
 `squatfather-run-a2`, and the first run in which the verifier merges. The protocol is
 [`docs/run-b.md`](run-b.md). Steps 1 to 6 of its launch are done (2026-11-14). What is
-left is the owner's, because it hands merge authority to the machine:
+left is the owner's, because it hands merge authority to the machine. One command, which
+shows what it will put in force and asks before it does:
 
 ```bash
-~/.forge/repo/scripts/merge-authority.sh grant squatfather-run-a2 --by <you> --reason "run B"
-~/.forge/repo/scripts/checkpoint-arm.sh arm --board squatfather-run-a2 --gate GATE-M1 --project "$HOME/dev/the-squatfather" --mode apply --confirm-release
-hermes cron resume 3f8cc5b95565     # the forge-checkpoint job, created paused
+forge go squatfather-run-a2 --project "$HOME/dev/the-squatfather" --branch-suffix a2
 ```
 
-Within 15 minutes the cron probes M1 (it passes 5 of 5 today), completes `GATE-M1`, and
-CHUNK-6 and CHUNK-8 start. To stop: `merge-authority.sh revoke squatfather-run-a2`.
-Leave `GATE-M2` unarmed until the checkpoint-freshness fix is deployed (see *Known gaps*).
+It grants merge authority on the board, arms `GATE-M1` `apply` and resumes the paused
+`forge-checkpoint` cron job. Within 15 minutes the cron probes M1 (it passes 5 of 5 today),
+completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run;
+`forge stop squatfather-run-a2` withdraws the authority. The run stops by itself at
+`GATE-M2` unless that gate is armed too.
 
 ## Proven (a command was run and its output observed)
 
@@ -43,6 +45,9 @@ Leave `GATE-M2` unarmed until the checkpoint-freshness fix is deployed (see *Kno
 | A plan becomes merged, probed code | Run A, Squatfather M1: CHUNK-1 to 5 merged on green CI, four of them lane-built; the M1 probe passes 5 of 5. [`docs/run-a.md`](run-a.md) *Results* |
 | The verifier's recommendations can be trusted so far | Run A: the operator merged everything it recommended and bounced nothing; it bounced CHUNK-4 itself first |
 | **Merge mode works live** | 2026-11-14, board `hello-rehearsal-a2h`, card `t_35fdac2e`: ready → PR `wielas/hello-forge#13` → CI green → verifier approve → merged → done in about 3 minutes, no operator action. Evidence: `~/forge-evidence/run-b-launch-2026-11-14/` |
+| The whole loop can be re-proved in one command | `forge rehearse`, 2026-11-14 on the deployed `04034da`: board `hello-rehearsal-r202611141142`, `wielas/hello-forge#15` merged by the verifier in 4 min 12 s, grant revoked, repo reset by `#16`, board archived. Evidence: `~/forge-evidence/rehearsals/` |
+| The checkpoint probes what was merged | #112, deployed: the cron fetches and fast-forwards the product checkout first; run once in rehearse against the private Squatfather repo |
+| The watchdog asks the verifier's token for life | #115, deployed: `OK    token  the verifier's claude token answered just now` on the host; a dead token is a FAIL and an alert |
 | A board follows a changed plan | `hermes/board-sync.sh --apply` on the live Squatfather board, 2026-11-14: 14 steps, each read back, ends in sync, releases nothing |
 | The checkpoint cron reports once and writes nothing in rehearse | `GATE-M1` armed `rehearse`, the cron script run twice: one report (pass, 5 of 5), then silence; the gate stayed held |
 | A bounce, a crash after push, a red CI and a quota park each recover | July ladder and fault exercises; run A's D-1 drill and resumed Codex run. Details in the archive |
@@ -60,17 +65,15 @@ Leave `GATE-M2` unarmed until the checkpoint-freshness fix is deployed (see *Kno
 - **A real watchdog alert.** It has only ever read healthy.
 - **The mutation probe's precision.** It reports and never bounces; read at the M2 checkpoint.
 
-## Known gaps, with the fix in hand
+## Known gaps
 
-- **The checkpoint probes the local product checkout, and nothing fast-forwards it.** After
-  the verifier merges on GitHub the local `main` is stale, so `GATE-M2`'s probe would judge a
-  tree without milestone 2. Fix: the cron fetches and fast-forwards first
-  (`slice/checkpoint-fresh-checkout`). Until it is deployed, do not arm `GATE-M2`.
-- **The verifier's token is checked for presence, not life.** A dead `CLAUDE_CODE_OAUTH_TOKEN`
-  passed preflight and failed two rehearsals in October. The stripped-environment probe in
-  `docs/run-a.md` (precondition 9, T1) is the manual check; it belongs in the watchdog.
-- **The operator's surface is a dozen script paths.** A `forge` command (`status`, `stop`,
-  then `go` and `rehearse`) is being built (`slice/forge-cli`).
+- **Starting a new project is still several commands** (below). `forge go` launches a board that
+  exists; it does not yet commission and bootstrap one.
+- **A blocked checkpoint has no phone answer** until the forge-gate bot exists (above).
+- **The suite is heavy.** `scripts/verify.sh` is about 23,000 lines and CI takes 18 minutes per
+  PR. WL4 (the `verify` diet) is the answer and is not started.
+- **`forge rehearse` has run once.** Run it after every deploy and tool upgrade; a failure is a
+  finding, and it names its own cleanup command.
 
 ## Starting a new project
 

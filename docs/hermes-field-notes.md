@@ -968,6 +968,15 @@ per-token billing with no other visible change. `claude -p` tolerates the
 variable being present but *empty* (`is_error:false`), so an empty assignment
 breaks nothing today — it is just a slot waiting for a paste.
 
+**A hook installed from a worktree outlives the worktree (2026-11-14).** `lefthook install` writes
+the shared `.git/hooks/*` with the absolute path of the lefthook it ran from. Installed from a lane
+worktree's `.venv`, that path dies when the worktree is swept; the launcher then walks its fallback
+chain, and on a Mac with Swift installed `swift package lefthook` runs first and leaves an untracked
+`.build/` in the checkout before `uv run lefthook` succeeds. An untracked file in a product's main
+checkout is what makes the checkpoint cron say "has uncommitted changes, so it was not probed". Seen
+in hello-forge (the hook named `.worktrees/t_1b7be3bb`, July's card). The repair is `uv run lefthook
+install -f` from the main checkout. `forge rehearse` runs its own git with `LEFTHOOK=0`.
+
 ## Known-bad in this repo
 
 - **`adapters/claude/.../hooks.json`** — its PreToolUse regex duplicates what

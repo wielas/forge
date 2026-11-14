@@ -495,7 +495,10 @@ RH_PR_STATE=""; RH_PR_OID=""
 rh_say() { printf 'rehearse: %s\n' "$*"; }
 rh_err() { printf 'rehearse: %s\n' "$*" >&2; }
 rh_fatal() { rh_err "$*"; exit 2; }
-rh_git() { git -C "$RH_DIR" "$@"; }
+# LEFTHOOK=0: the rehearsal's own commits and pushes (the revert branch) skip the repo's local hooks. CI checks the
+# revert PR, and a hook whose recorded lefthook path is dead falls through lefthook's launcher chain to
+# `swift package`, which leaves an untracked .build/ and fails the "clean main" read at the end (seen 2026-11-14).
+rh_git() { LEFTHOOK=0 git -C "$RH_DIR" "$@"; }
 rh_elapsed() { local s=$(( $(date +%s) - RH_T0 )); printf '%d min %02d s' $((s / 60)) $((s % 60)); }
 rh_pre_fail() { RH_PRE_FAILS="$RH_PRE_FAILS  - $1: $2"$'\n'; }
 rh_cmd_cleanup_hint() { printf 'forge rehearse --cleanup %s' "$1"; }
