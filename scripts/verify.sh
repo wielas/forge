@@ -98,6 +98,11 @@
 #               the LaunchAgent installer; and the two
 #               preflight checks (auto_decompose, the watchdog loaded). Stubbed launchctl, curl and
 #               claude, a pinned clock, temp directories only                         (S8e, liveness)
+#   front/      the operator's front door, scripts/forge.sh: `forge status` exits 0 for a board nothing waits
+#               on and 1 for one with cards waiting (the digest's own answer, compared) or a watchdog that
+#               is not healthy, 2 for what it could not read, and writes nothing; `forge stop` revokes the
+#               grant, disarms the board's gates and asks both scripts again. The real script against
+#               fixture boards, a real grant and real armed gates, a pinned clock, temp directories only
 #   manifest/   `--list` names every case the suite actually runs. Compares the
 #               catalogue against what THIS run emitted, so a check added
 #               without a catalogue entry is caught. Full runs only    (F65/F66)
@@ -130,11 +135,11 @@ while [ $# -gt 0 ]; do
     --with-replays) WITH_REPLAYS=1; shift;;
     --list) LIST_ONLY=1; shift;;
     -h|--help) helptext; exit 0;;
-    cli|config|substrate|template|lane|bootstrap|sync|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|watchdog|manifest) SUITES="$SUITES $1"; shift;;
+    cli|config|substrate|template|lane|bootstrap|sync|commission|metrics|metadata|prejudge|verifier|sweep|roadmap|probe|checkpoint|overseer|triage|gateway|gate|docs|digest|quota|watchdog|front|manifest) SUITES="$SUITES $1"; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-DEFAULT_SUITES="cli config substrate template lane bootstrap sync commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota watchdog manifest"
+DEFAULT_SUITES="cli config substrate template lane bootstrap sync commission metrics metadata prejudge verifier sweep roadmap probe checkpoint overseer triage gateway gate docs digest quota watchdog front manifest"
 [ -n "$SUITES" ] || SUITES="$DEFAULT_SUITES"
 
 PASS=0; FAIL=0; SKIP=0
@@ -1474,7 +1479,9 @@ SMJSON
   # swap is half-applied and every string still agrees with itself. The write
   # succeeds; the readback is what must catch it, and the files must come back.
   if _set_model_lab "$sm_lab"; then
-    awk 'NR==400 { print "Historically the lane ran with codex pinned gpt-old low." } { print }' \
+    # Inserted at line 1, so it precedes the real pin whatever the file's length (it was NR==400 while state.md was 767 lines;
+    # on the one-page state.md that inserted nothing and the mutation was a no-op).
+    awk 'NR==1 { print "Historically the lane ran with codex pinned gpt-old low." } { print }' \
       "$sm_lab/repo/docs/state.md" > "$sm_lab/state.mutated" \
       && mv "$sm_lab/state.mutated" "$sm_lab/repo/docs/state.md"
     _set_model_freeze "$sm_lab"
@@ -3281,6 +3288,7 @@ gateway/forge-gate-soul-says-what-the-plugin-does  the SOUL teaches each verb's 
 gateway/park-and-redirect-disarm-before-they-write  the gate is already disarmed and decided at the moment the comment is written, so a still-armed check cannot pass in between; a refused comment leaves it disarmed and says so
 gateway/unarmed-gate-never-completes      the cron completes nothing unarmed, nothing armed rehearse, exactly one armed apply (which needs --confirm-release); a malformed arming is no arming (decision 4)
 gateway/cron-silent-and-exit-0            a block is delivered once and recorded for its hold; repeat ticks, an unfinished milestone and a gate that is not held are silent; a dirty or non-main checkout is said once; only the job's own fault is non-zero
+gateway/cron-probes-what-was-merged       the cron fast-forwards a checkout that is behind origin/main before it probes, and probes nothing it could not bring up to date: a checkout with commits origin/main lacks, or whose origin cannot be fetched, is said once and not probed; a project with no origin is probed as before
 gateway/arming-is-explicit                checkpoint-arm.sh needs a mode, a --confirm-release for apply and an absolute project; arming clears an earlier hold's records; a malformed file lists as not armed
 gateway/every-hermes-kanban-call-carries-board  no hermes kanban call in the gate, arming or cron scripts is without --board
 gateway/state-root-agrees-with-forge-state  the plugin's ledger root and forge-state.sh's forge_state_root are one path
@@ -3300,6 +3308,12 @@ watchdog/token-alive-is-ok-and-throttled  a stub claude answering is_error false
 watchdog/token-dead-fails-and-alerts-once  is_error true is a FAIL with the reason and the remedy, exit 1 and one alert; asked again at FORGE_WATCHDOG_TOKEN_RETRY and not before; a renewed token gives OK and one recovery message
 watchdog/token-could-not-ask-is-neither  no claude binary, a claude that hangs past the timeout (killed), output that is not JSON and no token line are each a WARN: not OK, not FAIL, no alert, no verdict cached; a FAIL that cannot be re-asked stays a FAIL and a stale OK turns into a WARN
 watchdog/token-never-leaks  a recognisable token in the .env appears in the stub claude's environment and in no argv, alert, log line, bash -x trace, state or cache file, even when the CLI's own error text quotes it
+front/quiet-board-exits-0           a board with work in flight and nothing to decide: exit 0, the counts, this board's grant and armed gates, the running card, its held gate, the last chunk landed; reached through a symlink
+front/what-waits-on-you-is-listed-and-matches-the-digest  exit 1; blocked, triage, a human chunk sent back and a gate whose chunks are done are listed with the first line of their reason, held ones are not, and the ids equal digest.sh's
+front/unreadable-boards-and-usage-errors-exit-2  a missing board, a corrupt one, no boards directory, a bad name and an unknown subcommand are exit 2, which outranks 1; help and no arguments print usage and exit 0
+front/watchdog-reading-decides-the-exit  no log, a stale log, an UNHEALTHY or verdict-less last run exit 1 and say so; an old unhealthy run before a healthy one does not count
+front/stop-revokes-disarms-and-reads-back  a real grant and real armed gates are withdrawn and asked for again, another board's untouched, the second stop a no-op, a revoke that did not take read back as still in force (exit 1)
+front/status-is-read-only           the boards and the state root are byte-identical after status runs, and its snapshots are removed
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -17221,7 +17235,7 @@ run_gateway_group() {
   local hdrive="$REPO_ROOT/scripts/fixtures/gateway-hermes-drive.py"
   local fixsql="$REPO_ROOT/scripts/fixtures/checkpoint-board.sql"
   local hpy="$HOME/.hermes/hermes-agent/venv/bin/python"
-  local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent guard-forge-gate-blocks-everything forge-gate-soul-says-what-the-plugin-does park-and-redirect-disarm-before-they-write real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate forge-gate-profile-has-no-tools deployed-forge-gate-has-no-tools unarmed-gate-never-completes cron-silent-and-exit-0 arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
+  local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent guard-forge-gate-blocks-everything forge-gate-soul-says-what-the-plugin-does park-and-redirect-disarm-before-they-write real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate forge-gate-profile-has-no-tools deployed-forge-gate-has-no-tools unarmed-gate-never-completes cron-silent-and-exit-0 cron-probes-what-was-merged arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
   local tool n
   for tool in sqlite3 jq python3 shasum; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -18827,6 +18841,94 @@ GW_PROBE
   fi
 
   # ======================================================================
+  # cron-probes-what-was-merged
+  # ======================================================================
+  # A product checkout cloned from a bare `origin`, on main, one commit BEHIND it: the local tree still has the reader
+  # defect, and origin's main holds the fix, which is what a hands-free run leaves (the verifier merges on GitHub and
+  # nothing pulls). $1 = a name; builds proj-$1 and origin-$1.git.
+  _gw_originproj() {
+    local n="$1" d="$root/proj-$1" o="$root/origin-$1.git" dev="$root/dev-$1"
+    _gw_proj "$n" 's/if foreign:/if False:/'
+    rm -rf "$o" "$dev"
+    { git clone -q --bare "$d" "$o" && git -C "$d" remote add origin "$o" && git -C "$d" fetch -q origin \
+        && git clone -q "$o" "$dev"; } >/dev/null 2>&1 || return 1
+    cp "$root/proj-base/src/reader.py" "$dev/src/reader.py"
+    ( cd "$dev" && git -c user.email=gw@forge -c user.name=gw commit -qam "the merged chunk" && git push -q origin HEAD:main ) >/dev/null 2>&1
+  }
+  _gw_c_merged() {
+    local W cr h0 d o old new shape
+    GW_ALLOW="complete comment"
+    # A: origin is ahead. The cron fast-forwards the checkout and probes the tree that was merged: the pass is about
+    # the new commit, the same HEAD is not probed twice, and nothing was written to the board by a rehearsal.
+    _gw_originproj ff-a || { gwd="$gwd fixture-not-built"; GW_ALLOW=""; return; }
+    d="$root/proj-ff-a"; o="$root/origin-ff-a.git"; old="$(git -C "$d" rev-parse --short HEAD)"
+    W="$(_gw_world ff-a)"; cr="$(_gw_cronrepo ff-a)"; h0="$(_gw_hash "$W")"
+    _gw_armit "$W" "$d" rehearse
+    _gw_tick "$W" "$cr"
+    new="$(git -C "$d" rev-parse --short HEAD)"
+    [ "$(git -C "$d" rev-parse HEAD)" = "$(git -C "$o" rev-parse main)" ] && [ "$new" != "$old" ] && [ "$(git -C "$d" symbolic-ref --short HEAD)" = main ] && [ -z "$(git -C "$d" status --porcelain)" ] \
+      || gwd="$gwd checkout-not-fast-forwarded($old->$new)"
+    printf '%s' "$cout" | grep -q '^checkpoint: GATE-M1 passes' && printf '%s' "$cout" | grep -Fq "at $new" && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] && _gw_nowrites "$W" "$h0" \
+      || gwd="$gwd probed-a-tree-that-was-not-the-merged-one(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] || gwd="$gwd same-head-probed-twice(runs=$(_gw_runs "$cr"),rc=$crc)"
+    # B: the checkout has a commit origin/main lacks, whether it is also behind (diverged) or not (ahead). Nothing is
+    # probed, nothing is changed, it is said once, and a second tick is silent.
+    for shape in diverged ahead; do
+      _gw_originproj ff-b-$shape || { gwd="$gwd fixture-$shape-not-built"; continue; }
+      d="$root/proj-ff-b-$shape"; o="$root/origin-ff-b-$shape.git"
+      [ "$shape" = diverged ] || { git -C "$d" fetch -q origin && git -C "$d" merge -q --ff-only origin/main; } >/dev/null 2>&1
+      ( cd "$d" && echo "# local" > LOCAL.md && git add LOCAL.md && git -c user.email=gw@forge -c user.name=gw commit -qm "local only" ) >/dev/null 2>&1
+      old="$(git -C "$d" rev-parse HEAD)"
+      W="$(_gw_world ff-b-$shape)"; cr="$(_gw_cronrepo ff-b-$shape)"; h0="$(_gw_hash "$W")"
+      _gw_armit "$W" "$d" rehearse
+      _gw_tick "$W" "$cr"
+      printf '%s' "$cout" | grep -q "has commits on main that origin/main does not, so it was not probed" && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] \
+        && [ "$(git -C "$d" rev-parse HEAD)" = "$old" ] && _gw_nowrites "$W" "$h0" \
+        || gwd="$gwd local-commits-($shape)-not-held(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+      _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] || gwd="$gwd local-commits-($shape)-said-twice(runs=$(_gw_runs "$cr"),rc=$crc)"
+    done
+    # C: origin cannot be reached. "Could not ask" is not "up to date": nothing is probed, it is said once, exit 0 (the
+    # checkout still holds a remote-tracking main equal to its HEAD, so only the failed fetch can stop it). And it is
+    # no verdict: when origin is back, the next tick probes.
+    _gw_originproj ff-c || { gwd="$gwd fixture-c-not-built"; GW_ALLOW=""; return; }
+    d="$root/proj-ff-c"; o="$root/origin-ff-c.git"
+    git -C "$d" fetch -q origin >/dev/null 2>&1; git -C "$d" merge -q --ff-only origin/main >/dev/null 2>&1
+    git -C "$d" remote set-url origin "$root/no-such-origin.git"
+    old="$(git -C "$d" rev-parse HEAD)"
+    W="$(_gw_world ff-c)"; cr="$(_gw_cronrepo ff-c)"; h0="$(_gw_hash "$W")"
+    _gw_armit "$W" "$d" rehearse
+    _gw_tick "$W" "$cr"
+    printf '%s' "$cout" | grep -q "origin could not be fetched for $d, so GATE-M1 was not probed" && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] \
+      && [ "$(git -C "$d" rev-parse HEAD)" = "$old" ] && _gw_nowrites "$W" "$h0" \
+      || gwd="$gwd unreachable-origin-probed(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    _gw_tick "$W" "$cr"; [ -z "$cout" ] && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 0 ] || gwd="$gwd unreachable-origin-said-twice(runs=$(_gw_runs "$cr"),rc=$crc)"
+    git -C "$d" remote set-url origin "$o"
+    _gw_tick "$W" "$cr"; printf '%s' "$cout" | grep -q '^checkpoint: GATE-M1 passes' && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] \
+      || gwd="$gwd origin-back-not-probed(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    # D: a project with no origin remote has nothing to be behind: it is probed as it always was.
+    _gw_proj ff-d ''
+    d="$root/proj-ff-d"
+    W="$(_gw_world ff-d)"; cr="$(_gw_cronrepo ff-d)"
+    _gw_armit "$W" "$d" rehearse
+    _gw_tick "$W" "$cr"
+    printf '%s' "$cout" | grep -q '^checkpoint: GATE-M1 passes' && [ "$crc" = 0 ] && [ "$(_gw_runs "$cr")" = 1 ] \
+      || gwd="$gwd no-origin-project-not-probed(rc=$crc,runs=$(_gw_runs "$cr"),out=$(printf '%s' "$cout" | head -c 120))"
+    GW_ALLOW=""
+  }
+  if [ "$cron_ok" = 1 ]; then
+    gwd=""; _gw_c_merged
+    mnot=""
+    _gw_caught _gw_c_merged scripts no-fast-forward checkpoint-cron.sh 'if ! git -C "$project" merge --ff-only --quiet origin/main >/dev/null 2>&1; then' 'if ! git -C "$project" status --porcelain >/dev/null 2>&1; then' 'probed-a-tree-that-was-not-the-merged-one' || mnot="$mnot no-fast-forward"
+    _gw_caught _gw_c_merged scripts fetch-failure-carries-on checkpoint-cron.sh 'fetch --quiet origin main >/dev/null 2>&1; then' 'fetch --quiet origin main >/dev/null 2>&1 && false; then' 'unreachable-origin-probed' || mnot="$mnot fetch-failure-carries-on"
+    _gw_caught _gw_c_merged scripts local-commits-carry-on checkpoint-cron.sh 'if git -C "$project" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then' 'if true; then' 'not-held' || mnot="$mnot local-commits-carry-on"
+    _gw_caught _gw_c_merged scripts no-origin-is-refused checkpoint-cron.sh 'if git -C "$project" remote get-url origin >/dev/null 2>&1; then' 'if true; then' 'no-origin-project-not-probed' || mnot="$mnot no-origin-is-refused"
+    if [ -z "$gwd" ] && [ -z "$mnot" ]; then ok "cron-probes-what-was-merged (a checkout behind origin/main is fast-forwarded and the pass names the new commit, and the same HEAD is not probed twice; a checkout with commits origin/main lacks, diverged or ahead, and one whose origin cannot be fetched are not probed, said once, exit 0, and a fetch that works again is probed; a project with no origin is probed as before; four mutants caught)"
+    else bad "cron-probes-what-was-merged" "the milestone's probe must run on what was merged, not on a checkout nobody updated:${gwd}; mutants not caught:${mnot:- none}"; fi
+  else
+    skip "cron-probes-what-was-merged" "the fixture project could not be built (git or the real acceptance-freeze is missing)"
+  fi
+
+  # ======================================================================
   # arming-is-explicit
   # ======================================================================
   _gw_c_arming() {
@@ -19454,6 +19556,8 @@ run_docs_group() {
   local audit=docs/audit-forgeboard-2026-07-30.md
   local roadmap=docs/roadmap-first-run.md
   local state=docs/state.md
+  # The commissioning evidence F102 cites moved with the history when state.md became one page (2026-11-14).
+  local state_archive=docs/archive/state-2026-11-14.md
   local guide=docs/operator-guide.md
   local id expected header bad_headers=0
 
@@ -19595,7 +19699,7 @@ DISPOSITIONS
         "F81/F103 must retain their original text and append linked CHUNK-10 superseding records"
   fi
 
-  if _docs_f102_contract_ok "$audit" "$state"; then
+  if _docs_f102_contract_ok "$audit" "$state_archive"; then
     ok "launch-f102-cites-real-product-roadmap"
   else
     bad "launch-f102-cites-real-product-roadmap" \
@@ -19604,7 +19708,7 @@ DISPOSITIONS
 
   sed 's#wielas/forgeboard-report#wielas/fixture#g' \
     "$audit" > "$mutated/audit.md"
-  if _docs_f102_contract_ok "$mutated/audit.md" "$state"; then
+  if _docs_f102_contract_ok "$mutated/audit.md" "$state_archive"; then
     bad "launch-f102-evidence-mutation-is-caught" \
         "changing the real product identity still satisfied F102"
   else
@@ -22676,6 +22780,271 @@ WD_PLIST
     || bad "watchdog-scripts-are-executable-and-share-the-state-root" "—$d"
 }
 wants watchdog  && run_watchdog_group
+
+# ---------------------------------------------------------------------------
+# front/ — the operator's front door (scripts/forge.sh): `forge status` and `forge stop`.
+#
+# Six cases, each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
+# from scripts/fixtures/digest-board.sql's schema (the digest and checkpoint fixtures' own), the grant and the armed
+# gates are made by the real merge-authority.sh and checkpoint-arm.sh, and the script is reached through a relative
+# symlink that points at an absolute one, in another directory: the way the operator runs it (~/.local/bin/forge).
+# The clock is pinned: FORGE_STATUS_NOW is taken once and every fixture time is derived from it.
+#
+# FRONT_SCRIPTS aims the group at a COPY of scripts/, which is how each case was made to fail once against a
+# deliberately broken forge.sh without editing a tracked file (the copy must hold every sibling forge.sh calls).
+# ---------------------------------------------------------------------------
+run_front_group() {
+  group front
+  for tool in sqlite3 jq; do
+    command -v "$tool" >/dev/null 2>&1 || { skip "quiet-board-exits-0" "$tool not on PATH"; return; }
+  done
+  local fs="${FRONT_SCRIPTS:-$REPO_ROOT/scripts}" root="$TMPROOT/front"
+  local H="$root/hermes" S="$root/state" P="$root/proj" kb="$root/hermes/kanban/boards" FR_X=""
+  local now out rc d hold
+  now="$(date +%s)"
+  hold="$(bash -c '. "$1" && printf %s "$INTERACTIVE_HOLD_REASON"' _ "$REPO_ROOT/scripts/decision-message.sh" 2>/dev/null | sed "s/'/''/g")"
+  mkdir -p "$root/bin" "$root/link" "$root/home" "$root/tmp" "$P" "$kb"
+  ln -sfn "$fs/forge.sh" "$root/link/forge-real"
+  ln -sfn "../link/forge-real" "$root/bin/forge"
+  # A copy of the scripts forge.sh reaches in which checkpoint-arm.sh cannot run: "could not ask" for the arming list.
+  local blind="$root/blind-scripts" f
+  mkdir -p "$blind"
+  for f in forge.sh forge-state.sh decision-message.sh board-snapshot.sh merge-authority.sh checkpoint-arm.sh gate-reply.sh; do cp "$fs/$f" "$blind/$f"; done
+  chmod -x "$blind/checkpoint-arm.sh"
+
+  _fr() { # args for forge; FR_X holds extra NAME=value words -> stdout of forge (stderr is the caller's)
+    env -u FORGE_WATCHDOG_ROOT -u FORGE_MERGE_AUTHORITY_ROOT -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_KANBAN_HOME \
+        -u FORGE_HANDOFF_SENTINEL HOME="$root/home" HERMES_HOME="$H" FORGE_STATE_ROOT="$S" FORGE_STATUS_NOW="$now" \
+        TZ=UTC TMPDIR="$root/tmp" $FR_X "${FR_BIN:-$root/bin/forge}" "$@"
+  }
+  _fs() { # a sibling script run against the same state root, unfenced
+    local script="$1"; shift
+    env -u HERMES_DELEGATED_CHILD_CONTEXT -u FORGE_MERGE_AUTHORITY_ROOT HOME="$root/home" FORGE_STATE_ROOT="$S" "$fs/$script" "$@"
+  }
+  _fr_world() { # a clean state root with a healthy, just-written watchdog log
+    rm -rf "$S"; mkdir -p "$S/watchdog"
+    printf 'forge watchdog 2026-11-14T10:30:45+0100\nOK    gateway         up\nOK    ticker          young\nOK    digest          young\nOK    auto_decompose  false\nwatchdog: healthy\n' > "$S/watchdog/watchdog.log"
+    FR_X=""
+  }
+  _fr_board() { # name; the rows come on stdin as SQL, `now` already expanded
+    rm -rf "$kb/$1"; mkdir -p "$kb/$1"
+    sqlite3 "$kb/$1/kanban.db" < "$REPO_ROOT/scripts/fixtures/digest-board.sql" >/dev/null 2>&1
+    sqlite3 "$kb/$1/kanban.db" "DELETE FROM tasks; DELETE FROM task_events; DELETE FROM task_runs; DELETE FROM task_links;" >/dev/null 2>&1
+    sqlite3 "$kb/$1/kanban.db" >/dev/null 2>&1
+  }
+  _fr_tree() { { find "$1" | sort; find "$1" -type f -exec shasum -a 256 {} + | sort; } 2>/dev/null; }
+  _fr_want() { case "$1" in *"$2"*) ;; *) d="$d missing[$2]";; esac; }
+  _fr_not()  { case "$1" in *"$2"*) d="$d unexpected[$2]";; esac; }
+
+  # The boards. `quiet`: work in flight and nothing to decide, with the two shapes that must NOT read as waiting
+  # (a gate behind an open chunk, the bootstrap's interactive hold behind it). `waits`: every shape that must.
+  _fr_board quiet <<SQL
+INSERT INTO tasks (id, title, assignee, status, created_at, completed_at) VALUES
+  ('t_q1', 'CHUNK-1: landed three hours ago', 'forge-verifier',   'done',    $((now - 90000)), $((now - 3 * 3600 - 60))),
+  ('t_q2', 'CHUNK-2: the running' || char(10) || 'card',  'forge-codex-lane', 'running', $((now - 9000)), NULL),
+  ('t_q3', 'CHUNK-3: waits on the running card', 'forge-codex-lane', 'todo',    $((now - 9000)), NULL),
+  ('t_q4', 'GATE-M1: Milestone 1', NULL, 'blocked', $((now - 9000)), NULL),
+  ('t_q5', 'CHUNK-4: a human implements this', NULL, 'blocked', $((now - 9000)), NULL);
+INSERT INTO task_links (parent_id, child_id) VALUES ('t_q2', 't_q3'), ('t_q2', 't_q4'), ('t_q2', 't_q5');
+INSERT INTO task_runs (task_id, profile, status, started_at) VALUES
+  ('t_q2', 'forge-codex-lane', 'blocked', $((now - 7200))),
+  ('t_q2', 'forge-codex-lane', 'running', $((now - 12 * 60 - 20)));
+UPDATE task_runs SET ended_at = $((now - 7000)) WHERE status = 'blocked';
+INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+  ('t_q4', 'blocked', json_object('reason', 'milestone-gate: GATE-M1 holds milestone M1'), $((now - 9000))),
+  ('t_q5', 'blocked', json_object('reason', '$hold'), $((now - 9000)));
+SQL
+  _fr_board waits <<SQL
+INSERT INTO tasks (id, title, assignee, status, created_at, completed_at) VALUES
+  ('t_w1', 'CHUNK-1: blocked on env',          'forge-codex-lane',    'blocked', $((now - 9000)), NULL),
+  ('t_w2', 'CHUNK-2: parked in triage',        NULL,                  'triage',  $((now - 9000)), NULL),
+  ('t_w3', 'CHUNK-3: a human chunk sent back', 'forge-operator-handoff', 'ready', $((now - 9000)), NULL),
+  ('t_w4', 'GATE-M1: every chunk is done',     NULL,                  'blocked', $((now - 9000)), NULL),
+  ('t_w5', 'CHUNK-4: finished',                'forge-verifier',      'done',    $((now - 9000)), $((now - 600))),
+  ('t_w6', 'GATE-M2: a chunk is still open',   NULL,                  'blocked', $((now - 9000)), NULL),
+  ('t_w7', 'CHUNK-5: still running',           'forge-codex-lane',    'running', $((now - 9000)), NULL),
+  ('t_w8', 'CHUNK-6: held for a human',        NULL,                  'blocked', $((now - 9000)), NULL),
+  ('t_w9', 'CHUNK-7: ready for a lane',        'forge-codex-lane',    'ready',   $((now - 9000)), NULL);
+INSERT INTO task_links (parent_id, child_id) VALUES ('t_w5', 't_w4'), ('t_w7', 't_w6'), ('t_w7', 't_w8');
+INSERT INTO task_runs (task_id, profile, status, started_at) VALUES ('t_w7', 'forge-codex-lane', 'running', $((now - 300)));
+INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+  ('t_w1', 'blocked', json_object('reason', 'env: the sandbox cannot reach the remote' || char(10) || 'second line'), $((now - 100))),
+  ('t_w4', 'blocked', json_object('reason', 'milestone-gate: GATE-M1 holds milestone M1'), $((now - 100))),
+  ('t_w6', 'blocked', json_object('reason', 'milestone-gate: GATE-M2 holds milestone M2'), $((now - 100))),
+  ('t_w8', 'blocked', json_object('reason', '$hold'), $((now - 100)));
+SQL
+
+  # --- 1. a board nothing waits on -------------------------------------------------------------------------------
+  _fr_world
+  _fs merge-authority.sh grant quiet --by front-test --reason "fixture" >/dev/null 2>&1
+  _fs checkpoint-arm.sh arm --board quiet --gate GATE-M1 --project "$P" --mode rehearse >/dev/null 2>&1
+  _fs checkpoint-arm.sh arm --board other --gate GATE-M9 --project "$P" --mode rehearse >/dev/null 2>&1
+  out="$(_fr status quiet 2>"$root/err")"; rc=$?
+  d=""
+  [ "$rc" = 0 ] || d="$d exit=$rc(want 0)"
+  _fr_want "$out" 'quiet: running 1 · ready 0 · todo 1 · blocked 2 · review 0 · done 1'
+  _fr_want "$out" 'merge authority: granted: board quiet, by front-test at '
+  _fr_want "$out" 'armed gates: GATE-M1 (rehearse)'
+  _fr_not  "$out" 'GATE-M9'
+  _fr_want "$out" '  running: 1'
+  _fr_want "$out" '    t_q2  CHUNK-2: the running card  forge-codex-lane  12 min'
+  _fr_want "$out" '  waiting on you: nothing'
+  _fr_want "$out" '  held gates: GATE-M1 (t_q4)'
+  _fr_not  "$out" 't_q5'
+  _fr_want "$out" '  last landed: CHUNK-1: landed three hours ago — 3h ago'
+  _fr_want "$out" 'watchdog: healthy (4 OK'
+  [ ! -s "$root/err" ] || d="$d stderr[$(head -c 200 "$root/err" | tr '\n' ' ')]"
+  [ -z "$d" ] && ok "quiet-board-exits-0 (a board with work in flight, a gate and an interactive chunk held behind an open one: exit 0, counts, the grant and the armed gate of THIS board only, the running card for 12 min with its newline flattened, no card waiting, the gate under held gates, the landed chunk 3h ago, a healthy watchdog; reached through a relative symlink to an absolute one)" \
+    || bad "quiet-board-exits-0" "forge status on a quiet board —$d :: $(printf '%s' "$out" | head -14 | tr '\n' '|')"
+
+  # --- 2. what waits on the operator, and that it is the digest's own answer -------------------------------------
+  _fr_world
+  out="$(_fr status waits 2>"$root/err")"; rc=$?
+  d=""
+  [ "$rc" = 1 ] || d="$d exit=$rc(want 1)"
+  _fr_want "$out" '  waiting on you: 4'
+  _fr_want "$out" '    t_w1  CHUNK-1: blocked on env — env: the sandbox cannot reach the remote'
+  _fr_not  "$out" 'second line'
+  _fr_want "$out" '    t_w2  CHUNK-2: parked in triage — in triage'
+  _fr_want "$out" '    t_w3  CHUNK-3: a human chunk sent back — returned for changes'
+  _fr_want "$out" '    t_w4  GATE-M1: every chunk is done — milestone-gate: GATE-M1 holds milestone M1'
+  _fr_want "$out" '  held gates: GATE-M2 (t_w6)'
+  _fr_not  "$out" 't_w8'
+  _fr_not  "$out" 't_w9'
+  # The waiting set was re-derived from digest.sh's query; the digest's own answer for the same board is the check.
+  local fids dids
+  fids="$(printf '%s\n' "$out" | awk '/^  waiting on you:/{f=1; next} /^  [^ ]|^[^ ]|^$/{f=0} f{print $1}' | sort | tr '\n' ' ')"
+  dids="$(env -u HERMES_KANBAN_HOME HOME="$root/home" HERMES_HOME="$H" TZ=UTC TMPDIR="$root/tmp" "$fs/digest.sh" --board waits --day "$(date +%Y-%m-%d)" 2>/dev/null \
+            | sed -n 's/^— \(t_[A-Za-z0-9_]*\) · .*/\1/p' | sort | tr '\n' ' ')"
+  [ -n "$dids" ] || d="$d the-digest-named-no-waiting-card(the-comparison-went-blind)"
+  [ "$fids" = "$dids" ] || d="$d forge-waiting[$fids]!=digest-waiting[$dids]"
+  [ -z "$d" ] && ok "what-waits-on-you-is-listed-and-matches-the-digest (exit 1; a blocked card with the first line of its reason only, a triage card, a human chunk sent back and a gate whose chunks are done are listed; a gate behind an open chunk is held, an interactive hold behind one and a ready lane card are not; the same four ids the digest names)" \
+    || bad "what-waits-on-you-is-listed-and-matches-the-digest" "forge status on a board with cards waiting —$d :: $(printf '%s' "$out" | head -16 | tr '\n' '|')"
+
+  # --- 3. could not read is exit 2; so is a usage error -----------------------------------------------------------
+  _fr_world
+  d=""
+  out="$(_fr status nosuch 2>/dev/null)"; rc=$?
+  { [ "$rc" = 2 ] && [[ "$out" = *'nosuch: UNREADABLE'* ]]; } || d="$d a-board-that-does-not-exist(exit=$rc)"
+  mkdir -p "$kb/broken"; printf 'not sqlite\n' > "$kb/broken/kanban.db"
+  out="$(_fr status broken 2>/dev/null)"; rc=$?
+  { [ "$rc" = 2 ] && [[ "$out" = *'broken: UNREADABLE'* ]]; } || d="$d a-corrupt-board(exit=$rc)"
+  out="$(_fr status 2>/dev/null)"; rc=$?   # waits (exit 1) and broken (exit 2) together: 2 outranks 1
+  { [ "$rc" = 2 ] && [[ "$out" = *'broken: UNREADABLE'* ]] && [[ "$out" = *'  waiting on you: 4'* ]] && [[ "$out" = *'quiet: running 1'* ]]; } \
+    || d="$d no-argument-with-a-corrupt-board-among-others(exit=$rc)"
+  rm -rf "$kb/broken"
+  FR_X="HERMES_HOME=$root/no-such-home"
+  out="$(_fr status 2>/dev/null)"; rc=$?
+  { [ "$rc" = 2 ] && [[ "$out" = *'UNREADABLE'* ]]; } || d="$d no-boards-directory(exit=$rc)"
+  FR_X=""
+  out="$(_fr status 'Bad/Name' 2>"$root/err")"; rc=$?
+  { [ "$rc" = 2 ] && [ -z "$out" ]; } || d="$d a-name-that-is-not-a-slug(exit=$rc)"
+  out="$(_fr status quiet waits 2>/dev/null)"; rc=$?
+  [ "$rc" = 2 ] || d="$d two-boards(exit=$rc)"
+  FR_BIN="$blind/forge.sh"
+  out="$(_fr status quiet 2>/dev/null)"; rc=$?
+  FR_BIN=""
+  { [ "$rc" = 2 ] && [[ "$out" = *'armed gates: UNREADABLE'* ]]; } || d="$d an-arming-list-that-cannot-be-read(exit=$rc)"
+  out="$(_fr bogus 2>"$root/err")"; rc=$?
+  { [ "$rc" = 2 ] && [ -z "$out" ] && grep -q "unknown command 'bogus'" "$root/err" && grep -q 'forge status' "$root/err"; } || d="$d an-unknown-subcommand(exit=$rc)"
+  out="$(_fr stop 2>/dev/null)"; rc=$?
+  [ "$rc" = 2 ] || d="$d stop-without-a-board(exit=$rc)"
+  local variant
+  for variant in "" help -h --help; do
+    out="$(_fr $variant 2>/dev/null)"; rc=$?
+    { [ "$rc" = 0 ] && [[ "$out" = *'forge status [<board>]'* ]] && [[ "$out" = *'forge stop <board>'* ]]; } || d="$d usage-for[${variant:-no arguments}](exit=$rc)"
+  done
+  [ -z "$d" ] && ok "unreadable-boards-and-usage-errors-exit-2 (a board with no database, a corrupt one, a corrupt one among readable ones (2 outranks the 1 of a waiting card), no boards directory, a name that is not a slug, two boards, an arming list that cannot be read, an unknown subcommand and stop without a board are all 2; help, -h, --help and no arguments print usage and exit 0)" \
+    || bad "unreadable-boards-and-usage-errors-exit-2" "\"could not ask\" must never read as \"nothing there\" —$d"
+
+  # --- 4. the watchdog's last reading decides the exit ------------------------------------------------------------
+  d=""
+  _fr_world; rm -f "$S/watchdog/watchdog.log"
+  out="$(_fr status quiet 2>/dev/null)"; rc=$?
+  { [ "$rc" = 1 ] && [[ "$out" = *'watchdog: no reading in the last 30 min'* ]]; } || d="$d no-log(exit=$rc)"
+  _fr_world; touch -t 202001010000 "$S/watchdog/watchdog.log"
+  out="$(_fr status quiet 2>/dev/null)"; rc=$?
+  { [ "$rc" = 1 ] && [[ "$out" = *'watchdog: no reading in the last 30 min'* ]]; } || d="$d a-log-nobody-has-written-to(exit=$rc)"
+  _fr_world
+  printf 'forge watchdog 2026-11-14T10:30:45+0100\nOK    gateway         up\nFAIL  ticker          newest forge-merge-watcher output is 55m old (limit 30m)\nwatchdog: UNHEALTHY (ticker)\n' > "$S/watchdog/watchdog.log"
+  out="$(_fr status quiet 2>/dev/null)"; rc=$?
+  { [ "$rc" = 1 ] && [[ "$out" = *'watchdog: UNHEALTHY (ticker)'* ]] && [[ "$out" = *'    FAIL  ticker          newest forge-merge-watcher output is 55m old'* ]]; } || d="$d an-unhealthy-reading(exit=$rc)"
+  printf 'forge watchdog 2026-11-14T10:30:45+0100\nOK    gateway         up\n' > "$S/watchdog/watchdog.log"
+  out="$(_fr status quiet 2>/dev/null)"; rc=$?
+  { [ "$rc" = 1 ] && [[ "$out" = *'no healthy/UNHEALTHY verdict'* ]]; } || d="$d a-run-with-no-verdict(exit=$rc)"
+  # An old unhealthy run followed by a healthy one: only the LAST run counts.
+  printf 'forge watchdog 2026-11-14T10:20:45+0100\nFAIL  gateway         down\nwatchdog: UNHEALTHY (gateway)\nforge watchdog 2026-11-14T10:30:45+0100\nOK    gateway         up\nwatchdog: healthy\n' > "$S/watchdog/watchdog.log"
+  out="$(_fr status quiet 2>/dev/null)"; rc=$?
+  { [ "$rc" = 0 ] && [[ "$out" = *'watchdog: healthy (1 OK'* ]] && [[ "$out" != *FAIL* ]]; } || d="$d only-the-last-run-counts(exit=$rc)"
+  [ -z "$d" ] && ok "watchdog-reading-decides-the-exit (no log and a log nobody has written to in 30 minutes say so and exit 1; an UNHEALTHY last run exits 1 and prints its FAIL line; a last run with no verdict is not healthy; an old unhealthy run before a healthy one does not count)" \
+    || bad "watchdog-reading-decides-the-exit" "a watchdog that is not healthy is something the operator must act on —$d"
+
+  # --- 5. stop: revoke, disarm, read back, and nothing more -------------------------------------------------------
+  _fr_world
+  _fs merge-authority.sh grant stopme --by front-test >/dev/null 2>&1
+  _fs merge-authority.sh grant keep --by front-test >/dev/null 2>&1
+  _fs checkpoint-arm.sh arm --board stopme --gate GATE-M1 --project "$P" --mode rehearse >/dev/null 2>&1
+  _fs checkpoint-arm.sh arm --board stopme --gate GATE-M2 --project "$P" --mode apply --confirm-release >/dev/null 2>&1
+  _fs checkpoint-arm.sh arm --board keep --gate GATE-M1 --project "$P" --mode rehearse >/dev/null 2>&1
+  d=""
+  _fs merge-authority.sh status stopme >/dev/null 2>&1 || d="$d the-fixture-grant-was-not-made"
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null | grep -c '^stopme ')" = 2 ] || d="$d the-fixture-gates-were-not-armed"
+  local boards_before boards_after
+  boards_before="$(_fr_tree "$H")"
+  out="$(_fr stop stopme 2>"$root/err")"; rc=$?
+  [ "$rc" = 0 ] || d="$d first-stop-exit=$rc(want 0)"
+  _fr_want "$out" 'forge stop stopme'
+  _fr_want "$out" 'GATE-M1 (was armed rehearse)'
+  _fr_want "$out" 'GATE-M2 (was armed apply)'
+  _fr_want "$out" 'read back: board stopme has no merge authority and no armed gate'
+  _fr_want "$out" 'note: a merge already made is not undone'
+  _fr_want "$out" 'note: a card already running finishes its run; nothing new merges or releases without you'
+  # Asked again, by the scripts that own the answers: nothing of stopme's is left, and keep's is untouched.
+  if _fs merge-authority.sh status stopme >/dev/null 2>&1; then d="$d the-grant-is-still-there"; fi
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null | grep -c '^stopme ')" = 0 ] || d="$d a-gate-is-still-armed"
+  _fs merge-authority.sh status keep >/dev/null 2>&1 || d="$d another-boards-grant-was-revoked"
+  [ "$(_fs checkpoint-arm.sh list 2>/dev/null | grep -c '^keep GATE-M1 ')" = 1 ] || d="$d another-boards-gate-was-disarmed"
+  [ "$boards_before" = "$(_fr_tree "$H")" ] || d="$d stop-touched-the-boards"
+  out="$(_fr stop stopme 2>"$root/err")"; rc=$?
+  { [ "$rc" = 0 ] && [[ "$out" = *'nothing to stop'* ]] && [[ "$out" = *'note: a merge already made is not undone'* ]]; } || d="$d the-second-stop-is-not-a-no-op(exit=$rc)"
+  # A revoke that did not take (a fenced worker terminal refuses it) is read back as still in force: exit 1, never 0.
+  _fs merge-authority.sh grant stopme --by front-test >/dev/null 2>&1
+  FR_X="HERMES_DELEGATED_CHILD_CONTEXT=1"
+  out="$(_fr stop stopme 2>/dev/null)"; rc=$?
+  FR_X=""
+  { [ "$rc" = 1 ] && [[ "$out" = *'STILL IN FORCE: board stopme is still granted merge authority'* ]]; } || d="$d a-grant-that-survived-the-revoke(exit=$rc)"
+  # A broken arming helper must not leave the grant in force: the revoke runs first, the exit says it could not confirm.
+  _fs merge-authority.sh grant stopme --by front-test >/dev/null 2>&1
+  FR_BIN="$blind/forge.sh"
+  out="$(_fr stop stopme 2>/dev/null)"; rc=$?
+  FR_BIN=""
+  { [ "$rc" = 2 ] && [[ "$out" = *'COULD NOT CONFIRM'* ]]; } || d="$d a-stop-that-cannot-list-the-gates(exit=$rc)"
+  if _fs merge-authority.sh status stopme >/dev/null 2>&1; then d="$d the-grant-survived-a-stop-whose-arming-helper-was-broken"; fi
+  [ -z "$d" ] && ok "stop-revokes-disarms-and-reads-back (a real grant and two real armed gates, one of them apply, are withdrawn and both scripts asked again; another board's grant and gate and the boards themselves are untouched; the second stop says there was nothing to stop; a revoke that did not take is read back as STILL IN FORCE and exits 1; with the arming helper unable to run the grant is still revoked and the exit is 2)" \
+    || bad "stop-revokes-disarms-and-reads-back" "forge stop is the kill switch and must prove it worked —$d :: $(printf '%s' "$out" | head -8 | tr '\n' '|')"
+
+  # --- 6. status writes nothing -----------------------------------------------------------------------------------
+  _fr_world
+  _fs merge-authority.sh grant quiet --by front-test >/dev/null 2>&1
+  _fs checkpoint-arm.sh arm --board quiet --gate GATE-M1 --project "$P" --mode rehearse >/dev/null 2>&1
+  local tree_before tree_after
+  rm -rf "$root/tmp"; mkdir -p "$root/tmp"   # earlier cases ran the digest and metrics under the same TMPDIR
+  tree_before="$(_fr_tree "$H"; _fr_tree "$S")"
+  out="$(_fr status 2>"$root/err")"; rc=$?
+  d=""
+  [ "$rc" = 1 ] || d="$d no-argument-run-exit=$rc(want 1: waits has cards waiting)"
+  _fr_want "$out" 'quiet: running 1'
+  _fr_want "$out" 'waits: running 1'
+  _fr status waits >/dev/null 2>&1
+  _fr status quiet >/dev/null 2>&1
+  tree_after="$(_fr_tree "$H"; _fr_tree "$S")"
+  [ "$tree_before" = "$tree_after" ] || d="$d the-boards-or-the-state-root-changed"
+  [ -n "$tree_before" ] || d="$d the-fingerprint-was-empty"
+  [ -z "$(ls -A "$root/tmp" 2>/dev/null)" ] || d="$d a-snapshot-was-left-behind($(ls "$root/tmp" | head -2 | tr '\n' ' '))"
+  [ -z "$d" ] && ok "status-is-read-only (every file under the boards and the state root, and the directory listing, is byte-identical after three runs, and every snapshot it made is gone)" \
+    || bad "status-is-read-only" "forge status must only read —$d"
+}
+wants front     && run_front_group
 
 # ---------------------------------------------------------------------------
 # manifest/ — `--list` is a hand-maintained catalogue, and nothing compared it

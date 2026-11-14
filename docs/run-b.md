@@ -14,6 +14,7 @@ of what a long one cost.
 | Who completes a gate whose probe passes | nobody (held) | the checkpoint cron, when the gate is armed `apply` |
 | How the board follows a plan change | by hand | `hermes/board-sync.sh` |
 | What reports a dead gateway or cron | nothing | `scripts/watchdog.sh` |
+| Who brings the product checkout up to date before a checkpoint | the operator, by hand | the checkpoint cron (fetch, fast-forward only) |
 
 ## What it measures
 
@@ -74,6 +75,11 @@ is safe to stop after. Read the output of each before the next.
    CHUNK-6 and CHUNK-8 become ready. From here the run needs no one.
 9. **Arm `GATE-M2` `apply`** when you are content for milestone 3 to start by itself,
    or leave it unarmed and the run stops at the gate.
+
+**Launch record, 2026-11-14.** Steps 1 to 6 are done (the epic's *S9 launch record* has the
+detail). Step 6 passed: `wielas/hello-forge#13` went from ready to merged to done in about three
+minutes on board `hello-rehearsal-a2h`, with no operator action. Steps 7 to 9 are the owner's;
+`docs/state.md` gives the three commands. Do not arm `GATE-M2` before #112 is deployed.
 
 ## What the operator does during the run
 
