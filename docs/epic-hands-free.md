@@ -174,6 +174,29 @@ in force.*
     merge, and is otherwise at the session's discretion. Unchanged: never `make verify` in the
     runtime, and `make preflight` after every deploy.
 
+*Direction set 2026-11-14, in a session to which the owner again handed the roadmap and the way of
+working ("take the handoff lightly", "especially the rules how to work"). Numbered on from the
+eighteen above. All four are in force.*
+
+19. **The session that builds also operates the host, up to the two switches.** Deploys, preflight,
+    board sync, cron setup, rehearsals and their cleanup are run by the session, on the host, and
+    recorded. Granting merge authority on a product board and arming a gate `apply` stay the
+    owner's own commands. This supersedes "Claude hands those over as exact commands and never
+    runs them itself" (*How we run this epic*). The basis is the cost of the old rule: run A's
+    seven rehearsals each took an operator round trip of a day, and on 2026-11-14 the eighth ran
+    inside a session in four minutes, start to merged.
+20. **The operator's surface is one command, `forge`.** WL3 is pulled forward from S4b and S13:
+    `status` and `stop` first (S9a), then `go` and `rehearse`. A prose ritual on the operator's
+    side becomes a subcommand, as the lane's did (ADR-0010). `forge rehearse` replaces the R0 to
+    R7 procedure in `docs/run-a.md`'s amendments and is run after every deploy and tool upgrade:
+    seven rehearsals found five defects that several hundred offline cases had not.
+21. **Short docs now.** WL6 is pulled forward: `docs/state.md` is one page and its history is
+    archived unedited (S9c). A session's comprehension cost was most of its budget.
+22. **A hands-free run is walked end to end before it is armed.** Reading the flow for what a
+    person used to do by hand found, before launch, that nothing fast-forwards the product
+    checkout the checkpoint probes (S9b). The same walk is owed for the restart and
+    dead-token cases (`docs/state.md`, *Known gaps*).
+
 ## Principles
 
 Every item below follows from these; a new item that breaks one needs an ADR.
@@ -1000,6 +1023,9 @@ closes.
 | S8h | The digest collapses a board untouched for 14 days or more, with nothing running, to one line in a closing section (`FORGE_DIGEST_DORMANT_DAYS`) | The daily message was 19 KB, most of it boards nobody had touched since July | done — merged 2026-11-13 (`10a6d95`), not deployed. Measured on the host for 2026-11-11: 18,944 bytes before, 15,020 after, because only one board is dormant yet; two others had events on 2026-11-10 (P45) and cross the 14-day line on 2026-11-24 | #107 |
 | S8i | `scripts/watchdog.sh` and its LaunchAgent: gateway, cron ticker, digest and `kanban.auto_decompose` checked every 10 minutes outside Hermes, alerts on a change of state, and an optional heartbeat URL for what the host cannot report about itself. `make preflight` FAILs while `kanban.auto_decompose` is not false (P45) | Two silent gateway outages in November, and the kernel's auto-decomposer dispatching work on two old boards on 2026-11-10 | done — merged 2026-11-13 (`3b44701`), not deployed and not installed. Read on the host the same day with `--no-alert`: gateway, ticker and digest OK, `auto_decompose` FAIL. The watchdog reads `config.yaml` itself, because `hermes` is not on launchd's PATH and Hermes may be what is down; the Telegram API host is fixed, so no variable can redirect the bot token. **Not proven:** no alert has been sent for real, and with FileVault on nothing on the host runs after a restart, so only the heartbeat URL reports that | #110 |
 | S9 | **Run B = milestone 2**. *Decided 2026-11-06 (decisions 9 and 10): the variable is the overseer plus the milestone checkpoint on the live path (MS3, MS4, GW3), and merge authority stays in shadow. S9 pre-registers one fresh seeded defect in one M2 chunk, and records its tag, SHA and scorer outcome before that chunk runs. **Board reconciliation:** the Squatfather's board does not match its M2 plan, and the operator procedure is drafted outside this repository (`~/forge-evidence/reconciliation/`), with no product content committed. Its findings: MATCH 6, UPDATE 5, CREATE 3 (CHUNK-11, CHUNK-12, CHUNK-13), ANOMALY 2 (stale card bodies on CHUNK-5, which is done, and on CHUNK-8, which is todo). `board-bootstrap.sh` cannot reconcile an existing board (it is create-only and the rollout doc forbids a rebootstrap), so the steps are manual. Ordering hazard: link CHUNK-11 to CHUNK-9 before unlinking GATE-M2 from CHUNK-9, because an `unlink` re-computes readiness for the whole board and would release CHUNK-9 early. Never archive a gate: archived counts as done and releases its children. **Owner decisions on the reconciliation, 2026-11-06, given in a working session:** (1) the Squatfather's 13-chunk plan budget: "Approved". (2) CHUNK-13 and CHUNK-11, flagged high-risk: "Keep them as they are, we'll see how it goes." No reslice. (3) Update CHUNK-8's stale card body to match Squatfather PR #10: "yes". CHUNK-5's stale body stays as it is, because the card is done; that follows the plan's default and is not an owner ruling.* | *Amended 2026-11-13 (decisions 15 to 17), effective at the owner's go: the verifier merges lane-built chunks under a per-board grant (S8g); no seeded defect is required; the board is reconciled with `board-sync.sh` (S8f) instead of the manual procedure above; the checkpoint rehearsal on held M1 is a launch step.* | Variables: merge authority with the verifier, and the overseer and the checkpoint on the live path | planned | |
+| S9a | `scripts/forge.sh`: `forge status [<board>]` (read-only; exit 1 when something waits on the operator) and `forge stop <board>` (revoke and disarm, read back). New `front` group (decision 20) | The operator's surface was a dozen script paths, and stopping a run was two of them | in review | #113 |
+| S9b | The checkpoint cron fetches and fast-forwards the product checkout before it probes; an unreachable origin, or local commits origin lacks, is said once and not probed (decision 22). `gateway/cron-probes-what-was-merged` | In a hands-free run the verifier merges on GitHub and nothing pulled the local checkout, so `GATE-M2`'s probe would have judged a tree without milestone 2. **`GATE-M2` is not armed until this is deployed** | in review | #112 |
+| S9c | `docs/state.md` is one page; the 767-line file is `docs/archive/state-2026-11-14.md`, unedited (decision 21, WL6) | Every session paid for the sediment | in review | this PR |
 | S10 | EN5, EN1, EN2 | Engine groundwork | planned | |
 | S11 | EN3 (decides EN8) | Pi vs Hermes-native, on data | planned | |
 | S12 | EN4, FL9; **run C = milestone 3** | Variable: the implementer tier | planned | |
@@ -1017,6 +1043,18 @@ shadow too.
 recommended PR from the phone. After the flip: planning sessions, a daily
 digest, a reply at each milestone checkpoint, and rare exceptions.
 
+
+**S9 launch record, 2026-11-14:** steps 1 to 6 of `docs/run-b.md` are done; the evidence is in
+`~/forge-evidence/run-b-launch-2026-11-14/`. Step 4: the `forge-checkpoint` cron job exists, paused
+(`3f8cc5b95565`). Step 5: the Squatfather checkout was fast-forwarded to `ac06baf` and
+`board-sync.sh --apply --branch-suffix a2` ran its 14 steps, each read back, and ended in sync. Step 6:
+**merge mode ran live for the first time and passed**, on board `hello-rehearsal-a2h` (card
+`t_35fdac2e`, `wielas/hello-forge#13`): ready to merged to done in about three minutes with no
+operator action; the grant was revoked, the board archived and hello-forge reset by `#14`. `a2h` is
+spent; the next suffix is `a2i`. `GATE-M1` was armed `rehearse` and the cron script run twice by
+hand: one report (pass, 5 of 5 at `ac06baf`), then silence, the gate still held; it was disarmed
+again. **Not done: steps 7 to 9.** The grant and the `apply` arming are the owner's commands
+(decision 19); `docs/state.md` gives them.
 
 **S7 recovery note, 2026-11-02:** The later evidence and its limitations are
 recorded in `docs/run-a.md`'s recovery record. D-1 and the resumed approval
@@ -1051,6 +1089,9 @@ cites are left as written; the closeout supersedes them.
 and opens the PR. The operator merges, deploys, and performs every host
 mutation — `hermes config`, profiles, the gateway, launchd — and every live
 run. Claude hands those over as exact commands and never runs them itself.
+*Amended 2026-11-14 (decision 19): the session also deploys, runs preflight, board sync,
+rehearsals and their cleanup on the host, and records them. A merge-authority grant on a
+product board and an `apply` arming remain the owner's own commands.*
 
 **One session, one PR.** A session delivers the items in its row and nothing
 else. When an item turns out bigger than its row, it is split and the new

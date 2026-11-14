@@ -1472,7 +1472,9 @@ SMJSON
   # swap is half-applied and every string still agrees with itself. The write
   # succeeds; the readback is what must catch it, and the files must come back.
   if _set_model_lab "$sm_lab"; then
-    awk 'NR==400 { print "Historically the lane ran with codex pinned gpt-old low." } { print }' \
+    # Inserted at line 1, so it precedes the real pin whatever the file's length (it was NR==400 while state.md was 767 lines;
+    # on the one-page state.md that inserted nothing and the mutation was a no-op).
+    awk 'NR==1 { print "Historically the lane ran with codex pinned gpt-old low." } { print }' \
       "$sm_lab/repo/docs/state.md" > "$sm_lab/state.mutated" \
       && mv "$sm_lab/state.mutated" "$sm_lab/repo/docs/state.md"
     _set_model_freeze "$sm_lab"
@@ -19448,6 +19450,8 @@ run_docs_group() {
   local audit=docs/audit-forgeboard-2026-07-30.md
   local roadmap=docs/roadmap-first-run.md
   local state=docs/state.md
+  # The commissioning evidence F102 cites moved with the history when state.md became one page (2026-11-14).
+  local state_archive=docs/archive/state-2026-11-14.md
   local guide=docs/operator-guide.md
   local id expected header bad_headers=0
 
@@ -19589,7 +19593,7 @@ DISPOSITIONS
         "F81/F103 must retain their original text and append linked CHUNK-10 superseding records"
   fi
 
-  if _docs_f102_contract_ok "$audit" "$state"; then
+  if _docs_f102_contract_ok "$audit" "$state_archive"; then
     ok "launch-f102-cites-real-product-roadmap"
   else
     bad "launch-f102-cites-real-product-roadmap" \
@@ -19598,7 +19602,7 @@ DISPOSITIONS
 
   sed 's#wielas/forgeboard-report#wielas/fixture#g' \
     "$audit" > "$mutated/audit.md"
-  if _docs_f102_contract_ok "$mutated/audit.md" "$state"; then
+  if _docs_f102_contract_ok "$mutated/audit.md" "$state_archive"; then
     bad "launch-f102-evidence-mutation-is-caught" \
         "changing the real product identity still satisfied F102"
   else
