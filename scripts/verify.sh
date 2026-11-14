@@ -22495,11 +22495,16 @@ run_front_group() {
   mkdir -p "$root/bin" "$root/link" "$root/home" "$root/tmp" "$P" "$kb"
   ln -sfn "$fs/forge.sh" "$root/link/forge-real"
   ln -sfn "../link/forge-real" "$root/bin/forge"
+  # A copy of the scripts forge.sh reaches in which checkpoint-arm.sh cannot run: "could not ask" for the arming list.
+  local blind="$root/blind-scripts" f
+  mkdir -p "$blind"
+  for f in forge.sh forge-state.sh decision-message.sh board-snapshot.sh merge-authority.sh checkpoint-arm.sh gate-reply.sh; do cp "$fs/$f" "$blind/$f"; done
+  chmod -x "$blind/checkpoint-arm.sh"
 
   _fr() { # args for forge; FR_X holds extra NAME=value words -> stdout of forge (stderr is the caller's)
     env -u FORGE_WATCHDOG_ROOT -u FORGE_MERGE_AUTHORITY_ROOT -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_KANBAN_HOME \
         -u FORGE_HANDOFF_SENTINEL HOME="$root/home" HERMES_HOME="$H" FORGE_STATE_ROOT="$S" FORGE_STATUS_NOW="$now" \
-        TZ=UTC TMPDIR="$root/tmp" $FR_X "$root/bin/forge" "$@"
+        TZ=UTC TMPDIR="$root/tmp" $FR_X "${FR_BIN:-$root/bin/forge}" "$@"
   }
   _fs() { # a sibling script run against the same state root, unfenced
     local script="$1"; shift
@@ -22625,6 +22630,10 @@ SQL
   { [ "$rc" = 2 ] && [ -z "$out" ]; } || d="$d a-name-that-is-not-a-slug(exit=$rc)"
   out="$(_fr status quiet waits 2>/dev/null)"; rc=$?
   [ "$rc" = 2 ] || d="$d two-boards(exit=$rc)"
+  FR_BIN="$blind/forge.sh"
+  out="$(_fr status quiet 2>/dev/null)"; rc=$?
+  FR_BIN=""
+  { [ "$rc" = 2 ] && [[ "$out" = *'armed gates: UNREADABLE'* ]]; } || d="$d an-arming-list-that-cannot-be-read(exit=$rc)"
   out="$(_fr bogus 2>"$root/err")"; rc=$?
   { [ "$rc" = 2 ] && [ -z "$out" ] && grep -q "unknown command 'bogus'" "$root/err" && grep -q 'forge status' "$root/err"; } || d="$d an-unknown-subcommand(exit=$rc)"
   out="$(_fr stop 2>/dev/null)"; rc=$?
@@ -22634,7 +22643,7 @@ SQL
     out="$(_fr $variant 2>/dev/null)"; rc=$?
     { [ "$rc" = 0 ] && [[ "$out" = *'forge status [<board>]'* ]] && [[ "$out" = *'forge stop <board>'* ]]; } || d="$d usage-for[${variant:-no arguments}](exit=$rc)"
   done
-  [ -z "$d" ] && ok "unreadable-boards-and-usage-errors-exit-2 (a board with no database, a corrupt one, a corrupt one among readable ones (2 outranks the 1 of a waiting card), no boards directory, a name that is not a slug, two boards, an unknown subcommand and stop without a board are all 2; help, -h, --help and no arguments print usage and exit 0)" \
+  [ -z "$d" ] && ok "unreadable-boards-and-usage-errors-exit-2 (a board with no database, a corrupt one, a corrupt one among readable ones (2 outranks the 1 of a waiting card), no boards directory, a name that is not a slug, two boards, an arming list that cannot be read, an unknown subcommand and stop without a board are all 2; help, -h, --help and no arguments print usage and exit 0)" \
     || bad "unreadable-boards-and-usage-errors-exit-2" "\"could not ask\" must never read as \"nothing there\" —$d"
 
   # --- 4. the watchdog's last reading decides the exit ------------------------------------------------------------
@@ -22693,7 +22702,14 @@ SQL
   out="$(_fr stop stopme 2>/dev/null)"; rc=$?
   FR_X=""
   { [ "$rc" = 1 ] && [[ "$out" = *'STILL IN FORCE: board stopme is still granted merge authority'* ]]; } || d="$d a-grant-that-survived-the-revoke(exit=$rc)"
-  [ -z "$d" ] && ok "stop-revokes-disarms-and-reads-back (a real grant and two real armed gates, one of them apply, are withdrawn and both scripts asked again; another board's grant and gate and the boards themselves are untouched; the second stop says there was nothing to stop; a revoke that did not take is read back as STILL IN FORCE and exits 1)" \
+  # A broken arming helper must not leave the grant in force: the revoke runs first, the exit says it could not confirm.
+  _fs merge-authority.sh grant stopme --by front-test >/dev/null 2>&1
+  FR_BIN="$blind/forge.sh"
+  out="$(_fr stop stopme 2>/dev/null)"; rc=$?
+  FR_BIN=""
+  { [ "$rc" = 2 ] && [[ "$out" = *'COULD NOT CONFIRM'* ]]; } || d="$d a-stop-that-cannot-list-the-gates(exit=$rc)"
+  if _fs merge-authority.sh status stopme >/dev/null 2>&1; then d="$d the-grant-survived-a-stop-whose-arming-helper-was-broken"; fi
+  [ -z "$d" ] && ok "stop-revokes-disarms-and-reads-back (a real grant and two real armed gates, one of them apply, are withdrawn and both scripts asked again; another board's grant and gate and the boards themselves are untouched; the second stop says there was nothing to stop; a revoke that did not take is read back as STILL IN FORCE and exits 1; with the arming helper unable to run the grant is still revoked and the exit is 2)" \
     || bad "stop-revokes-disarms-and-reads-back" "forge stop is the kill switch and must prove it worked —$d :: $(printf '%s' "$out" | head -8 | tr '\n' '|')"
 
   # --- 6. status writes nothing -----------------------------------------------------------------------------------
@@ -22701,6 +22717,7 @@ SQL
   _fs merge-authority.sh grant quiet --by front-test >/dev/null 2>&1
   _fs checkpoint-arm.sh arm --board quiet --gate GATE-M1 --project "$P" --mode rehearse >/dev/null 2>&1
   local tree_before tree_after
+  rm -rf "$root/tmp"; mkdir -p "$root/tmp"   # earlier cases ran the digest and metrics under the same TMPDIR
   tree_before="$(_fr_tree "$H"; _fr_tree "$S")"
   out="$(_fr status 2>"$root/err")"; rc=$?
   d=""

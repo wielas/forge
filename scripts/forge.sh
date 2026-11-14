@@ -295,7 +295,8 @@ cmd_status() {
   HOLD_SQL="$(printf '%s' "$INTERACTIVE_HOLD_REASON" | sed "s/'/''/g")"
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-status.XXXXXX")" || die "cannot make a temporary directory"
   trap 'rm -rf "$WORK"' EXIT
-  ARM_OK=0; arm_read && ARM_OK=1
+  ARM_OK=0
+  if arm_read; then ARM_OK=1; else STATUS_UNREAD=1; fi   # not asked is not "nothing armed"
 
   if [ -n "$board" ]; then
     status_board "$board" 1
@@ -320,6 +321,7 @@ cmd_status() {
   status_watchdog; wd_rc=$?
   printf '  %s\n' "$WD_LINE"
   if [ -n "$WD_FAILS" ]; then printf '%s\n' "$WD_FAILS" | sed 's/^/    /'; fi
+  if [ "$ARM_OK" = 0 ]; then printf '  checkpoint arming: UNREADABLE (checkpoint-arm.sh list exited %s: %s)\n' "$ARM_RC" "$(printf '%s' "$ARM_OUT" | head -n 1)"; fi
 
   if [ "$STATUS_UNREAD" -gt 0 ] || [ "$wd_rc" = 2 ]; then rc=2
   elif [ "$STATUS_WAITING" -gt 0 ] || [ "$wd_rc" = 1 ]; then rc=1; fi
@@ -330,7 +332,7 @@ cmd_status() {
 # stop
 # ---------------------------------------------------------------------------
 cmd_stop() {
-  local board="" rc out ma_rc gate mode pre_grant=0 pre_gates act_failed=0 grant_left=0 gates_left read_failed=0 noop
+  local board="" rc out ma_rc gate mode pre_grant=0 pre_gates act_failed=0 grant_left=0 gates_left read_failed=0 noop list_failed
   while [ $# -gt 0 ]; do
     case "$1" in
       -h|--help) usage; return 0;;
@@ -341,15 +343,14 @@ cmd_stop() {
   [ -n "$board" ] || usage_err "stop needs a board"
   forge_board_slug_ok "$board" || die "'$board' is not a board slug (Hermes: lowercase letters, digits, - and _, starting with a letter or digit, at most 64)"
   # The board's database is not needed: a grant or an arming can outlive its board, and stop must still work.
-  for s in merge-authority.sh checkpoint-arm.sh; do
-    [ -x "$HERE/$s" ] || die "$HERE/$s is missing or not executable"
-  done
+  # NOTHING BELOW MAY END THE RUN BEFORE THE REVOKE HAS BEEN TRIED. A helper that cannot run is recorded and
+  # the read-back decides the exit; a broken arming list must not leave merge authority in force.
 
   # What is in force now, so a second run can say it had nothing to do.
   "$HERE/merge-authority.sh" status "$board" >/dev/null 2>&1; ma_rc=$?
   [ "$ma_rc" != 0 ] || pre_grant=1
-  arm_read || { echo "forge stop: checkpoint-arm.sh list failed (exit $ARM_RC): $ARM_OUT" >&2; exit 2; }
-  pre_gates="$(arm_gates "$board")"
+  list_failed=0
+  if arm_read; then pre_gates="$(arm_gates "$board")"; else pre_gates=""; list_failed=1; fi
 
   echo "forge stop $board"
   # 1. merge authority. Always asked to revoke, also when status says not granted: a malformed file
@@ -359,7 +360,10 @@ cmd_stop() {
   [ "$rc" -lt 2 ] || act_failed=1
 
   # 2. every gate armed for this board
-  if [ -z "$pre_gates" ]; then
+  if [ "$list_failed" = 1 ]; then
+    echo "  armed gates: could not be listed (checkpoint-arm.sh list exited $ARM_RC), so none was disarmed"
+    act_failed=1
+  elif [ -z "$pre_gates" ]; then
     echo "  armed gates: none armed"
   else
     while read -r gate mode; do
