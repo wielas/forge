@@ -93,9 +93,11 @@
 #               a dead gateway, a stale cron ticker, a missed digest or auto_decompose left on each fail
 #               on their own line; one alert per state change, a reminder only after the interval and one
 #               recovery; the token and the heartbeat URL reach curl on stdin and nowhere else; a missing
-#               token is said and health still decides the exit; the LaunchAgent installer; and the two
-#               preflight checks (auto_decompose, the watchdog loaded). Stubbed launchctl and curl, a
-#               pinned clock, temp directories only                                   (S8e, liveness)
+#               token is said and health still decides the exit; the verifier's claude token asked for life,
+#               not presence (alive, dead, could-not-ask, and never leaked; a stub claude, throttled);
+#               the LaunchAgent installer; and the two
+#               preflight checks (auto_decompose, the watchdog loaded). Stubbed launchctl, curl and
+#               claude, a pinned clock, temp directories only                         (S8e, liveness)
 #   front/      the operator's front door, scripts/forge.sh: `forge status` exits 0 for a board nothing waits
 #               on and 1 for one with cards waiting (the digest's own answer, compared) or a watchdog that
 #               is not healthy, 2 for what it could not read, and writes nothing; `forge stop` revokes the
@@ -3302,6 +3304,10 @@ watchdog/auto-decompose-must-be-a-bare-false  only an unquoted false inside the 
 watchdog/preflight-judges-auto-decompose-and-the-watchdog  preflight FAILs kanban.auto_decompose unless it reads false (with the fix command) and WARNs when ai.forge.watchdog is not loaded; the installed Hermes agrees on throwaway configs
 watchdog/install-prints-the-runtime-plist-and-touches-nothing  watchdog-install.sh --print renders the runtime-path plist and touches nothing; install and --uninstall drive launchctl bootout/bootstrap
 watchdog/watchdog-scripts-are-executable-and-share-the-state-root  both scripts are 100755 in git and forge_watchdog_root is <state root>/watchdog
+watchdog/token-alive-is-ok-and-throttled  a stub claude answering is_error false is an OK line, asked the verifier's question once per FORGE_WATCHDOG_TOKEN_EVERY with the root .env's token in its environment; the cached verdict and its age between probes; FORGE_WATCHDOG_TOKEN=0 skips; --no-alert asks and writes nothing; the binary named is the one that runs
+watchdog/token-dead-fails-and-alerts-once  is_error true is a FAIL with the reason and the remedy, exit 1 and one alert; asked again at FORGE_WATCHDOG_TOKEN_RETRY and not before; a renewed token gives OK and one recovery message
+watchdog/token-could-not-ask-is-neither  no claude binary, a claude that hangs past the timeout (killed), output that is not JSON and no token line are each a WARN: not OK, not FAIL, no alert, no verdict cached; a FAIL that cannot be re-asked stays a FAIL and a stale OK turns into a WARN
+watchdog/token-never-leaks  a recognisable token in the .env appears in the stub claude's environment and in no argv, alert, log line, bash -x trace, state or cache file, even when the CLI's own error text quotes it
 front/quiet-board-exits-0           a board with work in flight and nothing to decide: exit 0, the counts, this board's grant and armed gates, the running card, its held gate, the last chunk landed; reached through a symlink
 front/what-waits-on-you-is-listed-and-matches-the-digest  exit 1; blocked, triage, a human chunk sent back and a gate whose chunks are done are listed with the first line of their reason, held ones are not, and the ids equal digest.sh's
 front/unreadable-boards-and-usage-errors-exit-2  a missing board, a corrupt one, no boards directory, a bad name and an unknown subcommand are exit 2, which outranks 1; help and no arguments print usage and exit 0
@@ -22180,7 +22186,9 @@ wants digest    && run_digest_group
 # into dispatched workers (docs/hermes-field-notes.md). Every case here runs the real script against a stubbed
 # launchctl and a stubbed curl, in a temp HERMES_HOME and a temp state root, under a PINNED clock: the output files are
 # touched to fixed times and FORGE_WATCHDOG_NOW is set from their real mtimes, never from the wall clock. Nothing here
-# reaches Telegram, a heartbeat URL, the operator's ~/.hermes or ~/.forge, or a real launchd.
+# reaches Telegram, a heartbeat URL, the operator's ~/.hermes or ~/.forge, or a real launchd. The token check
+# (a dead CLAUDE_CODE_OAUTH_TOKEN that preflight only saw as PRESENT) is off in every one of those worlds and on in the four
+# token-* cases, which put a stub claude where the workers' is and a decoy claude first on PATH: nothing here asks a real model.
 #
 # WD_SCRIPTS and WD_PREFLIGHT aim the group at a COPY of the scripts, which is how each case was made to fail once
 # against a deliberately broken script without editing a tracked file.
@@ -22190,7 +22198,7 @@ run_watchdog_group() {
   command -v jq >/dev/null 2>&1 || { skip "healthy-pings-the-heartbeat-and-stays-quiet" "jq not on PATH"; return; }
   local wds="${WD_SCRIPTS:-$REPO_ROOT/scripts}" wdp="${WD_PREFLIGHT:-$REPO_ROOT/scripts/preflight.sh}" root="$TMPROOT/watchdog"
   local TOK="7000001:TEST-token_ABCdef" HB="https://hc.example.test/ping/00000000-test-heartbeat-secret"
-  local W NOW wdout wdrc WD_X="" WD_BASHFLAGS="" WD_BARE=0
+  local W NOW wdout wdrc WD_X="" WD_BASHFLAGS="" WD_BARE=0 WD_TOKEN=0
   mkdir -p "$root"
 
   _wd_mtime() { local m; m="$(stat -c %Y "$1" 2>/dev/null)" || m=""; case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)";; esac; printf '%s' "$m"; }
@@ -22248,19 +22256,20 @@ WD_CURL
     chmod +x "$W/bin/launchctl" "$W/bin/curl"
     echo running > "$W/stub/launchctl.mode"; echo ok > "$W/stub/telegram.mode"
     NOW=$(( $(_wd_mtime "$h/cron/output/mw1/2026-11-13_13-00-00.md") + 600 ))
-    WD_X=""; WD_BASHFLAGS=""; WD_BARE=0
+    WD_X=""; WD_BASHFLAGS=""; WD_BARE=0; WD_TOKEN=0   # the token check is off unless a case turns it on: it would ask a real claude
   }
   _wd_run() { # args for watchdog.sh; WD_X holds extra NAME=value words -> wdout, wdrc (stdout and stderr both kept, appended)
     local pathv="$PATH"
     [ "$WD_BARE" = 1 ] && pathv=/usr/bin:/bin
     if [ "$WD_BARE" = 1 ]; then
       wdout="$(env -i PATH="$pathv" HOME="$W/home" HERMES_HOME="$W/hermes" FORGE_STATE_ROOT="$W/state" FORGE_WATCHDOG_NOW="$NOW" \
-        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" WD_STUB_DIR="$W/stub" $WD_X \
+        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" FORGE_WATCHDOG_TOKEN="$WD_TOKEN" WD_STUB_DIR="$W/stub" $WD_X \
         /bin/bash $WD_BASHFLAGS "$wds/watchdog.sh" "$@" 2>>"$W/stderr")"; wdrc=$?
     else
       wdout="$(env -u FORGE_WATCHDOG_TICK_MAX_MIN -u FORGE_WATCHDOG_REMIND_HOURS -u FORGE_WATCHDOG_ROOT -u HERMES_KANBAN_BOARD \
+        -u FORGE_WATCHDOG_TOKEN_EVERY -u FORGE_WATCHDOG_TOKEN_RETRY -u FORGE_WATCHDOG_TOKEN_TIMEOUT -u FORGE_WATCHDOG_CLAUDE -u CLAUDE_CODE_OAUTH_TOKEN \
         HOME="$W/home" HERMES_HOME="$W/hermes" FORGE_STATE_ROOT="$W/state" FORGE_WATCHDOG_NOW="$NOW" \
-        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" WD_STUB_DIR="$W/stub" $WD_X \
+        FORGE_WATCHDOG_LAUNCHCTL="$W/bin/launchctl" FORGE_WATCHDOG_CURL="$W/bin/curl" FORGE_WATCHDOG_TOKEN="$WD_TOKEN" WD_STUB_DIR="$W/stub" $WD_X \
         /bin/bash $WD_BASHFLAGS "$wds/watchdog.sh" "$@" 2>>"$W/stderr")"; wdrc=$?
     fi
     printf '%s\n' "$wdout" >> "$W/stdout.txt"
@@ -22269,10 +22278,74 @@ WD_CURL
   _wd_state() { jq -r '[.observed, .alerted, (.alerted_at | tostring)] | join(" ")' "$W/state/watchdog/state.json" 2>/dev/null; }
   _wd_leaks() { # needle -> the places it appears that it must not
     local needle="$1" f out=""
-    for f in "$W"/stub/call.*.argv "$W"/stub/call.*.env "$W/stub/launchctl.calls" "$W/state/watchdog/state.json" "$W/stdout.txt" "$W/stderr"; do
+    for f in "$W"/stub/call.*.argv "$W"/stub/call.*.env "$W"/stub/cl.*.argv "$W/stub/launchctl.calls" "$W/state/watchdog/state.json" "$W/state/watchdog/token.json" "$W/stdout.txt" "$W/stderr"; do
       [ -f "$f" ] && grep -qF -- "$needle" "$f" && out="$out ${f##*/}"
     done
     printf '%s' "$out"
+  }
+  # The token check asks a real `claude` in production, so every world above has it off (WD_TOKEN=0) and a case that wants it
+  # builds _wd_token_world: a verifier that has a token in the root .env and a stub claude where a worker's is
+  # (<HERMES_HOME>/node/bin/claude), a DECOY claude first on PATH that must never be asked, and a watchdog whose own
+  # environment carries a different CLAUDE_CODE_OAUTH_TOKEN that must never reach the child. The stub records its argv and its
+  # environment apart (cl.N.argv, cl.N.env: the token may be in the second and must not be in the first) and answers from
+  # claude.mode: alive, dead, deadecho (an error text that quotes the token), hang, garbage (not JSON), noerr (JSON with no
+  # is_error). The ticker limit is raised because these cases move the clock by hours.
+  local CLTOK="fake-claude-oauth-token-8f3a91c7e2" CLDECOY="ambient-token-of-the-watchdog-itself" n _tk_s _tk_e
+  _wd_token_world() { # name
+    _wd_world "$1"
+    mkdir -p "$W/hermes/node/bin" "$W/decoy"
+    printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$CLTOK" >> "$W/hermes/.env"
+    cat > "$W/hermes/node/bin/claude" <<'WD_CLAUDE'
+#!/bin/sh
+d="$WD_STUB_DIR"
+n=$(cat "$d/cl.count" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$d/cl.count"
+printf '%s\n' "$@" > "$d/cl.$n.argv"
+env > "$d/cl.$n.env"
+echo "$$" > "$d/cl.$n.pid"
+pwd > "$d/cl.$n.cwd"
+case "$(cat "$d/claude.mode" 2>/dev/null || echo alive)" in
+  alive) printf '{"type":"result","subtype":"success","is_error":false,"result":"OK","session_id":"s"}\n';;
+  dead) printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 OAuth session expired and could not be refreshed"}\n'; exit 1;;
+  deadecho) printf '{"type":"result","is_error":true,"api_error_status":401,"result":"Invalid bearer token %s (and sk-ant-oat01-LEAKTEST9999)"}\n' "$CLAUDE_CODE_OAUTH_TOKEN"; exit 1;;
+  hang) sleep 30;;
+  garbage) echo "curl: (6) Could not resolve host: api.anthropic.com";;
+  noerr) printf '{"type":"result","result":"hello"}\n';;
+esac
+WD_CLAUDE
+    cat > "$W/decoy/claude" <<'WD_DECOY'
+#!/bin/sh
+echo decoy >> "$WD_STUB_DIR/decoy.calls"
+printf '{"type":"result","is_error":false,"result":"OK"}\n'
+WD_DECOY
+    chmod +x "$W/hermes/node/bin/claude" "$W/decoy/claude"
+    echo alive > "$W/stub/claude.mode"
+    WD_TOKEN=1
+    WD_X="FORGE_WATCHDOG_TICK_MAX_MIN=2000 PATH=$W/decoy:$PATH CLAUDE_CODE_OAUTH_TOKEN=$CLDECOY"
+  }
+  _wd_alt() { # a second claude, and the same one under another name in a directory of its own, that only say they were asked
+    mkdir -p "$W/alt"
+    cat > "$W/alt/claude" <<'WD_ALT'
+#!/bin/sh
+echo alt >> "$WD_STUB_DIR/alt.calls"
+printf '{"type":"result","is_error":false}\n'
+WD_ALT
+    mkdir -p "$W/alt2"; cp "$W/alt/claude" "$W/alt2/tool"; chmod +x "$W/alt/claude" "$W/alt2/tool"   # alt2 holds ONLY the odd name: nothing called claude beside it
+  }
+  _wd_cl() { local n; n="$(cat "$W/stub/cl.count" 2>/dev/null)"; printf '%s' "${n:-0}"; }   # how many times the stub claude was asked
+  _wd_tokv() { jq -r '.verdict' "$W/state/watchdog/token.json" 2>/dev/null; }
+  # could not ask: a WARN line, and neither an OK nor a FAIL one; health, the heartbeat and the alerts are as if the check were
+  # absent. Judges the FIRST pass of a fresh world (one heartbeat, no alert, no verdict cached); appends to d.
+  _wd_neither() { # label
+    local why="$1" w
+    w="$(_wd_line WARN token)"
+    [ -n "$w" ] || d="$d $why:no-WARN-line($(_wd_line '[A-Z]+' token | cut -c1-80))"
+    [ -z "$(_wd_line OK token)" ] || d="$d $why:said-OK"
+    [ -z "$(_wd_line FAIL token)" ] || d="$d $why:said-FAIL"
+    [ "$wdrc" = 0 ] || d="$d $why:exit=$wdrc"
+    [ "$(_wd_n telegram)" = 0 ] || d="$d $why:alerted($(_wd_n telegram))"
+    [ "$(_wd_n heartbeat)" = 1 ] || d="$d $why:heartbeats=$(_wd_n heartbeat)"
+    [ "$(_wd_tokv)" = none ] || d="$d $why:cached-a-verdict($(_wd_tokv))"
+    printf '%s\n' "$wdout" | grep -q '^watchdog: healthy (warning: token)$' || d="$d $why:summary($(printf '%s\n' "$wdout" | tail -n 1))"
   }
   local d
 
@@ -22452,6 +22525,151 @@ WD_CFGS
   [ -n "$(_wd_line FAIL auto_decompose)" ] || d="$d a-missing-config-passed"
   [ -z "$d" ] && ok "auto-decompose-must-be-a-bare-false (false, False, off and a commented false pass; true, an absent key, no kanban block, a quoted \"false\", flow style, another block's key, a nested key, a key that only shares a prefix and a missing file each fail; a later block's value is not read)" \
     || bad "auto-decompose-must-be-a-bare-false" "only an unquoted false in the kanban block passes —$d"
+
+  # --- the verifier's claude token: asked for life, not presence ----------------------------------------------------------
+  # `make preflight` only sees that the CLAUDE_CODE_OAUTH_TOKEN line exists; a dead one passed it twice in October and every
+  # verifier run then failed with a 401 until a human noticed. The watchdog asks claude itself (through claude-token.sh's
+  # function, so the token comes from the root .env as a worker's does), at most once per FORGE_WATCHDOG_TOKEN_EVERY.
+  # alive is OK and is asked once per window
+  d=""; _wd_token_world tokalive
+  t0="$NOW"
+  _wd_run
+  [ "$wdrc" = 0 ] || d="$d first-exit=$wdrc"
+  _wd_line OK token | grep -q "the verifier's claude token answered just now" || d="$d first-line($(_wd_line '[A-Z]+' token | cut -c1-100))"
+  [ "$(_wd_cl)" = 1 ] || d="$d first-calls=$(_wd_cl)"
+  [ "$(cat "$W/stub/cl.1.argv" 2>/dev/null)" = "$(printf -- '-p\nreply with exactly: OK\n--model\nhaiku\n--output-format\njson')" ] || d="$d the-question-is-not-the-verifiers-call($(tr '\n' '|' < "$W/stub/cl.1.argv" 2>/dev/null))"
+  grep -qx "CLAUDE_CODE_OAUTH_TOKEN=$CLTOK" "$W/stub/cl.1.env" 2>/dev/null || d="$d the-root-env-token-did-not-reach-the-child"
+  ! grep -qF "$CLDECOY" "$W/stub/cl.1.env" 2>/dev/null || d="$d the-watchdogs-own-token-reached-the-child"
+  [ ! -e "$W/stub/decoy.calls" ] || d="$d the-claude-on-PATH-was-asked-instead-of-the-workers"
+  [ "$(cat "$W/stub/cl.1.cwd" 2>/dev/null)" = / ] || d="$d asked-from-$(cat "$W/stub/cl.1.cwd" 2>/dev/null)-not-a-neutral-directory"
+  [ "$(_wd_tokv)" = ok ] || d="$d cached=$(_wd_tokv)"
+  { [ "$(_wd_state | cut -d' ' -f1,2)" = "healthy healthy" ] && [ "$(_wd_n heartbeat)" = 1 ] && [ "$(_wd_n telegram)" = 0 ]; } || d="$d state=$(_wd_state)"
+  NOW=$((t0 + 7200)); _wd_run
+  { [ "$(_wd_cl)" = 1 ] && _wd_line OK token | grep -q 'answered 2h ago'; } || d="$d inside-the-window(calls=$(_wd_cl) line=$(_wd_line '[A-Z]+' token | cut -c1-80))"
+  NOW=$((t0 + 6 * 3600 - 60)); _wd_run
+  [ "$(_wd_cl)" = 1 ] || d="$d one-minute-before-the-window-ends(calls=$(_wd_cl))"
+  NOW=$((t0 + 6 * 3600)); _wd_run
+  { [ "$(_wd_cl)" = 2 ] && _wd_line OK token | grep -q 'answered just now'; } || d="$d past-the-window(calls=$(_wd_cl) line=$(_wd_line '[A-Z]+' token | cut -c1-80))"
+  WD_X="$WD_X FORGE_WATCHDOG_TOKEN_EVERY=60"
+  NOW=$((t0 + 6 * 3600 + 59)); _wd_run
+  [ "$(_wd_cl)" = 2 ] || d="$d the-window-is-not-FORGE_WATCHDOG_TOKEN_EVERY(calls=$(_wd_cl))"
+  NOW=$((t0 + 6 * 3600 + 60)); _wd_run
+  [ "$(_wd_cl)" = 3 ] || d="$d the-window-does-not-end-at-FORGE_WATCHDOG_TOKEN_EVERY(calls=$(_wd_cl))"
+  # the switch, and --no-alert: a due probe is asked live, and nothing is written
+  WD_TOKEN=0; NOW=$((t0 + 9 * 3600)); _wd_run
+  { [ "$(_wd_cl)" = 3 ] && printf '%s\n' "$wdout" | grep -q '^SKIP  token  .*FORGE_WATCHDOG_TOKEN=0'; } || d="$d switched-off(calls=$(_wd_cl))"
+  WD_TOKEN=1; cp "$W/state/watchdog/token.json" "$W/token.before"; _wd_run --no-alert
+  { [ "$(_wd_cl)" = 4 ] && cmp -s "$W/state/watchdog/token.json" "$W/token.before"; } || d="$d no-alert-did-not-ask-or-wrote-the-cache(calls=$(_wd_cl))"
+  _wd_token_world tokreadonly
+  _wd_run --no-alert
+  { [ "$(_wd_cl)" = 1 ] && [ -n "$(_wd_line OK token)" ] && [ ! -e "$W/state/watchdog" ] && [ ! -e "$W/stub/curl.log" ]; } || d="$d no-alert-in-a-fresh-world(calls=$(_wd_cl))"
+  # which claude is asked: FORGE_WATCHDOG_CLAUDE, else the workers' <HERMES_HOME>/node/bin/claude, else PATH's. Whatever it is,
+  # it is the one that runs: claude-token.sh's function execs whatever `claude` PATH finds first, and a decoy is first.
+  _wd_token_world tokpick; _wd_alt
+  WD_X="$WD_X FORGE_WATCHDOG_CLAUDE=$W/alt/claude"; _wd_run --no-alert
+  { [ -n "$(_wd_line OK token)" ] && [ -e "$W/stub/alt.calls" ] && [ "$(_wd_cl)" = 0 ] && [ ! -e "$W/stub/decoy.calls" ]; } \
+    || d="$d FORGE_WATCHDOG_CLAUDE-did-not-win(alt=$([ -e "$W/stub/alt.calls" ] && echo y || echo n) workers=$(_wd_cl) decoy=$([ -e "$W/stub/decoy.calls" ] && echo y || echo n))"
+  _wd_token_world tokshim; _wd_alt
+  WD_X="$WD_X FORGE_WATCHDOG_CLAUDE=$W/alt2/tool"; _wd_run --no-alert
+  { [ -n "$(_wd_line OK token)" ] && [ -e "$W/stub/alt.calls" ] && [ ! -e "$W/stub/decoy.calls" ]; } \
+    || d="$d a-binary-not-called-claude-was-not-the-one-run(decoy=$([ -e "$W/stub/decoy.calls" ] && echo y || echo n))"
+  _wd_token_world tokpath; rm -f "$W/hermes/node/bin/claude"; WD_X="FORGE_WATCHDOG_TICK_MAX_MIN=2000 PATH=$W/decoy:$PATH"; _wd_run --no-alert
+  { [ -n "$(_wd_line OK token)" ] && [ -e "$W/stub/decoy.calls" ]; } || d="$d with-no-worker-claude-PATH-was-not-asked"
+  [ -z "$d" ] && ok "token-alive-is-ok-and-throttled (a stub claude answering is_error false is an OK line; it is asked exactly the verifier's question, once per FORGE_WATCHDOG_TOKEN_EVERY, with the root .env's token in its environment (not the watchdog's own) and from a neutral directory; between probes the cached verdict is reported with its age; FORGE_WATCHDOG_TOKEN=0 is a SKIP; --no-alert asks live and writes nothing; FORGE_WATCHDOG_CLAUDE, then <HERMES_HOME>/node/bin/claude, then PATH, and the binary named is the one that runs, whatever it is called)" \
+    || bad "token-alive-is-ok-and-throttled" "a live token is OK, and a probe spends a model call so it is asked once per window —$d"
+
+  # dead is FAIL, alerts once, is asked again after the retry interval (not the long one), and recovers
+  d=""; _wd_token_world tokdead
+  t0="$NOW"; echo dead > "$W/stub/claude.mode"
+  _wd_run
+  [ "$wdrc" = 1 ] || d="$d first-exit=$wdrc"
+  _wd_line FAIL token | grep -q "did not authenticate (401: Failed to authenticate. API Error: 401 OAuth session expired" || d="$d no-reason-in-the-FAIL-line($(_wd_line '[A-Z]+' token | cut -c1-120))"
+  _wd_line FAIL token | grep -q 'renew CLAUDE_CODE_OAUTH_TOKEN in .*\.env and restart the gateway' || d="$d the-remedy-is-not-said"
+  { [ "$(printf '%s\n' "$wdout" | grep -c '^FAIL')" = 1 ] && [ -z "$(_wd_line OK token)" ]; } || d="$d not-exactly-one-FAIL-line"
+  [ "$(_wd_n telegram)" = 1 ] || d="$d first-pass-alerts=$(_wd_n telegram)"
+  { grep -q 'token: the verifier' "$W"/stub/call.1.stdin 2>/dev/null && grep -q 'renew CLAUDE_CODE_OAUTH_TOKEN' "$W"/stub/call.1.stdin 2>/dev/null; } || d="$d the-alert-does-not-say-what-to-do"
+  [ "$(_wd_state | cut -d' ' -f1,2)" = "unhealthy unhealthy" ] || d="$d state-after-first=$(_wd_state)"
+  [ "$(_wd_n heartbeat)" = 0 ] || d="$d heartbeat-while-the-token-is-dead"
+  NOW=$((t0 + 600)); _wd_run
+  { [ "$wdrc" = 1 ] && [ "$(_wd_cl)" = 1 ] && [ "$(_wd_n telegram)" = 1 ] && [ -n "$(_wd_line FAIL token)" ]; } || d="$d ten-minutes-later(exit=$wdrc calls=$(_wd_cl) alerts=$(_wd_n telegram))"
+  NOW=$((t0 + 1799)); _wd_run
+  [ "$(_wd_cl)" = 1 ] || d="$d asked-before-the-retry-interval(calls=$(_wd_cl))"
+  NOW=$((t0 + 1800)); _wd_run
+  { [ "$wdrc" = 1 ] && [ "$(_wd_cl)" = 2 ] && [ "$(_wd_n telegram)" = 1 ]; } || d="$d at-the-retry-interval(exit=$wdrc calls=$(_wd_cl) alerts=$(_wd_n telegram))"
+  echo alive > "$W/stub/claude.mode"
+  NOW=$((t0 + 3599)); _wd_run
+  { [ "$wdrc" = 1 ] && [ "$(_wd_cl)" = 2 ] && [ -n "$(_wd_line FAIL token)" ]; } || d="$d a-renewed-token-is-noticed-early(exit=$wdrc calls=$(_wd_cl))"
+  NOW=$((t0 + 3600)); _wd_run
+  { [ "$wdrc" = 0 ] && [ "$(_wd_cl)" = 3 ] && [ -n "$(_wd_line OK token)" ] && [ "$(_wd_n telegram)" = 2 ]; } || d="$d recovery(exit=$wdrc calls=$(_wd_cl) alerts=$(_wd_n telegram))"
+  grep -q 'healthy again' "$W"/stub/call.2.stdin 2>/dev/null || d="$d recovery-is-not-worded-as-one"
+  { [ "$(_wd_n heartbeat)" = 1 ] && [ "$(_wd_state | cut -d' ' -f1,2)" = "healthy healthy" ]; } || d="$d after-recovery(heartbeats=$(_wd_n heartbeat) state=$(_wd_state))"
+  NOW=$((t0 + 3601)); _wd_run
+  { [ "$(_wd_cl)" = 3 ] && [ "$(_wd_n telegram)" = 2 ]; } || d="$d a-recovered-token-was-asked-again-at-once(calls=$(_wd_cl))"
+  [ -z "$d" ] && ok "token-dead-fails-and-alerts-once (is_error true is a FAIL line with the reason and the remedy and exit 1; one alert on the change, the remedy in it, none for the next passes; asked again exactly at FORGE_WATCHDOG_TOKEN_RETRY and not before; a renewed token gives OK, exit 0 and one recovery message, then the long window again)" \
+    || bad "token-dead-fails-and-alerts-once" "a dead token is an unhealthy run, one alert, a quick re-check and a recovery —$d"
+
+  # could not ask is neither OK nor FAIL, alerts nothing, caches no verdict, and moves health in neither direction
+  d=""
+  _wd_token_world tokbin; WD_X="$WD_X FORGE_WATCHDOG_CLAUDE=$W/nowhere/claude"; _wd_run
+  _wd_neither no-binary
+  _wd_line WARN token | grep -q 'not an executable file' || d="$d no-binary-not-said"
+  { [ "$(_wd_cl)" = 0 ] && [ ! -e "$W/stub/decoy.calls" ]; } || d="$d no-binary-fell-through-to-another-claude"
+  _wd_token_world tokhang; echo hang > "$W/stub/claude.mode"; WD_X="$WD_X FORGE_WATCHDOG_TOKEN_TIMEOUT=2"
+  _tk_s=$(date +%s); _wd_run; _tk_e=$(( $(date +%s) - _tk_s ))
+  _wd_neither hang
+  _wd_line WARN token | grep -q 'did not answer within 2s' || d="$d a-hang-was-not-named"
+  [ "$_tk_e" -lt 20 ] || d="$d the-watchdog-waited-${_tk_e}s-for-a-hung-claude"
+  { [ -s "$W/stub/cl.1.pid" ] && ! kill -0 "$(cat "$W/stub/cl.1.pid")" 2>/dev/null; } || d="$d the-hung-claude-is-still-running-or-never-ran"
+  _wd_token_world tokgarbage; echo garbage > "$W/stub/claude.mode"; t0="$NOW"; _wd_run
+  _wd_neither not-json
+  _wd_line WARN token | grep -q 'not a JSON result' || d="$d garbage-not-named"
+  NOW=$((t0 + 600)); _wd_run
+  [ "$(_wd_cl)" = 1 ] || d="$d could-not-ask-was-asked-again-after-ten-minutes(calls=$(_wd_cl))"
+  NOW=$((t0 + 1800)); _wd_run
+  [ "$(_wd_cl)" = 2 ] || d="$d could-not-ask-was-not-retried-at-the-retry-interval(calls=$(_wd_cl))"
+  _wd_token_world tokjson; echo noerr > "$W/stub/claude.mode"; _wd_run
+  _wd_neither no-is_error
+  _wd_token_world tokline
+  grep -v '^CLAUDE_CODE_OAUTH_TOKEN=' "$W/hermes/.env" > "$W/env.tmp"; mv "$W/env.tmp" "$W/hermes/.env"; _wd_run
+  _wd_neither no-token-line
+  _wd_line WARN token | grep -q 'no CLAUDE_CODE_OAUTH_TOKEN line' || d="$d a-missing-token-line-was-not-named"
+  { [ "$(_wd_cl)" = 0 ] && [ ! -e "$W/stub/decoy.calls" ]; } || d="$d claude-was-asked-with-no-token-to-give-it"
+  # a FAIL that cannot be re-checked stays a FAIL (no "healthy again" on a network blip), and an OK past its window that
+  # cannot be re-checked is a WARN, not a fresh OK
+  _wd_token_world tokstill; t0="$NOW"; echo dead > "$W/stub/claude.mode"; _wd_run
+  echo garbage > "$W/stub/claude.mode"; NOW=$((t0 + 1800)); _wd_run
+  { [ "$wdrc" = 1 ] && _wd_line FAIL token | grep -q 'could not ask' && [ "$(_wd_n telegram)" = 1 ] && [ "$(_wd_cl)" = 2 ] && [ "$(_wd_tokv)" = fail ]; } \
+    || d="$d a-dead-token-that-could-not-be-re-asked-recovered-or-was-forgotten(exit=$wdrc alerts=$(_wd_n telegram) cached=$(_wd_tokv))"
+  _wd_token_world tokstale; t0="$NOW"; _wd_run
+  echo garbage > "$W/stub/claude.mode"; NOW=$((t0 + 6 * 3600)); _wd_run
+  { [ "$wdrc" = 0 ] && [ -z "$(_wd_line OK token)" ] && _wd_line WARN token | grep -q 'last answered 6h ago' && [ "$(_wd_n telegram)" = 0 ] && [ "$(_wd_tokv)" = ok ]; } \
+    || d="$d a-stale-OK-that-could-not-be-re-asked-was-reported-as-fresh(exit=$wdrc line=$(_wd_line '[A-Z]+' token | cut -c1-100))"
+  [ -z "$d" ] && ok "token-could-not-ask-is-neither (no claude binary, a claude that hangs past FORGE_WATCHDOG_TOKEN_TIMEOUT and is killed, one that prints something that is not JSON, JSON with no is_error and no token line in the .env: each a WARN line and none an OK or a FAIL, exit 0, the heartbeat still pings, nothing alerts, no verdict is cached, and it is asked again at the retry interval; a FAIL that could not be re-asked stays a FAIL and an old OK becomes a WARN)" \
+    || bad "token-could-not-ask-is-neither" "could not ask is not 'it is fine' and not 'it is dead' —$d"
+
+  # the token reaches the child's environment and nowhere else
+  d=""; _wd_token_world tokleak
+  t0="$NOW"; WD_X="$WD_X FORGE_WATCHDOG_TOKEN_EVERY=0 FORGE_WATCHDOG_TOKEN_RETRY=0"
+  : > "$W/stderr"
+  WD_BASHFLAGS="-x"
+  _wd_run
+  echo deadecho > "$W/stub/claude.mode"; NOW=$((t0 + 60)); _wd_run
+  { [ "$wdrc" = 1 ] && printf '%s\n' "$wdout" | grep -q 'Invalid bearer token <redacted>' && printf '%s\n' "$wdout" | grep -q '(and <redacted>)'; } || d="$d an-error-text-that-quotes-the-token-was-not-scrubbed($(_wd_line '[A-Z]+' token | cut -c1-140))"
+  echo garbage > "$W/stub/claude.mode"; NOW=$((t0 + 120)); _wd_run
+  echo alive > "$W/stub/claude.mode"; NOW=$((t0 + 180)); _wd_run
+  WD_BASHFLAGS=""
+  { [ "$(_wd_cl)" = 4 ] && [ "$(_wd_n telegram)" = 2 ]; } || d="$d the-calls-did-not-happen(claude=$(_wd_cl) alerts=$(_wd_n telegram))"
+  [ -z "$(_wd_leaks "$CLTOK")" ] || d="$d token-leaked-into:$(_wd_leaks "$CLTOK")"
+  [ -z "$(_wd_leaks LEAKTEST9999)" ] || d="$d an-sk-ant-string-leaked-into:$(_wd_leaks LEAKTEST9999)"
+  ! grep -rqF -- "$CLTOK" "$W/state" "$W"/stub/call.*.stdin "$W"/stub/call.*.argv "$W"/stub/cl.*.argv 2>/dev/null || d="$d token-in-the-state-directory-an-alert-or-an-argv"
+  ! grep -rqF -- "$CLDECOY" "$W/state" "$W/stdout.txt" "$W/stderr" "$W"/stub/cl.*.env 2>/dev/null || d="$d the-watchdogs-own-token-leaked-or-reached-the-child"
+  n=1; while [ "$n" -le 4 ]; do
+    grep -qx "CLAUDE_CODE_OAUTH_TOKEN=$CLTOK" "$W/stub/cl.$n.env" 2>/dev/null || d="$d token-was-not-in-the-environment-of-call-$n"
+    n=$((n + 1))
+  done
+  grep -q '^+' "$W/stderr" 2>/dev/null || d="$d bash-x-left-no-trace-so-the-case-read-nothing"
+  [ -z "$d" ] && ok "token-never-leaks (a recognisable token in the .env, four passes under bash -x covering alive, a dead token whose error text QUOTES the token and an sk-ant- string, an unparsable answer and a recovery: it is in each stub claude's environment and in no argv of claude, curl or launchctl, no alert, no log line, no stderr trace, no state or cache file; the error text is scrubbed; the watchdog's own CLAUDE_CODE_OAUTH_TOKEN never reaches the child)" \
+    || bad "token-never-leaks" "the token travels in the child's environment only —$d"
 
   # --- preflight: auto_decompose FAILs unless false; the watchdog's absence WARNs -----------------------------------------
   local pf_ad pf_wl pf_loop pf_n=0 pf_row
