@@ -26,7 +26,9 @@ gates it (an ungated private repo on a free plan is fine). It ends by printing `
 the plan pushed, the merge gate, the host, the lanes, the board). It is read-only until the last rung, stops at the first rung not met
 with one `NEXT` line, and exits 2 for a rung it could not ask. When all are met and the board does not exist it says what the
 bootstrap will do (which card starts at once), asks (`--yes`, or `y` at a terminal) and bootstraps, reading the board back.
-`--commission` also runs the paid `commission.sh` first. `staged-run-guide.md` remains the long form.
+`--commission` also runs the paid `commission.sh` first (never against an existing board). On a project whose board already holds
+cards, `start` asks "is it still in line with its plan": a rung not met prints `warn` and the ladder goes on, and only the board's own
+rung decides (in sync: "already on board", exit 0 with a count of warnings; drift: `NEXT`). `staged-run-guide.md` remains the long form.
 `go --ahead` arms a gate whose milestone is not finished: the checkpoint cron does nothing for it until every chunk is done, then
 completes it by itself, which is what a multi-milestone run with nobody at the desk needs. `--gate` may repeat.
 

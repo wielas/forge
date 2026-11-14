@@ -54,7 +54,11 @@
 #                            stops at the first rung that is not met and prints one NEXT line. READ-ONLY until
 #                            the last rung: when every rung is met and the board does not exist it says in plain words
 #                            what the bootstrap will do, asks, and runs hermes/board-bootstrap.sh, reading the board back.
-#                            Run it again after every step. --commission also runs the paid commission.sh.
+#                            Run it again after every step. --commission also runs the paid commission.sh. A project
+#                            whose board already holds cards is RUNNING: asked right after rung 2, it turns every
+#                            other rung that is not met into a `warn` line, goes on through all of them, and lets the
+#                            board's own rung decide: in sync is "already on board", exit 0 (with a count of warnings);
+#                            drift is a NEXT, exit 1. Commissioning is never run against an existing board.
 #   forge help               this text
 #
 # Exit:
@@ -77,8 +81,9 @@
 #             that is not ready and no --ahead, a gate that already has checkpoint state and no --rearm, the cron job
 #             missing -- then the grant and the arming STAY and it says so); 2 usage or could not ask, or no
 #             confirmation (no --yes and no terminal): nothing was changed
-#   start   0 the board exists and matches the plan (just bootstrapped, or already there); 1 a rung is not met (the
-#             NEXT line says what) or the bootstrap refused (exit 3 of the bootstrap: another --branch-suffix);
+#   start   0 the board exists and matches the plan (just bootstrapped, or already there; warnings do not change it);
+#             1 a rung is not met (the NEXT line says what; on a project already on its board only the board's
+#             own rung can be) or the bootstrap refused (exit 3 of the bootstrap: another --branch-suffix);
 #             2 usage, a rung that could not be asked (never a NEXT), or no confirmation (no --yes and no terminal):
 #             nothing was changed
 #   new     0 stamped, committed (and, with --github, pushed and protected); 1 a step failed (it says which, and what
@@ -133,6 +138,7 @@ forge — the operator's front door
                              exit 0 done; 1 a step failed; 2 usage, the target exists, or could not ask
   forge start <project dir> [--board <slug>] [--branch-suffix <s>] [--root-only] [--commission] [--yes]
                            where the project stands and what to do next; once every rung is met, puts the plan on a board
+                           (a project already on its board: a rung not met is a warning, and only the board's rung decides)
                              exit 0 the board matches the plan; 1 a rung is not met (NEXT) or the bootstrap refused;
                              2 usage, could not ask, or not confirmed
   forge help               this text
@@ -1440,6 +1446,9 @@ SEL_ACT
 ST_WORK=""; ST_ACTING=0; ST_DONE=0
 ST_DIR=""; ST_BOARD=""; ST_BOARD_SET=0; ST_SUFFIX=""; ST_ROOT_ONLY=0; ST_COMMISSION=0; ST_YES=0
 ST_SLUG=""; ST_BSTATE=""; ST_BCOUNT=""
+# A project whose board already holds cards is RUNNING: start then answers "is it still in line with its plan", not "may it
+# start", so a rung that is not met warns instead of stopping the ladder, and the board's own rung decides the exit.
+ST_RUNNING=0; ST_WARNS=0; ST_WARN_AT=""
 ST_LANE="${FORGE_LANE_ASSIGNEE:-forge-codex-lane}"
 st_exit() {
   local rc=$?
@@ -1459,7 +1468,14 @@ st_name() {
   esac
 }
 st_ok()   { printf '  ok    %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"; }
-st_next() { printf '  NEXT  %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"; }
+st_next() {
+  if [ "$ST_RUNNING" = 1 ] && [ "$1" != 12 ]; then
+    printf '  warn  %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"
+    ST_WARNS=$((ST_WARNS + 1)); ST_WARN_AT="${ST_WARN_AT:+$ST_WARN_AT, }$1"
+  else
+    printf '  NEXT  %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"
+  fi
+}
 st_ask()  { printf '  ??    %-3s %s: %s\n' "$1" "$(st_name "$1")" "$2"; }
 st_skip() { printf '  -     %-3s %s\n' "$1" "$(st_name "$1")"; }
 st_more() { printf '              %s\n' "$*"; }
@@ -1473,7 +1489,7 @@ st_lines() {  # stdin -> indented detail lines, at most $1 of them
 }
 # The checkers print a block per finding: `  FAIL|WARN|SKIP  name`, then its evidence and its remedy. The failing blocks only.
 st_findings() {  # $1 status word, stdin the checker's output
-  awk -v w="$1" '/^  (CLEAR|FAIL|WARN) — / { show = 0; next } /^  (PASS|FAIL|WARN|SKIP)[ ]/ { show = ($1 == w) } show { sub(/^ +/, ""); print }'
+  awk -v w="$1" '/^  (CLEAR|FAIL|WARN) — / { show = 0; next } /^  (PASS|FAIL|WARN|SKIP)[ ]/ { show = ($1 == w) } show && NF { sub(/^ +/, ""); print }'
 }
 
 st_r1() {
@@ -1525,7 +1541,15 @@ st_r2() {
       st_ask 2 "the default board name '$ST_BOARD' (from $ST_SLUG) is not a Hermes board slug: run again with --board <slug>"; return 2
     fi
   fi
+  # Is the board already there with cards? It decides what the rungs after this one mean, so it is asked now, and read-only.
+  if ! st_board_state; then
+    st_ask 2 "GitHub $ST_SLUG, but hermes kanban boards list failed, so whether board $ST_BOARD exists could not be asked (it decides whether a rung not met stops the ladder or only warns)"; return 2
+  fi
+  [ "$ST_BSTATE" != exists ] || ST_RUNNING=1
   st_ok 2 "GitHub $ST_SLUG"
+  if [ "$ST_RUNNING" = 1 ]; then
+    st_more "board $ST_BOARD is on the board already ($ST_BCOUNT cards): a rung not met warns and the ladder goes on; only the board's own rung decides the exit"
+  fi
 }
 
 st_r3() {
@@ -1687,6 +1711,9 @@ st_r10() {
 
 st_r11() {
   local graph="$ST_DIR/docs/chunks/graph.json" out rc lanes assignees missing l
+  if [ ! -e "$graph" ]; then
+    st_next 11 "docs/chunks/graph.json does not exist, so the lanes of the plan cannot be read"; return 1
+  fi
   out="$("$HERE/overseer-guard.sh" lane "$ST_LANE" 2>&1)"; rc=$?
   case "$rc" in
     0) ;;
@@ -1898,7 +1925,7 @@ st_run_rung() {
     5) st_plan 5 architect docs/feasibility.md architect;;
     6) st_r6;; 7) st_r7;; 8) st_r8;; 9) st_r9;; 10) st_r10;;
     11) st_r11; rc=$?
-        if [ "$rc" = 0 ] && [ "$ST_COMMISSION" = 0 ]; then
+        if [ "$rc" = 0 ] && [ "$ST_COMMISSION" = 0 ] && [ "$ST_RUNNING" = 0 ]; then
           echo "        commissioning skipped: --commission would run scripts/commission.sh, which runs make verify WITH_CODEX=1 (one paid Codex sandbox probe, about 18 minutes) and writes a report under $ST_DIR/.forge/"
         fi
         return "$rc";;
@@ -1937,13 +1964,22 @@ cmd_start() {
   for n in $rungs; do
     if [ "$stopped" != 0 ]; then st_skip "$n"; continue; fi
     st_run_rung "$n"; rc=$?
-    case "$rc" in 0) ;; 1) stopped=1; stopped_at="$n";; *) stopped=2; stopped_at="$n";; esac
+    case "$rc" in
+      0) ;;
+      1) if [ "$ST_RUNNING" = 1 ] && [ "$n" != 12 ]; then :; else stopped=1; stopped_at="$n"; fi;;
+      *) stopped=2; stopped_at="$n";;
+    esac
   done
   case "$stopped" in
-    0) return 0;;
+    0) if [ "$ST_WARNS" -gt 0 ]; then
+         echo
+         echo "forge start: $ST_WARNS warning(s), at rung $ST_WARN_AT: the board matches the plan, but the project no longer meets every rung the plan was started on"
+       fi
+       return 0;;
     1) echo
        if [ "$ST_ACTING" = 1 ]; then echo "forge start: the bootstrap was refused at rung $stopped_at (above)"
        else echo "forge start: stopped at rung $stopped_at ($(st_name "$stopped_at")): do the step marked above and run this again. Nothing was changed."; fi
+       [ "$ST_WARNS" = 0 ] || echo "forge start: $ST_WARNS warning(s) before it, at rung $ST_WARN_AT"
        return 1;;
     *) echo
        echo "forge start: could not ask at rung $stopped_at ($(st_name "$stopped_at")): that is not the same as met. Nothing was changed." >&2

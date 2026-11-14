@@ -3333,6 +3333,7 @@ front/start-could-not-ask-is-exit-2  a merge gate, gh, a board list, a preflight
 front/start-bootstraps-only-when-confirmed  every rung ok and the board absent: no --yes and no terminal is exit 2 after the plain-words block (cards, the root that starts at once, the hand-built chunks that wait, the verifier only recommending, what waits behind GATE-M1) with nothing written; --yes runs the REAL board-bootstrap.sh on the stateful double and reads the board back; a second run says already on board and creates nothing; --root-only; a spent branch exits 1 naming --branch-suffix; a GitHub that cannot be asked is exit 2
 front/start-an-ungated-private-repo-is-allowed  merge-gate exit 5 is ok and printed as UNGATED, exit 0 as GATED, exit 4 is NEXT make protect; asked as commission asks it; --commission runs the paid commission once, only on the flag and only before the board exists
 front/new-stamps-and-stops-before-github  forge new stamps through uvx copier with the Makefile's arguments, runs init, make setup and one commit, makes no gh call, and prints the gh repo create line and the /scope next step; with --github the calls run in order and the posture is merge-gate's; an existing target, a volatile destination and bad arguments are exit 2 with nothing written; a failing step is exit 1 and names what is left on disk
+front/start-on-a-running-project-warns-and-continues  a project whose board already holds cards: a rung not met prints warn with its detail lines instead of NEXT, all twelve rungs are evaluated and only rung 12 decides (in sync is already on board with a count of the warnings, exit 0; drift is the NEXT, exit 1); a rung that could not be asked is still exit 2; an absent, empty or archived board is not a running project and the first rung not met still stops
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -22803,7 +22804,7 @@ wants watchdog  && run_watchdog_group
 # ---------------------------------------------------------------------------
 # front/ — the operator's front door (scripts/forge.sh): `forge status`, `forge stop`, `forge rehearse`, `forge go`, `forge start` and `forge new`.
 #
-# Eighteen cases (the first six are status and stop; then rehearse and go; then `go --ahead`, `forge start` and `forge new`, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
+# Nineteen cases (the first six are status and stop; then rehearse and go; then `go --ahead`, `forge start` and `forge new`, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
 # from scripts/fixtures/digest-board.sql's schema (the digest and checkpoint fixtures' own), the grant and the armed
 # gates are made by the real merge-authority.sh and checkpoint-arm.sh, and the script is reached through a relative
 # symlink that points at an absolute one, in another directory: the way the operator runs it (~/.local/bin/forge).
@@ -24007,7 +24008,7 @@ ST_GRAPH
   d=""
   _st_world; echo 2 > "$SS/gate.rc";                      _st_asks merge-gate-could-not-ask 9 "merge-gate exited 2"
   _st_world; : > "$SS/gh.fail";                           _st_asks gh-fails 2 "gh repo view could not name the repository"
-  _st_world; : > "$SS/boards.fail";                       _st_asks board-list-unreadable 12 "hermes kanban boards list failed"
+  _st_world; : > "$SS/boards.fail";                       _st_asks board-list-unreadable 2 "hermes kanban boards list failed"
   _st_world; echo garbled > "$SS/preflight.mode";         _st_asks preflight-without-a-summary 10 "without a readable summary"
   _st_world; echo silent > "$SS/roadmap.mode";            _st_asks roadmap-without-a-verdict 6 "no CLEAR or WARN summary"
   _st_world; echo fatal > "$SS/roadmap.mode";             _st_asks roadmap-graph-unreadable 6 "does not describe a checkable plan"
@@ -24243,6 +24244,72 @@ ST_NGH
   [ ! -e "$tgt" ] || d="$d volatile-destination:the-target-was-created"
   [ -z "$d" ] && ok "new-stamps-and-stops-before-github (without --github: the template is stamped through uvx copier with the Makefile's own arguments, git init -b main, make setup in the project, one commit, a clean tree, no gh call, the gh repo create line and then the /scope next step are printed; with it the calls run in order (stamp, setup, gh repo create, make protect) and the posture is merge-gate's: GATED, or UNGATED where make protect fails on a private repo on a free plan; a repository that is not gated is exit 1 and a gate that cannot be asked is 2; an existing target, a volatile destination (the real new-dest.sh) and bad arguments are exit 2 with nothing written; a failing step is exit 1, named, with what is left on disk)" \
     || bad "new-stamps-and-stops-before-github" "forge new must stamp, commit and stop where it was told to —$d :: $(printf '%s' "$out" | tail -3 | tr '\n' '|') :: $(head -3 "$root/err" | tr '\n' '|')"
+
+  # --- 19. a project already on its board is asked "is it still in line with its plan", and a rung not met only warns ------------
+  # Asked right after rung 2 (read-only): the board is listed and holds cards. Then every rung but 12 that is not met prints `warn` with
+  # the same detail lines, the ladder goes on through all twelve, and only rung 12 decides: in sync is "already on board" (exit 0, with a
+  # count of the warnings), drift is the NEXT. A rung that could not be asked is still exit 2. A board that is absent, empty or archived
+  # is not a running project: the first rung not met still stops.
+  d=""
+  _st_running() { # <label> <want exit> <warn rungs, space separated, or ""> <NEXT rung or ""> -- the world is the caller's
+    local label="$1" want_rc="$2" warns="$3" nextat="$4" at nn all fp0 fp1
+    : > "$SS/calls.log"; : > "$SS/readonly"
+    fp0="$(_st_fp)"
+    out="$(_st start "$sp" --board stub-board --branch-suffix a2 </dev/null 2>"$root/err")"; rc=$?
+    fp1="$(_st_fp)"
+    [ "$rc" = "$want_rc" ] || d="$d $label:exit=$rc(want $want_rc)"
+    at="$(printf '%s\n' "$out" | awk '$1 == "warn" { print $2 }' | paste -sd' ' -)"
+    [ "$at" = "$warns" ] || d="$d $label:warn-at[$at](want[$warns])"
+    nn="$(printf '%s\n' "$out" | awk '$1 == "NEXT" { print $2 }' | paste -sd' ' -)"
+    [ "$nn" = "$nextat" ] || d="$d $label:NEXT-at[$nn](want[$nextat])"
+    all="$(printf '%s\n' "$out" | grep -cE '^  (ok|warn|NEXT) ')"
+    [ "$all" = 12 ] || d="$d $label:rungs-evaluated=$all(want 12)"
+    [ "$(printf '%s\n' "$out" | grep -c '^  -  ')" = 0 ] || d="$d $label:a-rung-was-not-reached"
+    [ "$fp0" = "$fp1" ] || d="$d $label:the-project-or-the-boards-changed"
+    ! grep -q '^WRITE' "$SS/calls.log" || d="$d $label:a-write-verb-was-called"
+    [ -z "$(ls -A "$root/tmp" 2>/dev/null)" ] || d="$d $label:a-scratch-directory-was-left"
+    rm -f "$SS/readonly"
+  }
+  _st_running_world() { _st_world; echo '[{"slug":"stub-board","archived":false,"total":7}]' > "$SS/boards.json"; echo 0 > "$SS/sync.rc"; }
+  # in sync, and the architect rung fails: one warn, every later rung evaluated, already on board, exit 0, nothing written
+  _st_running_world; echo 1 > "$SS/plan-architect.rc"
+  _st_running one-warning 0 "5" ""
+  _fr_want "$out" 'is on the board already (7 cards): a rung not met warns and the ladder goes on'
+  _fr_want "$out" 'warn  5   architect: plan-check --stage architect found problems'
+  _fr_want "$out" 'FAIL   delight'
+  _fr_want "$out" "already on board stub-board: nothing to start. Next: forge go stub-board --project $spreal --branch-suffix a2"
+  _fr_want "$out" 'forge start: 1 warning(s), at rung 5'
+  for f in roadmap-check acceptance-freeze merge-gate preflight; do grep -q "^$f " "$SS/calls.log" || d="$d one-warning:$f-was-never-asked"; done
+  # the same project, but the board has drifted from the plan: the warning stays a warning and rung 12 is the NEXT
+  _st_running_world; echo 1 > "$SS/plan-architect.rc"; echo 1 > "$SS/sync.rc"
+  _st_running drifted 1 "5" "12"
+  _fr_want "$out" 'NEXT  12  board: board stub-board exists but differs from the plan'
+  _fr_want "$out" 'CREATE CHUNK-3'
+  _fr_want "$out" 'forge start: 1 warning(s) before it, at rung 5'
+  # several rungs not met, in every shape a rung can be not met: all warn, the exit is still the board's
+  _st_running_world; echo 1 > "$SS/plan-architect.rc"; echo warn > "$SS/roadmap.mode"; echo 4 > "$SS/gate.rc"; echo scratch > "$sp/untracked.txt"
+  _st_running four-warnings 0 "5 6 8 9" ""
+  _fr_want "$out" 'forge start: 4 warning(s), at rung 5, 6, 8, 9'
+  _fr_want "$out" 'WARN   scenarios'
+  # a plan with no graph: the rungs that read it warn, and the lane rung does not fall over reading a file that is not there
+  _st_running_world; rm "$sp/docs/chunks/graph.json"
+  _st_running no-graph 0 "6 7 8 11" ""
+  _fr_want "$out" 'warn  11  lanes: docs/chunks/graph.json does not exist'
+  # could not ask is exit 2 on a running project too, and is never a warn
+  _st_running_world; echo 1 > "$SS/plan-architect.rc"; echo 2 > "$SS/gate.rc"
+  : > "$SS/calls.log"; : > "$SS/readonly"
+  out="$(_st start "$sp" --board stub-board --branch-suffix a2 </dev/null 2>"$root/err")"; rc=$?
+  [ "$rc" = 2 ] || d="$d could-not-ask:exit=$rc(want 2)"
+  _fr_want "$out" '??    9   merge gate: merge-gate exited 2'
+  _fr_want "$out" 'warn  5   architect'
+  [ "$(printf '%s\n' "$out" | grep -c '^  -  ')" = 3 ] || d="$d could-not-ask:the-rungs-after-it-were-not-shown-as-not-reached"
+  rm -f "$SS/readonly"
+  # a board that is absent, listed with no card, or archived is not a running project: the first rung not met still stops
+  _st_world; echo 1 > "$SS/plan-architect.rc";                                                         _st_stops absent-board-is-not-running 5 "run /architect"
+  _st_world; echo 1 > "$SS/plan-architect.rc"; echo '[{"slug":"stub-board","archived":false,"total":0}]' > "$SS/boards.json"; _st_stops empty-board-is-not-running 5 "run /architect"
+  _st_world; echo 1 > "$SS/plan-architect.rc"; echo '[{"slug":"stub-board","archived":true,"total":7}]' > "$SS/boards.json";  _st_stops archived-board-is-not-running 5 "run /architect"
+  [ -z "$d" ] && ok "start-on-a-running-project-warns-and-continues (the board is asked about right after rung 2: when it exists and holds cards a rung that is not met prints warn with its usual detail lines instead of NEXT, all twelve rungs are evaluated, only rung 12 decides: in sync is already on board with a count of the warnings and exit 0, drift is the one NEXT and exit 1; four rungs not met at once, a plan with no graph and a rung that could not be asked (still exit 2, never a warn) behave the same way; an absent, empty or archived board is not a running project and the first rung not met still stops; nothing written, every write verb refused)" \
+    || bad "start-on-a-running-project-warns-and-continues" "a project already on its board must not be stopped by its planning rungs —$d :: $(printf '%s' "$out" | head -8 | tr '\n' '|')"
 }
 wants front     && run_front_group
 

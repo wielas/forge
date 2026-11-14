@@ -85,7 +85,7 @@ forge go <board> --project "$PROJECT" --branch-suffix <s>   # the launch; --gate
 ```
 
 `forge start` is read-only until its last rung (add `--commission` for the paid evidence run, `--root-only` to stage the
-root first). [`docs/operator-guide.md`](operator-guide.md) is the long form.
+root first); on a project already on its board a rung not met only warns. [`docs/operator-guide.md`](operator-guide.md) is the long form.
 
 ## Where things live
 
