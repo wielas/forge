@@ -6,20 +6,57 @@ on:
 
 jobs:
   # `make validate` is the cheap structural check (frontmatter, bash -n).
-  # `make verify` executes the repo's complete free verification surface. A
-  # genuinely absent live dependency is a named skip; the paid Codex probe is
-  # opt-in behind --with-codex and therefore never runs here.
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: make validate
 
-  verify:
+  # `make verify` executes the repo's complete free verification surface; a
+  # genuinely absent live dependency is a named skip, and the paid Codex probe is
+  # opt-in behind --with-codex and therefore never runs here.
+  #
+  # CI runs that surface as shards, in parallel, one machine each. Do not
+  # maintain a second suite allowlist here: the partition is computed by
+  # scripts/verify.sh from its own DEFAULT_SUITES, and
+  # `cli/shards-partition-the-default-suites` asserts that the n shards cover
+  # every default group exactly once, so a new group becomes required CI
+  # evidence by being part of make verify's default, as before. `manifest` runs
+  # in every shard. `make verify` locally is unchanged: one process, everything.
+  #
+  # The shard count is not written twice. `--shard k/n` takes n from
+  # strategy.job-total, so editing the matrix cannot leave a group unrun.
+  verify-shard:
+    name: verify-shard (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
+    strategy:
+      # Every shard to its end: one run shows every failure, not the first.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
+      # uv runs the pinned jsonschema validator (lane, metadata, probe); without
+      # it those cases skip, so every shard has it.
       - uses: astral-sh/setup-uv@v4
-      # Do not maintain a second suite allowlist here. New deterministic groups
-      # become required CI evidence by being part of make verify's default.
-      - run: make verify
+      - run: ./scripts/verify.sh --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+
+  # The required status check is still named `verify` (ruleset `mainprotect`
+  # requires `validate` and `verify`). The shard legs report as
+  # `verify-shard (k/n)`, which does not satisfy it: only this job does.
+  #
+  # `if: always()` is what makes it count. Without it a failed shard would leave
+  # this job SKIPPED, and GitHub treats a skipped required check as passing. The
+  # step is an allow-list: it passes only on `success`, so failure, cancelled and
+  # skipped all fail it, whatever other results GitHub invents.
+  verify:
+    needs: [verify-shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard must have succeeded
+        env:
+          SHARDS: ${{ needs.verify-shard.result }}
+        run: |
+          echo "verify-shard: $SHARDS"
+          [ "$SHARDS" = success ]

@@ -70,8 +70,9 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
 - **Starting a new project is still several commands** (below). `forge go` launches a board that
   exists; it does not yet commission and bootstrap one.
 - **A blocked checkpoint has no phone answer** until the forge-gate bot exists (above).
-- **The suite is heavy.** `scripts/verify.sh` is about 23,000 lines and CI takes 18 minutes per
-  PR. WL4 (the `verify` diet) is the answer and is not started.
+- **The suite is heavy, but no longer slow.** One case (`cli/flags-exist`) spent 344 s forking `grep`
+  per line of `docs/`; it now takes seconds, and CI runs `scripts/verify.sh --shard k/3` as three parallel
+  jobs behind the same required `verify` check, so the gateway group (263 s) is the floor.
 - **`forge rehearse` has run once.** Run it after every deploy and tool upgrade; a failure is a
   finding, and it names its own cleanup command.
 
