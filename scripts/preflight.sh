@@ -792,6 +792,24 @@ pf_check_watchdog_loaded() {
 }
 pf_check_watchdog_loaded
 
+# The push watcher (scripts/run-watch.sh): a --no-agent cron job that says, every ten minutes, what is NEW on the boards
+# (a hold, a landing, a stalled worker). Without it an unattended run advances at one human decision a day, the digest's.
+# WARN, not FAIL: the run works without it, only silently. It is a job in Hermes' own file, which `hermes cron list` has no
+# JSON form of, so it is read from there, as `forge go` and the watchdog read theirs.
+pf_check_run_watch_cron() {
+  local jobs="${HERMES_HOME:-$HOME/.hermes}/cron/jobs.json"
+  if [ -r "$jobs" ] && jq -e '[.jobs[]? | select(.name == "forge-run-watch")] | length > 0' "$jobs" >/dev/null 2>&1; then
+    pass "a cron job named forge-run-watch exists (scripts/run-watch.sh: new holds, landings and stalls reach you within ten minutes)"
+  else
+    warn "operator step pending: no cron job named forge-run-watch, so nothing tells you within minutes that a hold appeared,"
+    say  "      a chunk landed or a worker stopped moving (the digest comes once a day). The wrapper is a FILE, then the job:"
+    say  "      printf '#!/usr/bin/env bash\\nexec bash \"\$HOME/.forge/repo/scripts/run-watch.sh\" \"\$@\"\\n' > ~/.hermes/scripts/forge-run-watch.sh && chmod +x ~/.hermes/scripts/forge-run-watch.sh"
+    say  "      hermes cron create 'every 10m' --name forge-run-watch --no-agent --script forge-run-watch.sh --deliver telegram"
+  fi
+  return 0
+}
+pf_check_run_watch_cron
+
 # ---------------------------------------------------------------------------
 sect "8. Board state"
 # ---------------------------------------------------------------------------
@@ -948,7 +966,7 @@ fi
 # as an outage rather than as a verdict. merge-watcher.sh and bounce.sh are the
 # operator's own two commands. Since epic GW1 the verifier and the watcher both
 # source decision-message.sh beside themselves, and refuse to run without it;
-# digest.sh is the one the daily cron runs (GW2). Since epic S6d lane.sh, the verifier
+# digest.sh is the one the daily cron runs (GW2), run-watch.sh the one the ten-minute push cron runs. Since epic S6d lane.sh, the verifier
 # and the watcher also source forge-state.sh beside themselves: one definition of where
 # the lane's envelope and the verifier's verdict are kept, and each refuses to run without it.
 # merge-authority.sh is the operator's grant/revoke/status command for per-board merge mode; the
@@ -959,7 +977,7 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
                 merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
                 driver-call-hook.sh claude-token.sh merge-authority.sh \
                 checkpoint.sh triage.sh amend-contract.sh overseer-guard.sh \
-                watchdog.sh watchdog-install.sh \
+                watchdog.sh watchdog-install.sh run-watch.sh \
                 gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then

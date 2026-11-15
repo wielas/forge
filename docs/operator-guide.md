@@ -224,6 +224,28 @@ silence is the signal. The options: a hosted dead-man's-switch URL (above); `sud
 planned restarts, which unlocks the disk once for the next boot; or turning FileVault off on a machine that
 must recover by itself, which is the owner's security decision and Forge does not make it.
 
+**What is new, pushed (`run-watch`).** The digest comes once a day and `forge status` has to be asked, so an unattended
+run could advance at one human decision a day and stall unseen. `scripts/run-watch.sh` is a `--no-agent` cron job, every ten
+minutes, that compares each live board with what it told you last time and sends one short block per **new** event:
+a card **waiting on you** (the very set `forge status` lists, once per hold, with the command that resolves it; a card the
+dispatcher blocked after a crash says "the worker gave up" and its error); a chunk or gate that **landed**, with the
+merge-watcher's "NOT a verified merge" when the head drifted; a **stall** (a run past 45 minutes, again every 3 hours,
+"parked for quota until ..." when a park record says so); a ready card or one in review that is **not starting** while
+nothing runs on any board (or "the dispatcher is holding it: active_pr" when the dispatcher's own guard is the reason);
+and a gate armed while the `forge-checkpoint` job is missing or paused. No message means nothing is new. A board's first
+tick says what already waits on you, once, and only records the rest. A board it cannot read is said once. If its state
+cannot be written (a full disk) the same message repeats every tick and the cron reports a failure: that is deliberate.
+Install it once, on the host (Hermes refuses a symlink, so the wrapper is a file):
+
+```bash
+printf '#!/usr/bin/env bash\nexec bash "$HOME/.forge/repo/scripts/run-watch.sh" "$@"\n' > ~/.hermes/scripts/forge-run-watch.sh && chmod +x ~/.hermes/scripts/forge-run-watch.sh
+hermes cron create 'every 10m' --name forge-run-watch --no-agent --script forge-run-watch.sh --deliver telegram
+```
+
+`scripts/run-watch.sh --dry-run` prints what it would send and writes nothing; its state is `~/.forge/run-watch/<board>.json`.
+Thresholds: `FORGE_RUN_WATCH_RUNNING_MAX_MIN` (45), `FORGE_RUN_WATCH_REMIND_MIN` (180), `FORGE_RUN_WATCH_IDLE_MAX_MIN` (30).
+`make preflight` warns while no job named `forge-run-watch` exists.
+
 ## Claude Code, the parts that matter here
 
 - **Plan mode** (Shift+Tab) before anything non-trivial — it explores and proposes

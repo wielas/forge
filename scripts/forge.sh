@@ -168,13 +168,16 @@ arm_gates() {
 # status
 # ---------------------------------------------------------------------------
 # THE BOARD QUERY. One JSON object per board, from a snapshot (never the live file: a Hermes board is
-# WAL, and board-snapshot.sh is the one safe read). `waiting` and `held_gates` are RE-DERIVED from
-# scripts/digest.sh's board_json, because that script runs top-level code and cannot be sourced; they
-# are copied, not paraphrased, and verify's front/status-lists-what-waits-on-you compares the cards
-# it names with the digest's own for one fixture, so the two cannot drift unnoticed. In words:
+# WAL, and board-snapshot.sh is the one safe read). `waiting` is scripts/decision-message.sh's
+# forge_waiting_sql, the ONE query the digest and the push watcher (scripts/run-watch.sh) lay into
+# their own queries too, so the three cannot disagree about who waits on the operator; `held_gates`
+# is still re-derived from digest.sh's board_json, which verify's front/what-waits-on-you-is-listed-
+# and-matches-the-digest compares with the digest's own for one fixture. In words:
 #   waiting      blocked or triage, or ready on the human-handoff sentinel (a human chunk sent back),
 #                EXCEPT a gate held for open chunks and the bootstrap's interactive hold on a chunk
-#                whose parent is still open — neither asks anything yet.
+#                whose parent is still open — neither asks anything yet. Its reason is the latest
+#                block reason, or "the worker gave up (...): <error>" when the latest block event is
+#                the dispatcher's `gave_up`.
 #   held_gates   a blocked GATE-* card with a parent that is not done: it asks nothing until every
 #                chunk it closes is done. (digest.sh's `held` also holds interactive chunks; they are
 #                counted under `blocked` here and not listed.)
@@ -198,25 +201,7 @@ SELECT json_object(
                                    (SELECT r.started_at FROM task_runs r WHERE r.task_id = t.id AND r.ended_at IS NULL
                                      ORDER BY r.started_at DESC, r.id DESC LIMIT 1) AS since
                               FROM tasks t WHERE t.status = 'running' ORDER BY t.id)),
-  'waiting', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'status', status, 'reason', reason)), json_array())
-               FROM (SELECT t.id, t.title, t.status,
-                            (SELECT json_extract(e.payload,'\$.reason') FROM task_events e
-                              WHERE e.task_id = t.id AND e.kind IN ('blocked','block_loop_detected')
-                              ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS reason
-                       FROM tasks t
-                      WHERE (t.status IN ('blocked','triage')
-                             OR (t.status = 'ready' AND t.assignee IS '$1'))
-                        AND NOT (t.title GLOB 'GATE-*' AND t.status = 'blocked'
-                                 AND EXISTS (SELECT 1 FROM task_links l
-                                               JOIN tasks p ON p.id = l.parent_id
-                                              WHERE l.child_id = t.id
-                                                AND p.status NOT IN ('done','archived')))
-                      ORDER BY t.id) w
-              WHERE NOT (w.status = 'blocked' AND w.reason IS '$2'
-                         AND EXISTS (SELECT 1 FROM task_links l
-                                       JOIN tasks p ON p.id = l.parent_id
-                                      WHERE l.child_id = w.id
-                                        AND p.status NOT IN ('done','archived')))),
+  'waiting', $(forge_waiting_sql "$1" "$2"),
   'held_gates', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title)), json_array())
                    FROM (SELECT h.id, h.title FROM tasks h
                           WHERE h.status = 'blocked' AND h.title GLOB 'GATE-*'

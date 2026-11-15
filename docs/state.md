@@ -22,6 +22,8 @@ probe. The operator reads a daily digest and answers holds.
 
 ## Next: the owner's go for run B
 
+What is built after that, in order, is [`docs/path-to-utility.md`](path-to-utility.md).
+
 Run B is milestone 2 of The Squatfather (CHUNK-6, 7, 8, then `GATE-M2`) on board
 `squatfather-run-a2`, and the first run in which the verifier merges. The protocol is
 [`docs/run-b.md`](run-b.md). Steps 1 to 6 of its launch are done (2026-11-14). What is
@@ -63,6 +65,9 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
   unlocks the disk, and nothing on the host can say so. Only an external heartbeat URL in
   `~/.forge/watchdog.env` would report it; none is configured.
 - **A real watchdog alert.** It has only ever read healthy.
+- **The push watcher on the host.** `scripts/run-watch.sh` (new holds, landings, stalls and idle cards sent within
+  ten minutes) is tested offline only; until its two install commands are run (`docs/operator-guide.md`, Liveness) it
+  is not a cron job, `make preflight` WARNs, and a run is still seen once a day.
 - **The mutation probe's precision.** It reports and never bounces; read at the M2 checkpoint.
 
 ## Known gaps
