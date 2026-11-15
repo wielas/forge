@@ -22,6 +22,8 @@ probe. The operator reads a daily digest and answers holds.
 
 ## Next: the owner's go for run B
 
+What is built after that, in order, is [`docs/path-to-utility.md`](path-to-utility.md).
+
 Run B is milestone 2 of The Squatfather (CHUNK-6, 7, 8, then `GATE-M2`) on board
 `squatfather-run-a2`, and the first run in which the verifier merges. The protocol is
 [`docs/run-b.md`](run-b.md). Steps 1 to 6 of its launch are done (2026-11-14). What is

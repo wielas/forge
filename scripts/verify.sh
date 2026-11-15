@@ -3706,13 +3706,13 @@ front/start-bootstraps-only-when-confirmed  every rung ok and the board absent: 
 front/start-an-ungated-private-repo-is-allowed  merge-gate exit 5 is ok and printed as UNGATED, exit 0 as GATED, exit 4 is NEXT make protect; asked as commission asks it; --commission runs the paid commission once, only on the flag and only before the board exists
 front/new-stamps-and-stops-before-github  forge new stamps through uvx copier with the Makefile's arguments, runs init, make setup and one commit, makes no gh call, and prints the gh repo create line and the /scope next step; with --github the calls run in order and the posture is merge-gate's; an existing target, a volatile destination and bad arguments are exit 2 with nothing written; a failing step is exit 1 and names what is left on disk
 front/start-on-a-running-project-warns-and-continues  a project whose board already holds cards: a rung not met prints warn with its detail lines instead of NEXT, all twelve rungs are evaluated and only rung 12 decides (in sync is already on board with a count of the warnings, exit 0; drift is the NEXT, exit 1); a rung that could not be asked is still exit 2; an absent, empty or archived board is not a running project and the first rung not met still stops
-front/run-watch-says-each-new-hold-once-and-agrees-with-status  scripts/run-watch.sh: a first tick records and prints nothing; a new hold is said once across three ticks with its first reason line and the class table's command; held again after an unblock (between two ticks or not) it is said again; against an empty baseline it names the waiting cards forge status names; forty at once are cut under 3,500 characters with the count left over
+front/run-watch-says-each-new-hold-once-and-agrees-with-status  scripts/run-watch.sh: a first tick says what already waits on you and records the rest silently; a human chunk sent back (changes_requested, review_reopened) is said; a new hold is said once across three ticks with its first reason line and the class table's command; held again after an unblock (between two ticks or not) it is said again; against an empty baseline it names the waiting cards forge status names; forty at once are cut under 3,500 characters with the count left over
 front/run-watch-says-the-worker-gave-up  a card the dispatcher blocked after a crash or a timeout says the worker gave up and the error it recorded, never an older reason; a block written after the gave_up wins; forge status and the digest, which share the query, say the same
 front/run-watch-says-each-landing-once  a CHUNK or GATE that turns done is said once with the first line of its result (the merge-watcher's NOT a verified merge included) and its PR; one done before the baseline, and a card that is not a chunk or a gate, are not
-front/run-watch-stall-is-said-once-and-again-after-the-reminder  a run silent at 44 min, said at 46, not again until the 180 min reminder (STILL STALLED); a card with a park record says it waits on a quota and until when
-front/run-watch-not-starting-needs-nothing-running-anywhere  a ready card or one in review with no open run, idle past the limit, is said only when nothing runs on ANY board, once per entry into the status; a human chunk sent back and a queued card never
+front/run-watch-stall-is-said-once-and-again-after-the-reminder  a run silent at 44 min, said at 46, not again until the 180 min reminder (STILL STALLED); a card with a park record says it waits on a quota and until when; a running card with no open run row counts from its claim, else from first sight
+front/run-watch-not-starting-needs-nothing-running-anywhere  a ready card or one in review with no open run, idle past the limit, is said only when nothing runs on ANY board (its clock starts when nothing runs), once per entry into the status; a card the dispatcher holds says why; a human chunk sent back and a queued card never
 front/run-watch-is-read-only-and-never-silent-about-an-unreadable-board  boards byte-identical and no snapshot left; --dry-run prints and writes nothing and does not consume the event; a corrupt board is named once with exit 0, its old state kept, NOT STARTING held back; a bad argument or knob is exit 2
-front/run-watch-says-when-an-armed-gate-has-no-cron-job  a gate armed while the forge-checkpoint cron job is paused or missing is said once per change, with the command to resume or create it; nothing is said without an armed gate
+front/run-watch-says-when-an-armed-gate-has-no-cron-job  a gate armed while the forge-checkpoint cron job is paused or missing is said on the first tick and once per change, with the command to resume or create it; nothing is said without an armed gate
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -23448,7 +23448,7 @@ SQL
   # built from the same fixture schema, in its OWN Hermes root (rw-hermes: the boards the cases above left behind must not
   # take part), one tick at a time with the clock pinned by FORGE_RUN_WATCH_NOW. RW_BIN aims a case at a mutated copy.
   # ==============================================================================================================
-  local RH="$root/rw-hermes" RK="$root/rw-hermes/kanban/boards" t0 o1 o2 o3 o4 o5 o6 o7
+  local RH="$root/rw-hermes" RK="$root/rw-hermes/kanban/boards" t0 o1 o2 o3 o4 o5 o6 o7 ob
   t0="$now"
   _rw() { # <epoch now> args... -> stdout of run-watch (stderr is the caller's); FR_X holds extra NAME=value words
     local at="$1"; shift
@@ -23468,17 +23468,32 @@ SQL
   _rw_utc() { date -u -d "@$1" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || date -u -r "$1" '+%Y-%m-%d %H:%M UTC'; }
   _rw_count() { printf '%s\n' "$1" | grep -c "$2"; }   # lines of $1 matching $2
 
-  # --- run-watch 1. the first tick records, a new hold is said once, a hold again is said again, and the set is status's ---
+  # --- run-watch 1. the first tick says what waits, a new hold is said once, a hold again is said again, and the set is status's ---
   _rw_world
   _rw_board rwa <<SQL
 INSERT INTO tasks (id, title, assignee, status, created_at, completed_at) VALUES
   ('t_a1', 'CHUNK-1: held before the watch began', 'forge-codex-lane', 'blocked', $((t0 - 900)), NULL),
-  ('t_a2', 'CHUNK-2: parked in triage', NULL, 'triage', $((t0 - 900)), NULL);
+  ('t_a2', 'CHUNK-2: parked in triage', NULL, 'triage', $((t0 - 900)), NULL),
+  ('t_a5', 'CHUNK-5: a human chunk', 'forge-codex-lane', 'blocked', $((t0 - 900)), NULL),
+  ('t_a7', 'CHUNK-7: running for an hour already', 'forge-codex-lane', 'running', $((t0 - 4000)), NULL),
+  ('t_a8', 'CHUNK-8: landed before the watch began', 'forge-verifier', 'done', $((t0 - 4000)), $((t0 - 3000)));
+INSERT INTO task_runs (task_id, profile, status, started_at) VALUES ('t_a7', 'forge-codex-lane', 'running', $((t0 - 3600)));
 INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
-  ('t_a1', 'blocked', json_object('reason', 'env: the sandbox cannot reach the remote'), $((t0 - 800)));
+  ('t_a1', 'blocked', json_object('reason', 'env: the sandbox cannot reach the remote'), $((t0 - 800))),
+  ('t_a5', 'blocked', json_object('reason', 'env: the chunk waits for its human'), $((t0 - 700)));
 SQL
+  # THE FIRST TICK says what already waits on the operator (a board made minutes ago must not hide its first hold until the
+  # digest) and records everything else (a card done, a run an hour old) as a baseline: no LANDED, no STALL.
   o1="$(_rw "$t0" 2>"$root/err")"; rc=$?
-  { [ "$rc" = 0 ] && [ -z "$o1" ]; } || d="$d first-tick(exit=$rc,printed[$(printf '%s' "$o1" | head -c 80)])"
+  [ "$rc" = 0 ] || d="$d first-tick(exit=$rc)"
+  _fr_want "$o1" 'WAITING ON YOU: t_a1 on rwa'
+  _fr_want "$o1" 'WAITING ON YOU: t_a2 on rwa'
+  _fr_want "$o1" 'WAITING ON YOU: t_a5 on rwa'
+  [ "$(_rw_count "$o1" '^[A-Z][A-Z ]*:')" = 3 ] || d="$d the-first-tick-said-something-besides-the-three-holds[$(printf '%s' "$o1" | grep '^[A-Z][A-Z ]*:' | cut -c1-30 | tr '\n' '|')]"
+  _fr_not "$o1" 'LANDED'
+  _fr_not "$o1" 'STALL'
+  ob="$(_rw $((t0 + 60)) 2>>"$root/err")"
+  [ -z "$ob" ] || d="$d the-second-tick-said-the-first-again[$(printf '%s' "$ob" | head -c 80)]"
   [ -s "$S/run-watch/rwa.json" ] || d="$d no-baseline-was-recorded"
   _rw_sql rwa "INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_a9', 'CHUNK-9: the new hold', 'forge-codex-lane', 'blocked', $((t0 + 100)));
                INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_a9', 'blocked', json_object('reason', 'ci-red: make check is red on the branch' || char(10) || 'second line'), $((t0 + 100)));"
@@ -23490,6 +23505,7 @@ SQL
   _fr_not  "$o2" 'second line'
   _fr_not  "$o2" 't_a1'
   _fr_not  "$o2" 't_a2'
+  _fr_not  "$o2" 't_a5'
   [ -z "$o3$o4" ] || d="$d the-same-hold-was-said-again[$(printf '%s' "$o3$o4" | head -c 80)]"
   # Unblocked and held AGAIN between two ticks: the card is waiting at both, so only its hold tells the second from the first.
   _rw_sql rwa "UPDATE tasks SET status = 'todo' WHERE id = 't_a9'; INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_a9', 'unblocked', NULL, $((t0 + 2000)));
@@ -23507,10 +23523,22 @@ SQL
   o7="$(_rw $((t0 + 4800)) 2>>"$root/err")"; o6="$(_rw $((t0 + 5400)) 2>>"$root/err")"
   _fr_want "$o7" 'ci-red: it is red again'
   [ -z "$o6" ] || d="$d the-third-hold-was-said-twice[$(printf '%s' "$o6" | head -c 80)]"
+  # A human chunk SENT BACK writes no `blocked` event, only changes_requested (the verifier's bounce) or review_reopened
+  # (bounce.sh): the card goes ready on the handoff sentinel, in the very hold the baseline saw. It is waiting on the
+  # operator again and must be said, and said again for a second bounce that lands between two ticks.
+  _rw_sql rwa "UPDATE tasks SET status = 'ready', assignee = 'forge-operator-handoff' WHERE id = 't_a5'; INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_a5', 'changes_requested', json_object('reason', 'the verifier sent it back'), $((t0 + 5500)));"
+  o5="$(_rw $((t0 + 5600)) 2>>"$root/err")"; o6="$(_rw $((t0 + 5700)) 2>>"$root/err")"
+  _fr_want "$o5" 'WAITING ON YOU: t_a5 on rwa'
+  _fr_want "$o5" 'sent back for changes'
+  [ -z "$o6" ] || d="$d the-bounce-was-said-twice[$(printf '%s' "$o6" | head -c 80)]"
+  _rw_sql rwa "UPDATE tasks SET status = 'review' WHERE id = 't_a5'; UPDATE tasks SET status = 'ready' WHERE id = 't_a5'; INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_a5', 'review_reopened', json_object('status', 'ready'), $((t0 + 5800)));"
+  o5="$(_rw $((t0 + 5900)) 2>>"$root/err")"; o6="$(_rw $((t0 + 5950)) 2>>"$root/err")"
+  _fr_want "$o5" 'WAITING ON YOU: t_a5 on rwa'
+  [ -z "$o6" ] || d="$d the-second-bounce-was-said-twice[$(printf '%s' "$o6" | head -c 80)]"
   # THE SET IS STATUS'S: the `waits` board (4 cards wait on the operator, 5 shapes must not) against a recorded empty baseline.
   cp -R "$kb/waits" "$RK/rwa2"
   printf '{"schema":"forge.run-watch.v1","at":%s,"waiting":[],"landed":[],"stalls":{},"idle":{},"idle_reported":[]}\n' "$t0" > "$S/run-watch/rwa2.json"
-  o1="$(_rw $((t0 + 6000)) 2>>"$root/err")"
+  o1="$(_rw $((t0 + 6600)) 2>>"$root/err")"
   FR_X="HERMES_HOME=$RH"; out="$(_fr status rwa2 2>/dev/null)"; FR_X=""
   local rids fids2
   rids="$(printf '%s\n' "$o1" | sed -n 's/^WAITING ON YOU: \([A-Za-z0-9_]*\) on rwa2$/\1/p' | sort | tr '\n' ' ')"
@@ -23530,7 +23558,7 @@ SQL
   [ "${#o1}" -le 3500 ] || d="$d the-message-is-${#o1}-characters(limit 3500)"
   case "$n_more" in ''|*[!0-9]*) d="$d no-and-N-more-line";; *) [ $((n_kept + n_more)) = 40 ] || d="$d kept($n_kept)+left($n_more)!=40";; esac
   [ "$n_kept" -ge 5 ] || d="$d only-$n_kept-were-kept"
-  [ -z "$d" ] && ok "run-watch-says-each-new-hold-once-and-agrees-with-status (a baseline tick over a board with two cards already held prints nothing and records; a new hold is printed once across three ticks with its title, the first line of its reason only and the class table's command; unblocked and held again between two ticks, or after a tick saw it unblocked, it is said again and once, and unblocking alone says nothing; against an empty baseline the \`waits\` board is named card for card as forge status names it; forty new holds are cut to under 3,500 characters and end with how many were left)" \
+  [ -z "$d" ] && ok "run-watch-says-each-new-hold-once-and-agrees-with-status (the first tick over a board says the three cards already waiting, once, and nothing about a card done or a run an hour old, which it only records; a new hold is printed once across three ticks with its title, the first line of its reason only and the class table's command; unblocked and held again between two ticks, or after a tick saw it unblocked, it is said again and once, and unblocking alone says nothing; a human chunk sent back (changes_requested, review_reopened: no blocked event) is said, and a second bounce between two ticks again; against an empty baseline the \`waits\` board is named card for card as forge status names it; forty new holds are cut to under 3,500 characters and end with how many were left)" \
     || bad "run-watch-says-each-new-hold-once-and-agrees-with-status" "run-watch must say a new hold once, and mean forge status's waiting set —$d :: $(printf '%s' "$o2" | head -6 | tr '\n' '|')"
 
   # --- run-watch 2. a hold the dispatcher made after a crash says so, never an older reason --------------------------------
@@ -23605,8 +23633,12 @@ SQL
   # --- run-watch 4. a stall is said once per run, again after the reminder, and says when it is parked --------------------
   _rw_world
   _rw_board rwd <<SQL
-INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_d1', 'CHUNK-1: slow', 'forge-codex-lane', 'running', $((t0 - 900)));
+INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+  ('t_d1', 'CHUNK-1: slow', 'forge-codex-lane', 'running', $((t0 - 900))),
+  ('t_d3', 'CHUNK-3: running, no run row', 'forge-codex-lane', 'running', $((t0 - 900))),
+  ('t_d4', 'CHUNK-4: running, no run row and no claim', 'forge-codex-lane', 'running', $((t0 - 900)));
 INSERT INTO task_runs (task_id, profile, status, started_at) VALUES ('t_d1', 'forge-codex-lane', 'running', $t0);
+INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_d3', 'claimed', json_object('run_id', 99), $t0);
 SQL
   _rw_board rwd2 <<SQL
 INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_p1', 'CHUNK-2: waiting on a quota', 'forge-codex-lane', 'running', $((t0 - 900)));
@@ -23618,6 +23650,7 @@ SQL
   o2="$(_rw $((t0 + 44 * 60)) 2>>"$root/err")"                      # 44 min: under the 45 min limit
   o3="$(_rw $((t0 + 46 * 60)) 2>>"$root/err")"                      # 46 min: said
   o4="$(_rw $((t0 + 50 * 60)) 2>>"$root/err")"                      # once per run
+  o7="$(_rw $((t0 + 57 * 60)) 2>>"$root/err")"                      # t_d4 has no run row and no claim: counted from the tick that first saw it (10 min)
   o5="$(_rw $((t0 + 225 * 60)) 2>>"$root/err")"                     # 179 min after the report: not yet
   o6="$(_rw $((t0 + 227 * 60)) 2>>"$root/err")"                     # 181 min after it: again
   { [ -z "$o1" ] && [ -z "$o2" ]; } || d="$d said-before-45-minutes[$(printf '%s%s' "$o1" "$o2" | head -c 80)]"
@@ -23627,49 +23660,74 @@ SQL
   _fr_want "$o3" 'Do: hermes kanban --board rwd show t_d1'
   _fr_not  "$o3" 'STILL STALLED'
   _fr_want "$o3" 'STALL: t_p1 on rwd2'
+  _fr_want "$o3" 'STALL: t_d3 on rwd'                               # a running card with no open run row counts from its claim
+  _fr_not  "$o3" 't_d4'
+  _fr_want "$o7" 'STALL: t_d4 on rwd'
+  _fr_want "$o7" 'Running 47 min on forge-codex-lane'
+  _fr_not  "$o7" 't_d1'
   _fr_want "$o3" "Parked for quota until $(_rw_utc $((t0 + 46 * 60 + 3600))) (codex 5h window)."
   [ "$(printf '%s' "$o3" | grep -c 'Parked for quota')" = 1 ] || d="$d the-park-line-is-not-only-on-the-parked-card"
   { [ -z "$o4" ] && [ -z "$o5" ]; } || d="$d said-again-too-soon[$(printf '%s%s' "$o4" "$o5" | head -c 80)]"
   _fr_want "$o6" 'STILL STALLED: t_d1 on rwd'
   _fr_want "$o6" 'Running 227 min on forge-codex-lane'
-  [ -z "$d" ] && ok "run-watch-stall-is-said-once-and-again-after-the-reminder (a run silent at 44 min and at the baseline; said at 46 min with its age, its profile and the command to look; not again at 50 or 179 min after; again at 181 min as STILL STALLED; a card with a park record adds the quota window and the time it waits until, and only that card does)" \
+  _fr_want "$o6" 'STILL STALLED: t_d3 on rwd'
+  _fr_not  "$o6" 't_d4'
+  [ -z "$d" ] && ok "run-watch-stall-is-said-once-and-again-after-the-reminder (a run silent at 44 min and at the baseline; said at 46 min with its age, its profile and the command to look; not again at 50 or 179 min after; again at 181 min as STILL STALLED; a card with a park record adds the quota window and the time it waits until, and only that card does; a running card with no open run row counts from its latest claim, and with no claim either from the tick that first saw it)" \
     || bad "run-watch-stall-is-said-once-and-again-after-the-reminder" "a stuck worker is news once and then at the reminder —$d :: $(printf '%s' "$o3" | head -6 | tr '\n' '|')"
 
-  # --- run-watch 5. NOT STARTING needs nothing running on ANY board, and is said once per entry ----------------------------
+  # --- run-watch 5. NOT STARTING needs nothing running on ANY board, its clock starts when nothing runs, and a held card says why ---
   _rw_world
   _rw_board rwe <<SQL
 INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
   ('t_e1', 'CHUNK-1: ready, nobody takes it', 'forge-codex-lane', 'ready', $((t0 - 900))),
   ('t_e2', 'CHUNK-2: in review', 'forge-verifier', 'review', $((t0 - 900))),
   ('t_e3', 'CHUNK-3: a human chunk sent back', 'forge-operator-handoff', 'ready', $((t0 - 900))),
-  ('t_e4', 'CHUNK-4: queued behind a parent', 'forge-codex-lane', 'todo', $((t0 - 900)));
+  ('t_e4', 'CHUNK-4: queued behind a parent', 'forge-codex-lane', 'todo', $((t0 - 900))),
+  ('t_e5', 'CHUNK-5: held by the dispatcher', 'forge-codex-lane', 'ready', $((t0 - 900)));
+INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+  ('t_e5', 'respawn_guarded', json_object('reason', 'active_pr'), $t0),
+  ('t_e5', 'respawn_guarded', json_object('reason', 'active_pr'), $((t0 + 600))),
+  ('t_e5', 'respawn_guarded', json_object('reason', 'active_pr'), $((t0 + 1200))),
+  ('t_e5', 'respawn_guarded', json_object('reason', 'active_pr'), $((t0 + 1800))),
+  ('t_e5', 'respawn_guarded', json_object('reason', 'active_pr'), $((t0 + 2400))),
+  ('t_e5', 'respawn_guarded', json_object('reason', 'active_pr'), $((t0 + 3000))),
+  ('t_e5', 'respawn_guarded', json_object('reason', 'active_pr'), $((t0 + 3600)));
 SQL
   _rw_board rwe2 <<SQL
 INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_r1', 'probe: unrelated work on another board', 'forge-codex-lane', 'running', $((t0 - 900)));
 INSERT INTO task_runs (task_id, profile, status, started_at) VALUES ('t_r1', 'forge-codex-lane', 'running', $t0);
 SQL
-  o1="$(_rw "$t0" 2>"$root/err")"                                   # the baseline
+  o1="$(_rw "$t0" 2>"$root/err")"                                   # the first tick: what waits is said, nothing else
   o2="$(_rw $((t0 + 31 * 60)) 2>>"$root/err")"                      # idle 31 min, but a worker runs on the OTHER board
   _rw_sql rwe2 "UPDATE tasks SET status = 'done', completed_at = $((t0 + 31 * 60 + 30)) WHERE id = 't_r1'; UPDATE task_runs SET status = 'done', ended_at = $((t0 + 31 * 60 + 30)) WHERE task_id = 't_r1';"
-  o3="$(_rw $((t0 + 32 * 60)) 2>>"$root/err")"                      # nothing runs anywhere: said
-  o4="$(_rw $((t0 + 42 * 60)) 2>>"$root/err")"                      # once per entry
-  { [ -z "$o1" ] && [ -z "$o2" ]; } || d="$d said-while-a-worker-runs-elsewhere[$(printf '%s%s' "$o1" "$o2" | head -c 100)]"
-  _fr_want "$o3" 'NOT STARTING: t_e1 on rwe'
-  _fr_want "$o3" 'Ready for 32 min with no worker, and nothing else is running on any board.'
-  _fr_want "$o3" 'NOT STARTING: t_e2 on rwe'
-  _fr_want "$o3" 'In review for 32 min'
-  _fr_want "$o3" 'Do: forge status rwe'
-  _fr_not  "$o3" 't_e3'
-  _fr_not  "$o3" 't_e4'
-  [ -z "$o4" ] || d="$d said-twice[$(printf '%s' "$o4" | head -c 80)]"
+  o3="$(_rw $((t0 + 32 * 60)) 2>>"$root/err")"                      # the worker just ended: the queue behind it has waited 1 minute, not 32
+  o4="$(_rw $((t0 + 62 * 60)) 2>>"$root/err")"                      # nothing has run for 31 minutes: said
+  o5="$(_rw $((t0 + 72 * 60)) 2>>"$root/err")"                      # once per entry
+  _fr_want "$o1" 'WAITING ON YOU: t_e3 on rwe'
+  [ "$(_rw_count "$o1" '^[A-Z][A-Z ]*:')" = 1 ] || d="$d the-first-tick-said-more-than-the-one-card-that-waits[$(printf '%s' "$o1" | grep '^[A-Z][A-Z ]*:' | cut -c1-30 | tr '\n' '|')]"
+  [ -z "$o2" ] || d="$d said-while-a-worker-runs-elsewhere[$(printf '%s' "$o2" | head -c 100)]"
+  [ -z "$o3" ] || d="$d the-queue-behind-a-worker-that-just-ended-was-said-at-once[$(printf '%s' "$o3" | head -c 100)]"
+  _fr_want "$o4" 'NOT STARTING: t_e1 on rwe'
+  _fr_want "$o4" 'Ready for 31 min with no worker, and nothing else is running on any board.'
+  _fr_want "$o4" 'NOT STARTING: t_e2 on rwe'
+  _fr_want "$o4" 'In review for 31 min'
+  _fr_want "$o4" 'Do: forge status rwe'
+  # a card the dispatcher is holding on purpose (a respawn guard in the last 15 minutes) says so, not "nothing picks it up"
+  _fr_want "$o4" 'NOT STARTING: t_e5 on rwe'
+  _fr_want "$o4" 'Ready for 31 min, and the dispatcher is holding it: active_pr.'
+  [ "$(printf '%s' "$o4" | grep -c 'with no worker')" = 2 ] || d="$d the-guarded-card-said-nothing-picks-it-up-or-an-unguarded-one-did-not"
+  _fr_not  "$o4" 't_e3'
+  _fr_not  "$o4" 't_e4'
+  [ -z "$o5" ] || d="$d said-twice[$(printf '%s' "$o5" | head -c 80)]"
   # the card ran and came back: a new entry, said again once it has idled past the limit again
-  _rw_sql rwe "INSERT INTO task_runs (task_id, profile, status, started_at, ended_at) VALUES ('t_e1', 'forge-codex-lane', 'crashed', $((t0 + 43 * 60)), $((t0 + 44 * 60)));"
-  o5="$(_rw $((t0 + 50 * 60)) 2>>"$root/err")"; o6="$(_rw $((t0 + 81 * 60)) 2>>"$root/err")"
-  [ -z "$o5" ] || d="$d the-new-entry-was-said-at-once[$(printf '%s' "$o5" | head -c 80)]"
-  _fr_want "$o6" 'NOT STARTING: t_e1 on rwe'
-  _fr_not  "$o6" 't_e2'
-  [ -z "$d" ] && ok "run-watch-not-starting-needs-nothing-running-anywhere (a ready card and a card in review with no open run, idle 31 min, are NOT said while a worker runs on another board; once nothing runs they are said once, the human chunk sent back and the queued card never; a card that ran and came back is a new entry, said again after another 30 min)" \
-    || bad "run-watch-not-starting-needs-nothing-running-anywhere" "one worker runs at a time host-wide, so a queue behind it is normal —$d :: $(printf '%s' "$o3" | head -6 | tr '\n' '|')"
+  _rw_sql rwe "INSERT INTO task_runs (task_id, profile, status, started_at, ended_at) VALUES ('t_e1', 'forge-codex-lane', 'crashed', $((t0 + 73 * 60)), $((t0 + 74 * 60)));"
+  o6="$(_rw $((t0 + 80 * 60)) 2>>"$root/err")"; o7="$(_rw $((t0 + 111 * 60)) 2>>"$root/err")"
+  [ -z "$o6" ] || d="$d the-new-entry-was-said-at-once[$(printf '%s' "$o6" | head -c 80)]"
+  _fr_want "$o7" 'NOT STARTING: t_e1 on rwe'
+  _fr_not  "$o7" 't_e2'
+  _fr_not  "$o7" 't_e5'
+  [ -z "$d" ] && ok "run-watch-not-starting-needs-nothing-running-anywhere (a ready card and a card in review with no open run are NOT said while a worker runs on another board, and their clock starts when nothing runs: not 1 minute after the worker ended, but said once after 31 minutes of nothing running; a card the dispatcher holds (a respawn guard in the last 15 minutes) says it is held and why; the human chunk sent back and the queued card never; a card that ran and came back is a new entry, said again after another 30 min)" \
+    || bad "run-watch-not-starting-needs-nothing-running-anywhere" "one worker runs at a time host-wide, so a queue behind it is normal —$d :: $(printf '%s' "$o4" | head -6 | tr '\n' '|')"
 
   # --- run-watch 6. read-only, a dry run that writes nothing, and a board that cannot be read is said once ----------------
   _rw_world
@@ -23696,7 +23754,9 @@ SQL
   [ -z "$(ls -A "$root/tmp" 2>/dev/null)" ] || d="$d a-snapshot-was-left-behind($(ls "$root/tmp" | head -2 | tr '\n' ' '))"
   rm -rf "$S/run-watch"
   o3="$(_rw $((t0 + 700)) --dry-run 2>"$root/err")"
-  { [ -z "$o3" ] && [ ! -e "$S/run-watch" ] && grep -q 'no recorded state' "$root/err"; } || d="$d a-dry-first-tick-wrote-or-printed"
+  { [ ! -e "$S/run-watch" ] && grep -q 'no recorded state' "$root/err"; } || d="$d a-dry-first-tick-wrote-state-or-did-not-say-it-had-none"
+  _fr_want "$o3" 'WAITING ON YOU: t_f1 on rwf'
+  _fr_not  "$o3" 'LANDED'
   # a board that cannot be read: said once, exit 0, its old state kept, and nobody says "nothing is running" meanwhile
   rm -rf "$S/run-watch"; _rw "$t0" >/dev/null 2>&1 || true
   _rw_sql rwf "INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_f2', 'CHUNK-2: held while unreadable', 'forge-codex-lane', 'blocked', $((t0 + 800)));
@@ -23712,13 +23772,15 @@ SQL
   rm -f "$RK/rwf/kanban.db"; cp "$root/rwf-held.db" "$RK/rwf/kanban.db"
   o6="$(_rw $((t0 + 42 * 60)) 2>>"$root/err")"
   _fr_want "$o6" 'WAITING ON YOU: t_f2 on rwf'
-  _fr_want "$o6" 'NOT STARTING: t_g1 on rwg'
+  _fr_not  "$o6" 'NOT STARTING'                                     # the clock of an idle card restarts while nobody can say nothing runs
   _fr_not  "$o6" 'could not be read'
+  o7="$(_rw $((t0 + 73 * 60)) 2>>"$root/err")"                      # 32 minutes after the board could be read again
+  _fr_want "$o7" 'NOT STARTING: t_g1 on rwg'
   out="$(_rw "$t0" --bogus 2>/dev/null)"; rc=$?
   { [ "$rc" = 2 ] && [ -z "$out" ]; } || d="$d an-unknown-argument(exit=$rc)"
   FR_X="FORGE_RUN_WATCH_IDLE_MAX_MIN=soon"; out="$(_rw "$t0" 2>/dev/null)"; rc=$?; FR_X=""
   { [ "$rc" = 2 ] && [ -z "$out" ]; } || d="$d a-knob-that-is-not-a-number(exit=$rc)"
-  [ -z "$d" ] && ok "run-watch-is-read-only-and-never-silent-about-an-unreadable-board (the boards are byte-identical and no snapshot is left after a tick; --dry-run prints the event, writes nothing and does not consume it, and on a first tick says it would only record a baseline; a corrupt board is named once with exit 0, NOT STARTING is held back while it cannot be read, and what happened to it meanwhile is said when it can; an unknown argument and a knob that is not a number are exit 2)" \
+  [ -z "$d" ] && ok "run-watch-is-read-only-and-never-silent-about-an-unreadable-board (the boards are byte-identical and no snapshot is left after a tick; --dry-run prints the event, writes nothing and does not consume it, and on a first tick says it has no recorded state; a corrupt board is named once with exit 0, NOT STARTING is held back (and its clock restarted) while it cannot be read, and what happened to it meanwhile is said when it can; an unknown argument and a knob that is not a number are exit 2)" \
     || bad "run-watch-is-read-only-and-never-silent-about-an-unreadable-board" "run-watch only reads, and a board it cannot read is never a quiet board —$d :: $(printf '%s' "$o4" | head -4 | tr '\n' '|')"
 
   # --- run-watch 7. an armed gate with no cron job to complete it ----------------------------------------------------------
@@ -23731,8 +23793,12 @@ SQL
     esac
   }
   _fs checkpoint-arm.sh arm --board rwh --gate GATE-M1 --project "$P" --mode rehearse >/dev/null 2>&1
+  _rw_jobs false
+  ob="$(_rw "$t0" 2>"$root/err")"                                   # the FIRST tick finds a gate armed and its job paused: said at once
+  _fr_want "$ob" 'GATE-M1 on rwh armed, but the cron job forge-checkpoint is paused'
+  rm -rf "$S/run-watch"
   _rw_jobs true
-  o1="$(_rw "$t0" 2>"$root/err")"                                   # the baseline: the job runs
+  o1="$(_rw "$t0" 2>>"$root/err")"                                  # the baseline: the job runs
   _rw_jobs false
   o2="$(_rw $((t0 + 600)) 2>>"$root/err")"; o3="$(_rw $((t0 + 1200)) 2>>"$root/err")"
   _rw_jobs none
@@ -23749,7 +23815,7 @@ SQL
   _fr_want "$o4" 'there is no cron job named forge-checkpoint'
   _fr_want "$o4" "hermes cron create 'every 15m' --name forge-checkpoint --no-agent --script forge-checkpoint.sh --deliver telegram"
   { [ -z "$o5" ] && [ -z "$o6" ] && [ -z "$o7" ]; } || d="$d said-without-a-change-or-without-an-armed-gate[$(printf '%s%s%s' "$o5" "$o6" "$o7" | head -c 100)]"
-  [ -z "$d" ] && ok "run-watch-says-when-an-armed-gate-has-no-cron-job (a baseline over a running job says nothing; the job paused says so once with the command to resume it by its id; the job gone says so once with the create line; coming back, and a missing job with no gate armed, say nothing)" \
+  [ -z "$d" ] && ok "run-watch-says-when-an-armed-gate-has-no-cron-job (the first tick says at once that a gate is armed and its job paused; a baseline over a running job says nothing; the job paused says so once with the command to resume it by its id; the job gone says so once with the create line; coming back, and a missing job with no gate armed, say nothing)" \
     || bad "run-watch-says-when-an-armed-gate-has-no-cron-job" "an armed gate with nothing to complete it is a stall nobody sees —$d :: $(printf '%s' "$o2" | head -4 | tr '\n' '|')"
 
   # ==============================================================================================================

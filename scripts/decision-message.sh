@@ -68,13 +68,20 @@ INTERACTIVE_HOLD_REASON="$(decision_message interactive \
 #                       event, so before this the card showed a blank or an OLDER reason
 #   hold                id of that latest event: what tells one hold of a card from the next
 #   gave_up             1 when that event is a `gave_up`
+#   sig                 the newest event id among those four and the two that put a card back in the
+#                       operator's hands without a block (`changes_requested`, the verifier's bounce, and
+#                       `review_reopened`, a human chunk sent back): what tells one WAITING of a card from
+#                       the next, which `hold` cannot, since a bounce writes no `blocked` event
 # The `gave_up` payload's `error` is the only error read: it is on every `gave_up` event a real board
 # holds, and it is in every fixture's schema, which `task_runs.error` is not.
 forge_waiting_sql() {  # $1 sentinel (SQL-escaped)  $2 interactive hold (SQL-escaped)
   cat <<SQL
 (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'status', status, 'reason', reason,
-                                              'hold', hold, 'gave_up', gave_up)), json_array())
+                                              'hold', hold, 'gave_up', gave_up, 'sig', sig)), json_array())
    FROM (SELECT t.id, t.title, t.status, h.id AS hold, COALESCE(h.kind = 'gave_up', 0) AS gave_up,
+                (SELECT MAX(e.id) FROM task_events e
+                  WHERE e.task_id = t.id
+                    AND e.kind IN ('blocked','block_loop_detected','gave_up','changes_requested','review_reopened')) AS sig,
                 CASE WHEN h.kind = 'gave_up'
                      THEN 'the worker gave up'
                           || COALESCE(' (' || replace(json_extract(h.payload,'\$.trigger_outcome'), '_', ' ') || ')', '')

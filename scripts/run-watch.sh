@@ -24,25 +24,32 @@
 #   LANDED           a CHUNK-* or GATE-* card is newly done: its title, the first line of its result (the
 #                    merge-watcher writes "NOT a verified merge" there on head drift) and the PR.
 #   STALL            a card has been `running` for more than FORGE_RUN_WATCH_RUNNING_MAX_MIN minutes (default
-#                    45), by its open run's start. Once per run, again every FORGE_RUN_WATCH_REMIND_MIN (180)
+#                    45), by its open run's start (its latest claim, or the first tick that saw it, when it has no
+#                    open run row). Once per run, again every FORGE_RUN_WATCH_REMIND_MIN (180)
 #                    while it lasts. A park record (lane-parks/<card>.json) says it is waiting on a quota.
 #   NOT STARTING     a card is `ready` (not on the human-handoff sentinel, which "waiting" covers) or in
 #                    `review`, with no open run, for more than FORGE_RUN_WATCH_IDLE_MAX_MIN minutes (30) as
 #                    this script has seen it, AND no card is running on ANY board (Hermes runs one worker at a
-#                    time host-wide, so a card queued behind a running one is normal). Once per card and entry
-#                    into the status. Never said while a board could not be read.
+#                    time host-wide, so a card queued behind a running one is normal; its clock starts when nothing
+#                    runs). Once per card and entry into the status. A card the dispatcher is holding on purpose
+#                    (a respawn guard in the last 15 minutes) says why instead of "nothing picks it up". Never said
+#                    while a board could not be read.
 #   CHECKPOINT CRON  a gate is armed (scripts/checkpoint-arm.sh list) while the cron job forge-checkpoint is
 #                    missing or paused in <HERMES_HOME>/cron/jobs.json: nothing would complete the gate.
 #   <board>: cannot be read   a board that could not be snapshotted or queried. Said once per occurrence;
 #                    its previous state is kept, so what happened meanwhile is reported when it can be read.
 #
-# THE FIRST TICK FOR A BOARD (no recorded state) records a baseline and prints nothing for it: what was already
-# there is what `forge status` shows. A message over 3,500 characters (Telegram's limit is 4,096) keeps its
-# first blocks and ends "and N more - run: forge status"; the cut ones count as seen.
+# THE FIRST TICK FOR A BOARD (no recorded state) says what already waits on you, once, so a board created minutes
+# ago does not hide its first hold until the digest, and records everything else (landings, runs, idle cards) as a
+# baseline without a word. The checkpoint cron check has no baseline: a gate armed with no job to run it is said at
+# once. A message over 3,500 characters (Telegram's limit is 4,096) keeps its first blocks and ends "and N more -
+# run: forge status"; the cut ones count as seen. If the state cannot be written (a full disk, a read-only
+# directory) the same message repeats every tick and the cron reports a failure: that is deliberate, since a
+# watcher that cannot remember what it said is better loud than silent.
 #
 # Usage:
 #   run-watch.sh              one tick (cron passes no arguments)
-#   run-watch.sh --dry-run    print what would be sent and write no state (what a first tick would record is
+#   run-watch.sh --dry-run    print what would be sent and write no state (a board with no recorded state is
 #                             said on stderr)
 # Exit: 0 whenever it ran to the end, with or without a message (a non-zero exit makes the cron report a
 #       failure), 2 a usage error, a knob that is not a number, or a host that cannot run it at all: a tool
@@ -120,11 +127,16 @@ SELECT json_object(
                                               ORDER BY r.started_at DESC, r.id DESC LIMIT 1), t.assignee) AS who,
                                    (SELECT r.id FROM task_runs r WHERE r.task_id = t.id AND r.ended_at IS NULL
                                      ORDER BY r.started_at DESC, r.id DESC LIMIT 1) AS run,
-                                   (SELECT r.started_at FROM task_runs r WHERE r.task_id = t.id AND r.ended_at IS NULL
-                                     ORDER BY r.started_at DESC, r.id DESC LIMIT 1) AS since
+                                   COALESCE((SELECT r.started_at FROM task_runs r WHERE r.task_id = t.id AND r.ended_at IS NULL
+                                              ORDER BY r.started_at DESC, r.id DESC LIMIT 1),
+                                            (SELECT MAX(e.created_at) FROM task_events e WHERE e.task_id = t.id AND e.kind = 'claimed')) AS since
                               FROM tasks t WHERE t.status = 'running' ORDER BY t.id)),
-  'idle_cards', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'status', status, 'runs', runs)), json_array())
-                   FROM (SELECT t.id, t.title, t.status, (SELECT COUNT(*) FROM task_runs r WHERE r.task_id = t.id) AS runs
+  'idle_cards', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'status', status, 'runs', runs, 'guard', guard)), json_array())
+                   FROM (SELECT t.id, t.title, t.status, (SELECT COUNT(*) FROM task_runs r WHERE r.task_id = t.id) AS runs,
+                                (SELECT COALESCE(CASE WHEN json_valid(g.payload) THEN json_extract(g.payload,'\$.reason') END, 'no reason recorded')
+                                   FROM task_events g
+                                  WHERE g.task_id = t.id AND g.kind = 'respawn_guarded' AND g.created_at > $((NOW - 900))
+                                  ORDER BY g.created_at DESC, g.id DESC LIMIT 1) AS guard
                            FROM tasks t
                           WHERE (t.status = 'review' OR (t.status = 'ready' AND t.assignee IS NOT '$SENTINEL_SQL'))
                             AND NOT EXISTS (SELECT 1 FROM task_runs r WHERE r.task_id = t.id AND r.ended_at IS NULL)
@@ -177,8 +189,9 @@ def reply($board):
 | ((($old | type) == "object") and (($old.waiting | type) == "array")) as $had
 | ($run_max * 60) as $run_secs | ($remind * 60) as $remind_secs | ($idle_max * 60) as $idle_secs
 
-# WAITING ON YOU: the key is the card and the hold it is in
-| ($c.waiting | map(. + {key: "\(.id):\(.hold // .status)"})) as $wait
+# WAITING ON YOU: the key is the card, its status and the newest event that put it in the operator's hands (a bounce
+# writes no `blocked` event, so the hold alone cannot tell one waiting from the next)
+| ($c.waiting | map(. + {key: "\(.id):\(.status):\(.sig // 0)"})) as $wait
 | ($old.waiting // []) as $ow
 | ($wait | map(select(.key | inn($ow) | not))) as $newwait
 
@@ -187,8 +200,11 @@ def reply($board):
 | ($old.landed // []) as $ol
 | ($c.done | map(select(.id | inn($ol) | not))) as $newdone
 
-# STALL: the key is the open run; reported again after the reminder interval
-| ($c.running_cards | map(select(.since != null and ($now - .since) > $run_secs) | . + {key: "\(.id):\(.run)"})) as $stalled
+# STALL: the key is the open run; reported again after the reminder interval. A running card with no open run row
+# counts from its latest claim, and failing that from the first tick that saw it running.
+| ($old.rsince // {}) as $orsince
+| ($c.running_cards | map(. + {since: (.since // $orsince[.id] // $now)})) as $running
+| ($running | map(select(($now - .since) > $run_secs) | . + {key: "\(.id):\(.run // .since)"})) as $stalled
 | ($old.stalls // {}) as $os
 | ($stalled | map(select(($os[.key] // null) == null or ($now - $os[.key]) >= $remind_secs))) as $stallnow
 
@@ -196,13 +212,13 @@ def reply($board):
 | ($c.idle_cards | map(. + {key: "\(.id):\(.status):\(.runs)"})) as $idle
 | ($old.idle // {}) as $oi
 | ($old.idle_reported // []) as $orep
-| ($idle | map(. + {since: ($oi[.key] // $now)})) as $idle2
+| ($idle | map(. + {since: (if $any_running then $now else ($oi[.key] // $now) end)})) as $idle2
 | ($idle2 | map(select(($now - .since) > $idle_secs and (.key | inn($orep) | not)))) as $eligible
 | (if $any_running then [] else $eligible end) as $idlenow
 
-| (if $had then
-     ( ($newwait | map({rank: 1, text: ("WAITING ON YOU: \(.id) on \($board)\n\(.title | short(90))\n\(why | short(200))\nDo: \(reply($board) | short(280))")}))
-     + ($stallnow | map(. as $s | ($os[$s.key] // null) as $before | ($parks[$s.id] // null) as $p
+| ( ($newwait | map({rank: 1, text: ("WAITING ON YOU: \(.id) on \($board)\n\(.title | short(90))\n\(why | short(200))\nDo: \(reply($board) | short(280))")}))
+   + (if $had then
+     ( ($stallnow | map(. as $s | ($os[$s.key] // null) as $before | ($parks[$s.id] // null) as $p
          | {rank: 2, text: ("\(if $before != null then "STILL STALLED" else "STALL" end): \($s.id) on \($board)\n\($s.title | short(90))\n"
               + "Running \(mins($now - $s.since)) min on \($s.who // "an unknown profile"), over the \($run_max) min limit."
               + (if $p == null then ""
@@ -211,21 +227,25 @@ def reply($board):
                  else "\nIts quota park record ended at \($p.until | utc); it has not moved since." end)
               + "\nDo: hermes kanban --board \($board) show \($s.id)")}))
      + ($idlenow | map({rank: 3, text: ("NOT STARTING: \(.id) on \($board)\n\(.title | short(90))\n"
-              + (if .status == "review" then "In review" else "Ready" end)
-              + " for \(mins($now - .since)) min with no worker, and nothing else is running on any board.\nDo: forge status \($board)")}))
+              + (if .status == "review" then "In review" else "Ready" end) + " for \(mins($now - .since)) min"
+              + (if .guard != null
+                 then ", and the dispatcher is holding it: \(.guard | short(80))."
+                 else " with no worker, and nothing else is running on any board." end)
+              + "\nDo: forge status \($board)")}))
      + ($newdone | map(. as $d | (($d.result // "") | firstline | clean) as $r
          | {rank: 5, text: ("LANDED: \($d.id) on \($board)\n\($d.title | short(90))"
               + (if $r != "" then "\n\($r | short(300))" else "" end)
               + (if ($r | test("NOT a verified merge")) and (($r | short(300)) | test("NOT a verified merge") | not)
                  then "\nNOT a verified merge: the code that landed is not what the verifier reviewed." else "" end)
               + (if ($d.pr // "") != "" and ($r | contains($d.pr) | not) then "\nPR: \($d.pr)" else "" end))}))
-     ) else [] end) as $events
+     ) else [] end)) as $events
 
 | { events: $events,
     state: { schema: "forge.run-watch.v1", at: $now,
              waiting: ($wait | map(.key)),
              landed: $doneids,
              stalls: ($stalled | map(. as $s | {key: $s.key, value: (if ($stallnow | any(.key == $s.key)) then $now else $os[$s.key] end)}) | from_entries),
+             rsince: ($c.running_cards | map(select(.since == null) | {key: .id, value: ($orsince[.id] // $now)}) | from_entries),
              idle: ($idle2 | map({key: .key, value: .since}) | from_entries),
              idle_reported: ([$orep[] | select(inn($idle | map(.key)))] + ($idlenow | map(.key))) } }
 JQ
@@ -309,7 +329,7 @@ for b in $OKBOARDS; do
     jq -c '.events' "$WORK/res-$b.json" > "$WORK/ev-$b.json"
     jq -c '.state' "$WORK/res-$b.json" > "$WORK/new-$b.json"
     if [ "$DRY" = 1 ] && [ "$src" = "$WORK/null.json" ]; then
-      echo "run-watch: $b: no recorded state, so a real tick would record a baseline and print nothing for it" >&2
+      echo "run-watch: $b: no recorded state, so a real tick would say what already waits on you and record the rest as a baseline" >&2
     fi
   else
     echo "run-watch: $b: the comparison failed: $(head -c 300 "$WORK/res-$b.err")" >&2
@@ -362,7 +382,7 @@ Do: hermes cron resume ${job% *}";;
   *) HOST_NEW=unreadable;;
 esac
 HOST_OLD="$(jq -r '.checkpoint // empty' "$(state_or_null "$STATE_DIR/_host.json")" 2>/dev/null)"
-if [ -n "$HOST_OLD" ] && [ -n "$HOST_TEXT" ] && [ "$HOST_OLD" != "$HOST_NEW" ]; then
+if [ -n "$HOST_TEXT" ] && [ "$HOST_OLD" != "$HOST_NEW" ]; then   # no record yet is a change too: a gate armed with no job to run it is said at once
   jq -n -c --arg t "$HOST_TEXT" '[{rank: 4, text: $t}]' > "$WORK/ev-_host.json"
 fi
 # not asked is not "fine": keep what was recorded rather than record a reading nobody took

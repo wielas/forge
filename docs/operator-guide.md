@@ -231,9 +231,11 @@ a card **waiting on you** (the very set `forge status` lists, once per hold, wit
 dispatcher blocked after a crash says "the worker gave up" and its error); a chunk or gate that **landed**, with the
 merge-watcher's "NOT a verified merge" when the head drifted; a **stall** (a run past 45 minutes, again every 3 hours,
 "parked for quota until ..." when a park record says so); a ready card or one in review that is **not starting** while
-nothing runs on any board; and a gate armed while the `forge-checkpoint` job is missing or paused. No message means nothing
-is new, and a board's first tick only records a baseline. A board it cannot read is said once. Install it once, on the host
-(Hermes refuses a symlink, so the wrapper is a file):
+nothing runs on any board (or "the dispatcher is holding it: active_pr" when the dispatcher's own guard is the reason);
+and a gate armed while the `forge-checkpoint` job is missing or paused. No message means nothing is new. A board's first
+tick says what already waits on you, once, and only records the rest. A board it cannot read is said once. If its state
+cannot be written (a full disk) the same message repeats every tick and the cron reports a failure: that is deliberate.
+Install it once, on the host (Hermes refuses a symlink, so the wrapper is a file):
 
 ```bash
 printf '#!/usr/bin/env bash\nexec bash "$HOME/.forge/repo/scripts/run-watch.sh" "$@"\n' > ~/.hermes/scripts/forge-run-watch.sh && chmod +x ~/.hermes/scripts/forge-run-watch.sh
