@@ -22,6 +22,13 @@
 #        already carries the chunk, and the bounce may BE a red check, so a
 #        red baseline is recorded rather than refused. Everything else —
 #        the worktree checks, setup, a clean tree, the capture — still holds.
+#        FORGE_LANE_RESUME=1 when this run CONTINUES a stopped attempt (scripts/lane.sh sets it
+#        when codex-run.sh --resume-record finds a live record for this card and workspace: a
+#        Codex ended at its time limit, or a quota wait given up). The worktree then holds that
+#        attempt's unfinished edits, and the check may be red because of them: both are
+#        tolerated, and logged. The capture below is taken over that tree, so what the stopped
+#        attempt left is outside this run's audit -- the same trade a park adoption makes
+#        (ADR-0016). Everything AFTER Codex (clean tree, green check, the audit) is unchanged.
 #
 # Exit: 0  ready — environment built, baseline green, audit captured
 #       2  usage
@@ -175,6 +182,8 @@ make setup >/dev/null 2>&1 || {
 if ! make check >/dev/null 2>&1; then
   if [ "${FORGE_LANE_REENTRY:-}" = 1 ]; then
     echo "lane-setup: re-entry — baseline 'make check' is red, tolerated: the bounce may be exactly that"
+  elif [ "${FORGE_LANE_RESUME:-}" = 1 ]; then
+    echo "lane-setup: resume — baseline 'make check' is red, tolerated: the stopped attempt left its work half done"
   else
     echo "failing-prereq: baseline 'make check' was already red before the chunk started"
     exit 5
@@ -184,10 +193,14 @@ baseline_status="$(git status --porcelain=v1 --untracked-files=all 2>/dev/null)"
   echo "env: baseline worktree status could not be read"
   exit 3
 }
+if [ -n "$baseline_status" ] && [ "${FORGE_LANE_RESUME:-}" = 1 ]; then
+  echo "lane-setup: resume — the worktree holds the stopped attempt's unfinished edits, tolerated"
+else
 [ -z "$baseline_status" ] || {
   echo "failing-prereq: setup left a dirty baseline before the chunk started"
   exit 5
 }
+fi
 
 RUNTIME_DIR="${TMPDIR:-/tmp}/forge-lane-$SCOPE"
 [ ! -e "$RUNTIME_DIR" ] && mkdir "$RUNTIME_DIR" 2>/dev/null || {

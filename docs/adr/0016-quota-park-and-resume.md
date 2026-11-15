@@ -157,7 +157,11 @@ that is where the window data is. `scripts/codex-progress.py` condenses it back
 into a readable log so the driver's `process(action="log")` is not left watching
 raw JSONL scroll past.
 
-**Waiting is unbounded by default.** `FORGE_QUOTA_MAX_WAIT=0` means persist
+**Waiting is unbounded by default.** *Amended 2026-11-15: the default is now `21600` (6 h),
+and a stated reset beyond what the allowance still permits is given up at once instead of
+slept on; one Codex attempt is also bounded (`FORGE_CODEX_MAX_RUN_MIN`, 120). Hermes runs one
+worker for the whole host, so an unbounded wait held every board, silently. What follows is
+the original decision and still describes `0`.* `FORGE_QUOTA_MAX_WAIT=0` means persist
 through whatever the window costs, which is the point. An operator who does not
 want a card holding a worktree across a multi-day weekly reset sets a bound and
 gets an `env:` block with the park record named.

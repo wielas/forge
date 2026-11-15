@@ -19,9 +19,10 @@ What it is not yet is a product a person can leave alone:
 - **It does not speak.** A new hold, a merged chunk and a stalled worker reach the
   operator only through the 09:00 digest, or when they run `forge status`. A loop that
   turns in minutes waits a day for each human answer.
-- **It can wedge without a sound.** Codex has no timeout, a quota park waits forever by
-  default, and Hermes runs one worker at a time for the whole host, so one hung worker
-  stops every board. Nothing reports it.
+- **It can wedge without a sound.** Hermes runs one worker at a time for the whole host, so
+  one hung worker stops every board. A Codex attempt and a quota park are now bounded and
+  end in a hold (built in #123, not yet seen live); a worker that dies some other way, or a
+  card nothing picks up, is still reported by no one.
 - **Its numbers leave out the money.** The judge's cost is recorded per verdict and never
   summed; Codex tokens are read and dropped; the bounce rate misses the verifier's own
   bounces.
@@ -37,7 +38,7 @@ Each stage is done when its *proof* has been observed, not when its code is merg
 | # | Stage | What is built | Proof |
 |---|---|---|---|
 | 1 | **The run talks** | `scripts/run-watch.sh` on a ten-minute cron: one message for each new hold, landing and stall. Fault holds name their risk instead of "unknown". A hold made by a worker that gave up says so. The gate verbs answer from the phone (the forge-gate bot: owner's setup) | During run B the operator learns of every hold and every merge within 15 minutes, without opening a terminal |
-| 2 | **The run cannot wedge silently** | A bound on a Codex run and on a quota park, after which the card holds with a reason. An alert for a `ready` card nothing picks up and for an armed gate whose cron is paused. A heartbeat URL (owner's setup), so a reboot is noticed | A killed worker and a paused cron are each reported within 30 minutes on a rehearsal board |
+| 2 | **The run cannot wedge silently** | A bound on a Codex run and on a quota park, after which the card holds with a reason (built in #123, not yet seen live). An alert for a `ready` card nothing picks up and for an armed gate whose cron is paused. A heartbeat URL (owner's setup), so a reboot is noticed | A killed worker and a paused cron are each reported within 30 minutes on a rehearsal board |
 | 3 | **The numbers are true** | `make metrics` and the digest show, per chunk and per run: judge cost, Codex tokens, wall-clock. The bounce rate counts the verifier's bounces. `metadata-live` stops failing on a producer no flow runs | Run B's results are filled from one command, and the cost of milestone 2 is a number |
 | 4 | **A second product** | `forge new` run for real. The plan checks that stop a second project (a `proven` verdict with no spike, an unhashed probe driver, a probe that passes on a crash). A board that does not start chunks before a grant exists. `forge rehearse` against the new repository, not only hello-forge | A second, different product goes from `forge new` to its first verifier-merged chunk in one sitting |
 | 5 | **Less to carry** | Closed parking-lot entries move to the archive. The finished August plan in `docs/ROADMAP.md` is retired with the checks that read it. The operator guide is one page. The verify suite loses the cases that guard retired paths | A new session reads the plan and the state in under 300 lines |

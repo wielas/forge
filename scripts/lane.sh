@@ -348,9 +348,24 @@ BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" \
 [ "$BRANCH" != "$BASE" ] || block "env: workspace $WS is on $BASE, not a task branch"
 OWN_COMMITS="$(git rev-list --count "origin/$BASE..HEAD" 2>/dev/null)" \
   || block "env: cannot compare $BRANCH with origin/$BASE"
+# DOES THIS RUN CONTINUE A STOPPED ATTEMPT? codex-run.sh left a record keyed by this card -- the
+# <task>.resume of a Codex ended at its time limit, or the park record of a quota wait given up --
+# naming this workspace and young enough to adopt. Its worktree then holds that attempt's
+# unfinished edits, and `make check` may be red because of them; an unblocked card is otherwise a
+# fresh run (REENTRY=0 until a hand-off exists) that would refuse both as `failing-prereq` before
+# Codex could be resumed. Asked of codex-run.sh itself, so the rules that decide whether a record is
+# ADOPTED are the ones that decide this: one reader, not a second parser.
+RESUME=0
+if "$HERE/codex-run.sh" --resume-record "$WS" "$TASK" >/dev/null 2>&1; then RESUME=1; fi
 if [ "$OWN_COMMITS" = 0 ]; then
+  # Never stash or reset under a resume: Codex must find its own edits. When they are there, the
+  # branch is not moved under them (a main that moved over those very files cannot fast-forward).
+  if [ "$RESUME" = 1 ] && [ -n "$(git status --porcelain=v1 --untracked-files=all 2>/dev/null)" ]; then
+    say "resume: the worktree holds a stopped attempt's edits; not fast-forwarding $BRANCH under them"
+  else
   git merge --ff-only --quiet "origin/$BASE" >/dev/null 2>&1 \
     || block "env: fresh branch $BRANCH cannot fast-forward to origin/$BASE"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -360,7 +375,7 @@ fi
 # audit key as its last two lines; they are consumed, never recomputed — run
 # ids are board-local, so a recomputed key rebuilds the collision.
 # ---------------------------------------------------------------------------
-FORGE_LANE_REENTRY="$REENTRY" "$HERE/lane-setup.sh" "$WS" "$RUN_ID" > "$TMP/setup.out" 2>/dev/null
+FORGE_LANE_REENTRY="$REENTRY" FORGE_LANE_RESUME="$RESUME" "$HERE/lane-setup.sh" "$WS" "$RUN_ID" > "$TMP/setup.out" 2>/dev/null
 setup_rc=$?
 [ "$setup_rc" = 0 ] || block "$(reason_from "$TMP/setup.out" "env: lane-setup.sh exited $setup_rc")"
 FORGE_LANE_RUN_KEY="$(sed -n 's/^FORGE_LANE_RUN_KEY=//p' "$TMP/setup.out" | tail -1)"

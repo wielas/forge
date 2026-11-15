@@ -297,7 +297,9 @@ Stop before creating or expanding cards when any of these is true:
 A lane that has PARKED on a Codex usage limit is **not** a stop condition — it
 is the run doing what it is supposed to do, and it will resume itself. Stop
 only if it blocks with `env: codex usage limit …`, which means the wait passed
-`FORGE_QUOTA_MAX_WAIT`; the park record named in that reason is the evidence.
+`FORGE_QUOTA_MAX_WAIT` (default 6 h) or the stated reset lies beyond it; the park record
+named in that reason is the evidence. `env: codex ran … without finishing` is the same
+for one attempt past `FORGE_CODEX_MAX_RUN_MIN` (default 120): the session is kept.
 
 Preserve the board, worktrees, PRs, commissioning report, `RUN_START`, and
 command output when stopping. They are the failure evidence. Diagnose from
