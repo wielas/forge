@@ -1,0 +1,21 @@
+checkpoint GATE-M1 — REHEARSAL — releases nothing; board and GitHub are not written
+
+checkpoint: GATE-M1 passes — the probe holds and the milestone is within its estimate, so it proceeds on its own (decision 6)
+
+Numbers (each read from a script; the tag names which):
+  [gate card]     GATE-M1 (t_g1) is blocked on board ck
+  [probe-run.sh]  exit 0 — probe GATE-M1: PASS — 2 of 2 cases passed (realistic 1/1, adversarial 1/1)
+  [metrics.sh]    5 of 5 chunk(s) done
+  [metrics.sh]    cost: 5 chunk(s) against an estimate of 5 chunk(s)
+  [gate card]     requirements delivered: 5 of 6 named in Delivers
+                  delivered: FR-18, FR-8, NFR-2, NFR-3, NFR-6
+                  unserved: FR-9 (no chunk of this milestone serves it)
+                  laid for later milestones: FR-1, FR-5, FR-7
+  [gate card]     follow-ups waiting in triage: 2
+                  t_f1  follow-up: tighten the history window
+                  t_f2  follow-up: name the weekday type
+  [gate card]     next milestone: M2, 1 chunk(s) held until the gate is done
+
+On --apply this would complete the gate, which releases the next milestone:
+would run: hermes kanban --board ck complete t_g1 --result checkpoint pass: probe GATE-M1: PASS — 2 of 2 cases passed (realistic 1/1, adversarial 1/1)   (rehearsal: not run)
+rehearsal: nothing was written to the board

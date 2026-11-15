@@ -164,6 +164,10 @@ PARKS="$(for f in "$PARK_ROOT"/*.json; do
   jq -c --arg id "$id" '{key: $id, value: {until: (.wake_at // null), windows: (.blocked_windows // "")}}' "$f" 2>/dev/null
 done | jq -s 'from_entries' 2>/dev/null)"
 [ -n "$PARKS" ] || PARKS='{}'
+# A review waiting for the Claude usage limit (scripts/prejudge-review.sh) is read the same way, from its own
+# directory: it is the verifier asleep on a `running` card, not a lane's park, and is worded as what it is.
+JWAITS="$(forge_judge_waits_json)"
+[ -n "$JWAITS" ] || JWAITS='{}'
 
 # One JSON object per board: landed on the day, everything in flight, everything
 # waiting, with the last block reason of each waiting card.
@@ -293,6 +297,8 @@ waiting_kind() {
   [ "$status" = ready ]  && { printf 'returned\t\n'; return; }
   [ "$status" = triage ] && { printf 'triage\t\n'; return; }
   [ -n "$reason" ]       || { printf 'other\t\n'; return; }
+  # The judge held by the Claude usage limit: an `env:` reason with nothing to fix, worded as what it is.
+  case "$first" in "env: $USAGE_LIMIT_HOLD_HEAD"*) printf 'usage-limit\t%s\n' "${first#*: }"; return;; esac
   class="${first%%:*}"
   if [ "$class" = "$first" ]; then
     class=other
@@ -321,6 +327,7 @@ def fact($n; $h; $board; $id):
   elif . == "bounce-budget"  then "\(pl($n; "chunk"; "chunks")) the verifier bounced without converging; held, with their children, until you decide."
   elif . == "interactive"    then "\(pl($n; "chunk"; "chunks")) for you to implement; nothing is built until you start."
   elif . == "returned"       then "\(pl($n; "human chunk"; "human chunks")) sent back for changes; their children and milestone gate wait."
+  elif . == "usage-limit"    then "\(pl($n; "review"; "reviews")) held by the Claude usage limit; nothing was found wrong, and \(if $n == 1 then "it holds" else "they hold" end), with \(if $n == 1 then "its" else "their" end) children, until the limit resets and you unblock \(if $n == 1 then "it" else "each" end)."
   elif . == "triage"         then "\($n) in triage; no script can complete a triage card, so \(if $n == 1 then "it stays" else "they stay" end) until you decide."
   elif . == "other"          then "\($n) stopped for an unrecognised reason; read \(if $n == 1 then "it" else "each" end) with `hermes kanban --board \($board) show \(if $n == 1 then $id else "<card id>" end)`."
   else "\($n) blocked by \(.): \($h | short(90))" + (if $n > 1 then " (and \($n - 1) like it)" else "" end) + "; \(if $n == 1 then "it holds, with its children," else "they hold, with their children," end) until you fix the cause and unblock." end;
@@ -342,6 +349,8 @@ def step($board):
         "implement it with /start-chunk in the product checkout; its children wait for the merge."
       elif $c.kind == "returned" then
         "read the reasons with \(cmd($board; "show"; $id)), fix its branch, then /end-chunk."
+      elif $c.kind == "usage-limit" then
+        "wait for the Claude usage limit to reset, then \(cmd($board; "unblock"; $id)); the review runs again from the start."
       elif $c.kind == "triage" then
         "read it with \(cmd($board; "show"; $id)) and decide whether to keep it; no script can complete it."
       elif ($c.kind | unblockable) then
@@ -402,7 +411,9 @@ def step($board):
   ( if $nw == 0 then
       "Nothing needs you today."
       + (($b.parked // []) as $pk
-         | if ($pk | length) > 0 then
+         | if ($pk | length) > 0 and all($pk[]; .judge == true) then
+             " The review is waiting for the Claude usage limit, back at \(([$pk[].until] | max) | utc); it resumes on its own then, and the next digest says if that changes."
+           elif ($pk | length) > 0 then
              " The run is parked for quota until \(([$pk[].until] | max) | utc)\(if ($pk[0].windows // "") != "" then " (\($pk[0].windows | short(60)))" else "" end); it resumes on its own then, and the next digest says if that changes."
            elif $run + $rev + $rdy > 0 then " The run is moving on its own; the next digest says if that changes."
          elif $todo + $held > 0 then " Nothing is running either, though, and \(pl($todo + $held; "card waits"; "cards wait")) on parents: if tomorrow's digest says the same, look at the board with `hermes kanban --board \($board) list`."
@@ -464,10 +475,12 @@ for BOARD in $BOARDS; do
     rc=3; continue; }
   printf '%s' "$json" | jq -e '(.landed + .flight + .waiting) | length > 0' >/dev/null || continue
   # The running cards parked for quota right now; a jq failure leaves the board as read.
-  withparks="$(printf '%s' "$json" | jq -c --argjson parks "$PARKS" --argjson now "$NOW" '
-    . + {parked: [ .flight[] | select(.status == "running") | . as $c | ($parks[$c.id] // null) as $p
+  withparks="$(printf '%s' "$json" | jq -c --argjson parks "$PARKS" --argjson jw "$JWAITS" --argjson now "$NOW" '
+    . + {parked: [ .flight[] | select(.status == "running") | . as $c
+                   | (($parks[$c.id] // null) | if . != null then . + {judge: false}
+                        else (($jw[$c.id] // null) | if . != null then {until: .until, windows: "", judge: true} else null end) end) as $p
                    | select($p != null and ($p.until | type) == "number" and $p.until > $now)
-                   | {id: $c.id, until: $p.until, windows: $p.windows} ]}' 2>/dev/null)" \
+                   | {id: $c.id, until: $p.until, windows: $p.windows, judge: $p.judge} ]}' 2>/dev/null)" \
     && [ -n "$withparks" ] && json="$withparks"
   # Dormant: nothing landed on the day, nothing running or in review, and the board's
   # newest row is older than the cutoff. A jq failure here is not dormant: the board
@@ -501,7 +514,9 @@ for BOARD in $BOARDS; do
                  | . as $c
                  | "- \(if .status == "review" then "in review" else .status end): \(.title) (\(.id))"
                    + (([($b.parked // [])[] | select(.id == $c.id)] | first // null) as $pk
-                      | if $pk == null then "" else " — parked for quota until \($pk.until | utc)" end)),
+                      | if $pk == null then ""
+                        elif $pk.judge == true then " — waiting for the Claude usage limit, back at \($pk.until | utc)"
+                        else " — parked for quota until \($pk.until | utc)" end)),
       "\nWaiting on you (\(.waiting | length))"
         + (if (.waiting | length) == 0 then ": nothing" else "" end) + "\n────────────"' \
       || { echo "digest: rendering board $BOARD failed" >&2; rc=3; }

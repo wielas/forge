@@ -32,6 +32,14 @@ rung decides (in sync: "already on board", exit 0 with a count of warnings; drif
 `go --ahead` arms a gate whose milestone is not finished: the checkpoint cron does nothing for it until every chunk is done, then
 completes it by itself, which is what a multi-milestone run with nobody at the desk needs. `--gate` may repeat.
 
+**A checkpoint report that finds a failing probe case quotes what the case printed.** Under each classified
+finding it shows the last lines of the case's stdout and, if any, stderr (at most 6 lines and 600 characters; the
+first three failing cases, the rest counted, so the report stays one message), each line behind `      | ` and
+under a label saying it is the product's text. Read it before you `/accept`: a probe's substring check that
+met "Push incomplete" is a probe defect that this makes visible at a glance. The text is cleaned (control
+characters, a leading `/`, backticks, `](`), never trusted. The whole output of every case is
+`~/.forge/repo/scripts/probe-run.sh <project> GATE-<m> --logs <dir>`.
+
 `status` exits 0 when nothing waits on you, 1 when a card waits or the watchdog is not healthy, 2 when
 a board or the host could not be read. `stop` exits 0 only after it has asked again and found no grant
 and no armed gate; a merge already made is not undone, and a card already running finishes its run.
@@ -159,6 +167,20 @@ be green and the tree clean. **Each is a
 whole number**, not a duration: `14400`, not `4h`. Every knob is validated at startup and a
 value the runner cannot read exits `2` naming the knob, rather than quietly dropping the
 bound you thought you had set.
+
+**A review that hit the Claude usage limit waits, then holds with nothing for you to fix.** The
+verifier's judge (`claude -p`) answers HTTP 429 when the account's 5-hour limit is spent. The review
+asks again after a wait, for at most `FORGE_JUDGE_QUOTA_MAX_WAIT` seconds in all (default `1800`;
+`FORGE_JUDGE_QUOTA_STEP` 120 and `_CAP` 600 set the backoff when the answer names no reset time, and a
+stated "resets 1:20pm (Europe/Copenhagen)" is waited for, plus `FORGE_JUDGE_QUOTA_MARGIN` 60 s, when it is
+inside the allowance). It waits *holding the host's one worker slot*, so the lanes stop meanwhile, which is
+why the allowance is short: a reset past it holds at once. While it waits the card is `running`, and `forge
+status`, the digest and run-watch say "waiting for the Claude usage limit, back at <time>" instead of a stall
+(`~/.forge/judge-waits/<task-id>.json` is the record). When the allowance is spent the card blocks
+`env: claude usage limit (HTTP 429) — the judge could not run for <n>; …` with a Reply that is only
+`hermes kanban --board <board> unblock <id>` once the limit has reset: nothing in the PR was judged or found
+wrong, and the unblock runs the review from the start. A 401, a 5xx and an answer that is not JSON are not a
+usage limit and still hold at once as `env: judge-envelope — …`.
 
 **A lane card blocked `other: handoff-integrity — the review hand-off of <id> was
 refused by the kernel`** did all the work — the branch is pushed and the PR is open —

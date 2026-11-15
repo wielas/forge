@@ -189,7 +189,7 @@ def main():
     # next run at the gate with no verdict.
     sys.dont_write_bytecode = True
     sys.path.insert(0, sys.argv[1])
-    from forge_probe import IGNORED, probe_path, validate_probe
+    from forge_probe import IGNORED, log_stem, probe_path, validate_probe
 
     project = Path(sys.argv[2]).resolve()
     timeout = int(sys.argv[4])
@@ -273,10 +273,9 @@ def main():
                 proc.kill()  # in case the leader left its own group; a no-op once it has exited
                 proc.wait()
             if logs is not None:
-                stem = "".join(c if c.isalnum() else "-" for c in name).strip("-")[:60] or "case"
                 for ext, src in (("stdout", out_path), ("stderr", err_path)):
                     try:
-                        shutil.copyfile(src, logs / f"{index + 1:02d}-{stem}.{ext}")
+                        shutil.copyfile(src, logs / f"{log_stem(index, name)}.{ext}")
                     except OSError as exc:
                         unrunnable(f"cannot write --logs file for case '{name}': {exc.strerror or exc}")
             # The frozen files again, after THIS case: the one that changed them

@@ -40,6 +40,19 @@ forge_watchdog_root()     { printf '%s' "${FORGE_WATCHDOG_ROOT:-$(forge_state_ro
 # The push watcher (scripts/run-watch.sh) keeps what it last told the operator here, one file per board.
 forge_run_watch_root()    { printf '%s' "${FORGE_RUN_WATCH_ROOT:-$(forge_state_root)/run-watch}"; }
 forge_merge_authority_root() { printf '%s' "${FORGE_MERGE_AUTHORITY_ROOT:-$(forge_state_root)/merge-authority}"; }
+# A review waiting for the Claude usage limit to lift (scripts/prejudge-review.sh) is still a `running` card, and
+# says so here: one record per card, <card>.json, holding the epoch of its next try. It is NOT in lane-parks/: the
+# lane adopts <card>.json there on a re-run, and the lane and the verifier work one card.
+forge_judge_wait_root()   { printf '%s' "${FORGE_JUDGE_WAIT_ROOT:-$(forge_state_root)/judge-waits}"; }
+forge_judge_waits_json() {   # -> {"<card>": {"until": <epoch>}} for each record that names a time; {} when none
+  local f id
+  for f in "$(forge_judge_wait_root)"/*.json; do
+    [ -f "$f" ] || continue
+    id="${f##*/}"; id="${id%.json}"
+    jq -c --arg id "$id" 'select(.schema == "forge.judge-wait.v1" and (.wake_at | type) == "number")
+                          | {key: $id, value: {until: .wake_at}}' "$f" 2>/dev/null
+  done | jq -s 'from_entries' 2>/dev/null || printf '{}'
+}
 
 # ---------------------------------------------------------------------------
 # THE PENDING CALL (P34). A program decides the one lifecycle call the driver must make and

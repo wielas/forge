@@ -54,6 +54,20 @@ INTERACTIVE_HOLD_REASON="$(decision_message interactive \
   "nothing is built until you start it, and nothing merges before the verifier has reviewed it" \
   "\`/start-chunk <its CHUNK id>\` in the product checkout; \`/end-chunk\` hands it to the verifier")"
 
+# The Claude usage limit stopped the judge and the review's own wait ran out (scripts/prejudge-review.sh). It is
+# an `env:` hold, so the class table would tell the operator to "fix it"; there is nothing to fix, so it carries
+# its own Reply in the decision-first shape every reader (the digest, run-watch, `forge status`) shows as
+# written. USAGE_LIMIT_HOLD_HEAD is the one string the digest matches on to give it its own wording.
+USAGE_LIMIT_HOLD_HEAD="claude usage limit (HTTP 429)"
+judge_usage_limit_reason() {  # $1=why, one line  $2=board  $3=card id
+  decision_message env \
+    "$USAGE_LIMIT_HOLD_HEAD — $1" \
+    "claude -p, which scores every review, was refused for the account's usage limit, so this PR has not been judged; nothing was found wrong with it" \
+    "wait for the limit to reset, then unblock the card; the review runs again from the start" \
+    "nothing was merged and nothing was judged; this chunk and its children wait until the card is unblocked" \
+    "\`hermes kanban --board $2 unblock $3\` once the limit has reset"
+}
+
 # WHO WAITS ON THE OPERATOR — ONE QUERY, THREE READERS. `forge status` (scripts/forge.sh), the daily
 # digest (scripts/digest.sh) and the push watcher (scripts/run-watch.sh) all ask which cards are waiting
 # on the operator, and they must give one answer; before this function each held its own copy of the SQL.
