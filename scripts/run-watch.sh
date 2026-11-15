@@ -348,12 +348,12 @@ case "$arm_rc" in
         missing)
           HOST_NEW=missing
           HOST_TEXT="CHECKPOINT CRON NOT RUNNING
-$armed armed, but there is no cron job named forge-checkpoint, so nothing will complete it.
+$armed armed, but there is no cron job named forge-checkpoint, so nothing will probe or complete it.
 Do: hermes cron create 'every 15m' --name forge-checkpoint --no-agent --script forge-checkpoint.sh --deliver telegram";;
         *" paused")
           HOST_NEW=paused
           HOST_TEXT="CHECKPOINT CRON NOT RUNNING
-$armed armed, but the cron job forge-checkpoint is paused, so nothing will complete it.
+$armed armed, but the cron job forge-checkpoint is paused, so nothing will probe or complete it.
 Do: hermes cron resume ${job% *}";;
         *" active") ;;
         *) HOST_NEW=unreadable;;
@@ -387,6 +387,7 @@ if [ "$DRY" = 0 ]; then
   done
   # a board that is gone (archived) leaves nothing behind; only when the boards directory itself could be read
   if [ "$BOARDS_DIR_OK" = 1 ]; then
+    rm -f "$STATE_DIR/_boards.json"   # the directory is back: its next disappearance is a new occurrence
     for f in "$STATE_DIR"/*.json; do
       [ -f "$f" ] || continue
       n="${f##*/}"; n="${n%.json}"
