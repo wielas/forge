@@ -19,9 +19,10 @@ What it is not yet is a product a person can leave alone:
 - **It does not speak.** A new hold, a merged chunk and a stalled worker reach the
   operator only through the 09:00 digest, or when they run `forge status`. A loop that
   turns in minutes waits a day for each human answer.
-- **It can wedge without a sound.** Codex has no timeout, a quota park waits forever by
-  default, and Hermes runs one worker at a time for the whole host, so one hung worker
-  stops every board. Nothing reports it.
+- **It can wedge without a sound.** Hermes runs one worker at a time for the whole host, so
+  one hung worker stops every board. A Codex attempt and a quota park are now bounded and
+  end in a hold (built in #123, not yet seen live); a worker that dies some other way, or a
+  card nothing picks up, is still reported by no one.
 - **Its numbers leave out the money.** The judge's cost is recorded per verdict and never
   summed; Codex tokens are read and dropped; the bounce rate misses the verifier's own
   bounces.

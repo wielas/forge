@@ -36,6 +36,10 @@
 # for quota until", which a timeout is not.
 #
 # Usage: codex-run.sh <workspace> <run-id> <task-id>
+#        codex-run.sh --resume-record <workspace> <task-id>
+#            exit 0 and the path of a live task-keyed record (a timed-out attempt's
+#            <task>.resume, or a quota park record) when there is one, else exit 1.
+#            lane.sh asks it before lane-setup.sh. No codex call.
 #        codex-run.sh --print-sandbox-roots <workspace>
 #            prints, one per line, the directories the runner grants Codex's
 #            sandbox beyond the workspace, and exits. No codex call. preflight.sh
@@ -148,6 +152,65 @@ resolve_sandbox_roots() { # run inside the workspace; sets GIT_COMMON, GIT_DIR_A
   fi
 }
 
+# How long a task-keyed record (park record or <task>.resume) may be adopted for. Adoption exists for a supervisor
+# killed DURING a park, and that successor arrives inside the window it was
+# waiting on. A record still on disk a week later is debris from a run nobody
+# resumed; adopting it sends "a usage limit interrupted you, continue where you
+# stopped" into a session that was abandoned, against a contract that has had a
+# week to change. Not a knob: no operator should have to reason about this.
+PARK_TTL=604800
+
+PARK_ROOT="${FORGE_LANE_PARK_ROOT:-$HOME/.forge/lane-parks}"
+now() { date +%s; }
+
+# One numeric or string field out of a task-keyed record, first occurrence only.
+park_field() { # file key pattern
+  sed -n "s/.*\"$2\":[[:space:]]*$3.*/\\1/p" "$1" 2>/dev/null | head -1
+}
+
+# THE ONE READER of the task-keyed records. Both the adoption below and `--resume-record`
+# (which scripts/lane.sh asks) go through it, so "this run continues a stopped attempt" is
+# decided by the same rules in both places and cannot drift. Returns 0 when the record is
+# LIVE -- it names this workspace and is inside the adoption window -- 1 when it is refused
+# (REC_WHY says why), 2 when there is no such record. REC_SESSION is the session it names,
+# which is empty for a record left by an attempt that never got one.
+record_check() { # <file>
+  local file="$1" parked_ws parked_at age=-1
+  REC_SESSION=""; REC_WHY=""
+  [ -s "$file" ] || return 2
+  parked_ws="$(park_field "$file" workspace '"\([^"]*\)"')"
+  REC_SESSION="$(park_field "$file" codex_session_id '"\([^"]*\)"')"
+  parked_at="$(park_field "$file" parked_at '\([0-9][0-9]*\)')"
+  [ -n "$parked_at" ] && age=$(( $(now) - parked_at ))
+  if [ "$parked_ws" != "$WS" ]; then
+    REC_WHY="it names workspace $parked_ws, not $WS"; return 1
+  elif [ "$age" -lt 0 ]; then
+    # No readable parked_at means no way to tell a live park from debris, and
+    # the safe direction is to pay comprehension once more rather than resume
+    # into a session that may be arbitrarily old.
+    REC_WHY="it carries no readable parked_at"; return 1
+  elif [ "$age" -gt "$PARK_TTL" ]; then
+    REC_WHY="parked ${age}s ago, past the ${PARK_TTL}s adoption window"; return 1
+  fi
+  return 0
+}
+
+# codex-run.sh --resume-record <workspace> <task-id>
+#   exit 0 and the record's path on stdout when a LIVE record exists for the task -- the
+#   <task>.resume a timed-out attempt left, or the park record a quota wait left. That is
+#   what makes the next run of the card the CONTINUATION of a stopped attempt, whose worktree
+#   may hold its unfinished edits and a red check: lane.sh asks, and tells lane-setup.sh.
+#   exit 1 when there is none, 2 on usage. Reads nothing else and runs no codex.
+if [ "${1:-}" = --resume-record ]; then
+  [ "$#" -eq 3 ] || { echo "usage: codex-run.sh --resume-record <workspace> <task-id>" >&2; exit 2; }
+  WS="$2"; TASK_ID="$3"
+  case "$TASK_ID" in ""|.|..|*[!A-Za-z0-9._-]*) echo "usage: codex-run.sh --resume-record <workspace> <safe-task-id>" >&2; exit 2;; esac
+  for rec in "$PARK_ROOT/$TASK_ID.resume" "$PARK_ROOT/$TASK_ID.json"; do
+    record_check "$rec" && { printf '%s\n' "$rec"; exit 0; }
+  done
+  exit 1
+fi
+
 if [ "${1:-}" = --print-sandbox-roots ]; then
   [ "$#" -eq 2 ] || {
     echo "usage: codex-run.sh --print-sandbox-roots <workspace>" >&2
@@ -186,16 +249,8 @@ MAX_RUN_MIN="${FORGE_CODEX_MAX_RUN_MIN:-120}"
 KILL_GRACE="${FORGE_CODEX_KILL_GRACE:-5}"
 POLL="${FORGE_QUOTA_POLL:-300}"
 TICK="${FORGE_QUOTA_TICK:-60}"
-PARK_ROOT="${FORGE_LANE_PARK_ROOT:-$HOME/.forge/lane-parks}"
 CODEX_BIN="${FORGE_CODEX_BIN:-codex}"
 
-# How long a park record may be adopted for. Adoption exists for a supervisor
-# killed DURING a park, and that successor arrives inside the window it was
-# waiting on. A record still on disk a week later is debris from a run nobody
-# resumed; adopting it sends "a usage limit interrupted you, continue where you
-# stopped" into a session that was abandoned, against a contract that has had a
-# week to change. Not a knob: no operator should have to reason about this.
-PARK_TTL=604800
 # The horizon a single park may cover, matching quota-window.py's own. Every
 # wake target is clamped to it, so the worst a corrupt `resets_at` can cost is
 # one long sleep and a re-probe rather than a run that never returns.
@@ -366,7 +421,6 @@ mkdir -p "$PARK_ROOT" 2>/dev/null || {
   exit 3
 }
 
-now() { date +%s; }
 say() { printf '%s codex-run: %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 
 # BSD and GNU date spell "format this epoch" differently, and on the wrong one
@@ -391,11 +445,6 @@ fmt_utc() {
 # half-finished session unreadable.
 jesc() {
   printf '%s' "${1:-}" | tr -d '[:cntrl:]' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
-}
-
-# One numeric or string field out of the park record, first occurrence only.
-park_field() { # file key pattern
-  sed -n "s/.*\"$2\":[[:space:]]*$3.*/\\1/p" "$1" 2>/dev/null | head -1
 }
 
 # ---------------------------------------------------------------------------
@@ -627,10 +676,11 @@ park_until() {
 # the operator guide, the staged-run guide and the quota cases all name.
 quota_give_up() { # <windows>
   if [ -n "${GIVEUP_RESET:-}" ]; then
+    local kept="unblock the card after that time to run it again"
+    [ -z "${SESSION_ID:-}" ] || kept="the session and the worktree's unfinished edits are kept — unblock the card after that time to resume them"
     echo "env: codex usage limit on $1; the quota resets at $(fmt_utc "$GIVEUP_RESET")," \
-         "longer than FORGE_QUOTA_MAX_WAIT=${MAX_WAIT}s allows; the session is kept —" \
-         "unblock the card after that time to resume it; park record at" \
-         "$PARK_ROOT/$TASK_ID.json"
+         "longer than FORGE_QUOTA_MAX_WAIT=${MAX_WAIT}s allows; $kept;" \
+         "park record at $PARK_ROOT/$TASK_ID.json"
   else
     echo "env: codex usage limit on $1; waited ${TOTAL_WAITED}s," \
          "over FORGE_QUOTA_MAX_WAIT=${MAX_WAIT}s; park record at" \
@@ -798,7 +848,7 @@ _tree() { # <pid> -> its descendants, one per line
 }
 
 end_tree() { # <root pid>: end everything under it, never the root itself
-  local pids p alive steps=0
+  local pids p alive late steps=0
   pids="$(_tree "$1")"
   [ -n "$pids" ] || return 0
   # shellcheck disable=SC2086
@@ -810,7 +860,11 @@ end_tree() { # <root pid>: end everything under it, never the root itself
     sleep 0.2
     steps=$((steps + 1))
   done
-  pids="$pids $(_tree "$1")"
+  # Only what is STILL ALIVE at the last poll: a pid that has gone may have been handed to
+  # something else in the grace, and the snapshot is old.
+  late=""
+  for p in $pids; do kill -0 "$p" 2>/dev/null && late="$late $p"; done
+  pids="$late $(_tree "$1")"
   # shellcheck disable=SC2086
   kill -KILL $pids 2>/dev/null
   return 0
@@ -865,7 +919,9 @@ attempt_once() {
     ) > /dev/null 2>&1 &
     watcher=$!
   fi
+  INT_JOB="$job"; INT_WATCHER="$watcher"
   wait "$job" 2>/dev/null
+  INT_JOB=""; INT_WATCHER=""
   if [ -n "$watcher" ]; then
     [ -e "$ATTEMPT_FLAG" ] || kill "$watcher" 2>/dev/null
     wait "$watcher" 2>/dev/null
@@ -873,22 +929,48 @@ attempt_once() {
   rc=""
   [ -s "$ATTEMPT_RC" ] && rc="$(head -1 "$ATTEMPT_RC")"
   case "$rc" in ""|*[!0-9]*) rc=1;; esac
-  # Fired AND failed: a codex that finished on its own as the limit struck is a success.
-  if [ "$rc" -ne 0 ] && [ -e "$ATTEMPT_FLAG" ]; then ATTEMPT_TIMED_OUT=yes; fi
+  # The watcher's mark ALONE is the timeout, whatever the exit code: a codex that traps TERM
+  # and exits 0 has not finished -- unfinished work must never pass as a clean finish. The
+  # watcher marks only while the job is alive, a moment before it ends anything.
+  if [ -e "$ATTEMPT_FLAG" ]; then
+    ATTEMPT_TIMED_OUT=yes
+    [ "$rc" -ne 0 ] || rc=124
+  fi
   BOUNCE_DELIVERED=yes
   read_session_id
   return "$rc"
 }
+
+# INT and QUIT, from a person at a foreground terminal. The attempt is a background job, and
+# bash starts those with both signals IGNORED (and `trap - INT QUIT` inside the job does not
+# undo it), so without this a Ctrl-C ended this script and left Codex and everything under it
+# running. The same tree kill the watcher uses, then 130 / 131 as a shell would. Where this
+# script itself starts with them ignored -- run in the background by lane.sh -- bash makes the
+# traps no-ops, which leaves the lane's own path exactly as it was. TERM is not trapped.
+INT_JOB=""; INT_WATCHER=""
+on_interrupt() { # <exit code>
+  trap '' INT QUIT
+  [ -z "$INT_WATCHER" ] || kill "$INT_WATCHER" 2>/dev/null
+  [ -z "$INT_JOB" ] || end_tree "$INT_JOB"
+  say "interrupted; the attempt's processes were ended"
+  exit "$1"
+}
+trap 'on_interrupt 130' INT
+trap 'on_interrupt 131' QUIT
 
 # A timed-out attempt ends the run (exit 4), and the run's scratch directory goes with the
 # card's next run id -- so the session is left where the NEXT run looks for one: a record
 # keyed by task, <task>.resume, beside the park record and adopted the same way. It is a
 # different file from the park record because that one means "parked for quota until", which
 # scripts/run-watch.sh and digest.sh say aloud to the operator. Atomic for the same reason.
+#
+# Written even when no session id had been captured (its session is then empty and nothing is
+# adopted): the record is also how scripts/lane.sh knows the next run CONTINUES a stopped
+# attempt whose worktree may hold unfinished edits and a red check, which lane-setup.sh must
+# then tolerate instead of blocking `failing-prereq` before Codex is resumed.
 keep_session_for_resume() {
   local tmp="$PARK_ROOT/.$TASK_ID.resume.$$" at
   at="$(now)"
-  [ -n "${SESSION_ID:-}" ] || return 1
   cat > "$tmp" << JSON
 {
   "schema": "forge.resume.v1",
@@ -905,14 +987,18 @@ JSON
 
 # The block reason for an attempt ended at its limit -- the script's last line.
 timeout_give_up() {
-  local shown kept
+  local shown kept written=no
   if [ $(( MAX_RUN_SEC % 60 )) -eq 0 ]; then shown="$(( MAX_RUN_SEC / 60 )) min"; else shown="${MAX_RUN_SEC} s"; fi
-  if keep_session_for_resume; then
+  keep_session_for_resume && written=yes
+  if [ "$written" != yes ]; then
+    say "WARNING: the resume record could not be written to $PARK_ROOT"
+    kept="the resume record could not be written, so the next run will not know the worktree holds unfinished edits — raise the limit"
+  elif [ -n "${SESSION_ID:-}" ]; then
     say "attempt $ATTEMPT ran ${shown} without finishing and was ended; session $SESSION_ID kept in $PARK_ROOT/$TASK_ID.resume"
-    kept="the session is kept — unblock the card to resume it, or raise the limit"
+    kept="the session and the worktree's unfinished edits are kept — unblock the card to resume them, or raise the limit"
   else
     say "attempt $ATTEMPT ran ${shown} without finishing and was ended; no session id had been captured"
-    kept="no session had started, so unblocking begins again — or raise the limit"
+    kept="no session had started, so unblocking starts a fresh attempt in the same worktree — or raise the limit"
   fi
   echo "env: codex ran ${shown} without finishing (limit FORGE_CODEX_MAX_RUN_MIN); $kept"
 }
@@ -935,29 +1021,16 @@ read_session_id
 # keep_session_for_resume). The NEWER is tried first, and the other only if that one is
 # refused -- a stale record of one kind must not hide a live one of the other.
 adopt_record() { # <file> <what to call it in the log> -> 0 when SESSION_ID was set from it
-  local file="$1" what="$2" parked_ws parked_session parked_at park_age=-1
-  [ -s "$file" ] || return 1
-  parked_ws="$(park_field "$file" workspace '"\([^"]*\)"')"
-  parked_session="$(park_field "$file" codex_session_id '"\([^"]*\)"')"
-  parked_at="$(park_field "$file" parked_at '\([0-9][0-9]*\)')"
-  [ -n "$parked_at" ] && park_age=$(( $(now) - parked_at ))
-  if [ -z "$parked_session" ]; then
+  local file="$1" what="$2" rc
+  record_check "$file"; rc=$?
+  [ -n "$REC_SESSION" ] || return 1
+  if [ "$rc" != 0 ]; then
+    say "ignoring $what: $REC_WHY"
     return 1
-  elif [ "$parked_ws" != "$WS" ]; then
-    say "ignoring $what: it names workspace $parked_ws, not $WS"
-  elif [ "$park_age" -lt 0 ]; then
-    # No readable parked_at means no way to tell a live park from debris, and
-    # the safe direction is to pay comprehension once more rather than resume
-    # into a session that may be arbitrarily old.
-    say "ignoring $what: it carries no readable parked_at"
-  elif [ "$park_age" -gt "$PARK_TTL" ]; then
-    say "ignoring $what: parked ${park_age}s ago, past the ${PARK_TTL}s adoption window"
-  else
-    SESSION_ID="$parked_session"
-    say "adopting session $SESSION_ID from the $what left by an earlier run"
-    return 0
   fi
-  return 1
+  SESSION_ID="$REC_SESSION"
+  say "adopting session $SESSION_ID from the $what left by an earlier run"
+  return 0
 }
 if [ -z "$SESSION_ID" ]; then
   PARK_FILE="$PARK_ROOT/$TASK_ID.json"

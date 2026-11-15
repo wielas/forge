@@ -3255,6 +3255,7 @@ lane/the-program-records-its-call  P34: lane.sh records the call it names (the e
 lane/lane-sh-attempts-no-board-mutation  two full fenced passes on the real kernel with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses
 lane/lane-sh-reads-no-scrubbed-variable  fenced, with wrong values planted for exactly the scrubbed names; it reads its own card and nothing mentions the planted id
 lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers beside itself and names the hand-off as a kanban_request_review call
+lane/a-live-resume-record-lets-the-lane-continue-a-stopped-attempt  executed: with a live <task>.resume or park record for this card and workspace a dirty tree and a red check pass setup, the stopped session is resumed and the card hands off; with no record, another workspace's, or one past the adoption window, the same worktree still blocks failing-prereq
 lane/the-hook-is-reached-through-forge-repo  P34: the bootstrap installs, preflight checks and the script names ~/.forge/repo/scripts/driver-call-hook.sh; nothing under hermes/ or skills/ names it any other way; it is executable, 100755 in git, and answers --check
 lane/lane-sh-reenters-on-a-bounce  FL3, stubs: same card/branch/PR, red baseline tolerated, the implementer's session resumed with the reasons
 lane/bounce-round-trip-on-real-hermes  FL3 + P24, real kernel in an isolated HERMES_HOME: a fenced lane names the hand-off, the driver's tool call lands it, native gate, request-changes through the tool, re-entry, approval; lane-handoff.sh refuses under the fence
@@ -5387,6 +5388,69 @@ LPLOG
       ok "lane-handoff-is-fail-closed (an invalid envelope never transitions; a kernel claiming success is read back; a blocked human-tier card is unblocked, then handed off; an unassigned one is given the sentinel first)"
     else
       bad "lane-handoff-is-fail-closed" "lane-handoff.sh must validate first, read the end state back, and unpark a human-tier card —$lho_detail"
+    fi
+
+    # --- a STOPPED attempt is continued, not refused -------------------------
+    # A Codex ended at its time limit (or a quota wait given up) leaves, in the worktree, the
+    # edits it had not finished -- the normal mid-chunk state -- and `make check` may be red
+    # because of them. An unblocked card is a NEW run that lane.sh reads as fresh (REENTRY=0),
+    # and lane-setup.sh refuses a red baseline and ANY dirty tree as `failing-prereq` before
+    # Codex can be resumed: the hold said "unblock the card to resume it" and the unblock
+    # blocked at once. lane.sh now asks codex-run.sh (the one reader of the task-keyed record,
+    # the same one that decides whether a record is adopted) and tells lane-setup.sh. The
+    # fixture is the whole lane: a dirty tree (impl.txt, which the stub Codex then finishes and
+    # commits) and a red check (which the stub fixes), so everything AFTER Codex -- clean tree,
+    # green check, audit, push, hand-off -- is still demanded.
+    local lr_why="" lr_rc lr_now
+    lr_now="$(date +%s)"
+    _lr_prep() { # <label> <red: yes|no> -> a fixture whose worktree holds an unfinished edit
+      _lsh_fixture "$1" || return 1
+      printf 'unfinished edit by the stopped attempt\n' > "$lwt/impl.txt"
+      if [ "$2" = yes ]; then touch "$lstub/red"; fi
+    }
+    _lr_record() { # <file> <workspace> <session> <parked_at>
+      printf '{"schema":"forge.resume.v1","task_id":"t_lane","workspace":"%s","codex_session_id":"%s","reason":"attempt-limit","parked_at":%s}\n' \
+        "$2" "$3" "$4" > "$1"
+    }
+    # (1) a live resume record: dirty + red passes setup, the session is resumed, the card hands off
+    _lr_prep resume-live yes
+    _lr_record "$lroot/parks/t_lane.resume" "$lwt" lane-stopped-session "$lr_now"
+    lr_rc="$(_lsh_run STUB_FIX_RED=1)"
+    { [ "$lr_rc" = 4 ] && [ "$(_lsh_env .action)" = handoff ] \
+      && grep -q '^codex resume$' "$lstub/calls" 2>/dev/null \
+      && grep -q 'resume: the worktree holds a stopped attempt' "$lroot/err" \
+      && [ ! -e "$lroot/parks/t_lane.resume" ]; } \
+      || lr_why="$lr_why live-resume-record(rc=$lr_rc: $(_lsh_env .reason) calls=$(tr '\n' ' ' < "$lstub/calls" 2>/dev/null))"
+    # (2) a live quota park record (an exit-5 give-up) is the same
+    _lr_prep resume-park yes
+    printf '{"schema":"forge.park.v1","task_id":"t_lane","workspace":"%s","codex_session_id":"lane-parked-session","wake_at":%s,"parked_at":%s}\n' \
+      "$lwt" "$lr_now" "$lr_now" > "$lroot/parks/t_lane.json"
+    lr_rc="$(_lsh_run STUB_FIX_RED=1)"
+    { [ "$lr_rc" = 4 ] && [ "$(_lsh_env .action)" = handoff ] && grep -q '^codex resume$' "$lstub/calls" 2>/dev/null; } \
+      || lr_why="$lr_why live-park-record(rc=$lr_rc: $(_lsh_env .reason))"
+    # (3) no record, a record for ANOTHER workspace, and a record older than the adoption window
+    # each refuse exactly as before: a red baseline first, a dirty tree once the check is green.
+    local lr_case lr_red lr_expect
+    for lr_case in none:yes:'failing-prereq: baseline' none:no:'failing-prereq: setup left a dirty baseline' \
+                   foreign:yes:'failing-prereq: baseline' foreign:no:'failing-prereq: setup left a dirty baseline' \
+                   stale:yes:'failing-prereq: baseline' stale:no:'failing-prereq: setup left a dirty baseline'; do
+      lr_red="${lr_case#*:}"; lr_red="${lr_red%%:*}"; lr_expect="${lr_case#*:*:}"
+      _lr_prep "resume-${lr_case%%:*}-$lr_red" "$lr_red"
+      case "${lr_case%%:*}" in
+        foreign) _lr_record "$lroot/parks/t_lane.resume" "/somewhere/else" lane-stopped-session "$lr_now";;
+        stale)   _lr_record "$lroot/parks/t_lane.resume" "$lwt" lane-stopped-session 1;;
+      esac
+      lr_rc="$(_lsh_run STUB_FIX_RED=1)"
+      { [ "$lr_rc" = 3 ] && [ "$(_lsh_env .action)" = block ] \
+        && [ "$(_lsh_env .reason | cut -c1-${#lr_expect})" = "$lr_expect" ] \
+        && ! grep -q '^codex' "$lstub/calls" 2>/dev/null; } \
+        || lr_why="$lr_why ${lr_case%%:*}/red=$lr_red-must-still-refuse(rc=$lr_rc: $(_lsh_env .reason))"
+    done
+    if [ -z "$lr_why" ]; then
+      ok "a-live-resume-record-lets-the-lane-continue-a-stopped-attempt (a live <task>.resume or park record: a dirty tree and a red check pass setup, the session is resumed and the card hands off; none, another workspace's and an expired one still block failing-prereq)"
+    else
+      bad "a-live-resume-record-lets-the-lane-continue-a-stopped-attempt" \
+          "an unblocked card whose Codex was stopped must continue in the worktree it left, and only then —$lr_why"
     fi
   fi
 
@@ -20838,7 +20902,7 @@ QSTUB9
   # `codex` named by FORGE_CODEX_BIN (the shared $qbin/codex is left alone), and every one is
   # fast on purpose: the minutes knob has a seconds seam (FORGE_CODEX_MAX_RUN_SEC), the kill
   # grace is a knob, and the stubs' resets are seconds out.
-  local qb="$qroot/bound" qrtb qa_t0 qa_secs qa_alive qa_pid qa_why qlast
+  local qb="$qroot/bound" qrtb qa_t0 qa_secs qa_alive qa_pid qa_why qa_keep qlast
   mkdir -p "$qb"; rm -f "$qb"/*.n "$qb"/*.reset* "$qb"/grandchild-pids-* "$qb"/resume-argv-*
   cat > "$qb/hang-codex" <<'QHANG'
 #!/usr/bin/env bash
@@ -20853,6 +20917,7 @@ for a in "$@"; do [ "$a" = resume ] && { echo "$*" > "$STUBDIR/resume-argv-$STUB
 echo $! > "$STUBDIR/grandchild-pids-$STUB_TAG"
 ( exec sleep 308 ) >/dev/null 2>&1 &
 echo $! >> "$STUBDIR/grandchild-pids-$STUB_TAG"
+[ "${STUB_TERM_EXIT0:-}" != yes ] || { trap 'exit 0' TERM; sleep 309 & wait; }
 exec sleep 309
 QHANG
   # A reset N seconds out for each call named in STUB_RESETS (a list), then success. The
@@ -20903,7 +20968,7 @@ sys.exit(0 if re.fullmatch(pat, sys.argv[1]) else 1)' "$1" 2>/dev/null; }
   qa_why=""
   [ "$qrc" = 4 ] || qa_why="$qa_why rc=$qrc-not-4"
   [ "$qa_secs" -le 12 ] || qa_why="$qa_why took-${qa_secs}s"
-  printf '%s' "$qlast" | grep -qE '^env: codex ran 1 s without finishing \(limit FORGE_CODEX_MAX_RUN_MIN\); the session is kept' \
+  printf '%s' "$qlast" | grep -qE "^env: codex ran 1 s without finishing \(limit FORGE_CODEX_MAX_RUN_MIN\); the session and the worktree's unfinished edits are kept — unblock the card to resume them" \
     || qa_why="$qa_why last-line-is-'$qlast'"
   _qreason_ok "$qlast" || qa_why="$qa_why reason-does-not-match-blocked_reason_pattern"
   printf '%s' "$qout" | grep -q 'PARKED' && qa_why="$qa_why parked-on-a-timeout"
@@ -20928,8 +20993,40 @@ sys.exit(0 if re.fullmatch(pat, sys.argv[1]) else 1)' "$1" 2>/dev/null; }
   qbadout="$(_qb bc FORGE_CODEX_BIN="$qb/reset-codex" FORGE_CODEX_MAX_RUN_MIN=0 STUB_RESETS="")"; qbadrc=$?
   { [ "$qbadrc" = 0 ] && printf '%s' "$qbadout" | grep -q 'codex finished cleanly'; } \
     || qa_why="$qa_why zero-minutes-rc=$qbadrc"
+  # A Codex that traps TERM and exits 0 has NOT finished: the watcher's mark alone is the
+  # timeout, whatever the exit code, or unfinished work passes as a clean finish.
+  rm -f "$qpark/qtask-bt.json" "$qpark/qtask-bt.resume"
+  qout="$(_qb bt FORGE_CODEX_BIN="$qb/hang-codex" STUB_TERM_EXIT0=yes FORGE_CODEX_MAX_RUN_SEC=1 FORGE_CODEX_KILL_GRACE=1)"; qrc=$?
+  { [ "$qrc" = 4 ] && printf '%s' "$(_qlast "$qout")" | grep -q '^env: codex ran 1 s without finishing' \
+    && ! printf '%s' "$qout" | grep -q 'codex finished cleanly'; } \
+    || qa_why="$qa_why term-then-exit-0-passed-as-finished(rc=$qrc '$(_qlast "$qout")')"
+  for qa_pid in $(cat "$qb/grandchild-pids-bt" 2>/dev/null); do kill -KILL "$qa_pid" 2>/dev/null; done
+  # An INT at a foreground terminal (job control gives the runner the default disposition a
+  # shell would; a backgrounded one starts with it ignored and bash then cannot trap it) ends
+  # the attempt's whole tree and exits 130, instead of leaving Codex running.
+  rm -f "$qb/grandchild-pids-bi" "$qb/bi.rc"; mkdir -p "$qroot/rt-bound-bi"; printf 'c\n' > "$qroot/rt-bound-bi/contract.md"
+  ( set -m
+    env PATH="$qbin:$PATH" STUBDIR="$qb" STUB_TAG=bi CODEX_HOME="$qroot/codexhome" FORGE_LANE_RUNTIME="$qroot/rt-bound-bi" \
+      FORGE_LANE_PARK_ROOT="$qpark" FORGE_CODEX_BIN="$qb/hang-codex" FORGE_CODEX_MAX_RUN_MIN=0 FORGE_CODEX_KILL_GRACE=1 \
+      "$runner" "$qws" qrun-bi qtask-bi > "$qb/bi.out" 2>&1 &
+    qi_pid=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+      [ "$(wc -l < "$qb/grandchild-pids-bi" 2>/dev/null | tr -d ' ')" = 2 ] && break; sleep 0.2
+    done
+    sleep 0.5
+    kill -INT "$qi_pid"
+    wait "$qi_pid" 2>/dev/null; echo $? > "$qb/bi.rc"
+  ) > /dev/null 2>&1
+  [ "$(cat "$qb/bi.rc" 2>/dev/null)" = 130 ] || qa_why="$qa_why int-rc=$(cat "$qb/bi.rc" 2>/dev/null)"
+  qa_alive=""
+  for qa_pid in $(cat "$qb/grandchild-pids-bi" 2>/dev/null); do
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$qa_pid" 2>/dev/null || break; sleep 0.2; done
+    kill -0 "$qa_pid" 2>/dev/null && qa_alive="$qa_alive $qa_pid"
+  done
+  [ -s "$qb/grandchild-pids-bi" ] || qa_why="$qa_why int-the-stub-never-started"
+  [ -z "$qa_alive" ] || { qa_why="$qa_why int-left-grandchildren:$qa_alive"; kill -KILL $qa_alive 2>/dev/null; }
   if [ -z "$qa_why" ]; then
-    ok "a-hung-codex-attempt-is-ended (exit 4 after ${qa_secs}s, the reason last, no grandchild left, session id kept)"
+    ok "a-hung-codex-attempt-is-ended (exit 4 after ${qa_secs}s, the reason last, no grandchild left, session id kept; TERM-then-exit-0 is still a timeout; INT ends the tree and exits 130)"
   else
     bad "a-hung-codex-attempt-is-ended" \
         "an attempt past FORGE_CODEX_MAX_RUN_MIN must be ended with its whole tree, exit 4, the env: reason as the last line, and its session kept —$qa_why"
@@ -20940,11 +21037,18 @@ sys.exit(0 if re.fullmatch(pat, sys.argv[1]) else 1)' "$1" 2>/dev/null; }
   # why it was stopped and so gets a prompt that does not claim a usage limit. A timeout
   # before any session existed keeps nothing, and its reason does not say otherwise.
   qrtb="$qroot/rt-bound-ba2"; mkdir -p "$qrtb"; printf 'c\n' > "$qrtb/contract.md"
+  # scripts/lane.sh asks codex-run.sh, with this, whether the next run CONTINUES a stopped attempt.
+  qa_why=""
+  qout="$(env FORGE_LANE_PARK_ROOT="$qpark" "$runner" --resume-record "$qws" qtask-ba)"; qrc=$?
+  { [ "$qrc" = 0 ] && [ "$qout" = "$qpark/qtask-ba.resume" ]; } || qa_why="$qa_why record-not-live(rc=$qrc '$qout')"
+  env FORGE_LANE_PARK_ROOT="$qpark" "$runner" --resume-record "$TMPROOT/elsewhere" qtask-ba >/dev/null 2>&1
+  [ "$?" = 1 ] || qa_why="$qa_why another-workspace-counted-as-live"
+  qa_keep="$qa_why"
   qout="$(_qrun 60 env PATH="$qbin:$PATH" STUBDIR="$qb" STUB_TAG=ba CODEX_HOME="$qroot/codexhome" \
             FORGE_LANE_RUNTIME="$qrtb" FORGE_LANE_PARK_ROOT="$qpark" FORGE_CODEX_BIN="$qb/hang-codex" \
             FORGE_CODEX_MAX_RUN_SEC=1 FORGE_CODEX_KILL_GRACE=1 \
             "$runner" "$qws" qrun-ba2 qtask-ba 2>&1)"; qrc=$?
-  qa_why=""
+  qa_why="$qa_keep"
   [ "$qrc" = 0 ] || qa_why="$qa_why rc=$qrc"
   printf '%s' "$qout" | grep -q 'adopting session verify-hang-1 from the resume record' || qa_why="$qa_why not-adopted"
   grep -q 'exec resume verify-hang-1' "$qb/resume-argv-ba" 2>/dev/null || qa_why="$qa_why not-resumed"
@@ -20954,8 +21058,12 @@ sys.exit(0 if re.fullmatch(pat, sys.argv[1]) else 1)' "$1" 2>/dev/null; }
   rm -f "$qpark/qtask-bd.json" "$qpark/qtask-bd.resume"
   qout="$(_qb bd FORGE_CODEX_BIN="$qb/hang-codex" STUB_NO_SESSION=yes FORGE_CODEX_MAX_RUN_SEC=1 FORGE_CODEX_KILL_GRACE=1)"; qrc=$?
   qlast="$(_qlast "$qout")"
-  { [ "$qrc" = 4 ] && printf '%s' "$qlast" | grep -q 'no session had started' \
-    && ! printf '%s' "$qlast" | grep -q 'the session is kept' && [ ! -e "$qpark/qtask-bd.resume" ] && _qreason_ok "$qlast"; } \
+  # No session: nothing to adopt, so the record carries none -- but it IS written, and lane.sh finds
+  # it, because the worktree may hold the attempt's unfinished edits all the same.
+  { [ "$qrc" = 4 ] && printf '%s' "$qlast" | grep -q 'no session had started, so unblocking starts a fresh attempt in the same worktree' \
+    && ! printf '%s' "$qlast" | grep -q 'the session and' && grep -q '"codex_session_id": ""' "$qpark/qtask-bd.resume" 2>/dev/null \
+    && _qreason_ok "$qlast" \
+    && [ "$(env FORGE_LANE_PARK_ROOT="$qpark" "$runner" --resume-record "$qws" qtask-bd 2>/dev/null)" = "$qpark/qtask-bd.resume" ]; } \
     || qa_why="$qa_why no-session-case(rc=$qrc '$qlast')"
   for qa_pid in $(cat "$qb/grandchild-pids-bd" 2>/dev/null); do kill -KILL "$qa_pid" 2>/dev/null; done
   if [ -z "$qa_why" ]; then
@@ -20995,7 +21103,7 @@ sys.exit(0 if re.fullmatch(pat, sys.argv[1]) else 1)' "$1" 2>/dev/null; }
   [ "$qc_secs" -le 6 ] || qc_why="$qc_why beyond-took-${qc_secs}s"
   printf '%s' "$qout" | grep -q 'PARK-COMMENT' && qc_why="$qc_why beyond-entered-the-sleep"
   printf '%s' "$qout" | grep -q 'giving up at once' || qc_why="$qc_why beyond-did-not-say-at-once"
-  { [ -n "$qc_reset" ] && printf '%s' "$qlast" | grep -qF "env: codex usage limit on primary; the quota resets at $qc_reset, longer than FORGE_QUOTA_MAX_WAIT=3600s allows; the session is kept"; } \
+  { [ -n "$qc_reset" ] && printf '%s' "$qlast" | grep -qF "env: codex usage limit on primary; the quota resets at $qc_reset, longer than FORGE_QUOTA_MAX_WAIT=3600s allows; the session and the worktree's unfinished edits are kept — unblock the card after that time to resume them; park record at"; } \
     || qc_why="$qc_why beyond-reason-lacks-the-UTC-reset('$qc_reset' not in '$qlast')"
   _qreason_ok "$qlast" || qc_why="$qc_why beyond-reason-fails-the-pattern"
   { [ -s "$qpark/qtask-c1.json" ] && grep -q '"codex_session_id": "verify-reset-1"' "$qpark/qtask-c1.json"; } \
