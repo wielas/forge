@@ -37,6 +37,8 @@ forge_lane_session_root() { printf '%s' "${FORGE_LANE_SESSION_ROOT:-$(forge_stat
 forge_verdict_root()      { printf '%s' "${FORGE_VERDICT_ROOT:-$(forge_state_root)/verdicts}"; }
 # The liveness watchdog (scripts/watchdog.sh, scripts/watchdog-install.sh) keeps its alert state and its launchd log here.
 forge_watchdog_root()     { printf '%s' "${FORGE_WATCHDOG_ROOT:-$(forge_state_root)/watchdog}"; }
+# The push watcher (scripts/run-watch.sh) keeps what it last told the operator here, one file per board.
+forge_run_watch_root()    { printf '%s' "${FORGE_RUN_WATCH_ROOT:-$(forge_state_root)/run-watch}"; }
 forge_merge_authority_root() { printf '%s' "${FORGE_MERGE_AUTHORITY_ROOT:-$(forge_state_root)/merge-authority}"; }
 
 # ---------------------------------------------------------------------------

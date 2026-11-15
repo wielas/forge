@@ -180,35 +180,9 @@ SELECT json_object(
                    OR (SELECT json_extract(e.payload,'\$.reason') FROM task_events e
                         WHERE e.task_id = h.id AND e.kind IN ('blocked','block_loop_detected')
                         ORDER BY e.created_at DESC, e.id DESC LIMIT 1) IS '$INTERACTIVE_HOLD_SQL')),
-  'waiting', (SELECT COALESCE(json_group_array(json_object('id', id, 'title', title, 'status', status, 'reason', reason)), json_array())
-               FROM (SELECT t.id, t.title, t.status,
-                            (SELECT json_extract(e.payload,'\$.reason') FROM task_events e
-                              WHERE e.task_id = t.id AND e.kind IN ('blocked','block_loop_detected')
-                              ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS reason
-                       FROM tasks t
-                      WHERE (t.status IN ('blocked','triage')
-                             -- A human chunk sent back for changes (epic P21).
-                             OR (t.status = 'ready' AND t.assignee IS '$SENTINEL_SQL'))
-                        -- A milestone gate (epic MS1) is held from the moment the
-                        -- board is bootstrapped, but it asks nothing until every
-                        -- chunk it closes is done. Before that it is not waiting
-                        -- on the operator, and GW1 says no decision, no message.
-                        AND NOT (t.title GLOB 'GATE-*' AND t.status = 'blocked'
-                                 AND EXISTS (SELECT 1 FROM task_links l
-                                               JOIN tasks p ON p.id = l.parent_id
-                                              WHERE l.child_id = t.id
-                                                AND p.status NOT IN ('done','archived')))
-                      ORDER BY t.id) w
-              -- An interactive chunk (epic P13) is held from the bootstrap on as
-              -- well, and asks nothing while a parent is open: the human cannot
-              -- start it yet. Its one mark is the reason the bootstrap blocked it
-              -- with, and only as its LAST reason, so a later block still speaks.
-              -- IS, not =: a card blocked with no recorded reason must stay.
-              WHERE NOT (w.status = 'blocked' AND w.reason IS '$INTERACTIVE_HOLD_SQL'
-                         AND EXISTS (SELECT 1 FROM task_links l
-                                       JOIN tasks p ON p.id = l.parent_id
-                                      WHERE l.child_id = w.id
-                                        AND p.status NOT IN ('done','archived')))),
+  -- Who waits on the operator is decision-message.sh's forge_waiting_sql, shared with forge status and the
+  -- push watcher; the gate and interactive-chunk exclusions, and the gave_up reason, are explained there.
+  'waiting', $(forge_waiting_sql "$SENTINEL_SQL" "$INTERACTIVE_HOLD_SQL"),
   -- The newest thing that happened on this board, for the dormancy test: the latest
   -- task event, or a task's own created/completed time if one of those is later
   -- (a board with no event rows still has cards).

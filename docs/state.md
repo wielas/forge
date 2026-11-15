@@ -63,6 +63,9 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
   unlocks the disk, and nothing on the host can say so. Only an external heartbeat URL in
   `~/.forge/watchdog.env` would report it; none is configured.
 - **A real watchdog alert.** It has only ever read healthy.
+- **The push watcher on the host.** `scripts/run-watch.sh` (new holds, landings, stalls and idle cards sent within
+  ten minutes) is tested offline only; until its two install commands are run (`docs/operator-guide.md`, Liveness) it
+  is not a cron job, `make preflight` WARNs, and a run is still seen once a day.
 - **The mutation probe's precision.** It reports and never bounces; read at the M2 checkpoint.
 
 ## Known gaps
