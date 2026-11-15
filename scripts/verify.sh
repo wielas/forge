@@ -3439,6 +3439,9 @@ verifier/claude-token-reaches-the-claude-child  P36: with CLAUDE_CODE_OAUTH_TOKE
 verifier/claude-token-reaches-every-claude-call-site  P36: every script that calls claude -p sources claude-token.sh before it; no SOUL/skill/adapter calls it directly; the scan finds prejudge-review.sh, so it cannot go blind
 verifier/claude-token-mutation-is-caught  P36: no fallback, a clobbered token, the profile .env read, first-line-wins, a token left in the caller, xtrace left on, an unsourced call site and a missing helper each turn the two checks above red
 verifier/claude-token-reaches-the-judge-call  P36: the real prejudge-review.sh, fenced with the token unset, hands its judge call the root .env token; a set token wins; no .env is no token and still a verdict; the unsourced control gets none
+verifier/a-judge-usage-limit-is-waited-out  a judge call refused for the account's usage limit (HTTP 429) is made again after a bounded wait in-process: two refusals then a verdict end in the normal recommendation with one block and a wait record visible meanwhile; a stated reset inside the allowance is waited for, one past it holds at once; a zone with no file is not guessed at
+verifier/a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold  after FORGE_JUDGE_QUOTA_MAX_WAIT the review holds with an env: block that passes blocked_reason_pattern, is decision-first, names the unblock command and no fix, carries a kind (so a card held before does not reach the kernel's triage), and lands blocked on the real kernel; no bound, a "fix it" Reply and a kind-less hold are each seen
+verifier/another-judge-api-failure-is-held-as-before  a 401, a 500 and an answer that is not JSON each ask the judge once, wait for nothing and hold with their old reason byte for byte; a review that waits on every API error is seen
 verifier/chunk-is-the-running-card  D19.1 + P24: --chunk is read back off the board (running, this profile's, one running run), not compared with a scrubbed variable; a refusal names no task; the kernel refuses a call aimed at another card
 verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the scorer is given the card's body; an empty body is stale-spec (F2: a background launch has no pipe)
 verifier/the-envelope-lands-on-the-real-kernel  P24 (b),(c): a fail lands ready on the recorded implementer, a recommendation blocked/needs_input — each by the tool's own result; sticky without an assign, decision-first; a refused call leaves the card running and its fallback lands
@@ -3711,6 +3714,7 @@ front/run-watch-says-each-new-hold-once-and-agrees-with-status  scripts/run-watc
 front/run-watch-says-the-worker-gave-up  a card the dispatcher blocked after a crash or a timeout says the worker gave up and the error it recorded, never an older reason; a block written after the gave_up wins; forge status and the digest, which share the query, say the same
 front/run-watch-says-each-landing-once  a CHUNK or GATE that turns done is said once with the first line of its result (the merge-watcher's NOT a verified merge included) and its PR; one done before the baseline, and a card that is not a chunk or a gate, are not
 front/run-watch-stall-is-said-once-and-again-after-the-reminder  a run silent at 44 min, said at 46, not again until the 180 min reminder (STILL STALLED); a card with a park record says it waits on a quota and until when; a running card with no open run row counts from its claim, else from first sight
+front/a-review-waiting-on-the-usage-limit-is-not-a-stall  a running card with a live judge-wait record: forge status says "waiting for the Claude usage limit, back at <time>" on its line, the digest says it in flight and in "What to do", run-watch says no STALL for it while the record's time is ahead (and does when the record is gone or past); the usage-limit hold is "waiting on you" with its own Do: line (no "fix it") in run-watch, status and the digest
 front/run-watch-not-starting-needs-nothing-running-anywhere  a ready card or one in review with no open run, idle past the limit, is said only when nothing runs on ANY board (its clock starts when nothing runs), once per entry into the status; a card the dispatcher holds says why; a human chunk sent back and a queued card never
 front/run-watch-is-read-only-and-never-silent-about-an-unreadable-board  boards byte-identical and no snapshot left; --dry-run prints and writes nothing and does not consume the event; a corrupt board is named once with exit 0, its old state kept, NOT STARTING held back; a bad argument or knob is exit 2
 front/run-watch-says-when-an-armed-gate-has-no-cron-job  a gate armed while the forge-checkpoint cron job is paused or missing is said on the first tick and once per change, with the command to resume or create it; nothing is said without an armed gate
@@ -11866,7 +11870,8 @@ MAMV
              the-hook-restores-the-handoff the-hook-restores-the-verifiers-calls \
              the-hook-refuses-a-record-that-is-not-this-runs the-hook-policy-keeps-an-exit-open \
              the-hook-neutralises-keys-the-driver-invents the-lane-and-review-claims-share-one-workspace \
-             claude-token-reaches-the-judge-call; do
+             claude-token-reaches-the-judge-call a-judge-usage-limit-is-waited-out \
+             a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold another-judge-api-failure-is-held-as-before; do
       skip "$c" "hermes (and its venv python) not installed"
     done
   else
@@ -11930,6 +11935,21 @@ printf '%s\n' "$*" >> "$VSTUB/claude.log"
   [ -n "${VF_TOKEN_EXPECT:-}" ] && [ "${CLAUDE_CODE_OAUTH_TOKEN:-}" = "$VF_TOKEN_EXPECT" ] && vt_e=equal || vt_e=other
   printf '%s %s\n' "$vt_p" "$vt_e" >> "$VSTUB/claude.auth"; }
 cat > "$VSTUB/prompt.last"    # the prompt is consumed and never echoed — only kept, for the cases that ask what the scorer was given
+# A refused judge call, as claude -p reports one: is_error, an api_error_status and the text, on stdout, exit 1.
+# VF_JUDGE_FAILS=<n> refuses the first n calls, `always` every one; VF_JUDGE_STATUS (429) and VF_JUDGE_TEXT choose
+# what it says; VF_JUDGE_RAW=<text> prints that instead of JSON (an answer that is not JSON at all). The calls are
+# counted in $VSTUB/claude.n, and a wait record the review has left is copied to $VSTUB/wait-seen.json, so a case
+# can read what the readers would have seen while the review slept.
+for vw in "${FORGE_STATE_ROOT:-/nonexistent}"/judge-waits/*.json; do [ -f "$vw" ] && cp "$vw" "$VSTUB/wait-seen.json"; done
+if [ -n "${VF_JUDGE_FAILS:-}" ]; then
+  vn=$(( $(cat "$VSTUB/claude.n" 2>/dev/null || echo 0) + 1 )); echo "$vn" > "$VSTUB/claude.n"
+  if [ "$VF_JUDGE_FAILS" = always ] || [ "$vn" -le "$VF_JUDGE_FAILS" ]; then
+    if [ -n "${VF_JUDGE_RAW:-}" ]; then printf '%s\n' "$VF_JUDGE_RAW"; exit 1; fi
+    jq -nc --argjson s "${VF_JUDGE_STATUS:-429}" --arg t "${VF_JUDGE_TEXT:-claude usage limit reached}" \
+      '{type: "result", subtype: "success", is_error: true, api_error_status: $s, result: $t, session_id: "sess-stub-1"}'
+    exit 1
+  fi
+fi
 if [ "${VF_VERDICT:-approve}" = bounce ]; then
   scores='{"spec_fidelity":1,"scenario_integrity":1,"architectural_conformance":3,"scope_discipline":3,"debt_honesty":3,"doc_reconciliation":3}'
   verdict=bounce
@@ -12047,7 +12067,7 @@ with kbc.connect_closing() as c:
       echo "$rc"
     }
     _vboard() {   # a fresh board with P and its child C
-      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/claude.auth" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
+      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/claude.auth" "$vbin/claude.n" "$vbin/wait-seen.json" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
              "$vbin/base" "$vbin/state-down"
       mkdir -p "$vhome"
       # The live head starts equal to the one the recorded PR carries, because in
@@ -12174,6 +12194,151 @@ VLOGH
       && ok "claude-token-reaches-the-judge-call (the real prejudge-review.sh, fenced, token unset: the judge call receives the root .env token; a set token wins; no .env is no token and still a verdict; the same program with the helper unsourced gets none)" \
       || bad "claude-token-reaches-the-judge-call" \
           "the verifier's judge call must authenticate from the root ~/.hermes/.env when its environment has no token — a routed worker's has none (rehearsal 5) —$vdetail"
+
+    # ---- a Claude usage limit on the judge is waited out, bounded, and then held for what it is ------
+    # 2026-11-15, the first hands-free run: the judge's call hit the account's 5-hour limit, both reviews ended in
+    # `env: judge-envelope — … api_error_status=429`, and two cards sat held for three hours until a person
+    # unblocked them. Nothing in either PR was wrong. Hermes 0.21.5 cannot schedule a card for later (no worker
+    # tool, no wake time, and an unblock lands a scheduled card on the lane: docs/hermes-field-notes.md), so the
+    # review waits in-process, for a short allowance, because it holds the host's one worker slot. The stub
+    # `claude` refuses the first n calls (VF_JUDGE_FAILS) in the shape claude -p reports a refusal; the waits are
+    # milliseconds; FORGE_JUDGE_QUOTA_NOW pins the clock a stated reset time is read against. Each scenario is a
+    # function of the review program it runs, so the same scenario runs against a mutant copy and must go red.
+    local vqm="$TMPROOT/judge-quota-mutants" vq_pat vq_notmoved="" vq_m vq_red=""
+    vq_pat="$(jq -r .blocked_reason_pattern "$REPO_ROOT/rubrics/run-metadata-contract.json")"
+    _vq_calls() { if [ -f "$vbin/claude.log" ]; then wc -l < "$vbin/claude.log" | tr -d ' '; else echo 0; fi; }
+    _vq_blocks() { _v show "$vP" --json 2>/dev/null | jq -c '[.events[] | select(.kind == "blocked" or .kind == "block_loop_detected") | .payload.reason[0:48]]'; }
+    _vq_waited() {   # $1 = the review program -> what is wrong with a judge that is refused and then answers
+      local d="" rc
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=2 FORGE_JUDGE_QUOTA_STEP=0.05 FORGE_JUDGE_QUOTA_CAP=0.05 FORGE_JUDGE_QUOTA_MAX_WAIT=5)"
+      { [ "$rc" = 4 ] && jq -e '.action == "recommend"' "$vbin/out.json" >/dev/null 2>&1; } \
+        || d="$d two-refusals-then-an-answer-did-not-end-in-the-normal-recommendation(rc=$rc,$(jq -r '.reason // .action' "$vbin/out.json" 2>/dev/null | head -c 100))"
+      [ "$(_vq_calls)" = 3 ] || d="$d the-judge-was-asked-$(_vq_calls)-times-not-3"
+      grep -q 'usage limit (HTTP 429); waiting' "$vbin/err.txt" || d="$d it-did-not-say-it-was-waiting"
+      jq -e --arg id "$vP" '.schema == "forge.judge-wait.v1" and .task_id == $id and (.wake_at | type) == "number" and .max_wait == 5' \
+        "$vbin/wait-seen.json" >/dev/null 2>&1 || d="$d no-wait-record-was-visible-while-it-slept"
+      [ ! -e "$vstate/judge-waits/$vP.json" ] || d="$d the-wait-record-was-left-behind"
+      _v show "$vP" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | length == 1 and (.[0].payload.reason | startswith("merge-pending:"))' >/dev/null 2>&1 \
+        || d="$d the-card-got-a-block-the-normal-hold-would-not-make$(_vq_blocks)"
+      # a reset time the answer states, inside the allowance: it waits for that time (plus the margin), once
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=1 "VF_JUDGE_TEXT=You've hit your 5-hour limit · resets 1:20pm (UTC)" FORGE_JUDGE_QUOTA_NOW=13:19:59 \
+            FORGE_JUDGE_QUOTA_MARGIN=0.1 FORGE_JUDGE_QUOTA_MAX_WAIT=5)"
+      { [ "$rc" = 4 ] && [ "$(_vq_calls)" = 2 ] && grep -qF 'waiting 1 s of at most 5 s in all (resets 1:20pm (UTC))' "$vbin/err.txt"; } \
+        || d="$d a-stated-reset-inside-the-allowance-was-not-waited-for(rc=$rc,calls=$(_vq_calls),$(tail -1 "$vbin/err.txt" 2>/dev/null | head -c 120))"
+      # one past the allowance: it does not sit on the host's one slot, it holds at once and says when it lifts
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always "VF_JUDGE_TEXT=You've hit your 5-hour limit · resets 1:20pm (UTC)" FORGE_JUDGE_QUOTA_NOW=11:00:00 FORGE_JUDGE_QUOTA_MAX_WAIT=5)"
+      { [ "$rc" = 3 ] && [ "$(_vq_calls)" = 1 ] && jq -e '.reason | startswith("env: claude usage limit (HTTP 429) — the judge did not run; the limit lifts at 1:20pm (UTC), later than the 5 s this review may wait")' \
+          "$vbin/out.json" >/dev/null 2>&1; } \
+        || d="$d a-reset-past-the-allowance-was-waited-for-or-not-said(rc=$rc,calls=$(_vq_calls),$(jq -r '.reason' "$vbin/out.json" 2>/dev/null | head -1 | head -c 140))"
+      # a zone this host has no file for is not guessed at: the backoff is used
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=1 "VF_JUDGE_TEXT=You've hit your limit · resets 1:20pm (Mars/Olympus)" FORGE_JUDGE_QUOTA_NOW=11:00:00 \
+            FORGE_JUDGE_QUOTA_STEP=0.05 FORGE_JUDGE_QUOTA_MAX_WAIT=5)"
+      { [ "$rc" = 4 ] && [ "$(_vq_calls)" = 2 ] && ! grep -qF '(resets' "$vbin/err.txt"; } \
+        || d="$d an-unknown-zone-was-guessed-at(rc=$rc,calls=$(_vq_calls))"
+      printf '%s' "$d"
+    }
+    _vq_holds() {   # $1 = the review program -> what is wrong with a limit that never lifts
+      local d="" rc reason
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always FORGE_JUDGE_QUOTA_STEP=0.1 FORGE_JUDGE_QUOTA_CAP=0.1 FORGE_JUDGE_QUOTA_MAX_WAIT=1)"
+      reason="$(jq -r '.reason // ""' "$vbin/out.json" 2>/dev/null)"
+      { [ "$rc" = 3 ] && jq -e '.action == "substrate-block" and .terminate.tool == "kanban_block"' "$vbin/out.json" >/dev/null 2>&1; } \
+        || d="$d a-limit-that-never-lifts-did-not-end-in-a-substrate-hold(rc=$rc)"
+      [ "$(_vq_calls)" = 11 ] || d="$d the-wait-was-not-bounded(asked-$(_vq_calls)-times-want-11)"
+      printf '%s' "$reason" | head -1 | grep -qxF 'env: claude usage limit (HTTP 429) — the judge could not run for 1 s' \
+        || d="$d the-first-line-is-wrong($(printf '%s' "$reason" | head -1 | head -c 120))"
+      jq -e --arg p "$vq_pat" '.reason | test($p)' "$vbin/out.json" >/dev/null 2>&1 || d="$d the-reason-fails-blocked_reason_pattern"
+      printf '%s' "$reason" | grep -qF 'Decision needed: wait for the limit to reset, then unblock the card' || d="$d no-decision"
+      printf '%s' "$reason" | grep -qxF "Reply: \`hermes kanban --board vlab unblock $vP\` once the limit has reset" || d="$d the-reply-is-not-the-unblock-command"
+      ! printf '%s' "$reason" | grep -qi 'fix' || d="$d the-reason-tells-the-operator-to-fix-something"
+      printf '%s' "$reason" | grep -qF 'nothing was found wrong with it' || d="$d it-does-not-say-nothing-was-found-wrong"
+      jq -e '.terminate.args.kind == "needs_input" or .terminate.args.kind == "capability"' "$vbin/out.json" >/dev/null 2>&1 \
+        || d="$d the-block-carries-no-kind"
+      [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] || d="$d the-card-did-not-land-blocked($(_vst "$vP"))"
+      [ ! -e "$vstate/judge-waits/$vP.json" ] || d="$d the-wait-record-was-left-behind"
+      printf '%s' "$d"
+    }
+    _vq_kind() {   # $1 = the review program -> what is wrong with a usage-limit hold on a card that was held before
+      local d="" rc
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always VF_JUDGE_STATUS=401)"        # an earlier hold, with no kind (today's)
+      { [ "$rc" = 3 ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } || d="$d the-earlier-hold-did-not-land(rc=$rc,$(_vst "$vP"))"
+      _v unblock "$vP" >/dev/null 2>&1
+      [ "$(_vst "$vP" | cut -d/ -f1)" = review ] || d="$d unblock-did-not-return-the-card-to-review($(_vst "$vP"))"
+      rm -f "$vbin/claude.n"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always FORGE_JUDGE_QUOTA_MAX_WAIT=0)"
+      { [ "$rc" = 3 ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
+        || d="$d the-usage-limit-hold-after-an-earlier-block-landed-$(_vst "$vP" | cut -d/ -f1)-not-blocked(rc=$rc)"
+      printf '%s' "$d"
+    }
+    _vq_other() {   # $1 = the review program -> what is wrong with the failures that are NOT a usage limit
+      local d="" rc spec extra want
+      for spec in "401|VF_JUDGE_STATUS=401|env: judge-envelope — claude -p reported an API failure before returning a verdict (is_error=true, api_error_status=401)" \
+                  "500|VF_JUDGE_STATUS=500|env: judge-envelope — claude -p reported an API failure before returning a verdict (is_error=true, api_error_status=500)" \
+                  "not-json|VF_JUDGE_RAW=Error: not json|other: judge-envelope — claude -p returned no structured verdict"; do
+        extra="${spec#*|}"; want="${extra#*|}"; extra="${extra%%|*}"
+        _vboard; : > "$vbin/claude.log"
+        rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always "$extra" FORGE_JUDGE_QUOTA_STEP=0.05 FORGE_JUDGE_QUOTA_MAX_WAIT=5)"
+        { [ "$rc" = 3 ] && [ "$(jq -r '.reason' "$vbin/out.json" 2>/dev/null)" = "$want" ] && [ "$(_vq_calls)" = 1 ] \
+          && [ ! -e "$vstate/judge-waits" ]; } \
+          || d="$d ${spec%%|*}-was-not-held-as-before(rc=$rc,calls=$(_vq_calls),$(jq -r '.reason' "$vbin/out.json" 2>/dev/null | head -c 100))"
+      done
+      printf '%s' "$d"
+    }
+    # THE MUTANTS. Each is a copy of the real scripts with ONE rule changed; a scenario that stays green on its
+    # mutant is not a check, and a mutation that changes nothing means the text it aimed at moved (F65).
+    rm -rf "$vqm"; mkdir -p "$vqm"; cp -R "$REPO_ROOT/scripts/." "$vqm/" 2>/dev/null
+    _vq_mut() {   # file sed-expression: the mutant of scripts/<file> in $vqm (the others restored); 1 when nothing changed
+      cp -p "$REPO_ROOT/scripts/$1" "$vqm/$1"
+      sed -e "$2" "$REPO_ROOT/scripts/$1" > "$vqm/$1.m" && cat "$vqm/$1.m" > "$vqm/$1"; rm -f "$vqm/$1.m"
+      ! cmp -s "$REPO_ROOT/scripts/$1" "$vqm/$1"
+    }
+
+    vdetail="$(_vq_waited "$REPO_ROOT/$review")"
+    if [ -z "$vdetail" ]; then
+      _vq_mut prejudge-review.sh 's/judge_quota_pause && continue$/false \&\& continue/' || vq_notmoved="$vq_notmoved no-retry"
+      [ -n "$(_vq_waited "$vqm/prejudge-review.sh")" ] || vq_red="$vq_red no-retry-stayed-green"
+    fi
+    [ -z "$vdetail$vq_red" ] \
+      && ok "a-judge-usage-limit-is-waited-out (two 429s and then a verdict end in the normal recommendation, one block, three judge calls, a wait record visible meanwhile and gone after; a stated reset inside the allowance is waited for once, one past it holds at once and says when it lifts; a zone with no file is not guessed at; a review that never retries is seen)" \
+      || bad "a-judge-usage-limit-is-waited-out" \
+          "a judge call refused for the account's usage limit must be made again after a wait, not held for a person —$vdetail$vq_red"
+
+    vdetail="$(_vq_holds "$REPO_ROOT/$review")"
+    if [ -z "$vdetail" ]; then
+      _vq_mut prejudge-review.sh 's/exit !(r <= 0)/exit !(r < -1)/' || vq_notmoved="$vq_notmoved unbounded"
+      [ -n "$(_vq_holds "$vqm/prejudge-review.sh")" ] || vq_red="$vq_red unbounded-stayed-green"
+      cp -p "$REPO_ROOT/scripts/prejudge-review.sh" "$vqm/prejudge-review.sh"
+      _vq_mut decision-message.sh 's/ once the limit has reset"$/ — fix it, then unblock"/' || vq_notmoved="$vq_notmoved fix-it"
+      [ -n "$(_vq_holds "$vqm/prejudge-review.sh")" ] || vq_red="$vq_red fix-it-stayed-green"
+      cp -p "$REPO_ROOT/scripts/decision-message.sh" "$vqm/decision-message.sh"
+    fi
+    vdetail="$vdetail$(_vq_kind "$REPO_ROOT/$review")"
+    if [ -z "$vdetail" ]; then
+      _vq_mut prejudge-review.sh 's/hold_call "\$reason"/term_block "$reason"/' || vq_notmoved="$vq_notmoved kindless"
+      [ -n "$(_vq_kind "$vqm/prejudge-review.sh")" ] || vq_red="$vq_red kindless-stayed-green"
+      cp -p "$REPO_ROOT/scripts/prejudge-review.sh" "$vqm/prejudge-review.sh"
+    fi
+    [ -z "$vdetail$vq_red" ] \
+      && ok "a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold (the judge is asked 11 times in a 1 s allowance and no more; the hold is an env: block that passes blocked_reason_pattern, is decision-first, says nothing was found wrong, names the unblock command and no fix, carries a kind, lands blocked on the real kernel, and so does one on a card that was held before with no kind; a wait with no bound, a Reply that says fix it and a hold with no kind are each seen)" \
+      || bad "a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold" \
+          "when the allowance is spent the review must hold with a reason that says what is true, and the hold must not be the kernel's second same-kind block —$vdetail$vq_red"
+
+    vdetail="$(_vq_other "$REPO_ROOT/$review")"
+    if [ -z "$vdetail" ]; then
+      _vq_mut prejudge-review.sh 's/\.api_error_status == 429 then/.api_error_status != null then/' || vq_notmoved="$vq_notmoved any-error"
+      [ -n "$(_vq_other "$vqm/prejudge-review.sh")" ] || vq_red="$vq_red any-error-stayed-green"
+      cp -p "$REPO_ROOT/scripts/prejudge-review.sh" "$vqm/prejudge-review.sh"
+    fi
+    [ -z "$vdetail$vq_red" ] \
+      && ok "another-judge-api-failure-is-held-as-before (a 401, a 500 and an answer that is not JSON each ask the judge once, wait for nothing, leave no wait record and hold with exactly the reason they had; a review that waits on any API error is seen)" \
+      || bad "another-judge-api-failure-is-held-as-before" \
+          "only HTTP 429 is a usage limit; every other failure of the judge call keeps its hold and its reason —$vdetail$vq_red"
+    [ -z "$vq_notmoved" ] || bad "judge-usage-limit-mutants-moved" "a mutation changed nothing in${vq_notmoved} — the text it aimed at moved, so the cases above prove nothing (F65)"
 
     # ---- each envelope's call lands on the real kernel, through the real tool ---
     # Done-when (b) and (c) of P24 (the lane's (a) is lane/bounce-round-trip-on-real-hermes, the
@@ -24042,6 +24207,72 @@ SQL
   _fr_not  "$o6" 't_d4'
   [ -z "$d" ] && ok "run-watch-stall-is-said-once-and-again-after-the-reminder (a run silent at 44 min and at the baseline; said at 46 min with its age, its profile and the command to look; not again at 50 or 179 min after; again at 181 min as STILL STALLED; a card with a park record adds the quota window and the time it waits until, and only that card does; a running card with no open run row counts from its latest claim, and with no claim either from the tick that first saw it)" \
     || bad "run-watch-stall-is-said-once-and-again-after-the-reminder" "a stuck worker is news once and then at the reminder —$d :: $(printf '%s' "$o3" | head -6 | tr '\n' '|')"
+
+  # --- a review asleep on the Claude usage limit is moving on its own; the hold it ends in is the operator's, in its own words ---
+  # scripts/prejudge-review.sh waits for the account's usage limit with the card still `running`, and leaves a record of
+  # when it tries again (forge-state.sh: judge-waits/<card>.json). `forge status`, the digest and run-watch must say so
+  # instead of calling it a stall; and once the wait is spent the hold must not tell the operator to fix anything.
+  local jw_reason jw_wake jw_mut="$root/jw-mut" jw_status jw_dig jw_o1 jw_o2 jw_o2m
+  jw_reason="$(bash -c '. "$1" && judge_usage_limit_reason "the judge could not run for 30 min" rwj t_j2' _ "$fs/decision-message.sh" 2>/dev/null | sed "s/'/''/g")"
+  jw_wake=$((t0 + 7200))
+  _jw_world() {   # the review asleep (t_j1), a held one (t_j2), and the record when $1 is a wake time
+    local jw_keep="$d"
+    _rw_world; d="$jw_keep"
+    _rw_board rwj <<SQL
+INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+  ('t_j1', 'CHUNK-1: the review asleep', 'forge-verifier', 'running', $((t0 - 900))),
+  ('t_j2', 'CHUNK-2: held by the limit', 'forge-verifier', 'blocked', $((t0 - 900)));
+INSERT INTO task_runs (task_id, profile, status, started_at) VALUES ('t_j1', 'forge-verifier', 'running', $t0);
+INSERT INTO task_events (task_id, kind, payload, created_at) VALUES ('t_j2', 'blocked', json_object('reason', '$jw_reason'), $((t0 - 100)));
+SQL
+    mkdir -p "$S/judge-waits"
+    [ -z "${1:-}" ] || printf '{"schema":"forge.judge-wait.v1","task_id":"t_j1","board":"rwj","wake_at":%s,"waited":0,"max_wait":1800,"resets":""}\n' "$1" > "$S/judge-waits/t_j1.json"
+  }
+  d=""; _jw_world "$jw_wake"
+  jw_o1="$(_rw $((t0 + 10 * 60)) 2>"$root/err")"                    # the baseline: what already waits on the operator, once
+  jw_o2="$(_rw $((t0 + 46 * 60)) 2>>"$root/err")"                   # 46 min in: a stall for any other card
+  _fr_want "$jw_o1" 'WAITING ON YOU: t_j2 on rwj'
+  _fr_want "$jw_o1" 'env: claude usage limit (HTTP 429) — the judge could not run for 30 min'
+  _fr_want "$jw_o1" 'Do: `hermes kanban --board rwj unblock t_j2` once the limit has reset'
+  _fr_not  "$jw_o1" 'fix'
+  _fr_not  "$jw_o2" 'STALL'
+  jw_status="$(FR_X="HERMES_HOME=$RH FORGE_STATUS_NOW=$((t0 + 600))" _fr status rwj 2>&1)"
+  _fr_want "$jw_status" "    t_j1  CHUNK-1: the review asleep  forge-verifier  10 min — waiting for the Claude usage limit, back at $(_rw_utc "$jw_wake")"
+  _fr_want "$jw_status" 'env: claude usage limit (HTTP 429) — the judge could not run for 30 min'
+  jw_dig="$(env -u HERMES_KANBAN_HOME HOME="$root/home" HERMES_HOME="$RH" FORGE_STATE_ROOT="$S" TZ=UTC "$fs/digest.sh" --board rwj --day "$(date -u +%Y-%m-%d)" 2>&1)"
+  _fr_want "$jw_dig" "- running: CHUNK-1: the review asleep (t_j1) — waiting for the Claude usage limit, back at $(_rw_utc "$jw_wake")"
+  _fr_want "$jw_dig" 'Decision needed: wait for the limit to reset, then unblock the card'
+  _fr_want "$jw_dig" 'held by the Claude usage limit; nothing was found wrong'
+  _fr_want "$jw_dig" 'wait for the Claude usage limit to reset, then `hermes kanban --board rwj unblock t_j2`'
+  _fr_not  "$jw_dig" 'fix the cause'
+  # nothing else waits: the digest says the review is waiting, not that the run is parked or moving
+  _rw_board rwj2 <<SQL
+INSERT INTO tasks (id, title, assignee, status, created_at) VALUES ('t_k1', 'CHUNK-1: the review asleep', 'forge-verifier', 'running', $((t0 - 900)));
+INSERT INTO task_runs (task_id, profile, status, started_at) VALUES ('t_k1', 'forge-verifier', 'running', $t0);
+SQL
+  printf '{"schema":"forge.judge-wait.v1","task_id":"t_k1","board":"rwj2","wake_at":%s}\n' "$jw_wake" > "$S/judge-waits/t_k1.json"
+  jw_dig="$(env -u HERMES_KANBAN_HOME HOME="$root/home" HERMES_HOME="$RH" FORGE_STATE_ROOT="$S" TZ=UTC "$fs/digest.sh" --board rwj2 --day "$(date -u +%Y-%m-%d)" 2>&1)"
+  _fr_want "$jw_dig" "The review is waiting for the Claude usage limit, back at $(_rw_utc "$jw_wake")"
+  _fr_not  "$jw_dig" 'parked for quota'
+  # the controls: a record whose time has passed says nothing, and with no record the same run IS a stall
+  printf '{"schema":"forge.judge-wait.v1","task_id":"t_j1","board":"rwj","wake_at":%s}\n' "$((t0 - 5))" > "$S/judge-waits/t_j1.json"
+  jw_status="$(FR_X="HERMES_HOME=$RH FORGE_STATUS_NOW=$((t0 + 600))" _fr status rwj 2>&1)"
+  _fr_not "$jw_status" 'waiting for the Claude usage limit'
+  _jw_world ""
+  _rw $((t0 + 10 * 60)) >/dev/null 2>>"$root/err"
+  jw_o2="$(_rw $((t0 + 46 * 60)) 2>>"$root/err")"
+  _fr_want "$jw_o2" 'STALL: t_j1 on rwj'
+  # the mutant: run-watch with its suppression removed stalls the sleeping review, so the check above sees something
+  rm -rf "$jw_mut"; mkdir -p "$jw_mut"; cp -R "$fs/." "$jw_mut/" 2>/dev/null
+  sed -e 's/and ((\$jwaits\[\.id\]\.until \/\/ 0) <= \$now))/and true)/' "$fs/run-watch.sh" > "$jw_mut/run-watch.sh"; chmod +x "$jw_mut/run-watch.sh"
+  if cmp -s "$fs/run-watch.sh" "$jw_mut/run-watch.sh"; then d="$d the-mutation-changed-nothing"; else
+    _jw_world "$jw_wake"
+    RW_BIN="$jw_mut/run-watch.sh" _rw $((t0 + 10 * 60)) >/dev/null 2>>"$root/err"
+    jw_o2m="$(RW_BIN="$jw_mut/run-watch.sh" _rw $((t0 + 46 * 60)) 2>>"$root/err")"
+    case "$jw_o2m" in *'STALL: t_j1 on rwj'*) ;; *) d="$d the-suppression-mutant-stayed-green";; esac
+  fi
+  [ -z "$d" ] && ok "a-review-waiting-on-the-usage-limit-is-not-a-stall (a running review with a live judge-wait record: forge status says \"waiting for the Claude usage limit, back at <time>\" on its line, the digest says it in flight and, with nothing else to do, in \"What to do\", and run-watch says no STALL at 46 min; a record whose time has passed says nothing, and with no record the same run is a STALL; the held review is WAITING ON YOU with a Do: that names the unblock command and no fix, and status and the digest word it the same; run-watch with its suppression removed is seen)" \
+    || bad "a-review-waiting-on-the-usage-limit-is-not-a-stall" "a review asleep on the usage limit is moving on its own, and its hold is the operator's with no fix to make —$d :: $(printf '%s' "$jw_o1" | head -6 | tr '\n' '|')"
 
   # --- run-watch 5. NOT STARTING needs nothing running on ANY board, its clock starts when nothing runs, and a held card says why ---
   _rw_world

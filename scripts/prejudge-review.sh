@@ -128,6 +128,14 @@
 #                                   reports on the hold and gates nothing.
 #   FORGE_MUTATION_PROBE_BIN        stand in for scripts/mutation-probe.py
 #   FORGE_MUTATION_BUDGET           seconds the mutation probe may spend [420]
+#   FORGE_JUDGE_QUOTA_MAX_WAIT      seconds this review may wait, in all, for a Claude usage limit
+#                                   (HTTP 429 on the judge call) to lift before it holds [1800]. It holds
+#                                   the host's ONE worker slot (the lanes stop meanwhile), so it is short;
+#                                   a limit whose stated reset is later than that holds at once.
+#   FORGE_JUDGE_QUOTA_STEP / _CAP   with no reset time in the answer: the first wait and its ceiling, seconds
+#                                   [120 / 600], doubling. FORGE_JUDGE_QUOTA_MARGIN: seconds past a stated
+#                                   reset before trying again [60]. FORGE_JUDGE_QUOTA_NOW (HH:MM:SS in the
+#                                   reset's zone) is a test seam, not a knob.
 #
 # stdout is ONE `forge.review.v2` envelope, as ONE COMPACT LINE — the last thing
 # printed: `action`, `summary`, `reason`, `rc` (this program's exit code),
@@ -203,7 +211,21 @@ command -v jq >/dev/null || {
 }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/forge-review.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+JUDGE_WAIT_FILE=""   # the record of a wait for the Claude usage limit (below); never left behind
+trap 'rm -rf "$TMP"; [ -z "$JUDGE_WAIT_FILE" ] || rm -f "$JUDGE_WAIT_FILE"' EXIT
+
+# THE CLAUDE USAGE LIMIT, WAITED OUT. The knobs of the wait the judge call gets (see judge_quota_pause), read here so a
+# value that is not a number is a usage error before any work is spent, not after the judge has already been paid for.
+JUDGE_QUOTA_MAX_WAIT="${FORGE_JUDGE_QUOTA_MAX_WAIT:-1800}"   # seconds this review may wait in all
+JUDGE_QUOTA_STEP="${FORGE_JUDGE_QUOTA_STEP:-120}"            # the first wait when the reset time is unknown; doubles
+JUDGE_QUOTA_CAP="${FORGE_JUDGE_QUOTA_CAP:-600}"              # ...up to this
+JUDGE_QUOTA_MARGIN="${FORGE_JUDGE_QUOTA_MARGIN:-60}"         # seconds past a stated reset time before trying again
+for _kn in JUDGE_QUOTA_MAX_WAIT JUDGE_QUOTA_STEP JUDGE_QUOTA_CAP JUDGE_QUOTA_MARGIN; do
+  awk -v v="${!_kn}" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/) }' \
+    || { echo "usage: FORGE_${_kn} must be a number of seconds, got '${!_kn}'" >&2; exit 2; }
+done
+awk -v a="$JUDGE_QUOTA_STEP" -v b="$JUDGE_QUOTA_CAP" 'BEGIN { exit !(a > 0 && b > 0) }' \
+  || { echo "usage: FORGE_JUDGE_QUOTA_STEP and FORGE_JUDGE_QUOTA_CAP must be above 0 seconds" >&2; exit 2; }
 
 # ---------------------------------------------------------------------------
 # The envelope is the whole of this script's output, and it is small on
@@ -1159,6 +1181,116 @@ $(jq -r '.unobserved[:10][]? | "  - \(.file):\(.line) `\(.source)` — no test f
 esac
 
 # ---------------------------------------------------------------------------
+# A CLAUDE USAGE LIMIT ON THE JUDGE IS WAITED OUT, NOT HELD FOR A PERSON.
+#
+# 2026-11-15, the first hands-free run: the judge hit the account's 5-hour limit, both reviews ended in
+# `env: judge-envelope — … api_error_status=429`, and two cards sat held for three hours until a person unblocked
+# them after the reset. Nothing was wrong with either PR.
+#
+# THE BETTER SHAPE WAS NOT AVAILABLE (docs/hermes-field-notes.md, "scheduled has no wake"): Hermes 0.21.5 has no
+# worker tool that schedules a card, `scheduled` has no wake time, and `unblock` of a scheduled card lands it
+# `ready` on the lane, not in `review`. So this process waits, and the driver keeps the claim alive meanwhile as it
+# does for the lane's Codex park (lane.sh, "NO HEARTBEAT HERE": every `process_manage wait` heartbeats).
+#
+# WHAT IT COSTS: Hermes runs ONE worker for the whole host, so a waiting review stops every lane. That is why the
+# allowance is short (FORGE_JUDGE_QUOTA_MAX_WAIT, 1800 s) and why a stated reset that is later than what is left
+# of it holds AT ONCE instead of sitting on the slot for nothing. The wait is counted in seconds slept, in this
+# process; a hold ends the review and a later review starts with a full allowance.
+#
+# ONLY `is_error` with `api_error_status` 429 is a usage limit. A 401, a 5xx and an answer that is not JSON keep
+# the failure path below exactly as it was. The retry loop wraps the pinned scorer lines and touches none of them.
+# ---------------------------------------------------------------------------
+QUOTA_WAITED=0        # seconds slept so far, for this review
+QUOTA_TRIES=0
+QUOTA_NEXT="$JUDGE_QUOTA_STEP"
+QUOTA_RESET=""        # "resets 1:20pm (Europe/Copenhagen)" when the last answer named one
+
+# The seconds until the reset the answer names, or return 1. "resets 1:20pm (Europe/Copenhagen)": the time of day
+# in a named zone, the next time it comes. Anything else (a weekday, a date, a zone this host has no file for)
+# is not guessed at: the caller backs off instead. Neither BSD nor GNU `date` is asked to parse anything; the
+# zone is only read from (`TZ=<zone> date +%H:%M:%S`), and a zone with no file is refused first because both of
+# them answer UTC for it without a word.
+judge_quota_reset_in() {   # $1=the answer's text; sets QUOTA_SECS and QUOTA_RESET (no subshell: they must survive)
+  local re='resets ([0-9]{1,2})(:([0-9]{2}))?(am|pm) \(([A-Za-z0-9_/+-]+)\)' h m ap tz tod now target
+  local tod_re='^([0-9]{2}):([0-9]{2}):([0-9]{2})$'
+  QUOTA_SECS=""; QUOTA_RESET=""
+  [[ $1 =~ $re ]] || return 1
+  h=$((10#${BASH_REMATCH[1]})); m=$((10#${BASH_REMATCH[3]:-0})); ap="${BASH_REMATCH[4]}"; tz="${BASH_REMATCH[5]}"
+  [ "$h" -ge 1 ] && [ "$h" -le 12 ] && [ "$m" -le 59 ] || return 1
+  case "$tz" in UTC) ;; *) [ -f "${TZDIR:-/usr/share/zoneinfo}/$tz" ] || return 1;; esac
+  tod="${FORGE_JUDGE_QUOTA_NOW:-$(TZ="$tz" date +%H:%M:%S)}"
+  [[ $tod =~ $tod_re ]] || return 1
+  now=$((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 + 10#${BASH_REMATCH[3]}))
+  target=$(( (h % 12 + $([ "$ap" = pm ] && echo 12 || echo 0)) * 3600 + m * 60 ))
+  QUOTA_SECS=$(( (target - now + 86400) % 86400 ))
+  QUOTA_RESET="resets $h:$(printf '%02d' "$m")$ap ($tz)"
+}
+
+# "90" -> "1 min", "7200" -> "2 h", "20" -> "20 s": a duration a person reads at a glance.
+judge_quota_span() {
+  awk -v s="$1" 'BEGIN { if (s + 0 > 0 && s + 0 < 0.5) { printf "under 1 s"; exit }
+    s = int(s + 0.5)
+    if (s < 60) printf "%d s", s
+    else if (s < 7200) printf "%d min", int(s / 60 + 0.5)
+    else printf "%d h", int(s / 3600 + 0.5) }'
+}
+
+# The hold, when the allowance is spent or the reset is past it. A review that waited says for how long; one that
+# did not says what the limit said. The block's kind comes from the card's own events (hold_call), never `substrate`:
+# a block with no kind counts as a re-block of any earlier block with none, and the kernel's second one is `triage`.
+judge_quota_hold() {   # $1=why this is a hold
+  local reason
+  reason="$(judge_usage_limit_reason "$1" "$BOARD" "$CHUNK")"
+  envelope substrate-block "" null "$reason" 3 "$(hold_call "$reason")" null
+}
+
+# A record for the readers (forge status, the digest, run-watch): this card is `running` and asleep until <epoch>.
+judge_wait_record() {   # $1=epoch of the next try
+  local dir; dir="$(forge_judge_wait_root)"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  JUDGE_WAIT_FILE="$dir/$CHUNK.json"
+  jq -nc --arg t "$CHUNK" --arg b "$BOARD" --argjson at "$1" --arg r "$QUOTA_RESET" --argjson w "$QUOTA_WAITED" \
+     --argjson max "$JUDGE_QUOTA_MAX_WAIT" \
+     '{schema: "forge.judge-wait.v1", task_id: $t, board: $b, wake_at: $at, waited: $w, max_wait: $max, resets: $r}' \
+     > "$JUDGE_WAIT_FILE.tmp" 2>/dev/null && mv -f "$JUDGE_WAIT_FILE.tmp" "$JUDGE_WAIT_FILE" 2>/dev/null
+  return 0
+}
+judge_wait_clear() { [ -z "$JUDGE_WAIT_FILE" ] || rm -f "$JUDGE_WAIT_FILE" "$JUDGE_WAIT_FILE.tmp"; JUDGE_WAIT_FILE=""; }
+
+# After a judge call that gave no verdict: 0 = it was a usage limit and this process waited, call the judge again;
+# 1 = it was not one, carry on to the failure path as before. A usage limit with nothing left to wait for does not
+# return: it ends the review in a hold.
+judge_quota_pause() {   # reads $raw
+  local result remaining want base
+  [ "$(printf '%s' "${raw:-}" | jq -r 'if .is_error == true and .api_error_status == 429 then "429" else "" end' 2>/dev/null)" = 429 ] \
+    || return 1
+  result="$(printf '%s' "$raw" | jq -r '.result | if type == "string" then . else "" end' 2>/dev/null | head -c 400)"
+  QUOTA_TRIES=$((QUOTA_TRIES + 1))
+  remaining="$(awk -v m="$JUDGE_QUOTA_MAX_WAIT" -v w="$QUOTA_WAITED" 'BEGIN { r = m - w; printf "%.3f", (r < 0 ? 0 : r) }')"
+  judge_quota_reset_in "$result" || :
+  base="the judge did not run"
+  if awk -v w="$QUOTA_WAITED" 'BEGIN { exit !(w > 0) }'; then base="the judge could not run for $(judge_quota_span "$QUOTA_WAITED")"; fi
+  # nothing left to wait with (or fifty refusals in a row, which only a stated reset of "now" could make)
+  if [ "$QUOTA_TRIES" -gt 50 ] || awk -v r="$remaining" 'BEGIN { exit !(r <= 0) }'; then
+    judge_quota_hold "$base${QUOTA_RESET:+; the limit lifts at ${QUOTA_RESET#resets }}"
+  fi
+  if [ -n "$QUOTA_SECS" ]; then
+    want="$(awk -v r="$QUOTA_SECS" -v g="$JUDGE_QUOTA_MARGIN" 'BEGIN { printf "%.3f", r + g }')"
+    if awk -v w="$want" -v r="$remaining" 'BEGIN { exit !(w > r) }'; then
+      judge_quota_hold "$base; the limit lifts at ${QUOTA_RESET#resets }, later than the $(judge_quota_span "$JUDGE_QUOTA_MAX_WAIT") this review may wait"
+    fi
+  else
+    want="$(awk -v s="$QUOTA_NEXT" -v r="$remaining" 'BEGIN { printf "%.3f", (s > r ? r : s) }')"
+    QUOTA_NEXT="$(awk -v s="$QUOTA_NEXT" -v c="$JUDGE_QUOTA_CAP" 'BEGIN { s = s * 2; printf "%.3f", (s > c ? c : s) }')"
+  fi
+  judge_wait_record "$(( $(date +%s) + $(awk -v w="$want" 'BEGIN { printf "%d", w + 0.999 }') ))"
+  echo "review: the judge call was refused for the account's usage limit (HTTP 429); waiting $(judge_quota_span "$want") of at most $(judge_quota_span "$JUDGE_QUOTA_MAX_WAIT") in all${QUOTA_RESET:+ ($QUOTA_RESET)}" >&2
+  sleep "$want"
+  QUOTA_WAITED="$(awk -v a="$QUOTA_WAITED" -v b="$want" 'BEGIN { printf "%.3f", a + b }')"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Stages 3 and 4 — score, and stamp the provenance the model cannot know about
 # itself. THIS IS THE CONTROL ARM (ADR-0009 D9.5, ADR-0010): byte-identical to
 # `main`'s SOUL, pinned by `make verify`.
@@ -1194,6 +1326,9 @@ esac
 # itself, not a path, and its subset rejects a top-level `$schema`.
 # ---------------------------------------------------------------------------
 pr_url="$PR_URL"
+# The loop (not its body) is this slice's: a judge call refused for the account's usage limit is made again after a
+# wait (judge_quota_pause, above). Every line between the two markers is the control arm, unmoved.
+while :; do
 # --- PINNED REGION (control arm) — do not reindent, do not edit. ------------
    STAMPED='["pr","judge_model","tokens_estimate","cost","session_id"]'
    VERDICT_SCHEMA="$(jq -c --argjson stamped "$STAMPED" '
@@ -1220,6 +1355,10 @@ pr_url="$PR_URL"
      | .session_id = $env.session_id
    ')"
 # --- end pinned region ------------------------------------------------------
+  [ -z "${verdict:-}" ] && judge_quota_pause && continue
+  break
+done
+judge_wait_clear
 #
 # The pinned jq above collapses three distinct failures into one empty
 # `$verdict` and discards which one fired: `.is_error`, `.api_error_status`,

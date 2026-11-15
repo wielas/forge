@@ -204,7 +204,11 @@ def reply($board):
 # counts from its latest claim, and failing that from the first tick that saw it running.
 | ($old.rsince // {}) as $orsince
 | ($c.running_cards | map(. + {since: (.since // $orsince[.id] // $now)})) as $running
-| ($running | map(select(($now - .since) > $run_secs) | . + {key: "\(.id):\(.run // .since)"})) as $stalled
+| ($running | map(select(($now - .since) > $run_secs
+                          # a review asleep on the Claude usage limit is waiting, by its own record, until a time
+                          # it names (scripts/prejudge-review.sh); it is bounded there, and not a stall
+                          and (($jwaits[.id].until // 0) <= $now))
+                  | . + {key: "\(.id):\(.run // .since)"})) as $stalled
 | ($old.stalls // {}) as $os
 | ($stalled | map(select(($os[.key] // null) == null or ($now - $os[.key]) >= $remind_secs))) as $stallnow
 
@@ -311,6 +315,9 @@ PARKS="$(for f in "$PARK_ROOT"/*.json; do
   jq -c --arg id "$id" '{key: $id, value: {until: (.wake_at // null), windows: (.blocked_windows // "")}}' "$f" 2>/dev/null
 done | jq -s 'from_entries' 2>/dev/null)"
 [ -n "$PARKS" ] || PARKS='{}'
+# the verifier's waits for the Claude usage limit: card id -> {until}
+JWAITS="$(forge_judge_waits_json)"
+[ -n "$JWAITS" ] || JWAITS='{}'
 printf 'null\n' > "$WORK/null.json"
 state_or_null() {  # file -> the file when it holds a JSON object, else a file that holds null
   if [ -f "$1" ] && jq -e 'type == "object"' "$1" >/dev/null 2>&1; then printf '%s' "$1"; else printf '%s' "$WORK/null.json"; fi
@@ -324,7 +331,7 @@ for b in $OKBOARDS; do
   src="$(state_or_null "$STATE_DIR/$b.json")"
   if jq -n -c --slurpfile cur "$WORK/cur-$b.json" --slurpfile oldf "$src" --arg board "$b" --argjson now "$NOW" \
         --argjson run_max "$RUN_MAX_MIN" --argjson remind "$REMIND_MIN" --argjson idle_max "$IDLE_MAX_MIN" \
-        --argjson any_running "$ANY_RUNNING" --argjson replies "$REPLIES" --argjson parks "$PARKS" \
+        --argjson any_running "$ANY_RUNNING" --argjson replies "$REPLIES" --argjson parks "$PARKS" --argjson jwaits "$JWAITS" \
         "$DIFF_JQ" > "$WORK/res-$b.json" 2>"$WORK/res-$b.err"; then
     jq -c '.events' "$WORK/res-$b.json" > "$WORK/ev-$b.json"
     jq -c '.state' "$WORK/res-$b.json" > "$WORK/new-$b.json"

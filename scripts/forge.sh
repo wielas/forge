@@ -223,6 +223,12 @@ read -r -d '' STATUS_JQ <<'JQ'
 def clean: gsub("[[:cntrl:]]+"; " ");
 def short($n): clean | if length > $n then .[0:$n-1] + "…" else . end;
 def mins: (($now - .) / 60 | floor);
+def utc: strftime("%Y-%m-%d %H:%M UTC");
+# A review asleep on the Claude usage limit is `running` and moving on its own until the time its record names
+# (scripts/prejudge-review.sh); a record whose time has passed says nothing.
+def judge_wait($jw): ($jw[.id] // null) as $w
+  | if $w != null and ($w.until | type) == "number" and $w.until > $now
+    then " — waiting for the Claude usage limit, back at \($w.until | utc)" else "" end;
 def ago: ($now - .) as $d
   | if $d < 60 then "just now"
     elif $d < 3600 then "\($d / 60 | floor)m ago"
@@ -240,7 +246,8 @@ def why: if .status == "ready" then "returned for changes (a human chunk sent ba
 ( if (.running_cards | length) == 0 then "  running: nothing"
   else "  running: \(.running_cards | length)",
        (.running_cards[] | "    \(.id)  \(.title | short(70))  \(.who // "unassigned")  "
-                           + (if .since == null then "run start unknown" else "\(.since | mins) min" end)) end ),
+                           + (if .since == null then "run start unknown" else "\(.since | mins) min" end)
+                           + judge_wait($jw)) end ),
 ( if (.waiting | length) == 0 then "  waiting on you: nothing"
   else "  waiting on you: \(.waiting | length)",
        (.waiting[] | "    \(.id)  \(.title | short(70)) — \(why | short(100))") end ),
@@ -299,7 +306,7 @@ status_watchdog() {
 # STATUS_UNREAD and STATUS_SHOWN. Quiet boards (no open card) are skipped unless named.
 STATUS_WAITING=0; STATUS_UNREAD=0; STATUS_SHOWN=0
 status_board() {
-  local slug="$1" explicit="$2" db snap json ma ma_rc armed nw
+  local slug="$1" explicit="$2" db snap json ma ma_rc armed nw jw
   if [ "$slug" = default ]; then db="$HERMES_ROOT/kanban.db"; else db="$KANBAN_ROOT/boards/$slug/kanban.db"; fi
   if [ ! -f "$db" ]; then
     printf '%s: UNREADABLE — there is no board database at %s, so nothing here says it is quiet\n' "$slug" "$db"
@@ -326,7 +333,8 @@ status_board() {
     armed="UNREADABLE (checkpoint-arm.sh list exited $ARM_RC)"
   fi
   [ "$STATUS_SHOWN" = 0 ] || echo
-  printf '%s' "$json" | jq -r --arg board "$slug" --argjson now "$NOW" --arg ma "$ma" --arg armed "$armed" "$STATUS_JQ" \
+  jw="$(forge_judge_waits_json)"; [ -n "$jw" ] || jw='{}'
+  printf '%s' "$json" | jq -r --arg board "$slug" --argjson now "$NOW" --arg ma "$ma" --arg armed "$armed" --argjson jw "$jw" "$STATUS_JQ" \
     || { printf '%s: UNREADABLE — rendering the board failed\n' "$slug"; STATUS_UNREAD=1; }
   STATUS_SHOWN=$((STATUS_SHOWN + 1))
   nw="$(printf '%s' "$json" | jq -r '.waiting | length' 2>/dev/null)"

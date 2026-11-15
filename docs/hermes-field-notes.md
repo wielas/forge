@@ -366,6 +366,36 @@ exist** (and exits non-zero). `$(git rev-parse origin/nope 2>/dev/null || true)`
 is therefore the *string* `origin/nope`, not empty, and an absent-branch guard
 built on emptiness never fires. Use `rev-parse --verify --quiet`.
 
+**`scheduled` has no wake, and a worker cannot schedule (2026-11-15, installed 0.21.5).** Asked after the
+first hands-free run: the verifier's judge hit the account's 5-hour usage limit, both reviews ended in
+`env: judge-envelope — … api_error_status=429`, and two cards sat held for three hours. The idea was to end the
+run by putting the card in `scheduled` until the reset and let the kernel bring it back to `review`. It cannot be
+done here, for three separate reasons, each read in the installed source:
+- *No worker tool.* `tools/kanban_tools_schemas.py` registers show, list, complete, block, request_review,
+  request_changes, heartbeat, comment, attach, attach_url, attachments, create, unblock (orchestrator only) and link.
+  Nothing schedules. `hermes kanban schedule` exists (`hermes_cli/kanban.py:1008`, `kanban_db.py:3952`) and is in the
+  fenced verbs (`:210`), so a worker's terminal is refused it like every other mutation.
+- *There is no wake time.* `wake_at` appears in no file under `hermes_cli/`, `tools/`, `plugins/`, `gateway/` or
+  `cron/`; it is a name the lane's own park record uses (`codex-run.sh`). `schedule_task` parks a card "until
+  `unblock_task` re-gates it", and nothing in `kanban_db_dispatch.py` reads the status: nothing brings a scheduled card back.
+- *It returns to the wrong place.* `unblock_task` (`kanban_db.py:3644-3680`) takes `resume_status` from the card's
+  events only when the card is `blocked`; for `scheduled` it is `ready`. A scheduled review card lands `ready`
+  on the lane, which would implement the chunk again, never `review` on the verifier.
+So the verifier waits in-process (`FORGE_JUDGE_QUOTA_MAX_WAIT`, 1800 s), which holds the host's one worker slot,
+and the driver's `process_manage wait` keeps the claim alive as it does for the lane's Codex park.
+
+**The block counter, and a `kind` the kernel will take.** `block_task` (`kanban_db.py:3208`) refuses a kind that is
+not in `VALID_BLOCK_KINDS` (`:107`: dependency, needs_input, capability, transient), so `kind="quota"` is a
+refused `kanban_block` and a run reaped as a crash; the handler checks it first (`tools/kanban_tools.py:758-767`).
+`_route_block` (`:3302-3328`) counts a re-block as a recurrence only when the new kind EQUALS the card's stored
+one, with `None == None` counting, and at `BLOCK_RECURRENCE_LIMIT = 2` (`:111`) routes to `triage`. The counters
+survive `unblock` and only `complete_task` clears them (`:3665-3668`, `:2785-2786`). So a block with no kind, on a
+card that had any earlier block with no kind, is a card in `triage` that no script can complete. A hold that must
+not be the second of its kind takes the kind that is not the last one's (`prejudge-review.sh`'s
+`next_block_kind`, read from the events). A `scheduled` round trip would not have touched the counter either way:
+`schedule_task` and `unblock_task` write neither column. (`substrate()` still blocks with no kind: a pre-existing
+trap, not changed here.)
+
 ## How things really connect
 
 **Live schema inspection checks every board, by name.** There is no meaningful
