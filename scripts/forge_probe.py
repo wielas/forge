@@ -40,7 +40,9 @@ def log_stem(index, name):
 # and the report is answered with /accept, so it can never look like the report: every line is cleaned and bounded,
 # starts with `      | `, and sits under a label that says whose text it is.
 OUTPUT_LINES, OUTPUT_CHARS, OUTPUT_LINE_CHARS = 6, 600, 200
-_COMMAND = re.compile("(^|[\\s(\\[{<\\x22\\x27\\x60])/(?=[A-Za-z0-9_])")
+# a "/" after anything but a word character or another "/" (a path keeps its slashes): a chat client makes a
+# command tappable after punctuation too ("ok:/accept"), not only after a space
+_COMMAND = re.compile("((?<![A-Za-z0-9_/]))/(?=[A-Za-z0-9_])")
 
 
 def _clean_output_line(raw):

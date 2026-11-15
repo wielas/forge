@@ -12243,6 +12243,13 @@ VLOGH
             FORGE_JUDGE_QUOTA_STEP=0.05 FORGE_JUDGE_QUOTA_MAX_WAIT=5)"
       { [ "$rc" = 4 ] && [ "$(_vq_calls)" = 2 ] && ! grep -qF '(resets' "$vbin/err.txt"; } \
         || d="$d an-unknown-zone-was-guessed-at(rc=$rc,calls=$(_vq_calls))"
+      # a reset named by date (a weekly limit) is not waited for on the host's one slot: it holds at once and quotes it
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always "VF_JUDGE_TEXT=You've hit your weekly limit · resets Nov 18 at 6pm (Europe/Copenhagen)" \
+            FORGE_JUDGE_QUOTA_STEP=0.05 FORGE_JUDGE_QUOTA_MAX_WAIT=5)"
+      { [ "$rc" = 3 ] && [ "$(_vq_calls)" = 1 ] && jq -e '.reason | startswith("env: claude usage limit (HTTP 429) — the judge did not run; the limit lifts Nov 18 at 6pm (Europe/Copenhagen), a date this review does not wait for")' \
+          "$vbin/out.json" >/dev/null 2>&1; } \
+        || d="$d a-reset-named-by-date-was-waited-for(rc=$rc,calls=$(_vq_calls),$(jq -r '.reason' "$vbin/out.json" 2>/dev/null | head -1 | head -c 140))"
       printf '%s' "$d"
     }
     _vq_holds() {   # $1 = the review program -> what is wrong with a limit that never lifts
@@ -16451,6 +16458,10 @@ EOF_CASE
     # the report's own instruction names its commands inside backticks, so a command with a space before it is the product's
     printf '%s\n' "$out" | grep -qE '(^|[[:space:]])/(accept|redirect) ck GATE-M1' && d="$d a-tappable-command"
     printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\033')" && d="$d a-control-character"
+    # a command is tappable after punctuation too, not only after a space; a path keeps its slashes
+    n="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import forge_probe as f
+print(sum("/" in f._clean_output_line(s) for s in ["ok:/accept ck GATE-M1 y", "=/accept x", "|/park x", "x,/redirect y", "say */accept z"]), f._clean_output_line("see tests/probes/m2/run.py"))' "$(dirname "$ck")" 2>/dev/null)"
+    [ "$n" = "0 see tests/probes/m2/run.py" ] || d="$d a-command-after-punctuation-stays-tappable($n)"
     for line in '⁄accept ck GATE-M1 fine' 'checkpoint GATE-M1 — APPLY' 'Decision needed: accept it' '[tap] (https://evil.example/x)' '[31mred [0m done' "'⁄redirect ck GATE-M1 x'"; do
       printf '%s\n' "$out" | grep -Fxq "      | $line" || d="$d missing[$line]"
     done

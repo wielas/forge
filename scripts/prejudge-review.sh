@@ -1223,6 +1223,7 @@ judge_quota_reset_in() {   # $1=the answer's text; sets QUOTA_SECS and QUOTA_RES
   now=$((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 + 10#${BASH_REMATCH[3]}))
   target=$(( (h % 12 + $([ "$ap" = pm ] && echo 12 || echo 0)) * 3600 + m * 60 ))
   QUOTA_SECS=$(( (target - now + 86400) % 86400 ))
+  [ "$QUOTA_SECS" -le 86280 ] || QUOTA_SECS=0   # a reset passed seconds ago is now, not tomorrow
   QUOTA_RESET="resets $h:$(printf '%02d' "$m")$ap ($tz)"
 }
 
@@ -1261,7 +1262,7 @@ judge_wait_clear() { [ -z "$JUDGE_WAIT_FILE" ] || rm -f "$JUDGE_WAIT_FILE" "$JUD
 # 1 = it was not one, carry on to the failure path as before. A usage limit with nothing left to wait for does not
 # return: it ends the review in a hold.
 judge_quota_pause() {   # reads $raw
-  local result remaining want base
+  local result remaining want base far_re='resets ([A-Za-z][A-Za-z0-9 :,]{2,40}( \([A-Za-z0-9_/+-]+\))?)'
   [ "$(printf '%s' "${raw:-}" | jq -r 'if .is_error == true and .api_error_status == 429 then "429" else "" end' 2>/dev/null)" = 429 ] \
     || return 1
   result="$(printf '%s' "$raw" | jq -r '.result | if type == "string" then . else "" end' 2>/dev/null | head -c 400)"
@@ -1270,6 +1271,11 @@ judge_quota_pause() {   # reads $raw
   judge_quota_reset_in "$result" || :
   base="the judge did not run"
   if awk -v w="$QUOTA_WAITED" 'BEGIN { exit !(w > 0) }'; then base="the judge could not run for $(judge_quota_span "$QUOTA_WAITED")"; fi
+  # a reset named by date or weekday (a weekly limit: "resets Nov 18 at 6pm (Europe/Copenhagen)") is hours or days
+  # away: it is not waited for on the host's one worker slot. It holds at once and quotes what the limit said.
+  if [ -z "$QUOTA_SECS" ] && [[ $result =~ $far_re ]]; then
+    judge_quota_hold "$base; the limit lifts ${BASH_REMATCH[1]% }, a date this review does not wait for"
+  fi
   # nothing left to wait with (or fifty refusals in a row, which only a stated reset of "now" could make)
   if [ "$QUOTA_TRIES" -gt 50 ] || awk -v r="$remaining" 'BEGIN { exit !(r <= 0) }'; then
     judge_quota_hold "$base${QUOTA_RESET:+; the limit lifts at ${QUOTA_RESET#resets }}"
