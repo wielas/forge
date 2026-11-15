@@ -977,8 +977,8 @@ for _lscript in lane.sh lane-handoff.sh lane-setup.sh lane-blast-radius.sh valid
                 merge-watcher.sh bounce.sh decision-message.sh digest.sh forge-state.sh \
                 driver-call-hook.sh claude-token.sh merge-authority.sh \
                 checkpoint.sh triage.sh amend-contract.sh overseer-guard.sh \
-                watchdog.sh watchdog-install.sh \
-                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh run-watch.sh; do
+                watchdog.sh watchdog-install.sh run-watch.sh \
+                gate-reply.sh gate-accept.sh gate-redirect.sh gate-park.sh checkpoint-cron.sh checkpoint-arm.sh; do
   _lpath="$HOME/.forge/repo/scripts/$_lscript"
   if [ ! -e "$_lpath" ]; then
     fail "~/.forge/repo/scripts/$_lscript does not resolve"
