@@ -90,6 +90,8 @@ HERE="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" \
   || { echo "digest: script directory cannot be resolved" >&2; exit 2; }
 # shellcheck source=decision-message.sh
 . "$HERE/decision-message.sh" || { echo "digest: cannot source decision-message.sh" >&2; exit 2; }
+# shellcheck source=forge-state.sh
+. "$HERE/forge-state.sh" || { echo "digest: cannot source forge-state.sh" >&2; exit 2; }
 
 BOARDS=""; DAY=""; EXPLICIT=0
 while [ $# -gt 0 ]; do
@@ -146,6 +148,22 @@ SENTINEL_SQL="$(printf '%s' "${FORGE_HANDOFF_SENTINEL:-forge-operator-handoff}" 
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/forge-digest.XXXXXX")" || exit 2
 trap 'rm -rf "$WORK"' EXIT
+
+# A RUNNING CARD THAT IS PARKED FOR QUOTA IS NOT "MOVING". The lane keeps one record per card
+# under the park root while it waits for a usage window (scripts/codex-run.sh), with the
+# epoch it wakes at. A record whose wake time has not come, on a card that is `running`, means
+# the host's one worker is asleep until then; one whose time has passed is a run that resumed
+# (the record stays until the run ends), and says nothing. Read once, here, as card id ->
+# {until, windows}; the same shape scripts/run-watch.sh reads. `<card>.resume`, which a run
+# ended at its time limit leaves, is a different file and is not read: nothing is parked.
+NOW="$(date +%s)"
+PARK_ROOT="${FORGE_LANE_PARK_ROOT:-$(forge_state_root)/lane-parks}"
+PARKS="$(for f in "$PARK_ROOT"/*.json; do
+  [ -f "$f" ] || continue
+  id="${f##*/}"; id="${id%.json}"
+  jq -c --arg id "$id" '{key: $id, value: {until: (.wake_at // null), windows: (.blocked_windows // "")}}' "$f" 2>/dev/null
+done | jq -s 'from_entries' 2>/dev/null)"
+[ -n "$PARKS" ] || PARKS='{}'
 
 # One JSON object per board: landed on the day, everything in flight, everything
 # waiting, with the last block reason of each waiting card.
@@ -293,6 +311,7 @@ waiting_kind() {
 read -r -d '' GUIDANCE_JQ <<'JQ'
 def pl($n; $one; $many): "\($n) \(if $n == 1 then $one else $many end)";
 def short($n): if length > $n then .[0:$n-1] + "…" else . end;
+def utc: strftime("%Y-%m-%d %H:%M UTC");
 def nm: if (.title | test("^[A-Z]+-[A-Za-z0-9]+:")) then (.title | split(":")[0]) else (.title | short(48)) end;
 def prio: {"milestone-gate":0,"merge-pending":1,"bounce-budget":2,"interactive":3,"returned":4,"triage":6,"other":6}[.] // 5;
 def unblockable: IN("env","ci-red","stale-spec","failing-prereq","gate-unrunnable");
@@ -382,7 +401,10 @@ def step($board):
   "What to do\n────────────",
   ( if $nw == 0 then
       "Nothing needs you today."
-      + (if $run + $rev + $rdy > 0 then " The run is moving on its own; the next digest says if that changes."
+      + (($b.parked // []) as $pk
+         | if ($pk | length) > 0 then
+             " The run is parked for quota until \(([$pk[].until] | max) | utc)\(if ($pk[0].windows // "") != "" then " (\($pk[0].windows | short(60)))" else "" end); it resumes on its own then, and the next digest says if that changes."
+           elif $run + $rev + $rdy > 0 then " The run is moving on its own; the next digest says if that changes."
          elif $todo + $held > 0 then " Nothing is running either, though, and \(pl($todo + $held; "card waits"; "cards wait")) on parents: if tomorrow's digest says the same, look at the board with `hermes kanban --board \($board) list`."
          else "" end)
     else
@@ -441,6 +463,12 @@ for BOARD in $BOARDS; do
     printf '\n== %s ==\nUNREADABLE — the board could not be read, so nothing here says it is quiet\n' "$BOARD" >> "$OUT"
     rc=3; continue; }
   printf '%s' "$json" | jq -e '(.landed + .flight + .waiting) | length > 0' >/dev/null || continue
+  # The running cards parked for quota right now; a jq failure leaves the board as read.
+  withparks="$(printf '%s' "$json" | jq -c --argjson parks "$PARKS" --argjson now "$NOW" '
+    . + {parked: [ .flight[] | select(.status == "running") | . as $c | ($parks[$c.id] // null) as $p
+                   | select($p != null and ($p.until | type) == "number" and $p.until > $now)
+                   | {id: $c.id, until: $p.until, windows: $p.windows} ]}' 2>/dev/null)" \
+    && [ -n "$withparks" ] && json="$withparks"
   # Dormant: nothing landed on the day, nothing running or in review, and the board's
   # newest row is older than the cutoff. A jq failure here is not dormant: the board
   # is then rendered in full, which is the safe direction to be wrong in.
@@ -455,6 +483,7 @@ for BOARD in $BOARDS; do
   {
     printf '\n== %s ==\n' "$BOARD"
     printf '%s' "$json" | jq -r '
+      def utc: strftime("%Y-%m-%d %H:%M UTC");
       . as $b |
       "\nLanded (\(.landed | length))"
         + (if (.landed | length) == 0 then ": nothing" else "" end) + "\n────────────",
@@ -469,7 +498,10 @@ for BOARD in $BOARDS; do
                          | select($n > 0) | "\($n) \($label)" ]
            | if length == 0 then "nothing" else join(" · ") end),
       (.flight[] | select(.status == "running" or .status == "review")
-                 | "- \(if .status == "review" then "in review" else .status end): \(.title) (\(.id))"),
+                 | . as $c
+                 | "- \(if .status == "review" then "in review" else .status end): \(.title) (\(.id))"
+                   + (([($b.parked // [])[] | select(.id == $c.id)] | first // null) as $pk
+                      | if $pk == null then "" else " — parked for quota until \($pk.until | utc)" end)),
       "\nWaiting on you (\(.waiting | length))"
         + (if (.waiting | length) == 0 then ": nothing" else "" end) + "\n────────────"' \
       || { echo "digest: rendering board $BOARD failed" >&2; rc=3; }

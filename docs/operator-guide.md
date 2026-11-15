@@ -140,11 +140,21 @@ limit (<windows>)` once it is done. Two things are worth checking rather than
 assuming: that heartbeats are still landing (they now come from the driver
 process, one `heartbeat` event about a minute apart, not from the lane's own
 script; a window can outlast the 4h stale timeout, and the heartbeat is all that
-keeps the card alive), and — if you need the
-worktree back sooner — that you set `FORGE_QUOTA_MAX_WAIT`, since the default
-is to wait however long it takes. **It is a whole number of seconds**, not a
-duration: `14400`, not `4h`. Every knob is validated at startup and a value the
-runner cannot read exits `2` naming the knob, rather than quietly dropping the
+keeps the card alive). **Neither a park nor a Codex run waits forever.**
+`FORGE_QUOTA_MAX_WAIT` is the most a run waits across all its parks, in seconds, and
+defaults to `21600` (6 h); `0` means forever. When Codex states a reset further off than
+what is left of it, the run gives up *at once* rather than sleeping first, and the card
+blocks `env: codex usage limit on <windows>; the quota resets at <time> UTC, longer than
+FORGE_QUOTA_MAX_WAIT=<n>s allows; the session is kept — unblock the card after that time
+to resume it`. `FORGE_CODEX_MAX_RUN_MIN` is the most one `codex exec` attempt may stay
+alive, in minutes, and defaults to `120`; `0` means no limit, and time spent parked does
+not count. An attempt past it is ended (its whole process tree) and the card blocks
+`env: codex ran <n> min without finishing (limit FORGE_CODEX_MAX_RUN_MIN); the session is
+kept — unblock the card to resume it, or raise the limit`. Either way the host's worker
+slot is free, and `unblock` resumes the same Codex session (from
+`~/.forge/lane-parks/<task-id>.json` or `<task-id>.resume`, within a week). **Each is a
+whole number**, not a duration: `14400`, not `4h`. Every knob is validated at startup and a
+value the runner cannot read exits `2` naming the knob, rather than quietly dropping the
 bound you thought you had set.
 
 **A lane card blocked `other: handoff-integrity — the review hand-off of <id> was
