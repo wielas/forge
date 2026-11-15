@@ -261,7 +261,10 @@ PROBE_RC=""; PROBE_LAST=""
 NOT_DONE="$(printf '%s' "$PARENTS" | jq -r '[.[] | select(.status != "done") | "\(.title | split(":")[0]) is \(.status)"] | join("; ")')"
 : >"$WORK/probe.out"
 if [ "$ACTUAL" -gt 0 ] 2>/dev/null && [ "$DONE" = "$ACTUAL" ] && [ -z "$NOT_DONE" ]; then
-  "$HERE/probe-run.sh" "$PROJECT" "$GATE" --timeout "$TIMEOUT" >"$WORK/probe.out" 2>"$WORK/probe.err"
+  # --logs keeps every case's whole output in a scratch directory of this run ($WORK, removed on exit, outside the
+  # project and the board): the report quotes the last lines of a failing case from it, so a finding is read
+  # from what the product printed and not from the case's name alone. A rehearsal writes it too: it is neither.
+  "$HERE/probe-run.sh" "$PROJECT" "$GATE" --timeout "$TIMEOUT" --logs "$WORK/probe-logs" >"$WORK/probe.out" 2>"$WORK/probe.err"
   PROBE_RC=$?
   PROBE_LAST="$(tail -n 1 "$WORK/probe.out" 2>/dev/null)"
   case "$PROBE_RC" in 0|1) ;; *) PROBE_RC=2;; esac   # anything else is no verdict, never a pass
@@ -273,16 +276,16 @@ fi
 # ---- classify a finding ----------------------------------------------------
 CLASSIFIED='{"class":"none","cases":[],"drafts":[]}'
 if [ "$PROBE_RC" = 1 ]; then
-  CLASSIFIED="$(python3 - "$HERE" "$PROJECT" "$GATE" "$NEXT_N" "$WORK/probe.out" <<'PY'
+  CLASSIFIED="$(python3 - "$HERE" "$PROJECT" "$GATE" "$NEXT_N" "$WORK/probe.out" "$WORK/probe-logs" <<'PY'
 import json
 import re
 import sys
 
-here, project, gate, next_n, out_path = sys.argv[1:6]
+here, project, gate, next_n, out_path, logs_dir = sys.argv[1:7]
 sys.dont_write_bytecode = True
 sys.path.insert(0, here)
 from pathlib import Path
-from forge_probe import probe_path, validate_probe
+from forge_probe import case_output_lines, probe_path, validate_probe
 
 probe, _, error = validate_probe(Path(project), gate)
 frozen = {c["name"]: c for c in probe["cases"]} if not error else {}
@@ -302,6 +305,12 @@ for i, line in enumerate(lines):
             break
         shown.append(after.strip())
     cases.append({"name": name, "kind": kind, "misses": misses, "shown": shown})
+
+# What each failing case PRINTED, quoted for the operator from the --logs copy probe-run.sh kept (the one-line
+# verdict says which case failed and how, never why). The cleaning and the bounds are in forge_probe.py.
+names = [c["name"] for c in probe["cases"]] if not error else []
+for case in cases:
+    case["evidence"] = case_output_lines(logs_dir, names, case["name"])
 
 
 def norm(text):
@@ -424,6 +433,7 @@ else
   mode_line="APPLY — completes the gate on a pass"
 fi
 
+EV_N=0   # failing cases whose output say_numbers quotes: none, until a block report asks for them
 say_numbers() {
   echo "Numbers (each read from a script; the tag names which):"
   printf '  [gate card]     %s (%s) is %s on board %s\n' "$GATE" "$GCARD" "$GSTATUS" "$BOARD"
@@ -457,7 +467,16 @@ say_numbers() {
              + ", " + (.chunks | tostring) + " chunk(s) held until the gate is done") end)'
   if [ "$PROBE_RC" = 1 ]; then
     echo "  findings, classified by the checkpoint:"
-    printf '%s' "$CLASSIFIED" | jq -r '.cases[] | "    \(.class | ascii_upcase)  \(.name) — \(.reason)"'
+    # Under each of the first EV_N failing cases, the last lines it printed (forge_probe.case_output_lines): quoted,
+    # prefixed and labelled as the product's text. The rest are counted, so the report stays one message.
+    printf '%s' "$CLASSIFIED" | jq -r --argjson n "$EV_N" '
+      (.cases | length) as $total
+      | (.cases | to_entries[] | .key as $i | .value as $c
+         | "    \($c.class | ascii_upcase)  \($c.name) — \($c.reason)",
+           (if $i < $n then ($c.evidence // [])[] else empty end)),
+        (if ([.cases[$n:][] | select(.evidence != null)] | length) > 0
+         then "      …and \($total - $n) more failing case(s): their output is not shown here (a message holds 4,096 characters); ~/.forge/repo/scripts/probe-run.sh <project> <gate> --logs <dir> keeps all of it"
+         else empty end)'
   fi
 }
 
@@ -532,6 +551,10 @@ case "$OUTCOME" in
     [ "$MODE" = rehearse ] && echo "rehearsal: nothing was written to the board"
     exit 2;;
   block)
+   # The report is built whole (block_report), so its size is known before a word of it is sent: it quotes the
+   # output of the first EV_N failing cases, and EV_N drops from 3 until the report fits one Telegram message
+   # (4,096 characters; 4,000 bytes here is under it for any text this script writes).
+   block_report() {
     case "$FIRST" in
       finding)
         names="$(printf '%s' "$CLASSIFIED" | jq -r '[.cases[].name] | join("; ")')"
@@ -573,5 +596,13 @@ case "$OUTCOME" in
       printf '%s' "$CLASSIFIED" | jq -r '.drafts[] | .text + "\n"'
     fi
     [ "$MODE" = rehearse ] && echo "rehearsal: nothing was written to the board"
-    exit 1;;
+    return 0
+   }
+   EV_N=3
+   REPORT="$(block_report; printf x)"   # the x keeps the report's own trailing newlines through the substitution
+   while [ "$EV_N" -gt 0 ] && [ "$(printf '%s' "$REPORT" | wc -c | tr -d ' ')" -gt 4000 ]; do
+     EV_N=$((EV_N - 1)); REPORT="$(block_report; printf x)"
+   done
+   printf '%s' "${REPORT%x}"
+   exit 1;;
 esac

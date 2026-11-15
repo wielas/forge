@@ -15,6 +15,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import unicodedata
 
 SCHEMA = "forge.probe.v1"
 # Never part of a probe, at freeze time or at run time: Finder writes one into
@@ -26,6 +28,72 @@ IGNORED = frozenset({".DS_Store"})
 def probe_path(gate_id):
     """The probe's repo-relative path, derived from the gate id, never chosen."""
     return f"tests/probes/{gate_id.lower().replace('-', '_')}.json"
+
+
+def log_stem(index, name):
+    """The file name (less its .stdout / .stderr) probe-run.sh --logs keeps case <index> (0-based) under."""
+    stem = "".join(c if c.isalnum() else "-" for c in name).strip("-")[:60] or "case"
+    return f"{index + 1:02d}-{stem}"
+
+
+# What a failing case printed, quoted into the checkpoint report (scripts/checkpoint.sh). That text is the PRODUCT's
+# and the report is answered with /accept, so it can never look like the report: every line is cleaned and bounded,
+# starts with `      | `, and sits under a label that says whose text it is.
+OUTPUT_LINES, OUTPUT_CHARS, OUTPUT_LINE_CHARS = 6, 600, 200
+_COMMAND = re.compile("(^|[\\s(\\[{<\\x22\\x27\\x60])/(?=[A-Za-z0-9_])")
+
+
+def _clean_output_line(raw):
+    """One line of a case's output, safe to print under the report's own words."""
+    # a control, format, surrogate, private-use or unassigned character, or a line/paragraph separator, becomes a
+    # space: no escape sequence, no bidi override and no line break of its own survives
+    text = "".join(" " if unicodedata.category(ch)[0] == "C" or unicodedata.category(ch) in ("Zl", "Zp") else ch
+                   for ch in raw)
+    # a token-initial "/" is a tappable command in a chat client (U+2044 reads the same and taps nothing); a
+    # backtick starts a code span, "](" a markdown link, and angle brackets a tag
+    text = _COMMAND.sub(lambda m: m.group(1) + "⁄", text)
+    text = text.replace("\x60", "\x27").replace("](", "] (").replace("<", "‹").replace(">", "›").strip()
+    return text if len(text) <= OUTPUT_LINE_CHARS else text[:OUTPUT_LINE_CHARS - 1] + "…"
+
+
+def _tail_lines(path, want):
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(max(0, os.path.getsize(path) - 65536))
+            raw = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    return [line for line in map(_clean_output_line, raw.splitlines()) if line][-want:]
+
+
+def case_output_lines(logs_dir, names, name):
+    """The report lines that quote the last of what case `name` printed, or None when its output was not kept.
+
+    `names` is the probe's case names in order (the log files are numbered by position). At most six lines and 600
+    characters in all, the last lines first: a case that printed on stdout and on stderr gets the last three of each.
+    """
+    if not logs_dir or name not in names:
+        return None
+    base = os.path.join(logs_dir, log_stem(names.index(name), name))
+    out, err = _tail_lines(base + ".stdout", OUTPUT_LINES), _tail_lines(base + ".stderr", OUTPUT_LINES)
+    if out is None and err is None:
+        return None
+    out, err = out or [], err or []
+    if out and err:
+        out, err = out[-3:], err[-3:]
+    items = [("stdout", line) for line in out] + [("stderr", line) for line in err]
+    while len(items) > 1 and sum(len(line) for _, line in items) > OUTPUT_CHARS:
+        items.pop(0)
+    if not items:
+        return ["      the case printed nothing on stdout or stderr"]
+    lines = []
+    for stream in ("stdout", "stderr"):
+        kept = [line for s, line in items if s == stream]
+        if kept:
+            lines.append(f"      the case's own output, quoted (the product's text, not the checkpoint's) — {stream}, "
+                         f"last {len(kept)} line{'s' if len(kept) != 1 else ''}:")
+            lines.extend(f"      | {line}" for line in kept)
+    return lines
 
 
 def text(value):

@@ -3623,6 +3623,10 @@ checkpoint/numbers-are-scripted           every number in the report is read fro
 checkpoint/outcomes                       probe 0 passes and proceeds, 1 blocks decision-first, 2 is no verdict, cost over blocks; an absent estimate blocks (MS4, decision 6)
 checkpoint/rehearse-writes-nothing        --rehearse on a snapshot of a fixture board, against a hermes stub that fails on any write verb: every outcome, and the held gate stays held (P10(1))
 checkpoint/finding-is-classified          a product defect drafts a chunk card, a probe defect drafts an amendment, an ambiguous finding blocks with no draft; nothing is created (MS2)
+checkpoint/a-failing-case-shows-its-own-last-output  a failing case's report quotes the last lines of its stdout (6) and stderr (3 each when both print), at most 600 characters, labelled as the product's text and prefixed; in --rehearse and --apply, the scratch logs are gone afterwards, the project and the board are unchanged; a report that quotes nothing is seen
+checkpoint/a-case-output-cannot-forge-the-report  a case that prints /accept, a report header, "Decision needed:", a markdown link or an escape sequence shows each as one inert prefixed line (no tappable command, no second header, no control character); a missing prefix, a live slash and a kept control character are each seen
+checkpoint/a-report-with-many-failures-fits-one-message  five failing cases: output for the first of them that fits, the rest counted, the whole report under 4,096 bytes; a report with no size bound is seen
+checkpoint/a-passing-report-is-unchanged  the passing report is byte-for-byte the one recorded before the evidence was added (scripts/fixtures/checkpoint-pass-report.txt); a changed word is seen
 checkpoint/disagreeing-counts-block      metrics.sh's chunk counts and the checkpoint's own differ: no verdict, no probe, nothing completed (fail closed)
 checkpoint/skipped-probe-never-passes     with that check cut out, a probe that did not run is still never a pass and --apply never completes the gate
 checkpoint/passes-only-after-complete     --apply against a kernel that refuses complete says 'did NOT pass', never 'passes'; a checkpoint that ignores the refusal is seen (#102 minor a)
@@ -16011,7 +16015,7 @@ run_checkpoint_group() {
   local tool
   for tool in sqlite3 jq python3; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified passes-only-after-complete gate-moved-before-complete-is-no-verdict completion-is-read-back unreadable-readback-is-unverified rehearse-hash-sees-the-wal; do
+      for n in numbers-are-scripted outcomes rehearse-writes-nothing finding-is-classified a-failing-case-shows-its-own-last-output a-case-output-cannot-forge-the-report a-report-with-many-failures-fits-one-message a-passing-report-is-unchanged passes-only-after-complete gate-moved-before-complete-is-no-verdict completion-is-read-back unreadable-readback-is-unverified rehearse-hash-sees-the-wal; do
         skip "$n" "$tool is not on PATH"
       done
       return
@@ -16397,6 +16401,124 @@ EOF_CASE
   [ "$h0" = "$(_ck_hash classify)" ] && [ "$(_ck_q classify 'SELECT COUNT(*) FROM tasks')" = 9 ] || detail="$detail board-changed"
   if [ -z "$detail" ]; then ok "finding-is-classified (fail-open and a crash are PRODUCT with a chunk-card draft; wording is PROBE with an amendment draft; an unexplained miss blocks as AMBIGUOUS with no draft; nothing is created)"
   else bad "finding-is-classified" "a product defect drafts a chunk card, a probe defect an amendment, an ambiguous finding blocks:$detail"; fi
+
+  # -- the evidence a finding stands on ----------------------------------------
+  # 2026-11-15: a milestone checkpoint reported `probe GATE-M2: FAIL ... failed: partial-push-then-retry-leaves-one-
+  # workout-per-session`, classified it AMBIGUOUS and asked the operator to decide, with not one line of what the case
+  # printed. Its stdout was four lines ending "M2 PROBE FAILED: failure report claims success" (the probe's substring
+  # check for "complete" had met the product's "Push incomplete"), enough to classify it at a glance. The report now
+  # quotes the last lines of each failing case, from the --logs copy probe-run.sh keeps in a scratch directory.
+  # Each scenario below is a function of the checkpoint program it runs ($1: the real one, or a mutant copy with one
+  # rule changed), so the same scenario must go red on the mutant, and a mutation that changes nothing is red too (F65).
+  local ckm="$root/ev-mut" ck_unmoved="" ck_red="" ck_fix="$REPO_ROOT/scripts/fixtures/checkpoint-pass-report.txt"
+  mkdir -p "$root/ev-tmp"
+  _ck_tree() { ( cd "$1" && find . -type f | sort | xargs shasum | shasum | cut -d' ' -f1 ); }
+  _ck_ev_a() {   # the last lines of a failing case, labelled, prefixed, bounded; nothing written anywhere
+    local d="" ck="$1" h0 h1 t0 t1
+    _ck_variant evidence 's|^print("advance %d" % len(records))$|print("\\n".join(["noise %d" % i for i in range(1, 9)] + ["M2 PROBE FAILED: failure report claims success"])); sys.stderr.write("warn one\\nwarn two\\n")|'
+    _ck_variant lines 's|^print("advance %d" % len(records))$|print("\\n".join(["noise %d" % i for i in range(1, 9)] + ["M2 PROBE FAILED: failure report claims success"]))|'
+    rm -rf "$root/b-ev"; cp -R "$root/b-std" "$root/b-ev"; h0="$(_ck_hash_dir "$root/b-ev/kanban/boards/ck")"; t0="$(_ck_tree "$root/proj-evidence")"
+    rm -rf "$root/ev-tmp"; mkdir -p "$root/ev-tmp"
+    TMPDIR="$root/ev-tmp" _ck_run ev evidence --rehearse
+    h1="$(_ck_hash_dir "$root/b-ev/kanban/boards/ck")"; t1="$(_ck_tree "$root/proj-evidence")"
+    [ "$rc" = 1 ] || d="$d rc=$rc"
+    printf '%s\n' "$out" | grep -Fxq '    AMBIGUOUS  three records advance — the evidence fits both a product defect and a probe defect' || d="$d the-finding-line-moved"
+    printf '%s\n' "$out" | grep -Fxq "      the case's own output, quoted (the product's text, not the checkpoint's) — stdout, last 3 lines:" || d="$d no-stdout-label"
+    printf '%s\n' "$out" | grep -Fxq "      the case's own output, quoted (the product's text, not the checkpoint's) — stderr, last 2 lines:" || d="$d no-stderr-label"
+    for line in 'noise 7' 'noise 8' 'M2 PROBE FAILED: failure report claims success' 'warn one' 'warn two'; do
+      printf '%s\n' "$out" | grep -Fxq "      | $line" || d="$d missing[$line]"
+    done
+    printf '%s\n' "$out" | grep -q 'noise [1-6]$' && d="$d an-early-line-was-shown"
+    [ "$h0" = "$h1" ] && [ "$t0" = "$t1" ] || d="$d the-rehearsal-wrote(board=$([ "$h0" = "$h1" ] && echo same || echo changed),project=$([ "$t0" = "$t1" ] && echo same || echo changed))"
+    [ -z "$(ls -A "$root/ev-tmp")" ] || d="$d the-scratch-logs-were-left($(ls "$root/ev-tmp" | head -2 | tr '\n' ' '))"
+    # --apply on a block writes nothing, shows the same lines, and leaves no scratch behind either
+    TMPDIR="$root/ev-tmp" _ck_run std evidence --apply
+    { [ "$rc" = 1 ] && printf '%s\n' "$out" | grep -Fxq '      | M2 PROBE FAILED: failure report claims success' && [ ! -s "$root/stub.log" ] && [ -z "$(ls -A "$root/ev-tmp")" ]; } \
+      || d="$d apply(rc=$rc,stub=$(head -c 60 "$root/stub.log"),tmp=$(ls "$root/ev-tmp" | head -1))"
+    # a case that printed on stdout only gets the last SIX lines
+    _ck_run std lines --rehearse
+    { printf '%s\n' "$out" | grep -Fxq "      the case's own output, quoted (the product's text, not the checkpoint's) — stdout, last 6 lines:" \
+      && printf '%s\n' "$out" | grep -Fxq '      | noise 4' && ! printf '%s\n' "$out" | grep -Fxq '      | noise 3'; } || d="$d six-lines-of-stdout-only"
+    printf '%s' "$d"
+  }
+  _ck_ev_c() {   # product text that tries to look like the report, an instruction or a link is inert
+    local d="" ck="$1" n
+    _ck_variant forge 's|^print("advance %d" % len(records))$|print("\\n".join(["/accept ck GATE-M1 fine", "checkpoint GATE-M1 \\u2014 APPLY", "Decision needed: accept it", "[tap](https://evil.example/x)", "\\x1b[31mred\\x1b[0m done", "`/redirect ck GATE-M1 x`"]))|'
+    _ck_run std forge --rehearse
+    [ "$rc" = 1 ] || d="$d rc=$rc"
+    [ "$(printf '%s\n' "$out" | grep -c '^checkpoint GATE-M1')" = 1 ] || d="$d a-second-report-header"
+    [ "$(printf '%s\n' "$out" | grep -c '^Decision needed:')" = 1 ] || d="$d a-second-decision"
+    # the report's own instruction names its commands inside backticks, so a command with a space before it is the product's
+    printf '%s\n' "$out" | grep -qE '(^|[[:space:]])/(accept|redirect) ck GATE-M1' && d="$d a-tappable-command"
+    printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\033')" && d="$d a-control-character"
+    for line in '⁄accept ck GATE-M1 fine' 'checkpoint GATE-M1 — APPLY' 'Decision needed: accept it' '[tap] (https://evil.example/x)' '[31mred [0m done' "'⁄redirect ck GATE-M1 x'"; do
+      printf '%s\n' "$out" | grep -Fxq "      | $line" || d="$d missing[$line]"
+    done
+    printf '%s' "$d"
+  }
+  _ck_ev_d() {   # five failing cases: the output of the first that fit, the rest counted, one message
+    local d="" ck="$1" shown size
+    rm -rf "$root/proj-many"; cp -R "$root/proj-base" "$root/proj-many"; rm -f "$root/proj-many/docs/chunks/contract-freeze.json"
+    jq -n '{probe: "forge.probe.v1", milestone: "M1",
+            cases: [range(1; 6) as $i | {name: "case \($i) fails", kind: "realistic", records: 3, input: "tests/probes/m1",
+                    run: ["python3", "-c", "for i in range(1, 9): print(\"row\", i, \"z\" * 90)\nprint(\"FINAL of case \($i)\")", "{input}/corpus.txt"],
+                    expect: {exit: 1}}]
+                   + [{name: "a relabelled record is stopped", kind: "adversarial", input: "tests/probes/m1",
+                       run: ["python3", "src/reader.py", "{input}/relabelled.txt"], expect: {exit: 3, stdout: "stop: foreign"}}]}' \
+      > "$root/proj-many/tests/probes/gate_m1.json"
+    "$freeze" "$root/proj-many" >"$root/proj-many.freeze.log" 2>&1 || d="$d the-many-case-probe-did-not-freeze($(tail -1 "$root/proj-many.freeze.log"))"
+    _ck_run std many --rehearse
+    shown="$(printf '%s\n' "$out" | grep -c "^      the case's own output, quoted")"
+    size="$(printf '%s' "$out" | wc -c | tr -d ' ')"
+    [ "$rc" = 1 ] || d="$d rc=$rc"
+    [ "$size" -le 4096 ] || d="$d the-report-is-$size-bytes"
+    { [ "$shown" -ge 1 ] && [ "$shown" -le 3 ]; } || d="$d output-shown-for-$shown-cases"
+    printf '%s\n' "$out" | grep -Fq "      …and $((5 - shown)) more failing case(s): their output is not shown here" || d="$d no-count-of-the-rest(shown=$shown)"
+    printf '%s\n' "$out" | grep -Fxq '      | FINAL of case 1' || d="$d the-first-case-has-no-output"
+    printf '%s' "$d"
+  }
+  _ck_ev_pass() {   # the passing report is the one recorded before any of this existed
+    local d="" ck="$1"
+    _ck_run std pass --rehearse
+    [ "$rc" = 0 ] && printf '%s\n' "$out" | cmp -s - "$ck_fix" || d="$d the-passing-report-changed($(printf '%s\n' "$out" | diff - "$ck_fix" | head -3 | tr '\n' '|'))"
+    printf '%s' "$d"
+  }
+  _ck_ev_mut() {   # file sed-expression -> $ckm/<file> mutated, the rest of the scripts as they are; 1 when nothing changed
+    cp -p "$REPO_ROOT/scripts/$1" "$ckm/$1"
+    sed -e "$2" "$REPO_ROOT/scripts/$1" > "$ckm/$1.m" && cat "$ckm/$1.m" > "$ckm/$1"; rm -f "$ckm/$1.m"
+    ! cmp -s "$REPO_ROOT/scripts/$1" "$ckm/$1"
+  }
+  rm -rf "$ckm"; mkdir -p "$ckm"; cp -R "$REPO_ROOT/scripts/." "$ckm/" 2>/dev/null
+  _ck_ev_red() {   # name check-function file sed: the check must report something on the mutant (and the mutant is then undone)
+    if _ck_ev_mut "$3" "$4"; then
+      [ -n "$($2 "$ckm/checkpoint.sh")" ] || ck_red="$ck_red $1-stayed-green"
+    else ck_unmoved="$ck_unmoved $1"; fi
+    cp -p "$REPO_ROOT/scripts/$3" "$ckm/$3"
+  }
+
+  detail="$(_ck_ev_a "$ck")"
+  [ -n "$detail" ] || _ck_ev_red no-evidence _ck_ev_a checkpoint.sh 's/^   EV_N=3$/   EV_N=0/'
+  [ -z "$detail$ck_red$ck_unmoved" ] && ok "a-failing-case-shows-its-own-last-output (the last 3 lines of stdout and the last 2 of stderr of a case that printed on both, the last 6 of one that printed on stdout only, each under a label that says whose text it is and behind \`      | \`; in --rehearse and --apply the board, the project and the scratch directory are as they were; a report that quotes nothing is seen)" \
+    || bad "a-failing-case-shows-its-own-last-output" "a finding must show the last lines of what the failing case printed, bounded, labelled, and write nothing:$detail$ck_red${ck_unmoved:+ (a mutation changed nothing in:$ck_unmoved)}"
+
+  detail="$(_ck_ev_c "$ck")"; ck_red=""; ck_unmoved=""
+  [ -n "$detail" ] || {
+    _ck_ev_red a-live-slash _ck_ev_c forge_probe.py 's/m.group(1) + "⁄"/m.group(1) + "\/"/'
+    _ck_ev_red a-kept-control-character _ck_ev_c forge_probe.py 's/unicodedata.category(ch)\[0\] == "C"/unicodedata.category(ch)[0] == "Q"/'
+    _ck_ev_red a-missing-prefix _ck_ev_c forge_probe.py 's/f"      | {line}"/f"{line}"/'
+  }
+  [ -z "$detail$ck_red$ck_unmoved" ] && ok "a-case-output-cannot-forge-the-report (a case that prints /accept, a report header, \"Decision needed:\", a markdown link, an escape sequence and a backticked /redirect shows each as one inert line behind the prefix: one report header and one decision in the whole report, no tappable command, no control character; a live slash, a kept control character and a missing prefix are each seen)" \
+    || bad "a-case-output-cannot-forge-the-report" "product text in the report must never read as the report, an instruction or a link:$detail$ck_red${ck_unmoved:+ (a mutation changed nothing in:$ck_unmoved)}"
+
+  detail="$(_ck_ev_d "$ck")"; ck_red=""; ck_unmoved=""
+  [ -n "$detail" ] || _ck_ev_red no-size-bound _ck_ev_d checkpoint.sh 's/ -gt 4000 / -gt 400000 /'
+  [ -z "$detail$ck_red$ck_unmoved" ] && ok "a-report-with-many-failures-fits-one-message (five failing cases that each print 600 characters: the output of the first one to three that fit is quoted, the rest are counted, and the whole report is under 4,096 bytes; a report with no size bound is seen)" \
+    || bad "a-report-with-many-failures-fits-one-message" "a report with many failing cases must stay one Telegram message and say how many cases it did not quote:$detail$ck_red${ck_unmoved:+ (a mutation changed nothing in:$ck_unmoved)}"
+
+  detail="$(_ck_ev_pass "$ck")"; ck_red=""; ck_unmoved=""
+  [ -n "$detail" ] || _ck_ev_red a-changed-word _ck_ev_pass checkpoint.sh 's/Numbers (each read from a script; the tag names which):/Numbers (each read from a script; the tag names which, and more):/'
+  [ -z "$detail$ck_red$ck_unmoved" ] && ok "a-passing-report-is-unchanged (the passing rehearsal report is byte-for-byte scripts/fixtures/checkpoint-pass-report.txt, recorded from checkpoint.sh before the evidence existed; a changed word is seen)" \
+    || bad "a-passing-report-is-unchanged" "a passing checkpoint report must not change when a failing one learns to quote output:$detail$ck_red${ck_unmoved:+ (a mutation changed nothing in:$ck_unmoved)}"
 
   # -- fail closed ------------------------------------------------------------
   # metrics.sh reads the board through its own snapshot and the checkpoint through
