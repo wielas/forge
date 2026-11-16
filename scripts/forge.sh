@@ -257,14 +257,6 @@ def why: if .status == "ready" then "returned for changes (a human chunk sent ba
   else "  last landed: \(.landed_title | short(70)) — \(.landed_at | ago)" end )
 JQ
 
-file_mtime() {  # file -> its mtime in epoch seconds (GNU stat, then BSD stat), or fails
-  local m
-  m="$(stat -c %Y "$1" 2>/dev/null)" || m=""
-  case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)" || m="";; esac
-  case "$m" in ''|*[!0-9]*) return 1;; esac
-  printf '%s' "$m"
-}
-
 # The liveness watchdog's last reading (scripts/watchdog.sh, run by launchd every ten minutes, its
 # stdout and stderr appended to <watchdog root>/watchdog.log). A run starts with `forge watchdog
 # <time>`, then `OK|FAIL <name> <text>` lines, then a final `watchdog: healthy|UNHEALTHY (...)`.
@@ -273,16 +265,17 @@ file_mtime() {  # file -> its mtime in epoch seconds (GNU stat, then BSD stat), 
 # returns 0 healthy, 1 not healthy or no reading, 2 the log exists and cannot be read.
 WD_LINE=""; WD_FAILS=""
 status_watchdog() {
-  local log mt age run fails nok verdict
+  local log age run fails nok verdict
   WD_LINE=""; WD_FAILS=""
   log="$(forge_watchdog_root)/watchdog.log"
-  if [ ! -e "$log" ]; then
-    WD_LINE="watchdog: no reading in the last 30 min (there is no log at $log)"; return 1
-  fi
-  if [ ! -f "$log" ] || [ ! -r "$log" ]; then WD_LINE="watchdog: UNREADABLE ($log is not a readable file)"; return 2; fi
-  mt="$(file_mtime "$log")" || { WD_LINE="watchdog: UNREADABLE (cannot stat $log)"; return 2; }
-  age=$((NOW - mt)); [ "$age" -ge 0 ] || age=0
-  if [ "$age" -gt 1800 ]; then
+  # the age and the limit are forge-state.sh's, which scripts/run-watch.sh asks too
+  age="$(forge_watchdog_log_age "$NOW")"
+  case $? in
+    0) ;;
+    1) WD_LINE="watchdog: no reading in the last 30 min (there is no log at $log)"; return 1;;
+    *) WD_LINE="watchdog: UNREADABLE ($log is not a readable file, or cannot be stat'ed)"; return 2;;
+  esac
+  if [ "$age" -gt "$FORGE_WATCHDOG_SILENT_SECS" ]; then
     WD_LINE="watchdog: no reading in the last 30 min (the log was last written $((age / 60)) min ago)"; return 1
   fi
   # The last run is everything from the last header line to the end; 200 lines is many runs.

@@ -37,6 +37,27 @@ forge_lane_session_root() { printf '%s' "${FORGE_LANE_SESSION_ROOT:-$(forge_stat
 forge_verdict_root()      { printf '%s' "${FORGE_VERDICT_ROOT:-$(forge_state_root)/verdicts}"; }
 # The liveness watchdog (scripts/watchdog.sh, scripts/watchdog-install.sh) keeps its alert state and its launchd log here.
 forge_watchdog_root()     { printf '%s' "${FORGE_WATCHDOG_ROOT:-$(forge_state_root)/watchdog}"; }
+# The watchdog's last reading is the last write to its log, and it is silent when that is older than this many
+# seconds. `forge status` and scripts/run-watch.sh both ask here, so the two cannot disagree about "no reading".
+FORGE_WATCHDOG_SILENT_SECS=1800
+# The LaunchAgent scripts/watchdog-install.sh writes: its presence is what "a watchdog is installed here" means.
+forge_watchdog_plist()    { printf '%s' "${HOME:-}/Library/LaunchAgents/ai.forge.watchdog.plist"; }
+forge_file_mtime() {  # file -> its mtime in epoch seconds (GNU stat, then BSD stat), or fails
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null)" || m=""
+  case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)" || m="";; esac
+  case "$m" in ''|*[!0-9]*) return 1;; esac
+  printf '%s' "$m"
+}
+forge_watchdog_log_age() {  # <now, epoch> -> seconds since the log was last written; 1 there is no log, 2 it cannot be read
+  local log mt age
+  log="$(forge_watchdog_root)/watchdog.log"
+  [ -e "$log" ] || return 1
+  { [ -f "$log" ] && [ -r "$log" ]; } || return 2
+  mt="$(forge_file_mtime "$log")" || return 2
+  age=$(($1 - mt)); [ "$age" -ge 0 ] || age=0
+  printf '%s' "$age"
+}
 # The push watcher (scripts/run-watch.sh) keeps what it last told the operator here, one file per board.
 forge_run_watch_root()    { printf '%s' "${FORGE_RUN_WATCH_ROOT:-$(forge_state_root)/run-watch}"; }
 forge_merge_authority_root() { printf '%s' "${FORGE_MERGE_AUTHORITY_ROOT:-$(forge_state_root)/merge-authority}"; }

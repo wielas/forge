@@ -72,7 +72,9 @@ hold, a landing and a stall reach Telegram within ten minutes (`forge-run-watch`
 - **Recovery from a restart.** FileVault is on, so nothing runs after a reboot until someone
   unlocks the disk, and nothing on the host can say so. Only an external heartbeat URL in
   `~/.forge/watchdog.env` would report it; none is configured.
-- **A real watchdog alert.** It has only ever read healthy.
+- **A real watchdog alert.** It has only ever read healthy. On 2026-11-16 launchd held it for 8.5 hours
+  (01:31 to 09:57 local, cause not established) and nothing said so; `forge-run-watch` now says
+  `WATCHDOG SILENT` after 30 minutes without a reading and `WATCHDOG BACK` when one returns, offline-proven only.
 - **The mutation probe's precision.** It reports and never bounces; read at the M2 checkpoint.
 
 ## Known gaps
