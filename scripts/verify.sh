@@ -118,10 +118,11 @@
 #               what is unconfirmed, and puts the grant, the armed gate and the resumed cron job in force and
 #               reads each back. Stateful stubs of hermes, gh and launchctl, a real git repo with a bare origin
 #               that the stubs make real commits on, the real merge-authority.sh and checkpoint-arm.sh. NO
-#               case runs a real rehearsal: that spends a Codex run and a judge call. Seven cases are
+#               case runs a real rehearsal: that spends a Codex run and a judge call. Eight cases are
 #               scripts/run-watch.sh, the ten-minute push cron: a new hold, a worker that gave up, a landing,
-#               a stall, a card that is not starting, an unreadable board and a gate with no cron job, each said
-#               once, from boards built of the same fixture schema and a pinned clock
+#               a stall, a card that is not starting, an unreadable board, a gate with no cron job and a
+#               launchd watchdog that stopped writing, each said once, from boards built of the same fixture
+#               schema and a pinned clock
 #   manifest/   `--list` names every case the suite actually runs. Compares the
 #               catalogue against what THIS run emitted, so a check added
 #               without a catalogue entry is caught. Any run, narrowed or
@@ -3727,6 +3728,7 @@ front/a-review-waiting-on-the-usage-limit-is-not-a-stall  a running card with a 
 front/run-watch-not-starting-needs-nothing-running-anywhere  a ready card or one in review with no open run, idle past the limit, is said only when nothing runs on ANY board (its clock starts when nothing runs), once per entry into the status; a card the dispatcher holds says why; a human chunk sent back and a queued card never
 front/run-watch-is-read-only-and-never-silent-about-an-unreadable-board  boards byte-identical and no snapshot left; --dry-run prints and writes nothing and does not consume the event; a corrupt board is named once with exit 0, its old state kept, NOT STARTING held back; a bad argument or knob is exit 2
 front/run-watch-says-when-an-armed-gate-has-no-cron-job  a gate armed while the forge-checkpoint cron job is paused or missing is said on the first tick and once per change, with the command to resume or create it; nothing is said without an armed gate
+front/run-watch-says-the-watchdog-fell-silent-and-came-back  with the watchdog's LaunchAgent installed, a log not written for over 30 min (forge status's limit, from forge-state.sh, to the second) is said once, on the first tick too, and its return once; a missing log is said; a host with no watchdog installed is told nothing; four mutants are each seen
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
 gate/rulesets-are-a-gate                  a ruleset with a PR rule and required checks is GATED (exit 0)
@@ -24142,7 +24144,7 @@ wants watchdog  && run_watchdog_group
 # ---------------------------------------------------------------------------
 # front/ — the operator's front door (scripts/forge.sh): `forge status`, `forge stop`, `forge rehearse`, `forge go`, `forge start` and `forge new`.
 #
-# Twenty-six cases (the first six are status and stop; then seven for scripts/run-watch.sh, the push half; then rehearse and go; then `go --ahead`, `forge start` and `forge new`, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
+# Twenty-seven cases (the first six are status and stop; then eight for scripts/run-watch.sh, the push half; then rehearse and go; then `go --ahead`, `forge start` and `forge new`, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
 # from scripts/fixtures/digest-board.sql's schema (the digest and checkpoint fixtures' own), the grant and the armed
 # gates are made by the real merge-authority.sh and checkpoint-arm.sh, and the script is reached through a relative
 # symlink that points at an absolute one, in another directory: the way the operator runs it (~/.local/bin/forge).
@@ -24842,6 +24844,77 @@ SQL
   { [ -z "$o5" ] && [ -z "$o6" ] && [ -z "$o7" ]; } || d="$d said-without-a-change-or-without-an-armed-gate[$(printf '%s%s%s' "$o5" "$o6" "$o7" | head -c 100)]"
   [ -z "$d" ] && ok "run-watch-says-when-an-armed-gate-has-no-cron-job (the first tick says at once that a gate is armed and its job paused; a baseline over a running job says nothing; the job paused says so once with the command to resume it by its id; the job gone says so once with the create line; coming back, and a missing job with no gate armed, say nothing)" \
     || bad "run-watch-says-when-an-armed-gate-has-no-cron-job" "an armed gate with nothing to complete it is a stall nobody sees —$d :: $(printf '%s' "$o2" | head -4 | tr '\n' '|')"
+
+  # --- run-watch 8. the launchd watchdog fell silent, and came back ---------------------------------------------------------
+  # The watchdog checks that this cron's tickers are fresh; this is the other direction (16 Nov 2026: launchd held the
+  # watchdog for 8.5 hours and nothing said so). The log's mtime is set from the pinned clock, never the wall clock.
+  local wd_plist="$root/home/Library/LaunchAgents/ai.forge.watchdog.plist" wd_log="$S/watchdog/watchdog.log" wd_mut="$root/wd-mut" wd_d wd_m wd_seen
+  _rw_wd_at() { # <epoch> -> the watchdog's log was last written then
+    touch -d "@$1" "$wd_log" 2>/dev/null || touch -t "$(date -r "$1" '+%Y%m%d%H%M.%S')" "$wd_log"
+  }
+  _rw_wd_scenario() { # the whole story against ${RW_BIN:-the real script}; sets wd_d to what went wrong
+    local a1 a2 b1 b2 b3 b4 b5 b6 c1 c2 e1 e2 st
+    wd_d=""
+    _rw_world; rm -f "$wd_plist"; mkdir -p "${wd_plist%/*}"
+    # a. no watchdog installed: a log three hours old is nobody's silence
+    _rw_wd_at $((t0 - 10800))
+    a1="$(_rw "$t0" 2>>"$root/err")"; a2="$(_rw $((t0 + 600)) 2>>"$root/err")"
+    [ -z "$a1$a2" ] || wd_d="$wd_d a-host-with-no-watchdog-was-told[$(printf '%s' "$a1$a2" | head -c 80)]"
+    # b. installed: fresh on the baseline, silent ten minutes later, said once, back said once
+    rm -rf "$S/run-watch"; : > "$wd_plist"
+    _rw_wd_at $((t0 - 1740))
+    b1="$(_rw "$t0" 2>>"$root/err")"
+    b2="$(_rw $((t0 + 600)) 2>>"$root/err")"; b3="$(_rw $((t0 + 1200)) 2>>"$root/err")"; b4="$(_rw $((t0 + 1800)) 2>>"$root/err")"
+    _rw_wd_at $((t0 + 2280))
+    b5="$(_rw $((t0 + 2400)) 2>>"$root/err")"; b6="$(_rw $((t0 + 3000)) 2>>"$root/err")"
+    [ -z "$b1" ] || wd_d="$wd_d a-29-min-old-reading-was-called-silent[$(printf '%s' "$b1" | head -c 80)]"
+    case "$b2" in *'WATCHDOG SILENT'*'has written nothing for 39 min, over the 30 min limit'*"Do: launchctl kickstart gui/$(id -u)/ai.forge.watchdog"*) ;;
+      *) wd_d="$wd_d silence-not-said[$(printf '%s' "$b2" | head -c 120)]";; esac
+    [ -z "$b3$b4" ] || wd_d="$wd_d silence-said-again[$(printf '%s' "$b3$b4" | head -c 80)]"
+    case "$b5" in *'WATCHDOG BACK'*'wrote a reading 2 min ago, after about 67 min of silence'*) ;;
+      *) wd_d="$wd_d return-not-said[$(printf '%s' "$b5" | head -c 120)]";; esac
+    case "$b5" in *'WATCHDOG SILENT'*) wd_d="$wd_d the-return-tick-also-said-silent";; esac
+    [ -z "$b6" ] || wd_d="$wd_d return-said-again[$(printf '%s' "$b6" | head -c 80)]"
+    st="$(jq -r '"\(.watchdog) \(.checkpoint) \(has("watchdog_since"))"' "$S/run-watch/_host.json" 2>/dev/null)"
+    [ "$st" = "ok ok false" ] || wd_d="$wd_d host-state-after-the-return[$st]"
+    # c. no baseline: a first tick over a silent watchdog says so at once; so does an installed watchdog with no log
+    rm -rf "$S/run-watch"; _rw_wd_at $((t0 - 10800))
+    c1="$(_rw "$t0" 2>>"$root/err")"
+    case "$c1" in *'WATCHDOG SILENT'*'has written nothing for 180 min'*) ;; *) wd_d="$wd_d first-tick-silence-not-said[$(printf '%s' "$c1" | head -c 80)]";; esac
+    rm -rf "$S/run-watch"; rm -f "$wd_log"
+    c2="$(_rw "$t0" 2>>"$root/err")"
+    case "$c2" in *'WATCHDOG SILENT'*'is installed and has no log at'*) ;; *) wd_d="$wd_d a-missing-log-not-said[$(printf '%s' "$c2" | head -c 80)]";; esac
+    # e. the limit is forge status's, to the second: 1800 s is a reading, 1801 s is not, for both
+    rm -rf "$S/run-watch"; printf 'forge watchdog x\nOK    gateway         up\nwatchdog: healthy\n' > "$wd_log"; _rw_wd_at $((t0 - 1800))
+    e1="$(_rw "$t0" 2>>"$root/err")"
+    [ -z "$e1" ] || wd_d="$wd_d 1800s-was-silent[$(printf '%s' "$e1" | head -c 60)]"
+    [[ "$(_fr status 2>/dev/null)" = *'watchdog: healthy'* ]] || wd_d="$wd_d forge-status-disagrees-at-1800s"
+    _rw_wd_at $((t0 - 1801))
+    e2="$(_rw "$t0" 2>>"$root/err")"
+    case "$e2" in *'WATCHDOG SILENT'*) ;; *) wd_d="$wd_d 1801s-was-not-silent";; esac
+    [[ "$(_fr status 2>/dev/null)" = *'watchdog: no reading in the last 30 min'* ]] || wd_d="$wd_d forge-status-disagrees-at-1801s"
+    rm -f "$wd_plist"
+  }
+  _rw_wd_scenario; d="$wd_d"
+  # the mutants: each is the scenario against a copy of scripts/ with one line broken, and each must be seen
+  wd_seen=""
+  for wd_m in plist once back limit; do
+    rm -rf "$wd_mut"; mkdir -p "$wd_mut"; cp -R "$fs/." "$wd_mut/" 2>/dev/null
+    case "$wd_m" in
+      plist) sed -e 's/^if \[ -f "\$(forge_watchdog_plist)" \]; then$/if true; then/' "$fs/run-watch.sh" > "$wd_mut/run-watch.sh";;
+      once)  sed -e 's/^    if \[ "\$WD_OLD" != silent \]; then$/    if true; then/' "$fs/run-watch.sh" > "$wd_mut/run-watch.sh";;
+      back)  sed -e 's/^    if \[ "\$WD_OLD" = silent \]; then$/    if false; then/' "$fs/run-watch.sh" > "$wd_mut/run-watch.sh";;
+      limit) sed -e 's/^FORGE_WATCHDOG_SILENT_SECS=1800$/FORGE_WATCHDOG_SILENT_SECS=18000/' "$fs/forge-state.sh" > "$wd_mut/forge-state.sh";;
+    esac
+    chmod +x "$wd_mut/run-watch.sh" "$wd_mut/forge-state.sh"
+    if cmp -s "$fs/run-watch.sh" "$wd_mut/run-watch.sh" && cmp -s "$fs/forge-state.sh" "$wd_mut/forge-state.sh"; then
+      d="$d the-$wd_m-mutation-changed-nothing"; continue
+    fi
+    RW_BIN="$wd_mut/run-watch.sh" _rw_wd_scenario
+    [ -n "$wd_d" ] && wd_seen="$wd_seen $wd_m" || d="$d the-$wd_m-mutant-stayed-green"
+  done
+  [ -z "$d" ] && ok "run-watch-says-the-watchdog-fell-silent-and-came-back (with the LaunchAgent plist in place: a reading 29 min old says nothing; ten minutes later WATCHDOG SILENT is said once, with the age, the limit and the kickstart command, and not on the next two ticks; a new reading says WATCHDOG BACK once with the length of the gap; a first tick over a silent watchdog and an installed watchdog with no log are said at once; 1800 s is a reading and 1801 s is not, for run-watch and forge status alike; a host with no plist is told nothing about a log three hours old; seen broken:$wd_seen)" \
+    || bad "run-watch-says-the-watchdog-fell-silent-and-came-back" "the watchdog watches the cron, and something must watch the watchdog —$d"
 
   # ==============================================================================================================
   # `forge rehearse` and `forge go`. Offline: `hermes`, `gh` and `launchctl` are STATEFUL STUBS on PATH, the hello repo is

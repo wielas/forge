@@ -36,6 +36,12 @@
 #                    while a board could not be read.
 #   CHECKPOINT CRON  a gate is armed (scripts/checkpoint-arm.sh list) while the cron job forge-checkpoint is
 #                    missing or paused in <HERMES_HOME>/cron/jobs.json: nothing would complete the gate.
+#   WATCHDOG SILENT  the launchd watchdog (scripts/watchdog.sh) checks that this cron's tickers are fresh, and this
+#                    is the other direction: its log has not been written for more than 30 minutes (the reading
+#                    and the limit are forge-state.sh's, the ones `forge status` uses), or is missing or
+#                    unreadable. Said once, at once (no baseline), then WATCHDOG BACK once when a reading
+#                    returns, and nothing in between. Only on a host where the watchdog is installed (its
+#                    LaunchAgent plist exists): a host without one is never told its watchdog is silent.
 #   <board>: cannot be read   a board that could not be snapshotted or queried. Said once per occurrence;
 #                    its previous state is kept, so what happened meanwhile is reported when it can be read.
 #
@@ -394,7 +400,47 @@ if [ -n "$HOST_TEXT" ] && [ "$HOST_OLD" != "$HOST_NEW" ]; then   # no record yet
 fi
 # not asked is not "fine": keep what was recorded rather than record a reading nobody took
 if [ "$HOST_NEW" = unreadable ] && [ -n "$HOST_OLD" ]; then HOST_NEW="$HOST_OLD"; fi
-jq -n -c --argjson now "$NOW" --arg c "$HOST_NEW" '{schema: "forge.run-watch.v1", at: $now, checkpoint: $c}' > "$WORK/new-_host.json"
+
+# ---------------------------------------------------------------------------
+# Phase 4: the other watcher. The launchd watchdog reports this cron's silence; this reports the watchdog's.
+# WD_SINCE is the watchdog's last write before it went silent (this tick, when it left no log to date).
+# ---------------------------------------------------------------------------
+WD_NEW=absent; WD_TEXT=""; WD_SINCE=0
+WD_OLD="$(jq -r '.watchdog // empty' "$(state_or_null "$STATE_DIR/_host.json")" 2>/dev/null)"
+WD_OLD_SINCE="$(jq -r '.watchdog_since // 0 | floor' "$(state_or_null "$STATE_DIR/_host.json")" 2>/dev/null)"
+case "$WD_OLD_SINCE" in ''|*[!0-9]*) WD_OLD_SINCE=0;; esac
+if [ -f "$(forge_watchdog_plist)" ]; then
+  wd_age="$(forge_watchdog_log_age "$NOW")"; wd_rc=$?
+  if [ "$wd_rc" = 0 ] && [ "$wd_age" -le "$FORGE_WATCHDOG_SILENT_SECS" ]; then
+    WD_NEW=ok
+    if [ "$WD_OLD" = silent ]; then
+      wd_gap=""
+      if [ "$WD_OLD_SINCE" -gt 0 ] && [ $((NOW - wd_age)) -gt "$WD_OLD_SINCE" ]; then
+        wd_gap=", after about $(((NOW - wd_age - WD_OLD_SINCE) / 60)) min of silence"
+      fi
+      WD_TEXT="WATCHDOG BACK
+The liveness watchdog wrote a reading $((wd_age / 60)) min ago$wd_gap.
+What it says: forge status"
+    fi
+  else
+    WD_NEW=silent; WD_SINCE="$WD_OLD_SINCE"
+    if [ "$WD_OLD" != silent ]; then
+      case "$wd_rc" in
+        0) WD_SINCE=$((NOW - wd_age)); wd_why="has written nothing for $((wd_age / 60)) min, over the $((FORGE_WATCHDOG_SILENT_SECS / 60)) min limit";;
+        1) WD_SINCE="$NOW"; wd_why="is installed and has no log at $(forge_watchdog_root)/watchdog.log";;
+        *) WD_SINCE="$NOW"; wd_why="has a log that cannot be read, $(forge_watchdog_root)/watchdog.log";;
+      esac
+      WD_TEXT="WATCHDOG SILENT
+The liveness watchdog (launchd, ai.forge.watchdog) $wd_why. Until it runs, nothing checks the gateway, the cron tickers or the verifier's token.
+Do: launchctl kickstart gui/$(id -u 2>/dev/null)/ai.forge.watchdog"
+    fi
+  fi
+fi
+if [ -n "$WD_TEXT" ]; then
+  jq -c --arg t "$WD_TEXT" '. + [{rank: 4, text: $t}]' "$WORK/ev-_host.json" > "$WORK/ev-_host.tmp" && mv -f "$WORK/ev-_host.tmp" "$WORK/ev-_host.json"
+fi
+jq -n -c --argjson now "$NOW" --arg c "$HOST_NEW" --arg w "$WD_NEW" --argjson ws "$WD_SINCE" \
+  '{schema: "forge.run-watch.v1", at: $now, checkpoint: $c, watchdog: $w} + (if $w == "silent" then {watchdog_since: $ws} else {} end)' > "$WORK/new-_host.json"
 
 # ---------------------------------------------------------------------------
 # Say it, THEN record it: a tick that dies before the message is out re-says it next time.
