@@ -12005,6 +12005,12 @@ for a in "$@"; do
 done
 cat > "$VSTUB/codex-prompt.last"
 cp "$schema" "$VSTUB/codex-schema.last" || exit 8
+# the provider's own rule, seen live 2026-11-16: every key in an object's `properties` must be in its `required`
+if ! jq -e '[.. | objects | select(has("properties")) | ((.properties | keys | sort) == ((.required // []) | sort))] | all' "$schema" >/dev/null 2>&1; then
+  printf '%s\n' 'Reading prompt from stdin...' >&2
+  printf '%s\n' '{"type":"error","message":"Invalid schema for response_format: schema.required is required to include every key in properties."}'
+  exit 1
+fi
 case "${VF_CODEX_MODE:-nonzero}" in
   valid)
     if [ "${VF_VERDICT:-approve}" = bounce ]; then
@@ -12197,11 +12203,15 @@ with kbc.connect_closing() as c:
       grep -qF -- '--output-schema' "$vbin/codex.log" || d="$d schema-path-missing"
       ! grep -qF -- '## Diff under review' "$vbin/codex.log" || d="$d prompt-was-put-in-argv"
       grep -qF '## Diff under review' "$vbin/codex-prompt.last" || d="$d prompt-did-not-reach-stdin"
+      # Codex is handed the fields the model must author and no others: the Claude arm's required list, with exactly
+      # those properties (OpenAI refuses a schema whose `required` does not list every key in `properties`)
       cmp -s <(jq -S . "$vbin/codex-schema.last") \
         <(jq -S --argjson stamped '["pr","judge_model","tokens_estimate","cost","session_id"]' \
-          'del(."$schema") | .properties |= with_entries(select(.key | IN($stamped[]) | not))
-           | .required |= map(select(. | IN($stamped[]) | not))' "$REPO_ROOT/rubrics/judge-verdict.schema.json") \
-        || d="$d codex-schema-differs-from-claude-schema"
+          'del(."$schema") | .required |= map(select(. | IN($stamped[]) | not)) | .required as $asked
+           | .properties |= with_entries(select(.key | IN($asked[])))' "$REPO_ROOT/rubrics/judge-verdict.schema.json") \
+        || d="$d codex-schema-is-not-the-required-model-authored-fields"
+      jq -e '(.properties | keys | sort) == (.required | sort) and (.properties | has("judge_engine") | not)' "$vbin/codex-schema.last" >/dev/null 2>&1 \
+        || d="$d codex-schema-asks-for-a-property-it-does-not-require"
       _vboard
       rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER="codex claude" VF_CODEX_MODE=valid VF_VERDICT=bounce)"
       { [ "$rc" = 4 ] && jq -e '.call == "terminate" and .tool == "kanban_request_changes"' "$vbin/perform.json" >/dev/null 2>&1; } \

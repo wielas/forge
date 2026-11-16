@@ -1360,14 +1360,18 @@ judge_quota_pause() {   # reads $raw
 # ---------------------------------------------------------------------------
 pr_url="$PR_URL"
 
-# The two arms receive the same reduced schema. The pinned Claude arm computes
-# its copy in-place for the control-arm comparison; this copy is for Codex's
-# path-valued --output-schema flag and is deliberately outside that region.
+# The pinned Claude arm computes its own copy of the model-facing schema in-place for the control-arm comparison.
+# This copy is for Codex's path-valued --output-schema flag and is deliberately outside that region. It holds ONLY
+# the fields the model must author: OpenAI's structured output refuses a schema whose `required` does not list every
+# key in `properties` (seen live 2026-11-16: "Invalid schema … 'schema.required' is required to include every key in
+# properties. Missing 'judge_engine'", and the first live review fell back to Claude). Every property that is not
+# required is stamped by this script after the call, so the model is not asked for it.
 JUDGE_SCHEMA_FILE="$TMP/judge-verdict.schema.json"
 jq -c --argjson stamped '["pr","judge_model","tokens_estimate","cost","session_id"]' '
     del(."$schema")
-  | .properties |= with_entries(select(.key | IN($stamped[]) | not))
   | .required |= map(select(. | IN($stamped[]) | not))
+  | .required as $asked
+  | .properties |= with_entries(select(.key | IN($asked[])))
 ' ~/.forge/rubrics/judge-verdict.schema.json > "$JUDGE_SCHEMA_FILE" 2>/dev/null ||
   substrate "env: judge-envelope — could not compute the model-facing verdict schema"
 
