@@ -6,10 +6,9 @@ the only progress record is [`docs/epic-hands-free.md`](epic-hands-free.md) (its
 plan* table, and *§ How we run this epic* for how a session is run). If this page and
 another file disagree, `make verify` arbitrates.
 
-**As of 2026-11-14 (evening).** `main` and the live runtime (`~/dev/forge-runtime`) are in step
-through #116; `git -C ~/dev/forge-runtime log -1` is the truth. `make preflight` in the runtime
-reads PASS 143 / WARN 5 / FAIL 0; the five WARNs are the optional global lefthook and the four
-forge-gate bot steps (below).
+**As of 2026-11-16 (early morning).** `main` and the live runtime (`~/dev/forge-runtime`) are in step
+through #127; `git -C ~/dev/forge-runtime log -1` is the truth. `make preflight` in the runtime
+reads no FAIL; its WARNs are the optional global lefthook and the four forge-gate bot steps (below).
 
 ## What Forge is
 
@@ -23,25 +22,22 @@ probe. The operator reads a daily digest and answers holds.
 On 2026-11-15 the owner chose pace over cross-vendor review: the verifier now tries its
 OpenAI judge first and spends scarce Claude usage only as the fallback.
 
-## Next: the owner's go for run B
+## Next: the owner's go for milestone 3
 
 What is built after that, in order, is [`docs/path-to-utility.md`](path-to-utility.md).
 
-Run B is milestone 2 of The Squatfather (CHUNK-6, 7, 8, then `GATE-M2`) on board
-`squatfather-run-a2`, and the first run in which the verifier merges. The protocol is
-[`docs/run-b.md`](run-b.md). Steps 1 to 6 of its launch are done (2026-11-14). What is
-left is the owner's, because it hands merge authority to the machine. One command, which
-shows what it will put in force and asks before it does:
+Run B's milestone 2 is merged (2026-11-15, [`docs/run-b.md`](run-b.md) *Results*): CHUNK-6, 7 and 8
+of The Squatfather, each merged by the verifier on board `squatfather-run-a2`. `GATE-M2` is held
+and armed `rehearse`; its probe passes 4 of 4 at `3a96dd4`. Releasing milestone 3 hands the machine
+another five chunks, so it is the owner's command. It shows what it will put in force and asks:
 
 ```bash
-forge go squatfather-run-a2 --project "$HOME/dev/the-squatfather" --branch-suffix a2
+forge go squatfather-run-a2 --project "$HOME/dev/the-squatfather" --branch-suffix a2 --gate GATE-M2 --rearm
 ```
 
-It grants merge authority on the board, arms `GATE-M1` `apply` and resumes the paused
-`forge-checkpoint` cron job. Within 15 minutes the cron probes M1 (it passes 5 of 5 today),
-completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run;
-`forge stop squatfather-run-a2` withdraws the authority. The run stops by itself at
-`GATE-M2` unless that gate is armed too.
+On its next tick the checkpoint cron probes M2, completes the gate, and CHUNK-13 starts.
+`forge status` shows the run and `forge stop squatfather-run-a2` withdraws the authority. A new
+hold, a landing and a stall reach Telegram within ten minutes (`forge-run-watch`).
 
 ## Proven (a command was run and its output observed)
 
@@ -49,6 +45,11 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
 |---|---|
 | A plan becomes merged, probed code | Run A, Squatfather M1: CHUNK-1 to 5 merged on green CI, four of them lane-built; the M1 probe passes 5 of 5. [`docs/run-a.md`](run-a.md) *Results* |
 | The verifier's recommendations can be trusted so far | Run A: the operator merged everything it recommended and bounced nothing; it bounced CHUNK-4 itself first |
+| **A milestone is built and merged with nobody in the loop** | Run B, 2026-11-15: CHUNK-6, 7 and 8 merged by the verifier at the head each verdict covered, CI green; the verifier bounced CHUNK-6 once on a real test gap and the lane fixed it. The two operator actions were unblocks after a Claude usage limit. [`docs/run-b.md`](run-b.md) *Results* |
+| A gate is completed by the checkpoint cron | `GATE-M1`, armed `apply`: probed 5 of 5 and completed on the first tick, 16 minutes after `forge go` |
+| The milestone probe and the amendment path work on a real finding | `GATE-M2` reported 3 of 4; the failing case was a probe defect (a substring check); `amend-contract.sh` changed the probe, its freeze and the decision log together (`wielas/Squatfather#16`), and the next tick read 4 of 4 |
+| A hold reaches the operator in minutes | `forge-run-watch` on the host: both run B holds were on Telegram within three minutes |
+| **The verifier judges on OpenAI first, with Claude as the fallback** | `forge rehearse`, 2026-11-16 on the deployed `b4b8af1`: `wielas/hello-forge#23` merged in 4 min 52 s on a verdict with `judge_engine: "codex"` (`gpt-6-astra`). The fallback ran live the same night: `#17` was judged by Claude when the Codex call was refused |
 | **Merge mode works live** | 2026-11-14, board `hello-rehearsal-a2h`, card `t_35fdac2e`: ready → PR `wielas/hello-forge#13` → CI green → verifier approve → merged → done in about 3 minutes, no operator action. Evidence: `~/forge-evidence/run-b-launch-2026-11-14/` |
 | The whole loop can be re-proved in one command | `forge rehearse`, 2026-11-14 on the deployed `04034da`: board `hello-rehearsal-r202611141142`, `wielas/hello-forge#15` merged by the verifier in 4 min 12 s, grant revoked, repo reset by `#16`, board archived. Evidence: `~/forge-evidence/rehearsals/` |
 | The checkpoint probes what was merged | #112, deployed: the cron fetches and fast-forwards the product checkout first; run once in rehearse against the private Squatfather repo |
@@ -60,7 +61,11 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
 
 ## Not proven
 
-- **Hands-free merges on a real product.** That is run B. One hello-forge card is not a milestone.
+- **The OpenAI judge on a real product.** It has judged hello-forge only; milestone 3 is its first real
+  PRs. All eight earlier merges were judged by Claude opus, and the implementer is OpenAI too, so the
+  judge is no longer a cross-vendor check (owner's decision, 2026-11-15).
+- **The bounds, against a real limit.** The Codex attempt limit and the quota give-up (#123), and the
+  judge's wait on a Claude usage limit (#124), have only run against stubs.
 - **The gate verbs over Telegram** (`/accept`, `/redirect`, `/park`). The forge-gate bot does
   not exist yet (BotFather, the profile, the plugin, `FORGE_OPERATOR_TELEGRAM_ID`). Without
   it a checkpoint that blocks is answered from a terminal; one that passes needs no answer.
@@ -68,9 +73,6 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
   unlocks the disk, and nothing on the host can say so. Only an external heartbeat URL in
   `~/.forge/watchdog.env` would report it; none is configured.
 - **A real watchdog alert.** It has only ever read healthy.
-- **The push watcher on the host.** `scripts/run-watch.sh` (new holds, landings, stalls and idle cards sent within
-  ten minutes) is tested offline only; until its two install commands are run (`docs/operator-guide.md`, Liveness) it
-  is not a cron job, `make preflight` WARNs, and a run is still seen once a day.
 - **The mutation probe's precision.** It reports and never bounces; read at the M2 checkpoint.
 
 ## Known gaps
@@ -79,8 +81,15 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
 - **The suite is heavy, but no longer slow.** One case (`cli/flags-exist`) spent 344 s forking `grep`
   per line of `docs/`; it now takes seconds, and CI runs `scripts/verify.sh --shard k/3` as three parallel
   jobs behind the same required `verify` check, so the gateway group (263 s) is the floor.
-- **`forge rehearse` has run once.** Run it after every deploy and tool upgrade; a failure is a
-  finding, and it names its own cleanup command.
+- **One usage window for the lane and the judge.** Both now draw on the OpenAI subscription; when it
+  is spent the judge falls back to Claude and the lane parks.
+- **A card's second hold is a triage card.** Hermes sends a card to `triage` on its second block of the
+  same kind, and most of Forge's holds carry no kind; only the usage-limit hold avoids it. An unblock
+  works once per card (`docs/hermes-field-notes.md`).
+- **The bounce rate misses the verifier's bounces.** `make metrics` read 0 of 3 for run B although
+  CHUNK-6 was bounced once (epic P40).
+- **`forge rehearse` is the proof after every deploy.** It found two defects on 2026-11-16 that the
+  suite could not: a schema OpenAI refuses, and a driver that acted on the tail of the verifier's output.
 
 ## Starting a new project
 
