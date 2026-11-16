@@ -48,6 +48,11 @@
     "method": "GATE cards with status done and a completed_at in the period; \"checkpoint\" means the result begins \"checkpoint pass:\" (scripts/checkpoint.sh --apply), every other completion is counted as the operator's. A separate row: it is in neither the operator touches nor the merges above (P14)"
   },
   "chunk_cards": 3,
+  "applied_bounces": {
+    "events": 0,
+    "chunks": 0,
+    "method": "changes_requested events on CHUNK cards in the period; includes open cards and all causes, without inferred tier"
+  },
   "verdicts": {
     "total": 7,
     "unattributed": 1,

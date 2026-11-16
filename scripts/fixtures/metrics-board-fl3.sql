@@ -153,6 +153,11 @@ INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
   ('t_ca','completed',NULL,1785207300),
   ('t_cb','review_requested',NULL,1785201000),
   ('t_cb','changes_requested',NULL,1785201800),
+  -- A second return and one on a still-open card must both count as events.
+  ('t_cb','changes_requested',NULL,1785201900),
+  ('t_cd','changes_requested',NULL,1785211700),
+  -- A non-chunk change request is not a chunk bounce.
+  ('t_jx','changes_requested',NULL,1785211800),
   ('t_cb','review_requested',NULL,1785210000),
   ('t_cb','completed',NULL,1785219000),
   ('t_cc','review_requested',NULL,1785205200),

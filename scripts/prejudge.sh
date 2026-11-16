@@ -46,6 +46,8 @@
 # =============================================================================
 set -uo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)" || exit 2
+
 PR_ARG=""; REPO=""; FORMAT="text"; WAIT_SECS=180; FIXTURE="${PREJUDGE_FIXTURE:-}"
 # Line numbers drift every time this header is edited; these print the block by
 # its own markers instead, so `--help` cannot silently start printing code.
@@ -123,10 +125,10 @@ else
     command -v "$tool" >/dev/null 2>&1 || { echo "$tool is not on PATH" >&2; exit 2; }
   done
   if [ -z "$REPO" ]; then
-    REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"
+    REPO="$(python3 "$HERE/github-read.py" repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"
     [ -n "$REPO" ] || { echo "no --repo given and cwd is not a GitHub repo" >&2; exit 2; }
   fi
-  gh pr view "$NUM" --repo "$REPO" --json \
+  python3 "$HERE/github-read.py" pr view "$NUM" --repo "$REPO" --json \
     number,state,title,body,headRefName,headRefOid,baseRefName,baseRefOid,mergedAt,url,additions,deletions,changedFiles,statusCheckRollup \
     > "$PRJSON" 2>"$TMP/gh.log" \
     || { echo "cannot read $REPO#$NUM: $(tail -1 "$TMP/gh.log")" >&2; exit 2; }
@@ -237,7 +239,7 @@ ci_state() {
     now="$(date +%s)"
     [ "$now" -ge "$deadline" ] && break
     sleep 10
-    gh pr view "$NUM" --repo "$REPO" --json statusCheckRollup > "$TMP/roll.json" 2>/dev/null \
+    python3 "$HERE/github-read.py" pr view "$NUM" --repo "$REPO" --json statusCheckRollup > "$TMP/roll.json" 2>/dev/null \
       && jq -s '.[0] * .[1]' "$PRJSON" "$TMP/roll.json" > "$TMP/pr.merged" \
       && mv "$TMP/pr.merged" "$PRJSON"
   done

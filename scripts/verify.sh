@@ -3436,6 +3436,8 @@ prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_m
 prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
 prejudge/review-refuses-without-a-board  no board, or no hermes, is substrate before the gate — never a routed outcome with rc 0 that transitioned nothing
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
+verifier/github-reads-retry-without-partial-output  transient read failures recover; exhausted or hung reads fail with no stdout; merge and browser commands never execute
+verifier/review-history-keeps-earlier-rounds  original verdict and merged-tree payloads survive later rounds; applied bounce counts come from board events including repeated and open-card returns
 verifier/claude-token-reaches-the-claude-child  P36: with CLAUDE_CODE_OAUTH_TOKEN unset the helper hands the claude child the root .env token (profile HERMES_HOME resolves to the root; bare/export/quoted/CRLF parse, the last wins; a set token wins, an empty one does not; no file is no token, no crash; nothing leaks to the caller or an xtrace)
 verifier/claude-token-reaches-every-claude-call-site  P36: every script that calls claude -p sources claude-token.sh before it; no SOUL/skill/adapter calls it directly; the scan finds prejudge-review.sh, so it cannot go blind
 verifier/claude-token-mutation-is-caught  P36: no fallback, a clobbered token, the profile .env read, first-line-wins, a token left in the caller, xtrace left on, an unsourced call site and a missing helper each turn the two checks above red
@@ -10976,6 +10978,16 @@ wants prejudge  && run_prejudge_group
 # ===========================================================================
 run_verifier_group() {
   group verifier
+  if python3 scripts/fixtures/github-read-check.py > "$TMPROOT/github-read-check.log" 2>&1; then
+    ok "github-reads-retry-without-partial-output"
+  else
+    bad "github-reads-retry-without-partial-output" "$(tail -12 "$TMPROOT/github-read-check.log")"
+  fi
+  if python3 scripts/fixtures/review-evidence-test.py > "$TMPROOT/review-evidence-test.log" 2>&1; then
+    ok "review-history-keeps-earlier-rounds"
+  else
+    bad "review-history-keeps-earlier-rounds" "$(tail -12 "$TMPROOT/review-evidence-test.log")"
+  fi
   local review=scripts/prejudge-review.sh mc=scripts/merge-check.sh
   local mw=scripts/merge-watcher.sh bo=scripts/bounce.sh
   local prs=scripts/fixtures/prejudge-prs
