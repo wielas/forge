@@ -53,7 +53,8 @@
     "unattributed": 0,
     "by_verdict": {
       "approve": 3
-    }
+    },
+    "by_engine": {}
   },
   "tiers": [
     {

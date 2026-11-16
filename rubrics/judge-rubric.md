@@ -63,6 +63,7 @@ Scoring: 3 exemplary · 2 acceptable · 1 deficient (fixable) · 0 disqualifying
   "nits_as_cards": ["CARD?: extract retry policy into shared helper"],
   "spot_check_suggestion": "eyeball src/sync/engine.py diff — densest change",
   "judge_model": "<model id>",
+  "judge_engine": "<codex | claude>",
   "tokens_estimate": 0,
   "cost": {
     "input_tokens": 0,
@@ -75,13 +76,15 @@ Scoring: 3 exemplary · 2 acceptable · 1 deficient (fixable) · 0 disqualifying
 }
 ```
 
-The last four fields are **stamped by the operator from the judging harness,
+The last five fields are **stamped by the operator from the judging harness,
 never produced by the judging model** — a model cannot report its own id, and
-still less its own token consumption. The scorer is never asked for any of them:
-the schema it receives has them removed, because a field a model is asked for is
-a field it will invent.
+still less its own token consumption. The scorer is never asked for the
+provider-owned fields: the schema it receives has those removed, because a
+field a model is asked for is a field it will invent. The verifier stamps
+`judge_engine` after it chooses the provider arm; an OpenAI subscription records `total_cost_usd: null` with
+`cost_basis: "subscription"` rather than inventing a dollar price.
 
-**All four are therefore OPTIONAL in `judge-verdict.schema.json`, and that
+**All five are therefore OPTIONAL in `judge-verdict.schema.json`, and that
 includes `tokens_estimate`.** They can only be stamped where a judging harness
 reports usage, and an interactive tier-2 review has no such envelope. This
 paragraph and the schema contradicted each other until 2026-09-02: the schema

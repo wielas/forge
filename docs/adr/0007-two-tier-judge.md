@@ -80,3 +80,8 @@ mines those verdicts across cards; a free-text verdict would teach it nothing.
   to pay per token for review.
 - **Judging inside the lane worker.** The implementer reviewing its own diff in
   the same context is not review. Fresh context is the point.
+
+Amendment — 2026-11-15: the verifier's tier-1 judge now calls OpenAI/Codex first and
+falls back to Claude when that one-shot call fails. The owner explicitly accepted the
+loss of cross-vendor review to preserve pace while Claude usage is scarce; the rest of
+the two-tier boundary and merge authority decision is unchanged.

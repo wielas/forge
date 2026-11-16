@@ -16,9 +16,12 @@ forge-gate bot steps (below).
 A way to build software from a plan with the operator out of the per-chunk loop. The plan
 is made interactively (`/scope`, `/architect`, `/roadmap`). After that a Hermes board runs
 it: a lane drives Codex in a worktree and opens a PR, a verifier executes the checks and
-judges it, and the PR is merged — by the operator from a hold, or by the verifier where the
+judges it with OpenAI/Codex first and Claude as the fallback, and the PR is merged — by the operator from a hold, or by the verifier where the
 board has a merge-authority grant. Each milestone ends in a gate card with a whole-system
 probe. The operator reads a daily digest and answers holds.
+
+On 2026-11-15 the owner chose pace over cross-vendor review: the verifier now tries its
+OpenAI judge first and spends scarce Claude usage only as the fallback.
 
 ## Next: the owner's go for run B
 
@@ -49,7 +52,7 @@ completes `GATE-M1`, and CHUNK-6 and CHUNK-8 start. `forge status` shows the run
 | **Merge mode works live** | 2026-11-14, board `hello-rehearsal-a2h`, card `t_35fdac2e`: ready → PR `wielas/hello-forge#13` → CI green → verifier approve → merged → done in about 3 minutes, no operator action. Evidence: `~/forge-evidence/run-b-launch-2026-11-14/` |
 | The whole loop can be re-proved in one command | `forge rehearse`, 2026-11-14 on the deployed `04034da`: board `hello-rehearsal-r202611141142`, `wielas/hello-forge#15` merged by the verifier in 4 min 12 s, grant revoked, repo reset by `#16`, board archived. Evidence: `~/forge-evidence/rehearsals/` |
 | The checkpoint probes what was merged | #112, deployed: the cron fetches and fast-forwards the product checkout first; run once in rehearse against the private Squatfather repo |
-| The watchdog asks the verifier's token for life | #115, deployed: `OK    token  the verifier's claude token answered just now` on the host; a dead token is a FAIL and an alert |
+| The watchdog asks the verifier's token for life | #115, deployed: `OK    token  the verifier's claude token answered just now` on the host; a dead token is a FAIL and an alert, while HTTP 429 is a healthy WARN |
 | A board follows a changed plan | `hermes/board-sync.sh --apply` on the live Squatfather board, 2026-11-14: 14 steps, each read back, ends in sync, releases nothing |
 | The checkpoint cron reports once and writes nothing in rehearse | `GATE-M1` armed `rehearse`, the cron script run twice: one report (pass, 5 of 5), then silence; the gate stayed held |
 | A bounce, a crash after push, a red CI and a quota park each recover | July ladder and fault exercises; run A's D-1 drill and resumed Codex run. Details in the archive |

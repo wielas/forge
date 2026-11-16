@@ -3442,6 +3442,10 @@ verifier/claude-token-reaches-the-judge-call  P36: the real prejudge-review.sh, 
 verifier/a-judge-usage-limit-is-waited-out  a judge call refused for the account's usage limit (HTTP 429) is made again after a bounded wait in-process: two refusals then a verdict end in the normal recommendation with one block and a wait record visible meanwhile; a stated reset inside the allowance is waited for, one past it holds at once; a zone with no file is not guessed at
 verifier/a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold  after FORGE_JUDGE_QUOTA_MAX_WAIT the review holds with an env: block that passes blocked_reason_pattern, is decision-first, names the unblock command and no fix, carries a kind (so a card held before does not reach the kernel's triage), and lands blocked on the real kernel; no bound, a "fix it" Reply and a kind-less hold are each seen
 verifier/another-judge-api-failure-is-held-as-before  a 401, a 500 and an answer that is not JSON each ask the judge once, wait for nothing and hold with their old reason byte for byte; a review that waits on every API error is seen
+verifier/the-openai-judge-is-asked-first  a valid Codex verdict routes like Claude, never calls Claude, stamps the pinned model/engine and usage, and passes the read-only one-shot argv without the prompt
+verifier/a-failed-openai-judge-falls-back-to-claude  nonzero, timeout, empty, non-JSON, schema-incomplete and usage-limit Codex failures each emit one bounded diagnostic and use Claude
+verifier/the-judge-order-is-a-knob  the four accepted orders choose the first engine, a non-last Claude 429 falls through without waiting, and an invalid order calls nothing
+verifier/every-judge-failing-is-one-hold-that-names-them  both engines fail once and the substrate hold names both attempts with a rotated block kind
 verifier/chunk-is-the-running-card  D19.1 + P24: --chunk is read back off the board (running, this profile's, one running run), not compared with a scrubbed variable; a refusal names no task; the kernel refuses a call aimed at another card
 verifier/the-contract-comes-from-the-card  --contract-from-card: no stdin, the scorer is given the card's body; an empty body is stale-spec (F2: a background launch has no pipe)
 verifier/the-envelope-lands-on-the-real-kernel  P24 (b),(c): a fail lands ready on the recorded implementer, a recommendation blocked/needs_input — each by the tool's own result; sticky without an assign, decision-first; a refused call leaves the card running and its fallback lands
@@ -3693,6 +3697,7 @@ watchdog/install-prints-the-runtime-plist-and-touches-nothing  watchdog-install.
 watchdog/watchdog-scripts-are-executable-and-share-the-state-root  both scripts are 100755 in git and forge_watchdog_root is <state root>/watchdog
 watchdog/token-alive-is-ok-and-throttled  a stub claude answering is_error false is an OK line, asked the verifier's question once per FORGE_WATCHDOG_TOKEN_EVERY with the root .env's token in its environment; the cached verdict and its age between probes; FORGE_WATCHDOG_TOKEN=0 skips; --no-alert asks and writes nothing; the binary named is the one that runs
 watchdog/token-dead-fails-and-alerts-once  is_error true is a FAIL with the reason and the remedy, exit 1 and one alert; asked again at FORGE_WATCHDOG_TOKEN_RETRY and not before; a renewed token gives OK and one recovery message
+watchdog/a-usage-limit-is-not-a-dead-token  a Claude HTTP 429 probe is a quoted account-limit WARN, healthy with no alert or dead cache, while a 401 remains FAIL
 watchdog/token-could-not-ask-is-neither  no claude binary, a claude that hangs past the timeout (killed), output that is not JSON and no token line are each a WARN: not OK, not FAIL, no alert, no verdict cached; a FAIL that cannot be re-asked stays a FAIL and a stale OK turns into a WARN
 watchdog/token-never-leaks  a recognisable token in the .env appears in the stub claude's environment and in no argv, alert, log line, bash -x trace, state or cache file, even when the CLI's own error text quotes it
 front/quiet-board-exits-0           a board with work in flight and nothing to decide: exit 0, the counts, this board's grant and armed gates, the running card, its held gate, the last chunk landed; reached through a symlink
@@ -9031,7 +9036,8 @@ run_metadata_group() {
   local valid_ok=1 name profile gate_rc
   for spec in \
     "chunk-valid.json:forge-codex-lane" \
-    "judge-valid.json:forge-prejudge"; do
+    "judge-valid.json:forge-prejudge" \
+    "judge-subscription.json:forge-prejudge"; do
     name="${spec%%:*}"; profile="${spec#*:}"
     metadata_validate --profile "$profile" "$fixtures/$name" || valid_ok=0
   done
@@ -10419,6 +10425,8 @@ PVH
   elif jq -e '
       (.properties.cost.required | index("cache_read_input_tokens"))
       and (.properties.cost.required | index("total_cost_usd"))
+      and (.properties.cost.properties.total_cost_usd.type | index("null"))
+      and (.properties.cost.properties.cost_basis.enum | index("subscription"))
       and (.properties.session_id.type == "string")
       and (.properties.worker_session_id.type == "string")
       and ((.required | index("cost")) == null)
@@ -11875,7 +11883,9 @@ MAMV
              the-hook-refuses-a-record-that-is-not-this-runs the-hook-policy-keeps-an-exit-open \
              the-hook-neutralises-keys-the-driver-invents the-lane-and-review-claims-share-one-workspace \
              claude-token-reaches-the-judge-call a-judge-usage-limit-is-waited-out \
-             a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold another-judge-api-failure-is-held-as-before; do
+             a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold another-judge-api-failure-is-held-as-before \
+             the-openai-judge-is-asked-first a-failed-openai-judge-falls-back-to-claude \
+             the-judge-order-is-a-knob every-judge-failing-is-one-hold-that-names-them; do
       skip "$c" "hermes (and its venv python) not installed"
     done
   else
@@ -11933,6 +11943,7 @@ VGH
     cat > "$vbin/claude" <<'VCLAUDE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$VSTUB/claude.log"
+printf '%s\n' claude >> "$VSTUB/judge-order.log"
 # What the judge call's environment carried, recorded as a verdict and never as a value: whether
 # CLAUDE_CODE_OAUTH_TOKEN was set, and whether it equals the FIXTURE value the case planted.
 { [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && vt_p=present || vt_p=absent
@@ -11976,6 +11987,50 @@ jq -n --argjson scores "$scores" --argjson findings "$findings" --arg verdict "$
       verdict: $verdict, scores: $scores, findings: $findings,
       nits_as_cards: [], spot_check_suggestion: "run the sync twice" } }'
 VCLAUDE
+    # A one-shot Codex stub. It records argv separately from the prompt, so the
+    # verifier cases can prove the large prompt went through stdin and never
+    # became an argument. Its modes cover each provider failure class.
+    cat > "$vbin/codex" <<'VCODEX'
+#!/usr/bin/env bash
+printf '%s\n' 'Reading prompt from stdin...' >&2
+printf '%s\n' "$*" >> "$VSTUB/codex.log"
+printf '%s\n' codex >> "$VSTUB/judge-order.log"
+out=""
+schema=""
+prev=""
+for a in "$@"; do
+  [ "$prev" = -o ] && out="$a"
+  [ "$prev" = --output-schema ] && schema="$a"
+  prev="$a"
+done
+cat > "$VSTUB/codex-prompt.last"
+cp "$schema" "$VSTUB/codex-schema.last" || exit 8
+case "${VF_CODEX_MODE:-nonzero}" in
+  valid)
+    if [ "${VF_VERDICT:-approve}" = bounce ]; then
+      jq -n '{schema:"forge.judge.v1",chunk_id:"CHUNK-7",verdict:"bounce",
+        scores:{spec_fidelity:1,scenario_integrity:1,architectural_conformance:3,scope_discipline:3,debt_honesty:3,doc_reconciliation:3},
+        findings:[{dimension:"scenario_integrity",severity:"block",evidence:"stub evidence",action:"repair the failing scenario"}],
+        nits_as_cards:[],spot_check_suggestion:"HTTP 429 rate limit quota exhausted: run the sync twice"}' > "$out"
+    else
+      jq -n '{schema:"forge.judge.v1",chunk_id:"CHUNK-7",verdict:"approve",
+        scores:{spec_fidelity:3,scenario_integrity:3,architectural_conformance:3,scope_discipline:3,debt_honesty:3,doc_reconciliation:3},
+        findings:[],nits_as_cards:[],spot_check_suggestion:"HTTP 429 rate limit quota exhausted: run the sync twice"}' > "$out"
+    fi
+    jq -nc --rawfile message "$out" '{type:"item.completed",item:{type:"agent_message",text:$message}}'
+    printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":13,"reasoning_output_tokens":5}}'
+    exit 0;;
+  timeout) sleep "${VF_CODEX_SLEEP:-30}"; exit 0;;
+  empty) printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":13,"reasoning_output_tokens":5}}'; exit 0;;
+  not-json) printf '%s\n' 'not json' > "$out"; exit 0;;
+  missing) jq -n '{schema:"forge.judge.v1",chunk_id:"CHUNK-7",verdict:"approve",findings:[],nits_as_cards:[],spot_check_suggestion:""}' > "$out"; exit 0;;
+  usage)
+    printf '%s\n' '{"type":"error","message":"You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 16th, 2026 12:42 AM."}'
+    printf '%s\n' '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 16th, 2026 12:42 AM."}}'
+    exit 1;;
+  *) printf '%s\n' 'earlier transport error' 'codex stub failed' '' >&2; exit 7;;
+esac
+VCODEX
     # The merged-tree check, recorded. `merge-check.sh` itself is executed
     # against real repositories by the cases above; here the outcome is the
     # input, so the ROUTING is what gets exercised.
@@ -12007,12 +12062,13 @@ case "${VF_MUTATION:-pass}" in
   *) jq -n '{schema:"forge.mutation.v1",result:"unrunnable",evidence:"stub says unrunnable"}'; exit 3;;
 esac
 VMP
-    chmod +x "$vbin/gh" "$vbin/claude" "$vbin/merge-check" "$vbin/mutation-probe"
+    chmod +x "$vbin/gh" "$vbin/claude" "$vbin/codex" "$vbin/merge-check" "$vbin/mutation-probe"
 
     _v()   { HERMES_HOME="$vhome" hermes kanban --board vlab "$@"; }
     _vst() { _v show "$1" --json 2>/dev/null | jq -r '[.task.status,(.task.assignee // "-")] | join("/")'; }
     _vrid(){ _v show "$1" --json 2>/dev/null | jq -r '.runs | max_by(.id).id'; }
     _vcards() { _v list --json 2>/dev/null | jq 'length'; }
+    _vq_calls() { if [ -f "$vbin/claude.log" ]; then wc -l < "$vbin/claude.log" | tr -d ' '; else echo 0; fi; }
     _vclaim_review() {
       ( cd "$vsrc" && HERMES_HOME="$vhome" HERMES_KANBAN_BOARD=vlab "$vpy" -c "
 from hermes_cli import kanban_db as kb, kanban_db_connect as kbc
@@ -12050,6 +12106,7 @@ with kbc.connect_closing() as c:
       if [ "${VCONTRACT:-}" = card ]; then
         ( . "$snip"
           env -u CLAUDE_CODE_OAUTH_TOKEN PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
+            FORGE_CODEX_BIN="$vbin/codex" FORGE_JUDGE_ORDER=claude \
             FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
             "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
             --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" --contract-from-card < /dev/null ) \
@@ -12057,6 +12114,7 @@ with kbc.connect_closing() as c:
       else
       printf '%s' "$contract" | ( . "$snip"
         env -u CLAUDE_CODE_OAUTH_TOKEN PATH="$vbin:$PATH" VSTUB="$vbin" FORGE_STATE_ROOT="$vstate" \
+          FORGE_CODEX_BIN="$vbin/codex" FORGE_JUDGE_ORDER=claude \
           FORGE_MERGE_CHECK_BIN="$vbin/merge-check" FORGE_MUTATION_PROBE_BIN="$vbin/mutation-probe" "$@" \
           "${VREVIEW:-$REPO_ROOT/$review}" "${VPRURL:-https://example.invalid/wielas/proj/pull/9}" \
           --chunk "${VCHUNK:-$vP}" --board vlab --fixture "${VFIXTURE:-$REPO_ROOT/$prs/pr-9}" ) \
@@ -12071,8 +12129,9 @@ with kbc.connect_closing() as c:
       echo "$rc"
     }
     _vboard() {   # a fresh board with P and its child C
-      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/claude.auth" "$vbin/claude.n" "$vbin/wait-seen.json" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
+      rm -rf "$vhome" "$vstate" "$vbin/gh.log" "$vbin/claude.log" "$vbin/codex.log" "$vbin/claude.auth" "$vbin/claude.n" "$vbin/wait-seen.json" "$vbin/mc.log" "$vbin/mp.log" "$vbin/merged" "$vbin/closed" \
              "$vbin/base" "$vbin/state-down"
+      rm -f "$vbin/judge-order.log" "$vbin/codex-prompt.last" "$vbin/codex-schema.last"
       mkdir -p "$vhome"
       # The live head starts equal to the one the recorded PR carries, because in
       # fixture mode Stage 0 reads `pr.json` — so that is the commit this review is
@@ -12083,6 +12142,203 @@ with kbc.connect_closing() as c:
       vC="$(_v create "CHUNK-8: depends on 7" --assignee forge-codex-lane --parent "$vP" --json 2>/dev/null | jq -r '.id')"
       _vhandoff "$vP"
     }
+
+    # ---------------------------------------------------------------------
+    # S9k: the tier-1 judge arms. Mutants are complete copies of scripts/ so
+    # HERE= and every sourced helper still resolve exactly as they do in the
+    # tracked verifier; only the named rule is changed in each copy.
+    # ---------------------------------------------------------------------
+    local vjudge_mutants="$TMPROOT/verifier-judge-mutants" vjudge_home="$TMPROOT/verifier-judge-home"
+    local vdetail_mut
+    # Match the later merge-watcher case's HOME setup. The model-facing schema
+    # must be this checkout's, even if ~/.forge points at an older deployment.
+    mkdir -p "$vjudge_home/.forge" "$vjudge_home/tmp"
+    ln -s "$REPO_ROOT/rubrics" "$vjudge_home/.forge/rubrics"
+    local vjudge_env=(HOME="$vjudge_home" TMPDIR="$vjudge_home/tmp"
+      FORGE_JUDGE_MODEL= FORGE_JUDGE_EFFORT= FORGE_JUDGE_TIMEOUT=30
+      VF_JUDGE_FAILS= VF_JUDGE_RAW= VF_VERDICT=approve)
+    _vo_ready() { # check prerequisites before creating/claiming any card
+      [ -x "$1" ] && [ -x "$vbin/codex" ] && [ -x "$vbin/claude" ] \
+        && [ -d "$vjudge_home/tmp" ] && command -v pgrep >/dev/null 2>&1 \
+        && jq -e '.required | index("scores")' "$vjudge_home/.forge/rubrics/judge-verdict.schema.json" >/dev/null 2>&1
+    }
+    _vo_reason() { jq -r '.reason // .action // "no outcome"' "$vbin/out.json" 2>/dev/null | head -1 | cut -c1-180; }
+    _vo_mut() { # sed-expression -> fresh mutated scripts tree
+      rm -rf "$vjudge_mutants"; mkdir -p "$vjudge_mutants"
+      cp -R "$REPO_ROOT/scripts" "$vjudge_mutants/" || return 1
+      # Preserve +x when the replacement file is renamed over the script.
+      cp -p "$REPO_ROOT/scripts/prejudge-review.sh" "$vjudge_mutants/scripts/prejudge-review.sh.m" || return 1
+      sed -e "$1" "$REPO_ROOT/scripts/prejudge-review.sh" > "$vjudge_mutants/scripts/prejudge-review.sh.m" \
+        && mv "$vjudge_mutants/scripts/prejudge-review.sh.m" "$vjudge_mutants/scripts/prejudge-review.sh" || return 1
+      _vo_ready "$vjudge_mutants/scripts/prejudge-review.sh" \
+        && bash -n "$vjudge_mutants/scripts/prejudge-review.sh" \
+        && ! cmp -s "$REPO_ROOT/scripts/prejudge-review.sh" "$vjudge_mutants/scripts/prejudge-review.sh"
+    }
+    _vo_first() { # program -> detail (empty means the program passed)
+      local program="$1" d="" rc vf
+      _vo_ready "$program" || { printf ' judge-test-prerequisites-missing'; return; }
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER="codex claude" VF_CODEX_MODE=valid VF_VERDICT=approve)"
+      vf="$vstate/verdicts/vlab-$vP.json"
+      { [ "$rc" = 4 ] && jq -e '.call == "terminate" and .tool == "kanban_block"' "$vbin/perform.json" >/dev/null 2>&1; } \
+        || d="$d approve-did-not-route(rc=$rc,reason=$(_vo_reason))"
+      [ "$(_vq_calls)" = 0 ] || d="$d claude-was-called-on-approve"
+      jq -e '.judge_engine == "codex" and .judge_model == "gpt-6-astra" and .tokens_estimate == 27
+             and .cost.input_tokens == 11 and .cost.output_tokens == 13 and .cost.cache_read_input_tokens == 7
+             and .cost.cache_creation_input_tokens == 3 and .cost.reasoning_output_tokens == 5
+             and .cost.total_cost_usd == null and .cost.cost_basis == "subscription" and (.session_id | not)
+             and (.spot_check_suggestion | contains("HTTP 429 rate limit quota exhausted"))' \
+        "$vf" >/dev/null 2>&1 || d="$d codex-stamps-are-wrong"
+      grep -qF -- '--sandbox read-only' "$vbin/codex.log" || d="$d sandbox-pin-missing"
+      grep -qF -- 'approval_policy="never"' "$vbin/codex.log" || d="$d approval-pin-missing"
+      grep -qF -- '--ephemeral' "$vbin/codex.log" || d="$d ephemeral-missing"
+      grep -qF -- '-m gpt-6-astra' "$vbin/codex.log" || d="$d model-pin-missing"
+      grep -qF -- 'model_reasoning_effort="high"' "$vbin/codex.log" || d="$d effort-pin-missing"
+      grep -qF -- '--output-schema' "$vbin/codex.log" || d="$d schema-path-missing"
+      ! grep -qF -- '## Diff under review' "$vbin/codex.log" || d="$d prompt-was-put-in-argv"
+      grep -qF '## Diff under review' "$vbin/codex-prompt.last" || d="$d prompt-did-not-reach-stdin"
+      cmp -s <(jq -S . "$vbin/codex-schema.last") \
+        <(jq -S --argjson stamped '["pr","judge_model","tokens_estimate","cost","session_id"]' \
+          'del(."$schema") | .properties |= with_entries(select(.key | IN($stamped[]) | not))
+           | .required |= map(select(. | IN($stamped[]) | not))' "$REPO_ROOT/rubrics/judge-verdict.schema.json") \
+        || d="$d codex-schema-differs-from-claude-schema"
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER="codex claude" VF_CODEX_MODE=valid VF_VERDICT=bounce)"
+      { [ "$rc" = 4 ] && jq -e '.call == "terminate" and .tool == "kanban_request_changes"' "$vbin/perform.json" >/dev/null 2>&1; } \
+        || d="$d bounce-did-not-route(rc=$rc,reason=$(_vo_reason))"
+      [ "$(_vq_calls)" = 0 ] || d="$d claude-was-called-on-bounce"
+      printf '%s' "$d"
+    }
+    vdetail="$(_vo_first "$REPO_ROOT/$review")"
+    _vo_mut 's/--sandbox read-only/--sandbox workspace-write/' || vdetail="$vdetail sandbox-mutant-setup-failed"
+    vdetail_mut="$(_vo_first "$vjudge_mutants/scripts/prejudge-review.sh")"
+    if [ -z "$vdetail" ] && [ "$vdetail_mut" = " sandbox-pin-missing" ]; then
+      ok "the-openai-judge-is-asked-first (Codex handles approve and bounce without Claude, including agent messages discussing HTTP 429/rate limits/quota; model, engine and observed usage are stamped; stdin carries the prompt and both arms use the same schema; the executable sandbox mutant fails only the sandbox assertion)"
+    else
+      bad "the-openai-judge-is-asked-first" "Codex must be the first successful judge and its host-owned usage stamp must be truthful —$vdetail$([ -n "$vdetail_mut" ] && printf ' mutant:%s' "$vdetail_mut")"
+    fi
+
+    _vo_fallback() { # program -> detail; all Codex failure classes must reach one Claude verdict
+      local program="$1" d="" mode rc n vf timeout want
+      _vo_ready "$program" || { printf ' judge-test-prerequisites-missing'; return; }
+      for mode in nonzero timeout empty not-json missing usage; do
+        _vboard; timeout=30
+        case "$mode" in
+          nonzero) want='codex stub failed';;
+          timeout) timeout=1; want='timed out after 1s';;
+          empty) want='codex produced no final message';;
+          not-json) want='codex final message was not a JSON object';;
+          missing) want='codex final message was missing a required verdict field';;
+          usage) want='try again at Nov 16th, 2026 12:42 AM.';;
+        esac
+        rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER="codex claude" \
+          VF_CODEX_MODE="$mode" FORGE_JUDGE_TIMEOUT="$timeout" VF_CODEX_SLEEP=4)"
+        vf="$vstate/verdicts/vlab-$vP.json"
+        { [ "$rc" = 4 ] && [ "$(_vq_calls)" = 1 ]; } \
+          || d="$d $mode-did-not-fallback(rc=$rc,calls=$(_vq_calls),reason=$(_vo_reason))"
+        jq -e '.judge_engine == "claude"' "$vf" >/dev/null 2>&1 || d="$d $mode-verdict-was-not-claude"
+        n="$(grep -c '^judge: codex failed:' "$vbin/err.txt" 2>/dev/null || true)"
+        [ "$n" = 1 ] || d="$d $mode-did-not-emit-one-codex-diagnostic($n)"
+        grep '^judge: codex failed:' "$vbin/err.txt" | grep -qF "$want" || d="$d $mode-lost-the-failure-reason"
+        ! grep '^judge: codex failed:' "$vbin/err.txt" | grep -Eq 'Reading prompt from stdin|https?://' \
+          || d="$d $mode-diagnostic-contains-banner-or-url"
+        awk '/^judge: codex failed:/ && length($0) > 261 {bad=1} END {exit bad}' "$vbin/err.txt" \
+          || d="$d $mode-diagnostic-was-not-bounded"
+      done
+      printf '%s' "$d"
+    }
+    vdetail="$(_vo_fallback "$REPO_ROOT/$review")"
+    _vo_mut 's/if judge_claude; then :; else judge_record_failure claude "\$JUDGE_CLAUDE_REASON"; fi/JUDGE_CLAUDE_REASON="mutant skipped Claude"; judge_record_failure claude "$JUDGE_CLAUDE_REASON"/' \
+      || vdetail="$vdetail fallback-mutant-setup-failed"
+    vdetail_mut="$(_vo_fallback "$vjudge_mutants/scripts/prejudge-review.sh")"
+    if [ -z "$vdetail" ] && [ -n "$vdetail_mut" ] \
+       && jq -e '.reason | contains("mutant skipped Claude")' "$vbin/out.json" >/dev/null 2>&1; then
+      ok "a-failed-openai-judge-falls-back-to-claude (nonzero, timeout, empty, non-JSON, schema-incomplete and event-only usage refusals each name Codex on one bounded stderr line and use exactly one Claude verdict; diagnostics skip the stdin banner, retain reset times and omit URLs; the fallback rule is mutation-covered)"
+    else
+      bad "a-failed-openai-judge-falls-back-to-claude" "every bounded Codex failure must fall through to Claude —$vdetail$([ -n "$vdetail_mut" ] && printf ' mutant:%s' "$vdetail_mut")"
+    fi
+
+    _vo_order() { # program -> detail
+      local program="$1" d="" rc
+      _vo_ready "$program" || { printf ' judge-test-prerequisites-missing'; return; }
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER= VF_CODEX_MODE=valid)"
+      { [ "$rc" = 4 ] && [ -s "$vbin/codex.log" ] && [ ! -s "$vbin/claude.log" ]; } || d="$d default-is-not-codex-first"
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER="claude codex" VF_JUDGE_FAILS=always VF_JUDGE_STATUS=429 VF_CODEX_MODE=valid \
+        FORGE_JUDGE_QUOTA_STEP=0.05 FORGE_JUDGE_QUOTA_CAP=0.05 FORGE_JUDGE_QUOTA_MAX_WAIT=1)"
+      { [ "$rc" = 4 ] && [ "$(_vq_calls)" = 1 ] && [ "$(tr '\n' ' ' < "$vbin/judge-order.log")" = 'claude codex ' ] \
+        && [ ! -d "$vstate/judge-waits" ] && [ ! -e "$vbin/wait-seen.json" ]; } \
+        || d="$d claude-codex-did-not-fall-through-without-wait(rc=$rc,reason=$(_vo_reason))"
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER=codex VF_CODEX_MODE=nonzero)"
+      { [ "$rc" = 3 ] && [ ! -s "$vbin/claude.log" ]; } || d="$d codex-alone-called-claude(rc=$rc)"
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER=codex VF_CODEX_MODE=usage)"
+      { [ "$rc" = 3 ] && [ "$(_vq_calls)" = 0 ] && jq -e '
+          .action == "substrate-block" and .terminate.tool == "kanban_block"
+          and (.reason | contains("codex usage limit") and contains("try again at Nov 16th, 2026 12:42 AM.")
+            and (test("https?://|Reading prompt from stdin") | not))' "$vbin/out.json" >/dev/null 2>&1; } \
+        || d="$d codex-event-only-limit-was-not-an-honest-hold(rc=$rc,reason=$(_vo_reason))"
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER=claude VF_CODEX_MODE=valid)"
+      { [ "$rc" = 4 ] && [ ! -e "$vbin/codex.log" ]; } || d="$d claude-alone-called-codex(rc=$rc)"
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER=bad VF_CODEX_MODE=valid)"
+      { [ "$rc" = 2 ] && [ ! -e "$vbin/codex.log" ] && [ ! -e "$vbin/claude.log" ]; } || d="$d bad-order-called-a-provider(rc=$rc)"
+      printf '%s' "$d"
+    }
+    vdetail="$(_vo_order "$REPO_ROOT/$review")"
+    _vo_mut 's/JUDGE_ORDER="${FORGE_JUDGE_ORDER:-codex claude}"/JUDGE_ORDER="${FORGE_JUDGE_ORDER:-claude codex}"/' \
+      || vdetail="$vdetail order-mutant-setup-failed"
+    vdetail_mut="$(_vo_order "$vjudge_mutants/scripts/prejudge-review.sh")"
+    if [ -z "$vdetail" ] && [ "$vdetail_mut" = " default-is-not-codex-first" ]; then
+      ok "the-judge-order-is-a-knob (codex claude is the default; claude codex takes Claude once and falls to Codex on HTTP 429 without a wait record; codex and claude can be selected alone; bad input is usage before a call; the default-order mutation is caught)"
+    else
+      bad "the-judge-order-is-a-knob" "judge order must control both fallback and usage-limit waiting —$vdetail$([ -n "$vdetail_mut" ] && printf ' mutant:%s' "$vdetail_mut")"
+    fi
+
+    _vo_allfail() { # program -> detail
+      local program="$1" d="" rc oldkind newkind reason pat
+      _vo_ready "$program" || { printf ' judge-test-prerequisites-missing'; return; }
+      _vboard
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER=claude VF_JUDGE_FAILS=always VF_JUDGE_STATUS=401)"
+      { [ "$rc" = 3 ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ]; } \
+        || { printf ' earlier-hold-did-not-land(rc=%s)' "$rc"; return; }
+      oldkind="$(_v show "$vP" --json 2>/dev/null | jq -r '[.events[] | select(.kind == "blocked")] | last | (.payload.kind // "none")')"
+      _v unblock "$vP" >/dev/null 2>&1
+      [ "$(_vst "$vP" | cut -d/ -f1)" = review ] || { printf ' unblock-did-not-return-to-review'; return; }
+      rm -f "$vbin/claude.n" "$vbin/claude.log" "$vbin/judge-order.log"
+      rc="$(VREVIEW="$program" _vrun "${vjudge_env[@]}" FORGE_JUDGE_ORDER="codex claude" VF_CODEX_MODE=usage VF_JUDGE_FAILS=always VF_JUDGE_STATUS=429 FORGE_JUDGE_QUOTA_MAX_WAIT=0)"
+      reason="$(jq -r '.reason // ""' "$vbin/out.json" 2>/dev/null)"
+      newkind="$(_v show "$vP" --json 2>/dev/null | jq -r '[.events[] | select(.kind == "blocked")] | last | (.payload.kind // "none")')"
+      pat="$(jq -r .blocked_reason_pattern "$REPO_ROOT/rubrics/run-metadata-contract.json" 2>/dev/null)"
+      [ "$rc" = 3 ] || d="$d both-failed-rc=$rc"
+      { [ "$(_vq_calls)" = 1 ] && [ "$(tr '\n' ' ' < "$vbin/judge-order.log")" = 'codex claude ' ]; } \
+        || d="$d engines-did-not-fail-once-in-order"
+      { [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
+        && jq -e '.action == "substrate-block" and .terminate.tool == "kanban_block"' "$vbin/out.json" >/dev/null 2>&1 \
+        && _v show "$vP" --json 2>/dev/null | jq -e '[.events[] | select(.kind == "blocked")] | length == 2' >/dev/null 2>&1; } \
+        || d="$d all-fail-did-not-land-as-one-new-hold"
+      printf '%s' "$reason" | grep -qF 'codex:' || d="$d reason-does-not-name-codex"
+      printf '%s' "$reason" | grep -qF 'claude usage limit (HTTP 429)' || d="$d reason-does-not-name-claude"
+      printf '%s' "$reason" | grep -qF 'try again at Nov 16th, 2026 12:42 AM.' || d="$d reset-time-missing"
+      ! printf '%s' "$reason" | grep -Eq 'https?://|Reading prompt from stdin' || d="$d hold-contains-banner-or-url"
+      [ "$oldkind" != "$newkind" ] || d="$d block-kind-did-not-rotate($oldkind/$newkind)"
+      { [ -n "$pat" ] && jq -e --arg p "$pat" '.reason | test($p)' "$vbin/out.json" >/dev/null 2>&1; } \
+        || d="$d reason-does-not-match-blocked-reason-pattern"
+      printf '%s' "$d"
+    }
+    vdetail="$(_vo_allfail "$REPO_ROOT/$review")"
+    # The last engine's 429 exits inside judge_quota_hold, so mutate THAT
+    # summary (judge_hold_with_attempts is not reached on this path).
+    _vo_mut 's/^    reason="\$reason; tried: \$JUDGE_ATTEMPT_SUMMARY"$/    : # mutant omitted attempted engines/' || vdetail="$vdetail summary-mutant-setup-failed"
+    vdetail_mut="$(_vo_allfail "$vjudge_mutants/scripts/prejudge-review.sh")"
+    if [ -z "$vdetail" ] && [ "$vdetail_mut" = " reason-does-not-name-codex reset-time-missing" ]; then
+      ok "every-judge-failing-is-one-hold-that-names-them (the failed Codex plus Claude-429 hold is one decision-first substrate hold, names both engines, matches the blocked-reason vocabulary and rotates its block kind; omission of the attempted-engine summary is caught)"
+    else
+      bad "every-judge-failing-is-one-hold-that-names-them" "an all-engine failure must make one honest hold naming every tried engine —$vdetail$([ -n "$vdetail_mut" ] && printf ' mutant:%s' "$vdetail_mut")"
+    fi
 
     # =========================================================================
     # P24 (epic S6d). The verifier's terminal is FENCED: Hermes refuses every
@@ -12210,7 +12466,6 @@ VLOGH
     # function of the review program it runs, so the same scenario runs against a mutant copy and must go red.
     local vqm="$TMPROOT/judge-quota-mutants" vq_pat vq_notmoved="" vq_m vq_red=""
     vq_pat="$(jq -r .blocked_reason_pattern "$REPO_ROOT/rubrics/run-metadata-contract.json")"
-    _vq_calls() { if [ -f "$vbin/claude.log" ]; then wc -l < "$vbin/claude.log" | tr -d ' '; else echo 0; fi; }
     _vq_blocks() { _v show "$vP" --json 2>/dev/null | jq -c '[.events[] | select(.kind == "blocked" or .kind == "block_loop_detected") | .payload.reason[0:48]]'; }
     _vq_waited() {   # $1 = the review program -> what is wrong with a judge that is refused and then answers
       local d="" rc
@@ -23371,6 +23626,7 @@ pwd > "$d/cl.$n.cwd"
 case "$(cat "$d/claude.mode" 2>/dev/null || echo alive)" in
   alive) printf '{"type":"result","subtype":"success","is_error":false,"result":"OK","session_id":"s"}\n';;
   dead) printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 OAuth session expired and could not be refreshed"}\n'; exit 1;;
+  quota) printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You have hit the account usage limit; resets Nov 18 at 6pm (Europe/Copenhagen)"}\n'; exit 1;;
   deadecho) printf '{"type":"result","is_error":true,"api_error_status":401,"result":"Invalid bearer token %s (and sk-ant-oat01-LEAKTEST9999)"}\n' "$CLAUDE_CODE_OAUTH_TOKEN"; exit 1;;
   hang) sleep 30;;
   garbage) echo "curl: (6) Could not resolve host: api.anthropic.com";;
@@ -23672,6 +23928,28 @@ WD_CFGS
   { [ "$(_wd_cl)" = 3 ] && [ "$(_wd_n telegram)" = 2 ]; } || d="$d a-recovered-token-was-asked-again-at-once(calls=$(_wd_cl))"
   [ -z "$d" ] && ok "token-dead-fails-and-alerts-once (is_error true is a FAIL line with the reason and the remedy and exit 1; one alert on the change, the remedy in it, none for the next passes; asked again exactly at FORGE_WATCHDOG_TOKEN_RETRY and not before; a renewed token gives OK, exit 0 and one recovery message, then the long window again)" \
     || bad "token-dead-fails-and-alerts-once" "a dead token is an unhealthy run, one alert, a quick re-check and a recovery —$d"
+
+  # --- a provider usage limit is healthy account state, not a dead token ------------------------
+  d=""; _wd_token_world tokquota; echo quota > "$W/stub/claude.mode"; _wd_run
+  { [ "$wdrc" = 0 ] && [ -n "$(_wd_line WARN token | grep 'account usage limit')" ] && printf '%s' "$wdout" | grep -q 'resets Nov 18 at 6pm (Europe/Copenhagen)'; } \
+    || d="$d 429-was-not-a-quoted-account-limit-warning(exit=$wdrc)"
+  ! printf '%s\n' "$wdout" | grep -q '^FAIL token' || d="$d 429-was-called-FAIL"
+  [ "$(_wd_n telegram)" = 0 ] || d="$d 429-sent-an-alert"
+  [ "$(_wd_n heartbeat)" = 1 ] || d="$d 429-did-not-ping-healthy-heartbeat"
+  [ "$(_wd_tokv)" != fail ] || d="$d 429-was-cached-as-dead"
+  _wd_token_world tok401; echo dead > "$W/stub/claude.mode"; _wd_run --no-alert
+  { [ "$wdrc" = 1 ] && [ -n "$(_wd_line FAIL token)" ]; } || d="$d 401-no-longer-fails(exit=$wdrc)"
+  wdmut="$TMPROOT/watchdog-429-mutants"; rm -rf "$wdmut"; mkdir -p "$wdmut"; cp -R "$REPO_ROOT/scripts" "$wdmut/"
+  sed 's/usage-limit) TK_VERDICT=none/usage-limit) TK_VERDICT=fail/' "$REPO_ROOT/scripts/watchdog.sh" > "$wdmut/scripts/watchdog.sh.m" \
+    && mv "$wdmut/scripts/watchdog.sh.m" "$wdmut/scripts/watchdog.sh"
+  wds_saved="$wds"; wds="$wdmut/scripts"
+  _wd_token_world tokquota-mut; echo quota > "$W/stub/claude.mode"; _wd_run --no-alert
+  wds="$wds_saved"
+  if [ -z "$d" ] && { [ "$wdrc" = 1 ] || printf '%s\n' "$wdout" | grep -q '^FAIL token'; }; then
+    ok "a-usage-limit-is-not-a-dead-token (HTTP 429 is a quoted WARN with reset text, healthy/no-alert/heartbeat, and a non-dead cache; HTTP 401 remains FAIL; the dead-cache mutation is caught)"
+  else
+    bad "a-usage-limit-is-not-a-dead-token" "a Claude usage limit is account state, not token death —$d"
+  fi
 
   # could not ask is neither OK nor FAIL, alerts nothing, caches no verdict, and moves health in neither direction
   d=""
