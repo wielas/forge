@@ -391,10 +391,11 @@ refused `kanban_block` and a run reaped as a crash; the handler checks it first 
 one, with `None == None` counting, and at `BLOCK_RECURRENCE_LIMIT = 2` (`:111`) routes to `triage`. The counters
 survive `unblock` and only `complete_task` clears them (`:3665-3668`, `:2785-2786`). So a block with no kind, on a
 card that had any earlier block with no kind, is a card in `triage` that no script can complete. A hold that must
-not be the second of its kind takes the kind that is not the last one's (`prejudge-review.sh`'s
-`next_block_kind`, read from the events). A `scheduled` round trip would not have touched the counter either way:
-`schedule_task` and `unblock_task` write neither column. (`substrate()` still blocks with no kind: a pre-existing
-trap, not changed here.)
+not be the second of its kind takes the kind that is not the last one's (`forge_next_block_kind` in
+`scripts/forge-state.sh`, read from the events; the lane's blocks and every verifier block ask it). A `scheduled`
+round trip would not have touched the counter either way: `schedule_task` and `unblock_task` write neither column.
+What no program can give a kind: a block the driver model types itself (exit 2, a usage error, in both SOULs),
+the two `jq missing` envelopes, and a verifier fault before the card is proven to be this worker's.
 
 ## How things really connect
 

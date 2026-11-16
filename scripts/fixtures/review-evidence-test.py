@@ -34,6 +34,16 @@ with tempfile.TemporaryDirectory() as tmp:
                           "board", "chunk", "bounce", str(payload)], capture_output=True)
     assert bad.returncode != 0 and len(list((verdict_root / "history").glob("*.json"))) == 2
 
+    dry_root = root / "dry-state"
+    dry = subprocess.run([str(SCRIPTS / "prejudge-review.sh"),
+                          "https://github.com/example/project/pull/8", "--chunk", "t_fixture",
+                          "--fixture", str(SCRIPTS / "fixtures/prejudge-prs/pr-8"), "--dry-run"],
+                         env=dict(os.environ, FORGE_STATE_ROOT=str(dry_root), FORGE_VERDICT_ROOT=str(dry_root / "verdicts")),
+                         input="fixture contract", capture_output=True, text=True)
+    assert dry.returncode == 4, dry.stderr
+    assert json.loads(dry.stdout)["action"] == "gate-block", dry.stdout
+    assert not dry_root.exists(), "a dry-run must not create review history"
+
     board = root / "kanban" / "boards" / "test"
     board.mkdir(parents=True)
     with sqlite3.connect(board / "kanban.db") as db:

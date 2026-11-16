@@ -190,11 +190,20 @@ envelope() {   # action, summary, reason, terminate-json, on_error-json|null, ex
 # driver's own: a wrong --task must not make the kernel refuse the very block that
 # reports it (a worker may only mutate its own task).
 TRUSTED_TASK=""
+# The kind of a block on this card. The kernel sends a card to `triage` on its second block of one
+# kind, and blocks with no kind all match (forge-state.sh, forge_next_block_kind), so a lane block
+# after any earlier hold on the card names the kind that is not the last one's. The card's FIRST
+# block names none, as every lane block did before. Read from the card as this run read it back:
+# nothing blocks a card while its own worker runs. Empty until the card is provably this terminal's.
+block_kind() {
+  [ -n "$TRUSTED_TASK" ] && [ -s "$TMP/card.json" ] || return 0
+  forge_next_block_kind "" < "$TMP/card.json"
+}
 block() {
   say "block: $1"
   envelope block "" "$1" \
-    "$(call_json kanban_block "$(jq -nc --arg t "$TRUSTED_TASK" --arg r "$1" \
-         '(if $t == "" then {} else {task_id: $t} end) + {reason: $r}')")" null 3
+    "$(call_json kanban_block "$(jq -nc --arg t "$TRUSTED_TASK" --arg r "$1" --arg k "$(block_kind)" \
+         '(if $t == "" then {} else {task_id: $t} end) + {reason: $r} + (if $k == "" then {} else {kind: $k} end)')")" null 3
 }
 
 # The canonical `<class>: <reason>` line out of a step's output, or a fallback
@@ -649,6 +658,6 @@ envelope handoff "$SUMMARY" "" \
   "$(call_json kanban_request_review "$(jq -nc --arg t "$TASK" --arg s "$SUMMARY" --arg r "$REVIEWER" \
        --slurpfile m "$FORGE_LANE_RUNTIME/chunk-metadata.json" \
        '{task_id: $t, summary: $s, metadata: $m[0], reviewer: $r}')")" \
-  "$(call_json kanban_block "$(jq -nc --arg t "$TASK" --arg u "$PR_URL" --arg b "$BOARD" --arg m "$RECOVER_META" \
-       '{task_id: $t, reason: ("other: handoff-integrity — the review hand-off of " + $t + " was refused by the kernel; the branch is pushed and the PR is open (" + $u + "). Do NOT just unblock the card: that runs Codex again over finished work. Recover with: ~/.forge/repo/scripts/lane-handoff.sh " + $t + " --board " + $b + " --summary \"<one line>\" --metadata " + $m)}')")" \
+  "$(call_json kanban_block "$(jq -nc --arg t "$TASK" --arg u "$PR_URL" --arg b "$BOARD" --arg m "$RECOVER_META" --arg k "$(block_kind)" \
+       '(if $k == "" then {} else {kind: $k} end) + {task_id: $t, reason: ("other: handoff-integrity — the review hand-off of " + $t + " was refused by the kernel; the branch is pushed and the PR is open (" + $u + "). Do NOT just unblock the card: that runs Codex again over finished work. Recover with: ~/.forge/repo/scripts/lane-handoff.sh " + $t + " --board " + $b + " --summary \"<one line>\" --metadata " + $m)}')")" \
   4

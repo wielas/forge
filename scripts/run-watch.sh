@@ -21,6 +21,9 @@
 #                    hold: the key is the card and the id of its latest blocked / block_loop_detected / gave_up
 #                    event, so a card that is unblocked and holds again is reported again. A card the dispatcher
 #                    blocked after a crash or a timeout says "the worker gave up" and the error it recorded.
+#   IN TRIAGE        the same set, for a CHUNK-* card whose status is `triage`: the kernel sends a card there
+#                    on its second block of one kind, nothing dispatches it and `unblock` is refused. Says the
+#                    reason of its last hold and the one command that takes it out (`specify`). Once, like a hold.
 #   LANDED           a CHUNK-* or GATE-* card is newly done: its title, the first line of its result (the
 #                    merge-watcher writes "NOT a verified merge" there on head drift) and the PR.
 #   STALL            a card has been `running` for more than FORGE_RUN_WATCH_RUNNING_MAX_MIN minutes (default
@@ -174,6 +177,9 @@ def inn($a): . as $x | any($a[]; . == $x);
 def why: if .status == "ready" then "sent back for changes (a human chunk)"
          else ((.reason // "") | firstline | clean) as $r
               | if $r != "" then $r elif .status == "triage" then "in triage" else "blocked, no reason recorded" end end;
+# A chunk the kernel routed to `triage` (a second block of one kind, docs/hermes-field-notes.md): it is not a
+# hold, since nothing the hold's own reply names works on it. Follow-up cards are born in triage and are not this.
+def stranded: .status == "triage" and ((.title // "") | test("^CHUNK-"));
 # The command that resolves a card: its own Reply line when its reason is a decision-first hold, else the class
 # table's (scripts/decision-message.sh, handed in as $replies), else the `other` entry.
 def reply($board):
@@ -226,7 +232,12 @@ def reply($board):
 | ($idle2 | map(select(($now - .since) > $idle_secs and (.key | inn($orep) | not)))) as $eligible
 | (if $any_running then [] else $eligible end) as $idlenow
 
-| ( ($newwait | map({rank: 1, text: ("WAITING ON YOU: \(.id) on \($board)\n\(.title | short(90))\n\(why | short(200))\nDo: \(reply($board) | short(280))")}))
+| ( ($newwait | map({rank: 1, text: (if stranded
+       then "IN TRIAGE: \(.id) on \($board)\n\(.title | short(90))\n"
+            + "Last hold: \(((.reason // "") | firstline | clean) as $r | if $r == "" then "no reason recorded" else ($r | short(160)) end)\n"
+            + "Nothing dispatches a card in triage, and unblock and complete are refused there.\n"
+            + "Do: hermes kanban --board \($board) specify \(.id) (the one way out: back to todo, for its implementer)"
+       else "WAITING ON YOU: \(.id) on \($board)\n\(.title | short(90))\n\(why | short(200))\nDo: \(reply($board) | short(280))" end)}))
    + (if $had then
      ( ($stallnow | map(. as $s | ($os[$s.key] // null) as $before | ($parks[$s.id] // null) as $p
          | {rank: 2, text: ("\(if $before != null then "STILL STALLED" else "STALL" end): \($s.id) on \($board)\n\($s.title | short(90))\n"

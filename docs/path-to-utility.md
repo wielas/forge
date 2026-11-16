@@ -1,65 +1,47 @@
 # Path to utility
 
-What Forge has to become to be worth using, and the order to get there. It replaces the
-session plan in `docs/epic-hands-free.md` as the thing that decides what is built next;
-the epic stays as the record of what was built and why. One page: when a stage closes,
-its lines shrink to one.
+The order of work, updated 2026-11-16 after Run B completed both remaining Squatfather
+milestones. The epic records history; this page chooses the next work. The owner delegated
+implementation direction and Terra/Luna orchestration to the takeover session.
 
-**Written 2026-11-15**, from two read-only audits of the code and the host on that day.
+## What the evidence says
 
-## Where Forge is
+Forge has delivered one complete planned product: 13 chunks across three milestones.
+Run B merged eight chunks through the verifier. Its M2 and M3 probes pass 4/4 and 6/6;
+GATE-M3 is complete. This demonstrates the delivery loop against frozen probes, not that
+someone has successfully used the product against their real accounts.
 
-The loop works. Run A built milestone 1 of a real product (five chunks, the probe passes
-5 of 5), and merge mode has run live on a rehearsal board. Once the seams held, a lane
-run took 3 to 4 minutes, a verifier run 3 to 8, and a PR went from open to merged in a
-median of 1.1 hours.
+M3 needed one operator unblock after a transient GitHub diff read. Three reviews bounced
+and were repaired; the previous metrics hid all three. The watchdog was loaded but missed
+its interval repeatedly. The useful next step is reliable recovery and trustworthy evidence,
+followed by a real operator journey. Engine comparisons are premature.
 
-What it is not yet is a product a person can leave alone:
+## Ordered work and its exit evidence
 
-- **It does not speak.** A new hold, a merged chunk and a stalled worker reach the
-  operator only through the 09:00 digest, or when they run `forge status`. A loop that
-  turns in minutes waits a day for each human answer.
-- **It can wedge without a sound.** Hermes runs one worker at a time for the whole host, so
-  one hung worker stops every board. A Codex attempt and a quota park are now bounded and
-  end in a hold (built in #123, not yet seen live); a worker that dies some other way, or a
-  card nothing picks up, is still reported by no one.
-- **Its numbers leave out the money.** The judge's cost is recorded per verdict and never
-  summed; Codex tokens are read and dropped; the bounce rate misses the verifier's own
-  bounces.
-- **It has built one product.** `forge new` and the board-creating rung of `forge start`
-  have only run against fixtures. Everything stack-specific assumes Python.
-- **It is heavy to read.** 29 of the epic's 46 parking-lot entries are closed, and they are
-  about 1,300 lines every session pays for.
+| Order | Work | Done when |
+|---|---|---|
+| 1 | **Recover without losing the run.** Keep repeated lane/verifier holds out of triage when the card can be identified; retry read-only GitHub failures with a bound; retain every review decision; report actual bounce events. Recover the existing Slice 2 work. | Focused regression and required CI pass; deploy and one end-to-end rehearsal pass. This recovery slice supplies the code. Early identity failures and driver-authored blocks remain exceptions. |
+| 2 | **Prove unattended liveness.** Deploy the calendar workaround supported by the isolated timestamp experiment (three calendar ticks, zero interval ticks), then observe it. Diagnose the underlying scheduler fault if accessible logs become available. Verify one killed worker and one paused cron are reported within 30 minutes. Add an external heartbeat when the owner has a destination. | Scheduled readings continue for a full day without a manual kick, both fault exercises are observed, and delivery is verified. A healthy manual watchdog run is insufficient. |
+| 3 | **Measure the whole run honestly.** Sum retained review cost/usage and lane usage; separate subscription usage from billed dollars; expose missing historical rounds. Replace stale metrics claims and distinguish cards created in the period from work completed in it. | One command produces the results table, with known/unknown totals explicitly distinguished. Historical lost verdicts are not reconstructed as zero cost. |
+| 4 | **Prove the front door and actual utility.** Use the delivered Squatfather workflow with the owner, then take a second small, different Python product through `forge new`, planning, `forge start`, one verifier merge and a useful operator action. Fix the friction encountered. | A new project reaches a useful result in one sitting without editing the board or host files by hand. Private account setup and the product choice are the owner's inputs. |
+| 5 | **Reduce the maintenance burden.** Archive closed epic entries and retire the completed August roadmap with its obsolete checks; shorten the operator guide around the front-door commands. | State plus this plan stays below 300 lines; retired behavior no longer consumes the verification budget. |
 
-## The stages
+The stages overlap when the evidence is independent. Do not delay recovery fixes for cost
+accounting or the Telegram bot. Do not start a new engine experiment just because the next
+roadmap row is an old engine row. M3 extended Run B with the existing strong lane; it did not
+perform the planned cheaper-implementer Run C comparison.
 
-Each stage is done when its *proof* has been observed, not when its code is merged.
+## Working method
 
-| # | Stage | What is built | Proof |
-|---|---|---|---|
-| 1 | **The run talks** | `scripts/run-watch.sh` on a ten-minute cron: one message for each new hold, landing and stall. Fault holds name their risk instead of "unknown". A hold made by a worker that gave up says so. A failing checkpoint finding quotes the last lines of the failing case, so it can be classified from the message. The gate verbs answer from the phone (the forge-gate bot: owner's setup) | During run B the operator learns of every hold and every merge within 15 minutes, without opening a terminal |
-| 2 | **The run cannot wedge silently** | A bound on a Codex run and on a quota park, after which the card holds with a reason (built in #123, not yet seen live); the same for a judge usage limit, waited out for at most 30 min and then held with nothing to fix. An alert for a `ready` card nothing picks up and for an armed gate whose cron is paused. The two host watchers report each other's silence: the watchdog the cron tickers, `run-watch` a watchdog with no reading for 30 min. A heartbeat URL (owner's setup), so a reboot is noticed | A killed worker and a paused cron are each reported within 30 minutes on a rehearsal board |
-| 3 | **The numbers are true** | `make metrics` and the digest show, per chunk and per run: judge cost, Codex tokens, wall-clock. The bounce rate counts the verifier's bounces. `metadata-live` stops failing on a producer no flow runs | Run B's results are filled from one command, and the cost of milestone 2 is a number |
-| 4 | **A second product** | `forge new` run for real. The plan checks that stop a second project (a `proven` verdict with no spike, an unhashed probe driver, a probe that passes on a crash). A board that does not start chunks before a grant exists. `forge rehearse` against the new repository, not only hello-forge | A second, different product goes from `forge new` to its first verifier-merged chunk in one sitting |
-| 5 | **Less to carry** | Closed parking-lot entries move to the archive. The finished August plan in `docs/ROADMAP.md` is retired with the checks that read it. The operator guide is one page. The verify suite loses the cases that guard retired paths | A new session reads the plan and the state in under 300 lines |
+Use Terra for bounded code changes and Luna for bounded evidence gathering. Keep integration,
+review and product decisions in the parent session. Separate write ownership; never run two
+`verify.sh` processes on this host because its lab path is shared. Start from the last green
+main CI baseline, run the affected checks once with usable host dependencies, and let required
+CI cover the complete suite. Repeat only for a new change or a real failure. Do not spend model
+calls on repetitive monitoring or make a sandbox/cache problem look like a product regression.
 
-Run B (milestone 2 of The Squatfather) runs alongside stage 1 and is its test. Run C
-(milestone 3) follows stage 3, so that its question — a cheaper implementer — is answered
-with real cost numbers.
+## External inputs still needed
 
-## What is deliberately not next
-
-The engine experiments (Pi against Hermes-native, local models, session affinity), the
-coloured board graph, per-board spend caps and a second template. Each is worth doing
-only after a second product has shipped through the front door; before that they
-optimise a loop only one product has used.
-
-## The owner's steps
-
-Three things only the owner can do, in order of how much they are worth:
-
-1. `forge go squatfather-run-a2 --project "$HOME/dev/the-squatfather" --branch-suffix a2` — run B.
-2. The forge-gate Telegram bot. Until it exists a checkpoint that blocks is answered from
-   a terminal. `make preflight` section 14 lists the four steps.
-3. A heartbeat URL in `~/.forge/watchdog.env`. With FileVault on, it is the only thing that
-   can say the machine restarted.
+The forge-gate Telegram bot enables phone replies to blocked checkpoints. An external
+heartbeat destination can detect a restart before FileVault is unlocked. Neither is evidence
+of reliability until exercised; neither blocks the code improvements above.

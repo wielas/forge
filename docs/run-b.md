@@ -1,7 +1,9 @@
 # Run B — the first hands-free run
 
-Run B is milestone 2 of The Squatfather (CHUNK-6, CHUNK-7, CHUNK-8, then `GATE-M2`) on
-board `squatfather-run-a2`. It is epic session S9, as amended by decisions 15 to 17.
+Run B began with milestone 2 of The Squatfather (CHUNK-6, CHUNK-7, CHUNK-8, then `GATE-M2`)
+on board `squatfather-run-a2`, and extended through milestone 3 on 2026-11-16. It is epic
+session S9, as amended by decisions 15 to 17. The launch sheet below is historical; both
+milestones and the final gate are now complete.
 This page is the whole protocol. It is short on purpose: `docs/run-a.md` is the record
 of what a long one cost.
 
@@ -105,9 +107,11 @@ adversarial 3/3) at ac06baf`) and CHUNK-6 and CHUNK-8 became ready.
 | CHUNK-8 | #14 | 12:40:31 | `883962f` | approve-with-nits, 3 findings | $0.3926328 |
 | CHUNK-7 | #15 | 13:18:39 | `dbb25ec` | approve-with-nits, 2 findings | $0.4527846 |
 
-All three were judged by Claude opus. The verifier bounced CHUNK-6 once before approving it
-(`scenario_integrity`: the steps checked the exercise name on three sets only); the lane fixed it in one
-run. The mutation probe's line is on CHUNK-8's card only: `report-only — 11/46 probed lines observed by
+All three final approvals were judged by Claude opus. **Corrected 2026-11-16 from board events:**
+the verifier bounced two cards once each: CHUNK-6 at 08:57:45Z (`scenario_integrity`: the steps
+checked the exercise name on three sets only), and CHUNK-7 at 13:07:12Z (one actionable fix
+and two nits). Both were repaired. Earlier prose omitted CHUNK-7. The dollar figures above
+are the retained approving verdicts only; the overwritten bounce verdict costs are unknown. The mutation probe's line is on CHUNK-8's card only: `report-only — 11/46 probed lines observed by
 no test`. It was not written to the other two cards.
 
 **`metrics.sh squatfather-run-a2 --since 2026-11-15`:**
@@ -120,8 +124,9 @@ gate completions  1 = 1 by the checkpoint + 0 by the operator
 bounce rate  tier 1  0.00 (0/3 chunk cards)   from 0/3 verdicts
 ```
 
-Run A read 0.00 (0/5) and 2.40. The bounce rate is wrong: it does not count the verifier's own bounce
-of CHUNK-6 (epic P40). The two board touches and the 3-hour median are one event: at 10:08 and 10:32
+Run A read 0.00 (0/5) and 2.40. The historical bounce-rate line above is wrong: it misses both
+verifier bounces (epic P40). The corrected event metric reads 2 applied bounces on 2 chunks
+for 2026-11-15; it counts observed transitions, not retained verdict recommendations. The two board touches and the 3-hour median are one event: at 10:08 and 10:32
 local both reviews ended `env: judge-envelope — claude -p reported an API failure before returning a
 verdict (is_error=true, api_error_status=429)`, the account's 5-hour Claude limit, which the overseeing
 session shared with the judge. Both cards were unblocked by hand at 13:22 after the reset. CHUNK-7,
@@ -142,3 +147,64 @@ had merged.
 **What the run changed in Forge** (rows S9h to S9k and after): the push watcher (#122), the bounds on a
 Codex attempt and a quota park (#123), the judge's wait on a usage limit and the failing case's output
 in the checkpoint report (#124), and the judge on OpenAI first with Claude as the fallback (#125 to #127).
+
+
+## Milestone 3 continuation — 2026-11-16
+
+This extended Run B with the existing strong implementer; it was **not** the planned Run C
+experiment with a cheaper implementer. Launch/grant at 08:57:08Z; final GitHub merge at
+13:11:59Z: 4 h 14 min 51 s, calculated from the recorded timestamps.
+
+| Chunk | PR | GitHub merged (UTC) | Reviewed head | Final judge |
+|---|---|---|---|---|
+| CHUNK-13 | #17 | 10:53:38 | `4cc9013` | Codex / gpt-6-astra |
+| CHUNK-11 | #18 | 11:29:11 | `141b4a9` | Codex / gpt-6-astra |
+| CHUNK-9 | #19 | 12:05:58 | `35069da` | Codex / gpt-6-astra |
+| CHUNK-10 | #20 | 12:44:44 | `7c38c23` | Codex / gpt-6-astra |
+| CHUNK-12 | #21 | 13:11:59 | `d34e1a3` | Codex / gpt-6-astra |
+
+GitHub read-back confirms all five PRs merged. Each retained verdict approves its listed
+head with zero final findings; each board completion attributes the merge to the verifier.
+Board completion timestamps trail the actual merges by seconds, so they are not substituted
+for `mergedAt` here.
+
+**Recovery.** Three `changes_requested` events survive: CHUNK-11 at 11:18:14Z, CHUNK-9 at
+11:55:18Z, CHUNK-10 at 12:33:52Z. Each was repaired and approved. CHUNK-12 instead held on
+`env: diff-unavailable` at 13:01:12Z and was unblocked at 13:03:21Z: the one operator touch.
+Its next review succeeded. CHUNK-13's lane reports one quota park, then resumed itself.
+The earlier session reported roughly 1 h 20 min waiting; retained state does not establish
+the exact interval, and the completed run's 94-minute duration is not all quota time.
+
+**One-command reading**, `scripts/metrics.sh squatfather-run-a2 --since 2026-11-16 --json`
+with the recovery slice:
+
+- Merged without the operator: 5/5, rate 1.00.
+- Operator actions per merged chunk: 0.20 (one unblock, no operator merges).
+- Applied bounces: 3 events on 3 chunks. The old verdict-only rate misses these.
+- Review-request to completion proxy: median 0.33 h, max 0.34 h. Actual GitHub PR
+  open-to-merge: median 19 min 38 s, maximum 20 min 24 s, computed from GitHub timestamps.
+- Full review cost: unknown. Older bounced verdict payloads were overwritten; subscription
+  usage is not a measured dollar charge. New history starts with this recovery deployment.
+
+**Final checkpoint.** The takeover fast-forwarded the clean product checkout to `9136771`
+and ran the frozen M3 probe: 6/6 (3 realistic, 3 adversarial). The deployed runtime's normal
+`checkpoint.sh --apply` then rechecked and completed GATE-M3 (`t_7af4caeb`): 5/5 chunks,
+8/8 named requirements delivered, zero triage follow-ups and no downstream cards. The
+milestone probe found no product defect. `forge stop squatfather-run-a2` then revoked the
+spent grant and confirmed no gates armed. No new milestone was released.
+
+**Watchdog finding.** The job remained loaded and enabled with interval 600; no watchdog
+process was stuck, and observed runs exited 0. Recorded passes on November 16 were 01:31,
+09:57, 11:41, 12:30 and 14:02 local. The power log shows no sleep/wake cycle explaining the
+missed intervals. Unified launchd logs were denied by macOS even with sandbox escalation.
+#129's silence detector worked at the state-file level; Telegram delivery and the scheduler
+cause remain unproven. A separate timestamp-only experiment at 16:42–16:45 local recorded
+zero runs from a 30-second interval job, versus calendar runs at 16:43, 16:44 and 16:45.
+Both jobs were removed. This supports the recovery slice's switch to calendar boundaries
+(00, 10, 20, 30, 40, 50), but does not prove full-day reliability.
+
+Private supporting records are in `~/forge-evidence/takeover-2026-11-16/`: GitHub read-back,
+the checkpoint report, probe logs and corrected metrics. The source board was read through
+`board-snapshot.sh`, preserving the WAL rule. Future original review payloads live under
+`~/.forge/verdicts/history/`; their action records intent, while board events prove a bounce
+actually happened.

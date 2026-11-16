@@ -1,131 +1,96 @@
 # Forge — current state
 
-One page, for a session or a person starting with no context. It says what works, what is
-not proven, and what is next. History lives in [`docs/archive/`](archive/); the plan and
-the only progress record is [`docs/epic-hands-free.md`](epic-hands-free.md) (its *Session
-plan* table, and *§ How we run this epic* for how a session is run). If this page and
-another file disagree, `make verify` arbitrates.
+Start here, then read [the path to utility](path-to-utility.md). History and the session
+record live in [the epic](epic-hands-free.md), including *How we run this epic*; the current
+plan supersedes its old engine-experiment ordering. Run evidence is in [Run A](run-a.md)
+and [Run B](run-b.md). If a behavioral claim and the code disagree, `make verify` arbitrates.
 
-**As of 2026-11-16 (early morning).** `main` and the live runtime (`~/dev/forge-runtime`) are in step
-through #127; `git -C ~/dev/forge-runtime log -1` is the truth. `make preflight` in the runtime
-reads no FAIL; its WARNs are the optional global lefthook and the four forge-gate bot steps (below).
+**As of 2026-11-16, takeover.** The Squatfather's 13 chunks and all three milestone gates
+are complete. M3 was an extension of Run B using the existing strong lane, not the planned
+cheaper-implementer Run C. The final frozen probe passed 6/6 at product main `9136771`.
 
-## What Forge is
+## What Forge does
 
-A way to build software from a plan with the operator out of the per-chunk loop. The plan
-is made interactively (`/scope`, `/architect`, `/roadmap`). After that a Hermes board runs
-it: a lane drives Codex in a worktree and opens a PR, a verifier executes the checks and
-judges it with OpenAI/Codex first and Claude as the fallback, and the PR is merged — by the operator from a hold, or by the verifier where the
-board has a merge-authority grant. Each milestone ends in a gate card with a whole-system
-probe. The operator reads a daily digest and answers holds.
+An interactive plan (`/scope`, `/architect`, `/roadmap`) becomes a Hermes board. A lane
+implements a chunk in a worktree, opens a PR, and hands it to the verifier. Deterministic
+checks precede an OpenAI judge, with Claude as fallback. A valid board grant permits the
+verifier to merge at the reviewed head. Otherwise the operator decides. Milestone gates
+probe the integrated product. The digest and run watcher report progress and holds.
 
-On 2026-11-15 the owner chose pace over cross-vendor review: the verifier now tries its
-OpenAI judge first and spends scarce Claude usage only as the fallback.
+## Current implementation
 
-## Next: the owner's go for milestone 3
+The recovery slice builds on deployed #129 (`c6dc0f0`):
 
-What is built after that, in order, is [`docs/path-to-utility.md`](path-to-utility.md).
+- The watchdog installer uses six calendar minute boundaries per hour. An isolated host
+  experiment produced three calendar runs and zero interval runs; sustained operation still
+  needs observation after reinstalling the deployed LaunchAgent.
+- Lane and verifier blocks rotate the kernel block kind using the identified card's last
+  hold, so another recoverable hold stays blocked rather than entering triage. The verifier
+  retains its initial trusted snapshot when a later read fails. Existing triage is reported
+  with the recovery command.
+- Verifier and deterministic gate GitHub reads get three attempts, each bounded at 30 s,
+  with 2 s and 4 s backoff. Only successful output is used; merges are never retried.
+- Original decision payloads are retained under `~/.forge/verdicts/history/` before a bounce
+  or approval. These record intended decisions; board events prove applied transitions.
+  The existing latest-verdict file remains compatible with the merge-watcher.
+- Metrics report actual `changes_requested` events, including repeat bounces and open
+  cards. Legacy verdict recommendation rates are labeled separately.
 
-Run B's milestone 2 is merged (2026-11-15, [`docs/run-b.md`](run-b.md) *Results*): CHUNK-6, 7 and 8
-of The Squatfather, each merged by the verifier on board `squatfather-run-a2`. `GATE-M2` is held
-and armed `rehearse`; its probe passes 4 of 4 at `3a96dd4`. Releasing milestone 3 hands the machine
-another five chunks, so it is the owner's command. It shows what it will put in force and asks:
+The runtime changes only after a green PR is merged and deliberately deployed. Read
+`git -C ~/dev/forge-runtime log -1` for the installed revision; the source checkout is not
+proof of deployment. Validation and rollout evidence are recorded in the recovery epic row.
 
-```bash
-forge go squatfather-run-a2 --project "$HOME/dev/the-squatfather" --branch-suffix a2 --gate GATE-M2 --rearm
-```
+## Proven
 
-On its next tick the checkpoint cron probes M2, completes the gate, and CHUNK-13 starts.
-`forge status` shows the run and `forge stop squatfather-run-a2` withdraws the authority. A new
-hold, a landing and a stall reach Telegram within ten minutes (`forge-run-watch`).
-
-## Proven (a command was run and its output observed)
-
-| Claim | Evidence |
+| Claim | Observed evidence |
 |---|---|
-| A plan becomes merged, probed code | Run A, Squatfather M1: CHUNK-1 to 5 merged on green CI, four of them lane-built; the M1 probe passes 5 of 5. [`docs/run-a.md`](run-a.md) *Results* |
-| The verifier's recommendations can be trusted so far | Run A: the operator merged everything it recommended and bounced nothing; it bounced CHUNK-4 itself first |
-| **A milestone is built and merged with nobody in the loop** | Run B, 2026-11-15: CHUNK-6, 7 and 8 merged by the verifier at the head each verdict covered, CI green; the verifier bounced CHUNK-6 once on a real test gap and the lane fixed it. The two operator actions were unblocks after a Claude usage limit. [`docs/run-b.md`](run-b.md) *Results* |
-| A gate is completed by the checkpoint cron | `GATE-M1`, armed `apply`: probed 5 of 5 and completed on the first tick, 16 minutes after `forge go` |
-| The milestone probe and the amendment path work on a real finding | `GATE-M2` reported 3 of 4; the failing case was a probe defect (a substring check); `amend-contract.sh` changed the probe, its freeze and the decision log together (`wielas/Squatfather#16`), and the next tick read 4 of 4 |
-| A hold reaches the operator in minutes | `forge-run-watch` on the host: both run B holds were on Telegram within three minutes |
-| **The verifier judges on OpenAI first, with Claude as the fallback** | `forge rehearse`, 2026-11-16 on the deployed `b4b8af1`: `wielas/hello-forge#23` merged in 4 min 52 s on a verdict with `judge_engine: "codex"` (`gpt-6-astra`). The fallback ran live the same night: `#17` was judged by Claude when the Codex call was refused |
-| **Merge mode works live** | 2026-11-14, board `hello-rehearsal-a2h`, card `t_35fdac2e`: ready → PR `wielas/hello-forge#13` → CI green → verifier approve → merged → done in about 3 minutes, no operator action. Evidence: `~/forge-evidence/run-b-launch-2026-11-14/` |
-| The whole loop can be re-proved in one command | `forge rehearse`, 2026-11-14 on the deployed `04034da`: board `hello-rehearsal-r202611141142`, `wielas/hello-forge#15` merged by the verifier in 4 min 12 s, grant revoked, repo reset by `#16`, board archived. Evidence: `~/forge-evidence/rehearsals/` |
-| The checkpoint probes what was merged | #112, deployed: the cron fetches and fast-forwards the product checkout first; run once in rehearse against the private Squatfather repo |
-| The watchdog asks the verifier's token for life | #115, deployed: `OK    token  the verifier's claude token answered just now` on the host; a dead token is a FAIL and an alert, while HTTP 429 is a healthy WARN |
-| A board follows a changed plan | `hermes/board-sync.sh --apply` on the live Squatfather board, 2026-11-14: 14 steps, each read back, ends in sync, releases nothing |
-| The checkpoint cron reports once and writes nothing in rehearse | `GATE-M1` armed `rehearse`, the cron script run twice: one report (pass, 5 of 5), then silence; the gate stayed held |
-| A bounce, a crash after push, a red CI and a quota park each recover | July ladder and fault exercises; run A's D-1 drill and resumed Codex run. Details in the archive |
-| The tier-1 gate, the lane protocol and the gate verbs behave as written, offline | `make verify` (CI runs all of it on every PR; it is a required check) |
+| A real plan becomes integrated code | Squatfather M1: five chunks, probe 5/5. M2: three chunks, probe 4/4. M3: five chunks, probe 6/6. |
+| The verifier can merge an entire milestone | All eight Run B chunks merged by the verifier. M2 required two quota-related unblocks; M3 required one after a transient diff read. |
+| The OpenAI judge works on the real product | All five final M3 verdicts name `codex` / `gpt-6-astra`; three M3 cards were sent back and repaired. |
+| A quota wait can resume itself | CHUNK-13 parked once on the OpenAI usage limit and then completed. Exact retained pause timestamps are unavailable. |
+| The final checkpoint closes the completed run | Runtime `checkpoint.sh --apply` completed GATE-M3 after 6/6 at `9136771`, five of five chunks, eight of eight delivered requirements, no downstream cards. |
+| The normal loop can be rehearsed | `forge rehearse` previously merged hello-forge #23 in 4m52s with the Codex judge; rerun after a behavior-changing deploy. |
+| Recovery checks execute kernel behavior | Repeated-hold tests use isolated real Hermes cards; GitHub retry and archive tests use subprocess/board fixtures. Required CI covers the complete suite. |
 
-## Not proven
+## Gaps that remain
 
-- **The OpenAI judge on a real product.** It has judged hello-forge only; milestone 3 is its first real
-  PRs. All eight earlier merges were judged by Claude opus, and the implementer is OpenAI too, so the
-  judge is no longer a cross-vendor check (owner's decision, 2026-11-15).
-- **The bounds, against a real limit.** The Codex attempt limit and the quota give-up (#123), and the
-  judge's wait on a Claude usage limit (#124), have only run against stubs.
-- **The gate verbs over Telegram** (`/accept`, `/redirect`, `/park`). The forge-gate bot does
-  not exist yet (BotFather, the profile, the plugin, `FORGE_OPERATOR_TELEGRAM_ID`). Without
-  it a checkpoint that blocks is answered from a terminal; one that passes needs no answer.
-- **Recovery from a restart.** FileVault is on, so nothing runs after a reboot until someone
-  unlocks the disk, and nothing on the host can say so. Only an external heartbeat URL in
-  `~/.forge/watchdog.env` would report it; none is configured.
-- **A real watchdog alert.** It has only ever read healthy. On 2026-11-16 launchd held it for 8.5 hours
-  (01:31 to 09:57 local, cause not established) and nothing said so; `forge-run-watch` now says
-  `WATCHDOG SILENT` after 30 minutes without a reading and `WATCHDOG BACK` when one returns, offline-proven only.
-- **The mutation probe's precision.** It reports and never bounces; read at the M2 checkpoint.
+- **Scheduled watchdog liveness is unresolved.** Its job is loaded, not disabled, with no
+  running watchdog process; observed passes exit 0. It missed its 600 s interval repeatedly.
+  The host reports no sleep/wake cycles explaining the gaps. macOS denied unified-log
+  access even outside the sandbox. #129 detects silence. The isolated calendar experiment
+  supports a scheduling workaround, not a diagnosis of launchd or a full-day reliability claim.
+- **Notification delivery is partly unproven.** Earlier quota holds reached Telegram;
+  watchdog-silent state transitions were observed, but their Telegram receipt was not.
+  Killed-worker and paused-cron exercises are still owed.
+- **Some blocks cannot rotate safely.** Missing jq, an unreadable or untrusted initial card,
+  a driver-authored block, or an external mutation after the snapshot can still reach triage.
+- **Historical review cost is incomplete.** M2 had two bounces, M3 three. Older bounced
+  verdict payloads were overwritten; board reasons survive, their original usage does not.
+  New archives cannot reconstruct that missing cost. Subscription usage is not dollar cost.
+- **Phone gate replies and restart detection need setup.** No forge-gate Telegram bot and
+  no external heartbeat are configured. With FileVault locked after reboot, local tools
+  cannot report that the machine is down.
+- **One product has been delivered.** `forge new` and the board-creating rung of `forge start`
+  still need a real second-product proof. The delivered product also needs a real user journey.
 
-## Known gaps
+## Commands and locations
 
-- **A blocked checkpoint has no phone answer** until the forge-gate bot exists (above).
-- **The suite is heavy, but no longer slow.** One case (`cli/flags-exist`) spent 344 s forking `grep`
-  per line of `docs/`; it now takes seconds, and CI runs `scripts/verify.sh --shard k/3` as three parallel
-  jobs behind the same required `verify` check, so the gateway group (263 s) is the floor.
-- **One usage window for the lane and the judge.** Both now draw on the OpenAI subscription; when it
-  is spent the judge falls back to Claude and the lane parks.
-- **A card's second hold is a triage card.** Hermes sends a card to `triage` on its second block of the
-  same kind, and most of Forge's holds carry no kind; only the usage-limit hold avoids it. An unblock
-  works once per card (`docs/hermes-field-notes.md`).
-- **The bounce rate misses the verifier's bounces.** `make metrics` read 0 of 3 for run B although
-  CHUNK-6 was bounced once (epic P40).
-- **`forge rehearse` is the proof after every deploy.** It found two defects on 2026-11-16 that the
-  suite could not: a schema OpenAI refuses, and a driver that acted on the tail of the verifier's output.
-
-## Starting a new project
+`forge status` reads progress; `forge stop <board>` revokes its grant and disarms its gates.
+The completed Squatfather run has no merge authority or armed gates after `forge stop`
+read them back; there is no next milestone to release. For the next project:
 
 ```bash
-forge new my-project --dest $HOME/dev [--github <owner>/<repo>]   # stamp, git init, make setup, first commit
-# in Claude Code, in the project: /scope, then /architect, then /roadmap
-PROJECT=/absolute/path/to/product
-make roadmap-check PROJECT="$PROJECT"   # repeat until CLEAR
-forge start "$PROJECT" --branch-suffix <s>   # re-run after every step; it prints the next one, then bootstraps the board
-forge go <board> --project "$PROJECT" --branch-suffix <s>   # the launch; --gate GATE-Mn --ahead arms a later milestone
+forge new my-project --dest "$HOME/dev" [--github <owner>/<repo>]
+# Plan in the project: /scope, /architect, /roadmap
+PROJECT=/absolute/path/to/project
+make roadmap-check PROJECT="$PROJECT"
+forge start /absolute/path/to/project --branch-suffix <s>
+forge go <board> --project /absolute/path/to/project --branch-suffix <s>
 ```
 
-`forge start` is read-only until its last rung (add `--commission` for the paid evidence run, `--root-only` to stage the
-root first); on a project already on its board a rung not met only warns. [`docs/operator-guide.md`](operator-guide.md) is the long form.
-
-## Where things live
-
-- `~/dev/forge` — the dev checkout. Slices are built here on `slice/*` branches, merged by PR;
-  ruleset `mainprotect` requires green `validate` and `verify`.
-- `~/dev/forge-runtime` — what every Hermes profile executes (`~/.forge/repo` points at it).
-  It changes only by `git pull --ff-only` after a merge, followed by `make preflight`.
-  **Never `make verify` there:** its mutation harnesses edit scripts the live cron runs.
-- `~/.forge/` — host state: verdicts, grants, gate arming, the watchdog's log.
-- `~/forge-evidence/` — pasted evidence that is not committed (the products are private).
-
-## Environment as of this writing
-
-Tool versions as recorded on 2026-11-06; `make preflight` section 10 compares them with the
-live binaries and WARNs on drift.
-
-```
-Hermes 0.21.5 · codex-cli 0.164.0 · Claude Code 2.1.318 · gh 2.103.2
-lefthook 2.1.10 · uv 0.13.5 · copier 9.17.0
-mini: Goons-Mac-mini.local, gateway supervised by launchd, dispatch every 60s
-profiles: forge-orchestrator, forge-codex-lane, forge-verifier,
-          forge-digest (glm-5.3-flash) · codex pinned gpt-5.6-luna xhigh
-```
+- `~/dev/forge`: development; changes land through PRs with required `validate` and `verify`.
+- `~/dev/forge-runtime`: live scripts, reached through `~/.forge/repo`; deploy by fast-forward
+  after merge, then preflight. **Never run `make verify` here**: mutation tests edit scripts.
+- `~/.forge`: host grants, latest verdicts, review history and watcher state.
+- `~/forge-evidence`: private run evidence; do not commit private product contents.
+- [Operator guide](operator-guide.md): detailed setup and recovery commands.

@@ -76,6 +76,33 @@ forge_judge_waits_json() {   # -> {"<card>": {"until": <epoch>}} for each record
 }
 
 # ---------------------------------------------------------------------------
+# THE KIND OF A NEW BLOCK — ONE RULE, EVERY PROGRAM THAT BLOCKS A CARD.
+#
+# The kernel sends a card to `triage` on its second block of one kind (`_route_block`,
+# `BLOCK_RECURRENCE_LIMIT = 2`), a block with no kind equals an earlier block with no kind, and the
+# counter survives `unblock` (docs/hermes-field-notes.md, "The block counter"). From `triage` nothing
+# dispatches the card and `unblock` and `complete` are refused. So a block Forge names never takes
+# the kind of the card's last block. The card's own events are the source: every block the kernel
+# takes writes a `blocked` or `block_loop_detected` event whose payload carries the kind it stored
+# (`show --json` does not expose the column), and the dispatcher's own give-up writes neither the
+# event nor the column.
+#
+# stdin: `hermes kanban show <card> --json`. $1: the kind of a card's FIRST block, which is the
+# caller's (the lane's is none, as it always was; the verifier's hold is needs_input). Prints the
+# kind, or an empty line for "name no kind". A card that cannot be read gets the first-block kind:
+# the caller's behaviour before this rule, never a refusal to block.
+forge_next_block_kind() {
+  local last
+  last="$(jq -r '[ .events[]? | select(.kind == "blocked" or .kind == "block_loop_detected") ]
+                 | if length == 0 then "first" else "last:" + ((last | .payload.kind) // "" | tostring) end' 2>/dev/null)"
+  case "$last" in
+    last:needs_input) echo capability;;
+    last:*)           echo needs_input;;
+    *)                printf '%s\n' "${1:-}";;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # THE PENDING CALL (P34). A program decides the one lifecycle call the driver must make and
 # prints it in its envelope; a cheap driver model retypes it, and sometimes drops an argument
 # (rehearsal 4: `kanban_request_review` without `reviewer`, so the card stayed with the lane).

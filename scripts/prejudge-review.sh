@@ -298,14 +298,22 @@ call_json() {   # tool, args-json -> {tool, args}
 # it to the driver's own: naming a card that failed the identity check would make
 # the kernel refuse the very `kanban_block` that reports the failure.
 CHUNK_TRUSTED=0
+CARD0=""  # the identity-checked snapshot, retained if a later board read fails
 task_args() {   # jq filter over {task_id: $t}, then --arg pairs -> args-json
   local filter="$1"; shift
   jq -nc --arg t "$([ "$CHUNK_TRUSTED" = 1 ] && printf '%s' "$CHUNK")" "$@" \
     "(if \$t == \"\" then {} else {task_id: \$t} end) + ($filter)"
 }
 term_block() {   # reason [kind] -> the kanban_block call
-  if [ -n "${2:-}" ]; then
-    call_json kanban_block "$(task_args '{reason: $r, kind: $k}' --arg r "$1" --arg k "$2")"
+  local kind="${2:-}"
+  # No kind named: a fault block, which carried none. On its first block the card still gets none; after
+  # that it gets the kind that is not the last block's (forge-state.sh), so a fault after any earlier hold
+  # is a block and not `triage`. Only for a card proven to be this worker's: no other card is read.
+  if [ -z "$kind" ] && [ "$CHUNK_TRUSTED" = 1 ]; then
+    kind="$(printf '%s' "$CARD0" | forge_next_block_kind "")"
+  fi
+  if [ -n "$kind" ]; then
+    call_json kanban_block "$(task_args '{reason: $r, kind: $k}' --arg r "$1" --arg k "$kind")"
   else
     call_json kanban_block "$(task_args '{reason: $r}' --arg r "$1")"
   fi
@@ -591,13 +599,11 @@ card_json() { kanban show "$CHUNK" --json 2>/dev/null; }
 # exists to stop a WORKER looping unblock/re-block by itself; a re-block that
 # follows the operator's own `reopen-review` is not that loop, and the
 # alternative is a chunk nothing can finish.
-last_block_kind() {
-  card_json | jq -r '
-    [ .events[]? | select(.kind == "blocked" or .kind == "block_loop_detected") ]
-    | last | .payload.kind // empty' 2>/dev/null
-}
+#
+# THE RULE ITSELF IS forge-state.sh's (`forge_next_block_kind`), which the lane asks too: one
+# definition, so the two workers of one card cannot each pick the kind the other just used.
 next_block_kind() {
-  if [ "$(last_block_kind)" = needs_input ]; then echo capability; else echo needs_input; fi
+  printf '%s' "$CARD0" | forge_next_block_kind needs_input
 }
 
 # FL6's budget, counted from the card's own events and WINDOWED.
@@ -656,6 +662,8 @@ changes_call() {  # $1=reasons body
 # file. A failed write is said out loud instead: the watcher then completes the
 # card with "NO stored verdict envelope", which names the absence.
 archive_envelope() {  # original payload, intended action; board events prove the actual transition
+  [ "$DRY_RUN" != 1 ] || return 0
+  board_live || return 0
   python3 "$HERE/verdict-archive.py" "$(forge_verdict_root)" "$BOARD" "$CHUNK" "$2" "$1" \
     || echo "verdict archive: review history could not be saved; latest verdict handling continues" >&2
 }
