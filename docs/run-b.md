@@ -90,6 +90,55 @@ checkpoint, a substrate fault). Applies the stop rules. That is all.
 
 ## Results
 
-*Filled from pasted output when the run ends: `make metrics` for the board, the list
-of merged PRs with the verifier's verdict and the probe's line for each, any stop rule
-that fired, and the M2 checkpoint.*
+Milestone 2, 2026-11-15, on the deployed forge `653fa2b` (later `689cbca`); every number below is pasted
+from a command, a card or GitHub.
+
+**Launch.** `forge go` was confirmed at 08:20:50Z. The checkpoint cron's first tick completed `GATE-M1`
+at 09:36 local (`checkpoint pass: probe GATE-M1: PASS — 5 of 5 cases passed (realistic 2/2,
+adversarial 3/3) at ac06baf`) and CHUNK-6 and CHUNK-8 became ready.
+
+**Merged PRs** (`wielas/Squatfather`; each merged by the verifier at the head its verdict covers, CI green):
+
+| Chunk | PR | Merged (UTC) | Head | Verdict | Judge cost |
+|---|---|---|---|---|---|
+| CHUNK-6 | #13 | 12:31:31 | `a34f974` | approve-with-nits, 2 findings | $0.414155 |
+| CHUNK-8 | #14 | 12:40:31 | `883962f` | approve-with-nits, 3 findings | $0.3926328 |
+| CHUNK-7 | #15 | 13:18:39 | `dbb25ec` | approve-with-nits, 2 findings | $0.4527846 |
+
+All three were judged by Claude opus. The verifier bounced CHUNK-6 once before approving it
+(`scenario_integrity`: the steps checked the exercise name on three sets only); the lane fixed it in one
+run. The mutation probe's line is on CHUNK-8's card only: `report-only — 11/46 probed lines observed by
+no test`. It was not written to the other two cards.
+
+**`metrics.sh squatfather-run-a2 --since 2026-11-15`:**
+
+```
+merged without the operator  1.00 (3/3)
+operator actions per merged chunk  0.67 (2 = 2 board touches + 0 merges, over 3 merged)
+PR open -> merge  median 3.26 h · max 3.72 h over 3
+gate completions  1 = 1 by the checkpoint + 0 by the operator
+bounce rate  tier 1  0.00 (0/3 chunk cards)   from 0/3 verdicts
+```
+
+Run A read 0.00 (0/5) and 2.40. The bounce rate is wrong: it does not count the verifier's own bounce
+of CHUNK-6 (epic P40). The two board touches and the 3-hour median are one event: at 10:08 and 10:32
+local both reviews ended `env: judge-envelope — claude -p reported an API failure before returning a
+verdict (is_error=true, api_error_status=429)`, the account's 5-hour Claude limit, which the overseeing
+session shared with the judge. Both cards were unblocked by hand at 13:22 after the reset. CHUNK-7,
+which met no limit, went from ready to merged in about 37 minutes.
+
+**Stop rules.** None fired. No merge was at a head its verdict did not cover.
+
+**The M2 checkpoint** (rehearse). First report, 14:24 local: `probe GATE-M2: FAIL — 3 of 4 cases passed
+(realistic 1/2, adversarial 2/2); failed: partial-push-then-retry-leaves-one-workout-per-session at
+4f560a0`, classified ambiguous. It was a probe defect: `tests/probes/m2/run.py` checked `"complete" not
+in text` and the product's failure line is `Push incomplete: upload failed for session B`. The owner
+confirmed the amendment; `amend-contract.sh --apply` changed the check to whole words together with the
+freeze and the decision log (`wielas/Squatfather#16`, `3a96dd4`). Next report, 19:44: `probe GATE-M2:
+PASS — 4 of 4 cases passed (realistic 2/2, adversarial 2/2) at 3a96dd4`, 3 of 3 chunks against an
+estimate of 3, 11 of 11 requirements delivered. So the M2 probe found no product defect the verifier
+had merged.
+
+**What the run changed in Forge** (rows S9h to S9k and after): the push watcher (#122), the bounds on a
+Codex attempt and a quota park (#123), the judge's wait on a usage limit and the failing case's output
+in the checkpoint report (#124), and the judge on OpenAI first with Claude as the fallback (#125 to #127).
