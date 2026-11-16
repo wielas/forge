@@ -12189,6 +12189,11 @@ with kbc.connect_closing() as c:
       { [ "$rc" = 4 ] && jq -e '.call == "terminate" and .tool == "kanban_block"' "$vbin/perform.json" >/dev/null 2>&1; } \
         || d="$d approve-did-not-route(rc=$rc,reason=$(_vo_reason))"
       [ "$(_vq_calls)" = 0 ] || d="$d claude-was-called-on-approve"
+      # the output ends with one short line naming the terminate tool, and says the on_error call is not the step:
+      # a driver that reads only the end of the output must not take on_error for the instruction
+      { tail -n 1 "$vbin/err.txt" | grep -qF "NEXT STEP: call the tool $(jq -r '.terminate.tool' "$vbin/out.json") now, once." \
+        && [ "$(tail -n 1 "$vbin/err.txt" | wc -c)" -lt 500 ] && jq -e 'type == "object"' "$vbin/out.json" >/dev/null 2>&1 \
+        && ! LC_ALL=C grep -q "$(printf '\033')" "$vbin/out.json"; } || d="$d the-last-line-does-not-name-the-step($(tail -n 1 "$vbin/err.txt" | head -c 80))"
       jq -e '.judge_engine == "codex" and .judge_model == "gpt-6-astra" and .tokens_estimate == 27
              and .cost.input_tokens == 11 and .cost.output_tokens == 13 and .cost.cache_read_input_tokens == 7
              and .cost.cache_creation_input_tokens == 3 and .cost.reasoning_output_tokens == 5

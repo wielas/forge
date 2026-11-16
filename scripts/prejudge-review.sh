@@ -260,13 +260,31 @@ envelope() {   # action, summary, metadata-file|'null', reason, exit-code, [term
   # arguments. Written BEFORE the envelope is printed. A dry-run names no call and writes none. Keyed on
   # HERMES_KANBAN_BOARD, the board the hook reads (and the one a call with no `board` argument lands on).
   forge_pending_write "${HERMES_KANBAN_BOARD:-$BOARD}" "${HERMES_PROFILE:-}" "${HERMES_KANBAN_WORKSPACE:-}" "$CHUNK" "$terminate" "$on_error"
-  jq -nc --arg action "$action" --arg summary "$summary" --arg reason "$reason" --argjson rc "$code" \
+  # -M: this runs under a pty, where jq colours its output; the escape codes tripled the envelope's length.
+  jq -nMc --arg action "$action" --arg summary "$summary" --arg reason "$reason" --argjson rc "$code" \
         --argjson metadata "$meta" --argjson terminate "$terminate" --argjson on_error "$on_error" \
         --argjson created "$(printf '%s\n' ${CREATED[@]+"${CREATED[@]}"} \
                              | jq -Rs 'split("\n") | map(select(length>0))')" '
     { schema: "forge.review.v2", action: $action, summary: $summary,
       reason: (if $reason == "" then null else $reason end),
       rc: $rc, metadata: $metadata, terminate: $terminate, on_error: $on_error, created_cards: $created }'
+  # THE LAST LINE NAMES THE STEP. A driver that reads only the END of this output (`process_manage` wait keeps
+  # about 2,000 characters, and the envelope ends with on_error) saw a complete `kanban_block` call and nothing
+  # else, and made it: a merged card was held, twice in a row, on 2026-11-16. So the step is said again, last and
+  # short, on stderr (stdout stays one envelope line). The hook fills the arguments from the record written above,
+  # so the tool's name is all a driver needs.
+  if [ "$terminate" != null ]; then
+    local next_tool fallback_tool=""
+    next_tool="$(printf '%s' "$terminate" | jq -r '.tool // empty' 2>/dev/null)"
+    [ "$on_error" = null ] || fallback_tool="$(printf '%s' "$on_error" | jq -r '.tool // empty' 2>/dev/null)"
+    if [ -n "$next_tool" ]; then
+      printf '\nNEXT STEP: call the tool %s now, once. Its arguments are the ones under "terminate" in the line above, and a hook fills them in if you cannot see them.' "$next_tool" >&2
+      if [ -n "$fallback_tool" ]; then
+        printf ' Call %s ONLY IF %s itself returns an error; the call shown under "on_error" is not the step to take.' "$fallback_tool" "$next_tool" >&2
+      fi
+      printf '\n' >&2
+    fi
+  fi
   exit "$code"
 }
 
