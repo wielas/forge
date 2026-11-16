@@ -1527,6 +1527,17 @@ PF_CODEX_RUN="$PF_SELF_REPO/scripts/codex-run.sh"
 # The binary codex-run.sh would use (its FORGE_CODEX_BIN knob), so a probe cannot bless one codex while the lane runs another.
 PF_CODEX="${FORGE_CODEX_BIN:-codex}"
 if [ "$PIPED" = 1 ]; then
+  fail "verifier judge pins are UNCHECKED because preflight was piped in on stdin"
+elif ! command -v "$PF_CODEX" >/dev/null 2>&1; then
+  fail "verifier judge pins are set, but $PF_CODEX is not on PATH"
+elif ! PF_JUDGE_PINS="$(. "$PF_SELF_REPO/scripts/model-pins.sh" 2>/dev/null && printf '%s\n%s' "${FORGE_PIN_JUDGE_MODEL:-}" "${FORGE_PIN_JUDGE_EFFORT:-}")" \
+      || [ "$(printf '%s\n' "$PF_JUDGE_PINS" | sed -n '1p')" = "" ] \
+      || [ "$(printf '%s\n' "$PF_JUDGE_PINS" | sed -n '2p')" = "" ]; then
+  fail "verifier judge model/effort do not resolve from scripts/model-pins.sh"
+else
+  pass "verifier judge pins resolve to $(printf '%s\n' "$PF_JUDGE_PINS" | sed -n '1p')/$(printf '%s\n' "$PF_JUDGE_PINS" | sed -n '2p'); $PF_CODEX is on PATH"
+fi
+if [ "$PIPED" = 1 ]; then
   warn "cannot locate scripts/codex-run.sh because this script was piped in on stdin — there is no file"
   say  "      path to resolve it from. Re-run from a checkout to probe the sandbox grant."
 elif ! command -v "$PF_CODEX" >/dev/null 2>&1; then

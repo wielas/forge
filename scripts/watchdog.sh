@@ -24,6 +24,8 @@
 #                    from the root .env exactly as a worker's does. Three outcomes, kept apart:
 #                      OK    the answer was JSON with is_error false
 #                      FAIL  the answer was JSON with is_error true: the token is dead. Unhealthy, alerts like any FAIL
+#                      WARN  an HTTP 429 usage limit: the account is healthy but temporarily out of allowance; the
+#                            reset text is shown, no alert is sent, and it is not cached as a dead token
 #                      WARN  could not ask (no claude binary, no token line, a timeout, output that is not JSON,
 #                            e.g. the network is down): logged and named in the summary, never an alert, never a
 #                            recovery. It is not cached as a verdict, and an earlier FAIL stays a FAIL until a probe
@@ -326,6 +328,8 @@ wd_token_probe() {
       (if type == "array" then (map(select(type == "object" and .type == "result")) | last) else . end) as $r
       | if ($r | type) != "object" then "unknown"
         elif $r.is_error == false then "ok"
+        elif $r.is_error == true and $r.api_error_status == 429 then
+          "usage-limit " + ([($r.api_error_status // empty | tostring), ($r.result // "" | tostring | gsub("[\\s]+"; " "))] | map(select(. != "")) | join(": "))
         elif $r.is_error == true then
           "dead " + ([($r.api_error_status // empty | tostring), ($r.result // "" | tostring | gsub("[\\s]+"; " "))] | map(select(. != "")) | join(": "))
         else "unknown" end' "$work/out" 2>/dev/null | head -n 1)"
@@ -336,6 +340,11 @@ wd_token_probe() {
         r="${r//"$tok"/$red}"
         r="$(printf '%s' "$r" | tr -cd ' -~' | sed 's/sk-ant-[A-Za-z0-9_-]*/<redacted>/g; s/^ *//' | cut -c1-70)"
         echo "dead ${r:-no reason given}";;
+      usage-limit*)
+        r="${v#usage-limit}"; red='<redacted>'
+        r="${r//\"$tok\"/$red}"
+        r="$(printf '%s' "$r" | tr -cd ' -~' | sed 's/sk-ant-[A-Za-z0-9_-]*/<redacted>/g; s/^ *//' | cut -c1-160)"
+        echo "usage-limit ${r:-HTTP 429 account usage limit}";;
       *) echo "unknown claude answered with something that is not a JSON result with is_error (exit $rc), e.g. the network is down";;
     esac
   ) 2>/dev/null
@@ -389,6 +398,7 @@ chk_token() {
     case "$kind" in
       ok)   TK_VERDICT=ok;   TK_AT="$NOW"; TK_REASON="";     TK_TRIED="$NOW"; TK_NOTE="";;
       dead) TK_VERDICT=fail; TK_AT="$NOW"; TK_REASON="$why"; TK_TRIED="$NOW"; TK_NOTE="";;
+      usage-limit) TK_VERDICT=none; TK_AT=0; TK_REASON=""; TK_TRIED="$NOW"; TK_NOTE="account usage limit (HTTP 429): $why";;
       *)    TK_TRIED="$NOW"; TK_NOTE="$why";;
     esac
     if [ "$READONLY" = 0 ]; then tk_write || TK_WRITE_NOTE="the token cache $TOKEN_FILE could not be written, so the next pass asks again"; fi
@@ -406,7 +416,10 @@ chk_token() {
       if [ "$TK_TRIED" = "$TK_AT" ]; then res ok token "the verifier's claude token answered $ago"
       else res warn token "could not ask the verifier's claude token: $note (it last answered $ago)"; fi;;
     *)
-      res warn token "could not ask the verifier's claude token: $note";;
+      case "$note" in
+        account\ usage\ limit*) res warn token "the verifier's claude account usage limit (HTTP 429): \"$note\"";;
+        *) res warn token "could not ask the verifier's claude token: $note";;
+      esac;;
   esac
 }
 

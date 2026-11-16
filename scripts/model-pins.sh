@@ -20,7 +20,8 @@
 # no backtick, no escape — which is what makes sourcing it safe.
 #
 # NAMESPACE: `FORGE_PIN_*`, deliberately NOT the operator override knobs
-# `FORGE_MODEL_ROUTER`, `FORGE_MODEL_DRIVER`, `FORGE_CODEX_MODEL`. Sourcing this
+# `FORGE_MODEL_ROUTER`, `FORGE_MODEL_DRIVER`, `FORGE_CODEX_MODEL`,
+# `FORGE_JUDGE_MODEL` and `FORGE_JUDGE_EFFORT`. Sourcing this
 # file must never clobber an override someone exported on purpose. Consumers
 # compose: `MODEL_ROUTER="${FORGE_MODEL_ROUTER:-$FORGE_PIN_ROUTER}"`.
 #
@@ -47,6 +48,12 @@ FORGE_PIN_DRIVER="z-ai/glm-5.3-flash"
 # chunk's completion metadata (F22).
 FORGE_PIN_CODEX_MODEL="gpt-5.6-luna"
 FORGE_PIN_CODEX_EFFORT="xhigh"
+
+# The verifier's tier-1 judge. The verifier drives this engine directly through
+# the OpenAI subscription; operator overrides are FORGE_JUDGE_MODEL and
+# FORGE_JUDGE_EFFORT, never these pin names.
+FORGE_PIN_JUDGE_MODEL="gpt-6-astra"
+FORGE_PIN_JUDGE_EFFORT="high"
 
 # The overseer (epic MS3, S8c): `forge-overseer` judges milestone gates, exceptions
 # and triage and never touches a chunk. It drives on the OpenAI subscription through

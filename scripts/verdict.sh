@@ -167,6 +167,15 @@ stamp_shadow_file() {
   return "$rc"
 }
 
+# The provider call cannot author this field. Keep the stamp beside the other
+# host-owned verdict operations, but call it only after the verifier has chosen
+# the engine so the model-facing schema remains engine-neutral.
+stamp_judge_engine() {  # $1=verdict JSON  $2=codex|claude
+  case "$2" in codex|claude) ;; *) return 1;; esac
+  printf '%s' "$1" | jq -ce --arg engine "$2" \
+    '.judge_engine = $engine'
+}
+
 # Only run when executed, so `source`ing this file just defines the functions
 # and leaves the caller's shell options exactly as it found them.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

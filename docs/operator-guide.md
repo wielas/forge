@@ -100,6 +100,11 @@ judge (you + Claude Code)           /judge — the only step that needs your tas
 merge                               auto only if approved AND tagged low-risk
 ```
 
+The unattended verifier judge is OpenAI/Codex first, with Claude as fallback. Set
+`FORGE_JUDGE_ORDER` to `codex claude` (default), `claude codex`, `codex`, or `claude`;
+`FORGE_JUDGE_MODEL` and `FORGE_JUDGE_EFFORT` override the pinned `gpt-6-astra`/`high`,
+and `FORGE_JUDGE_TIMEOUT` bounds the Codex call in seconds (`0` means no bound).
+
 You are tier 2. That is the design, not a fallback: it is the one step where
 human judgement is the product.
 
@@ -168,9 +173,9 @@ whole number**, not a duration: `14400`, not `4h`. Every knob is validated at st
 value the runner cannot read exits `2` naming the knob, rather than quietly dropping the
 bound you thought you had set.
 
-**A review that hit the Claude usage limit waits, then holds with nothing for you to fix.** The
-verifier's judge (`claude -p`) answers HTTP 429 when the account's 5-hour limit is spent. The review
-asks again after a wait, for at most `FORGE_JUDGE_QUOTA_MAX_WAIT` seconds in all (default `1800`;
+**A review that hit the Claude usage limit waits only when Claude is the last arm, then holds with nothing for you to fix.** The
+verifier's fallback judge (`claude -p`) answers HTTP 429 when the account's 5-hour limit is spent. The review
+asks again after a wait when no later engine can take over, for at most `FORGE_JUDGE_QUOTA_MAX_WAIT` seconds in all (default `1800`;
 `FORGE_JUDGE_QUOTA_STEP` 120 and `_CAP` 600 set the backoff when the answer names no reset time, and a
 stated "resets 1:20pm (Europe/Copenhagen)" is waited for, plus `FORGE_JUDGE_QUOTA_MARGIN` 60 s, when it is
 inside the allowance). It waits *holding the host's one worker slot*, so the lanes stop meanwhile, which is

@@ -175,6 +175,7 @@ WAIT_SECS=600; FIXTURE="${PREJUDGE_FIXTURE:-}"; DRY_RUN=0; CONTRACT_FROM_CARD=0
 CREATED=()
 # shellcheck source=forge-state.sh
 . "$HERE/forge-state.sh" || { echo "usage: forge-state.sh is missing beside prejudge-review.sh" >&2; exit 2; }
+. "$HERE/model-pins.sh" || { echo "usage: model-pins.sh is missing beside prejudge-review.sh" >&2; exit 2; }
 # The judge call below is `claude -p`, and a ROUTED worker's environment has no CLAUDE_CODE_OAUTH_TOKEN
 # (the dispatcher strips every name the root ~/.hermes/.env defines; docs/hermes-field-notes.md,
 # rehearsal 5). Sourcing this defines a `claude` function that supplies it to that one child, so the
@@ -226,6 +227,24 @@ for _kn in JUDGE_QUOTA_MAX_WAIT JUDGE_QUOTA_STEP JUDGE_QUOTA_CAP JUDGE_QUOTA_MAR
 done
 awk -v a="$JUDGE_QUOTA_STEP" -v b="$JUDGE_QUOTA_CAP" 'BEGIN { exit !(a > 0 && b > 0) }' \
   || { echo "usage: FORGE_JUDGE_QUOTA_STEP and FORGE_JUDGE_QUOTA_CAP must be above 0 seconds" >&2; exit 2; }
+
+JUDGE_ORDER="${FORGE_JUDGE_ORDER:-codex claude}"
+case "$JUDGE_ORDER" in
+  "codex claude"|"claude codex"|codex|claude) ;;
+  *) echo "usage: FORGE_JUDGE_ORDER must be one of: codex claude, claude codex, codex, claude" >&2; exit 2;;
+esac
+JUDGE_TIMEOUT="${FORGE_JUDGE_TIMEOUT:-900}"
+case "$JUDGE_TIMEOUT" in
+  ''|*[!0-9]*) echo "usage: FORGE_JUDGE_TIMEOUT must be a non-negative integer, got '$JUDGE_TIMEOUT'" >&2; exit 2;;
+esac
+[ "$JUDGE_TIMEOUT" = 0 ] || command -v pgrep >/dev/null 2>&1 || {
+  echo "usage: pgrep is required to enforce FORGE_JUDGE_TIMEOUT" >&2; exit 2;
+}
+JUDGE_MODEL="${FORGE_JUDGE_MODEL:-$FORGE_PIN_JUDGE_MODEL}"
+JUDGE_EFFORT="${FORGE_JUDGE_EFFORT:-$FORGE_PIN_JUDGE_EFFORT}"
+[ -n "$JUDGE_MODEL" ] && [ -n "$JUDGE_EFFORT" ] || {
+  echo "usage: verifier judge model and effort must resolve from model-pins.sh or their overrides" >&2; exit 2;
+}
 
 # ---------------------------------------------------------------------------
 # The envelope is the whole of this script's output, and it is small on
@@ -1241,7 +1260,14 @@ judge_quota_span() {
 # a block with no kind counts as a re-block of any earlier block with none, and the kernel's second one is `triage`.
 judge_quota_hold() {   # $1=why this is a hold
   local reason
+  if [ "${JUDGE_CLAUDE_DIAGNOSTIC_PRINTED:-0}" != 1 ]; then
+    printf 'judge: claude failed: %s\n' "$(printf '%s' "$1" | sed -n '1p' | cut -c1-240)" >&2
+    JUDGE_CLAUDE_DIAGNOSTIC_PRINTED=1
+  fi
   reason="$(judge_usage_limit_reason "$1" "$BOARD" "$CHUNK")"
+  if [ "${JUDGE_ATTEMPT_COUNT:-0}" -gt 0 ] && [ -n "${JUDGE_ATTEMPT_SUMMARY:-}" ]; then
+    reason="$reason; tried: $JUDGE_ATTEMPT_SUMMARY"
+  fi
   envelope substrate-block "" null "$reason" 3 "$(hold_call "$reason")" null
 }
 
@@ -1263,6 +1289,7 @@ judge_wait_clear() { [ -z "$JUDGE_WAIT_FILE" ] || rm -f "$JUDGE_WAIT_FILE" "$JUD
 # return: it ends the review in a hold.
 judge_quota_pause() {   # reads $raw
   local result remaining want base far_re='resets ([A-Za-z][A-Za-z0-9 :,]{2,40}( \([A-Za-z0-9_/+-]+\))?)'
+  [ "${JUDGE_CLAUDE_LAST:-1}" = 1 ] || return 1
   [ "$(printf '%s' "${raw:-}" | jq -r 'if .is_error == true and .api_error_status == 429 then "429" else "" end' 2>/dev/null)" = 429 ] \
     || return 1
   result="$(printf '%s' "$raw" | jq -r '.result | if type == "string" then . else "" end' 2>/dev/null | head -c 400)"
@@ -1332,9 +1359,199 @@ judge_quota_pause() {   # reads $raw
 # itself, not a path, and its subset rejects a top-level `$schema`.
 # ---------------------------------------------------------------------------
 pr_url="$PR_URL"
-# The loop (not its body) is this slice's: a judge call refused for the account's usage limit is made again after a
-# wait (judge_quota_pause, above). Every line between the two markers is the control arm, unmoved.
-while :; do
+
+# The two arms receive the same reduced schema. The pinned Claude arm computes
+# its copy in-place for the control-arm comparison; this copy is for Codex's
+# path-valued --output-schema flag and is deliberately outside that region.
+JUDGE_SCHEMA_FILE="$TMP/judge-verdict.schema.json"
+jq -c --argjson stamped '["pr","judge_model","tokens_estimate","cost","session_id"]' '
+    del(."$schema")
+  | .properties |= with_entries(select(.key | IN($stamped[]) | not))
+  | .required |= map(select(. | IN($stamped[]) | not))
+' ~/.forge/rubrics/judge-verdict.schema.json > "$JUDGE_SCHEMA_FILE" 2>/dev/null ||
+  substrate "env: judge-envelope — could not compute the model-facing verdict schema"
+
+JUDGE_ATTEMPT_COUNT=0
+JUDGE_ATTEMPT_SUMMARY=""
+JUDGE_ENGINE=""
+CODEX_USAGE_LIMIT=0
+JUDGE_LAST_ENGINE=""
+JUDGE_LAST_FAILURE_REASON=""
+judge_record_failure() { # engine, reason -> one bounded diagnostic line
+  local engine="$1" why="$2" one
+  one="$(printf '%s' "$why" | sed -n '1p' | tr '\n' ' ' | cut -c1-240)"
+  [ -n "$one" ] || one="no reason was reported"
+  printf 'judge: %s failed: %s\n' "$engine" "$one" >&2
+  if [ -n "$JUDGE_ATTEMPT_SUMMARY" ]; then JUDGE_ATTEMPT_SUMMARY="$JUDGE_ATTEMPT_SUMMARY; "; fi
+  JUDGE_ATTEMPT_SUMMARY="${JUDGE_ATTEMPT_SUMMARY}${engine}: $one"
+  JUDGE_ATTEMPT_COUNT=$((JUDGE_ATTEMPT_COUNT + 1))
+  JUDGE_LAST_ENGINE="$engine"
+  JUDGE_LAST_FAILURE_REASON="$one"
+}
+
+# A Codex process can leave children behind on macOS, where timeout(1) and
+# setsid are not available. This is the small process-tree watcher used by
+# scripts/codex-run.sh, with the root included because this one-shot call has
+# no resumable supervisor to reap it.
+judge_codex_tree() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    printf '%s\n' "$child"
+    judge_codex_tree "$child"
+  done
+}
+judge_codex_end_tree() {
+  local root="$1" pids p alive late steps=0
+  pids="$root $(judge_codex_tree "$root")"
+  # shellcheck disable=SC2086
+  kill -TERM $pids 2>/dev/null || :
+  while [ "$steps" -lt 25 ]; do
+    alive=""
+    for p in $pids; do kill -0 "$p" 2>/dev/null && alive=yes; done
+    [ -z "$alive" ] && return 0
+    sleep 0.2
+    steps=$((steps + 1))
+  done
+  late=""
+  for p in $pids; do kill -0 "$p" 2>/dev/null && late="$late $p"; done
+  pids="$late $(judge_codex_tree "$root")"
+  # shellcheck disable=SC2086
+  kill -KILL $pids 2>/dev/null || :
+}
+
+# Only called AFTER an unsuccessful call or an unusable final message. Agent
+# messages can legitimately review a rate limiter; they are never provider errors.
+judge_codex_failure() { # fallback reason, stderr file, event stream
+  local fallback="$1" err="$2" events="$3" last errors
+  last="$(tr -d '\r' < "$err" | awk 'NF && $0 != "Reading prompt from stdin..." { last=$0 } END { print last }')"
+  errors="$(jq -Rr 'fromjson? | select(type == "object")
+    | select(.type == "error" or .type == "turn.failed")
+    | (.message // (.error | if type == "object" then .message // . else . end) // .)
+    | if type == "string" then . else tojson end' "$events" 2>/dev/null)"
+  CODEX_REASON="$fallback"
+  if grep -Eiq '429|usage[ -]?limit|rate[ -]?limit|quota|exhaust' "$err" 2>/dev/null \
+     || printf '%s\n' "$errors" | grep -Ei '429|usage[ -]?limit|rate[ -]?limit|quota|exhaust' >/dev/null; then
+    CODEX_USAGE_LIMIT=1
+    CODEX_REASON="provider refused this call for its usage limit"
+  fi
+  if [ -z "$last" ]; then
+    last="$(printf '%s\n' "$errors" | tr -d '\r' | awk 'NF { last=$0 } END { print last }')"
+  fi
+  # Remove provider upsell links BEFORE bounding the message, keeping room for
+  # the useful "try again at ..." reset time in an event-only refusal.
+  last="$(printf '%s\n' "$last" | sed -E 's@\(?https?://[^[:space:])]+\)?@@g; s/[[:space:]]+/ /g; s/^ //; s/ $//' | cut -c1-240)"
+  [ -z "$last" ] || CODEX_REASON="$last"
+  return 0
+}
+
+judge_codex() {
+  local bin="${FORGE_CODEX_BIN:-codex}" out="$TMP/codex-verdict.json" events="$TMP/codex-events.jsonl"
+  local err="$TMP/codex.stderr" job watcher="" rc=0 usage_json
+  local input_tokens cached_input_tokens cache_write_input_tokens output_tokens reasoning_output_tokens
+  CODEX_VERDICT=""; CODEX_REASON=""; CODEX_USAGE_LIMIT=0
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    CODEX_REASON="codex binary '$bin' is not on PATH"; return 1
+  fi
+  : > "$events"; : > "$err"; rm -f "$out"
+  (
+    "$bin" exec -m "$JUDGE_MODEL" \
+      -c "model_reasoning_effort=\"$JUDGE_EFFORT\"" \
+      -c 'approval_policy="never"' \
+      --sandbox read-only --skip-git-repo-check --ephemeral \
+      --output-schema "$JUDGE_SCHEMA_FILE" -o "$out" --json \
+      < "$prompt_file" > "$events" 2> "$err"
+    printf '%s\n' "$?" > "$TMP/codex.rc"
+  ) &
+  job=$!
+  if [ "$JUDGE_TIMEOUT" -gt 0 ]; then
+    (
+      deadline=$((SECONDS + JUDGE_TIMEOUT + 1))
+      while kill -0 "$job" 2>/dev/null; do
+        if [ "$SECONDS" -ge "$deadline" ]; then
+          : > "$TMP/codex.timeout"
+          judge_codex_end_tree "$job"
+          break
+        fi
+        sleep 1
+      done
+    ) >/dev/null 2>&1 &
+    watcher=$!
+  fi
+  wait "$job" 2>/dev/null || rc=$?
+  if [ -n "$watcher" ]; then
+    [ -e "$TMP/codex.timeout" ] || kill "$watcher" 2>/dev/null || :
+    wait "$watcher" 2>/dev/null || :
+  fi
+  [ -s "$TMP/codex.rc" ] && rc="$(head -1 "$TMP/codex.rc")"
+  if [ -e "$TMP/codex.timeout" ]; then
+    CODEX_REASON="timed out after ${JUDGE_TIMEOUT}s"; return 1
+  fi
+  case "$rc" in ''|*[!0-9]*) rc=1;; esac
+  [ "$rc" -eq 0 ] || {
+    judge_codex_failure "codex exited with status $rc" "$err" "$events"; return 1;
+  }
+  [ -s "$out" ] || {
+    judge_codex_failure "codex produced no final message" "$err" "$events"; return 1;
+  }
+  jq -e 'type == "object"' "$out" >/dev/null 2>&1 || {
+    judge_codex_failure "codex final message was not a JSON object" "$err" "$events"; return 1;
+  }
+  jq -e '
+    . as $v
+    | $v.schema == "forge.judge.v1" and ($v.chunk_id | type) == "string"
+    and ($v.verdict | IN("approve","approve-with-nits","bounce"))
+    and ($v.scores | type) == "object"
+    and (($v.scores.spec_fidelity | type) == "number" and ($v.scores.spec_fidelity | floor) == $v.scores.spec_fidelity and $v.scores.spec_fidelity >= 0 and $v.scores.spec_fidelity <= 3)
+    and (($v.scores.scenario_integrity | type) == "number" and ($v.scores.scenario_integrity | floor) == $v.scores.scenario_integrity and $v.scores.scenario_integrity >= 0 and $v.scores.scenario_integrity <= 3)
+    and (($v.scores.architectural_conformance | type) == "number" and ($v.scores.architectural_conformance | floor) == $v.scores.architectural_conformance and $v.scores.architectural_conformance >= 0 and $v.scores.architectural_conformance <= 3)
+    and (($v.scores.scope_discipline | type) == "number" and ($v.scores.scope_discipline | floor) == $v.scores.scope_discipline and $v.scores.scope_discipline >= 0 and $v.scores.scope_discipline <= 3)
+    and (($v.scores.debt_honesty | type) == "number" and ($v.scores.debt_honesty | floor) == $v.scores.debt_honesty and $v.scores.debt_honesty >= 0 and $v.scores.debt_honesty <= 3)
+    and (($v.scores.doc_reconciliation | type) == "number" and ($v.scores.doc_reconciliation | floor) == $v.scores.doc_reconciliation and $v.scores.doc_reconciliation >= 0 and $v.scores.doc_reconciliation <= 3)
+    and ($v.findings | type) == "array"
+    and ($v.nits_as_cards | type) == "array"
+    and ($v.spot_check_suggestion | type) == "string"
+  ' "$out" >/dev/null 2>&1 || {
+    judge_codex_failure "codex final message was missing a required verdict field" "$err" "$events"; return 1;
+  }
+  usage_json="$(jq -c 'select(.type == "turn.completed" and (.usage | type) == "object") | .usage' "$events" 2>/dev/null | tail -1)"
+  jq -e '[.input_tokens,.cached_input_tokens,.cache_write_input_tokens,.output_tokens,.reasoning_output_tokens] | all(.[]; type == "number" and floor == .)' \
+    <<< "${usage_json:-null}" >/dev/null 2>&1 || {
+    judge_codex_failure "codex returned no complete turn.completed usage event" "$err" "$events"; return 1;
+  }
+  input_tokens="$(printf '%s' "$usage_json" | jq -r '.input_tokens')"
+  cached_input_tokens="$(printf '%s' "$usage_json" | jq -r '.cached_input_tokens')"
+  cache_write_input_tokens="$(printf '%s' "$usage_json" | jq -r '.cache_write_input_tokens')"
+  output_tokens="$(printf '%s' "$usage_json" | jq -r '.output_tokens')"
+  reasoning_output_tokens="$(printf '%s' "$usage_json" | jq -r '.reasoning_output_tokens')"
+  CODEX_VERDICT="$(jq -c --arg pr "$pr_url" --arg model "$JUDGE_MODEL" \
+    --argjson input "$input_tokens" --argjson cached "$cached_input_tokens" \
+    --argjson created "$cache_write_input_tokens" --argjson output "$output_tokens" \
+    --argjson reasoning "$reasoning_output_tokens" '
+      .pr = $pr
+      | .judge_model = $model
+      | .tokens_estimate = ($input + $created + $output)
+      | .cost = {input_tokens: $input, output_tokens: $output,
+                 cache_read_input_tokens: $cached,
+                 cache_creation_input_tokens: $created,
+                 reasoning_output_tokens: $reasoning,
+                 total_cost_usd: null, cost_basis: "subscription"}
+      | del(.session_id)
+      | .judge_engine = "codex"
+    ' "$out")" || {
+      CODEX_REASON="could not stamp the Codex verdict"; CODEX_VERDICT=""; return 1;
+    }
+  return 0
+}
+
+judge_claude() {
+  JUDGE_CLAUDE_REASON=""
+  JUDGE_CLAUDE_LAST=1
+  [ "$JUDGE_ORDER" = "claude codex" ] && JUDGE_CLAUDE_LAST=0
+  verdict=""
+  raw=""
+  # The loop (not its body) is this slice's: a judge call refused for the account's usage limit is made again after a
+  # wait (judge_quota_pause, above). Every line between the two markers is the control arm, unmoved.
+  while :; do
 # --- PINNED REGION (control arm) — do not reindent, do not edit. ------------
    STAMPED='["pr","judge_model","tokens_estimate","cost","session_id"]'
    VERDICT_SCHEMA="$(jq -c --argjson stamped "$STAMPED" '
@@ -1361,31 +1578,70 @@ while :; do
      | .session_id = $env.session_id
    ')"
 # --- end pinned region ------------------------------------------------------
-  [ -z "${verdict:-}" ] && judge_quota_pause && continue
-  break
-done
-judge_wait_clear
-#
-# The pinned jq above collapses three distinct failures into one empty
-# `$verdict` and discards which one fired: `.is_error`, `.api_error_status`,
-# and a non-object `.structured_output` are FAIL CLOSED together by design
-# (the comment above the pinned region says so), but that means every one of
-# them reached `kanban_block` as the same `other: judge-envelope — claude -p
-# returned no structured verdict` string — an API-level failure (quota, auth,
-# a rate limit) filed identically to the model returning malformed output.
-# `reason_class`'s own vocabulary (rubrics/run-metadata-contract.json) already
-# has `env:` for a substrate fact distinct from a work judgement; this was
-# never routed there because nothing after the pinned block re-read `$raw` to
-# find out which arm fired. `$raw` is untouched by the pinned region — reading
-# it again here does not move the control arm's pinned bytes, only what a
-# caller does after they already decided nothing usable came back.
-[ -n "${verdict:-}" ] || {
-  reason="$(printf '%s' "$raw" | jq -r '
+    [ -z "${verdict:-}" ] && judge_quota_pause && continue
+    break
+  done
+  judge_wait_clear
+  if [ -n "${verdict:-}" ]; then
+    verdict="$(printf '%s' "$verdict" | jq -c '.judge_engine = "claude"')"
+    JUDGE_ENGINE=claude
+    return 0
+  fi
+  if [ "$JUDGE_CLAUDE_LAST" != 1 ] \
+     && [ "$(printf '%s' "$raw" | jq -r 'if .api_error_status == 429 then "429" else "" end' 2>/dev/null)" = 429 ]; then
+    JUDGE_CLAUDE_REASON="claude usage limit (HTTP 429)"
+    return 1
+  fi
+  JUDGE_CLAUDE_REASON="$(printf '%s' "$raw" | jq -r '
       if .is_error == true or .api_error_status != null
       then "env: judge-envelope — claude -p reported an API failure before returning a verdict (is_error=\(.is_error // false), api_error_status=\(.api_error_status // "n/a"))"
       else "other: judge-envelope — claude -p returned no structured verdict"
       end' 2>/dev/null)"
-  substrate "${reason:-other: judge-envelope — claude -p returned no structured verdict}"
+  JUDGE_CLAUDE_REASON="${JUDGE_CLAUDE_REASON:-other: judge-envelope — claude -p returned no structured verdict}"
+  return 1
+}
+
+judge_hold_with_attempts() {
+  local base="$1"
+  if [ "$JUDGE_ATTEMPT_COUNT" -gt 1 ]; then
+    printf '%s — tried: %s' "$base" "$JUDGE_ATTEMPT_SUMMARY"
+  else
+    printf '%s' "$base"
+  fi
+}
+
+verdict=""
+if [ "$JUDGE_ORDER" = codex ] || [ "$JUDGE_ORDER" = "codex claude" ]; then
+  if judge_codex; then
+    verdict="$CODEX_VERDICT"
+    JUDGE_ENGINE=codex
+  else
+    judge_record_failure codex "$CODEX_REASON"
+  fi
+fi
+if [ -z "${verdict:-}" ] && { [ "$JUDGE_ORDER" = claude ] || [ "$JUDGE_ORDER" = "claude codex" ] || [ "$JUDGE_ORDER" = "codex claude" ]; }; then
+  if judge_claude; then :; else judge_record_failure claude "$JUDGE_CLAUDE_REASON"; fi
+fi
+if [ -z "${verdict:-}" ] && [ "$JUDGE_ORDER" = "claude codex" ]; then
+  if judge_codex; then
+    verdict="$CODEX_VERDICT"
+    JUDGE_ENGINE=codex
+  else
+    judge_record_failure codex "$CODEX_REASON"
+  fi
+fi
+
+[ -n "${verdict:-}" ] || {
+  if [ "$JUDGE_LAST_ENGINE" = codex ] && [ "${CODEX_USAGE_LIMIT:-0}" = 1 ]; then
+    reason="$(judge_hold_with_attempts "env: judge-envelope — codex usage limit: $JUDGE_LAST_FAILURE_REASON")"
+    envelope substrate-block "" null "$reason" 3 "$(hold_call "$reason")" null
+  fi
+  if [ "${JUDGE_LAST_ENGINE:-}" = claude ]; then
+    reason="$(judge_hold_with_attempts "${JUDGE_CLAUDE_REASON:-env: judge-envelope — claude did not return a verdict}")"
+  else
+    reason="$(judge_hold_with_attempts "env: judge-envelope — codex: ${JUDGE_LAST_FAILURE_REASON:-codex did not return a verdict}")"
+  fi
+  substrate "$reason"
 }
 
 # ---------------------------------------------------------------------------
@@ -1492,6 +1748,10 @@ printf '%s' "$verdict" > "$TMP/verdict.json"
 # ---------------------------------------------------------------------------
 # shellcheck source=scripts/verdict.sh
 . "$HERE/verdict.sh"
+if [ -n "${JUDGE_ENGINE:-}" ]; then
+  _engine_stamped="$(stamp_judge_engine "$(cat "$TMP/verdict.json")" "$JUDGE_ENGINE")" || _engine_stamped=""
+  [ -n "$_engine_stamped" ] && printf '%s' "$_engine_stamped" > "$TMP/verdict.json"
+fi
 stamp_shadow_file "$TMP/verdict.json" \
   || echo "shadow: derivation unavailable this run; verdict left untouched" >&2
 

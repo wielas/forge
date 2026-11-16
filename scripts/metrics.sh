@@ -482,6 +482,8 @@ v AS (
          CASE WHEN r.profile IN ('forge-prejudge','forge-verifier')
               THEN 1 ELSE 2 END AS tier,
          json_extract(r.metadata,'$.verdict') AS verdict,
+         json_extract(r.metadata,'$.judge_model') AS judge_model,
+         json_extract(r.metadata,'$.judge_engine') AS judge_engine,
          (json_extract(r.metadata,'$.scores.spec_fidelity')
         + json_extract(r.metadata,'$.scores.scenario_integrity')
         + json_extract(r.metadata,'$.scores.architectural_conformance')) / 3.0 AS d13
@@ -822,7 +824,11 @@ SELECT json_object(
      'total', (SELECT COUNT(*) FROM va),
      'unattributed', (SELECT COUNT(*) FROM va WHERE chunk_card IS NULL),
      'by_verdict', (SELECT json_group_object(COALESCE(verdict,'(null)'), n) FROM
-                     (SELECT verdict, COUNT(*) n FROM va GROUP BY verdict ORDER BY verdict))),
+                     (SELECT verdict, COUNT(*) n FROM va GROUP BY verdict ORDER BY verdict)),
+     'by_engine', COALESCE((SELECT json_group_object(engine, n) FROM
+                     (SELECT COALESCE(NULLIF(judge_engine,''),'unknown') AS engine, COUNT(*) n
+                        FROM va WHERE judge_engine IS NOT NULL AND judge_engine <> ''
+                       GROUP BY engine ORDER BY engine)), json_object())),
   'tiers', (SELECT json_group_array(json_object(
               'tier', tier, 'verdicts', verdicts, 'bounce_verdicts', bounce_verdicts,
               'mean_d13', mean_d13, 'chunks_judged', chunks_judged,
@@ -1037,6 +1043,8 @@ text)
          then "   (\(.verdicts.unattributed) not attributable to a chunk card)" else "" end),
     "  verdicts: " + ([.verdicts.by_verdict | to_entries[] | "\(.key) \(.value)"]
                       | if length == 0 then "none" else join(" · ") end),
+    (if (.verdicts.by_engine | length) == 0 then empty
+     else "  judge engine: " + ([.verdicts.by_engine | to_entries[] | "\(.key) \(.value)"] | join(" · ")) end),
     "",
     "reason class distribution — leading token of the blocked reason; legacy forge.block.v1 envelopes observed: \(.forge_block_v1)",
     (if (.reason_class | length) == 0 then "  empty (0 blocked cards)"

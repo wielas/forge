@@ -100,6 +100,11 @@
       "type": "string",
       "description": "OPTIONAL, and never model-produced: model id that produced this verdict, operator-stamped from the observed --model argument (a model cannot reliably report its own id). Absent on any path with no judging harness behind it, exactly like tokens_estimate/cost/session_id below — an interactive tier-2 /judge has none to stamp. judge-rubric.md has always documented all four operator-stamped fields as optional; this one stayed REQUIRED here until 2026-09-04, the same contradiction tokens_estimate carried until 2026-09-02 (see that field's note) and by the same mechanism: a model-authored envelope cannot supply a field the rubric forbids asking it for, so storing one produced by a harness-less path failed validation with no permitted author on any path without a usage envelope."
     },
+    "judge_engine": {
+      "type": "string",
+      "enum": ["codex", "claude"],
+      "description": "OPTIONAL, and never model-produced: engine that judged this verdict, stamped by the verifier after the provider call."
+    },
     "tokens_estimate": {
       "type": "integer",
       "minimum": 0,
@@ -124,11 +129,26 @@
         },
         "cache_creation_input_tokens": { "type": "integer", "minimum": 0 },
         "total_cost_usd": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 0,
-          "description": "Actual price reported by the harness, not a token estimate."
+          "description": "Actual price reported by the harness, not a token estimate. Null is honest for a subscription-backed call when cost_basis is subscription."
+        },
+        "cost_basis": {
+          "type": "string",
+          "enum": ["metered", "subscription"],
+          "description": "Why total_cost_usd is numeric or null. A subscription-backed judge reports no dollar price."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["total_cost_usd"], "properties": { "total_cost_usd": { "type": "null" } } },
+          "then": { "required": ["cost_basis"], "properties": { "cost_basis": { "const": "subscription" } } }
+        },
+        {
+          "if": { "required": ["cost_basis"], "properties": { "cost_basis": { "const": "subscription" } } },
+          "then": { "properties": { "total_cost_usd": { "type": "null" } } }
+        }
+      ]
     },
     "session_id": {
       "type": "string",
