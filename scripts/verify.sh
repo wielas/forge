@@ -118,7 +118,7 @@
 #               what is unconfirmed, and puts the grant, the armed gate and the resumed cron job in force and
 #               reads each back. Stateful stubs of hermes, gh and launchctl, a real git repo with a bare origin
 #               that the stubs make real commits on, the real merge-authority.sh and checkpoint-arm.sh. NO
-#               case runs a real rehearsal: that spends a Codex run and a judge call. Eight cases are
+#               case runs a real rehearsal: that spends a Codex run and a judge call. Nine cases are
 #               scripts/run-watch.sh, the ten-minute push cron: a new hold, a worker that gave up, a landing,
 #               a stall, a card that is not starting, an unreadable board, a gate with no cron job and a
 #               launchd watchdog that stopped writing, each said once, from boards built of the same fixture
@@ -3254,6 +3254,8 @@ lane/lane-sh-ignores-the-scrubbed-variables  stub variant, no Hermes needed: pla
 lane/programs-answer-without-jq  lane.sh and prejudge-review.sh with no jq: exit 3, a one-line kanban_block carrying rc, naming no task, embedding nothing typed (S9)
 lane/the-program-records-its-call  P34: lane.sh records the call it names (the envelope's terminate and on_error) keyed by board+profile+workspace, clears the earlier record at its start, and records a block too
 lane/lane-sh-attempts-no-board-mutation  two full fenced passes on the real kernel with the hermes argv logged: reads only, none of the verbs the installed Hermes refuses
+lane/a-lane-block-never-takes-the-last-blocks-kind  forge_next_block_kind (forge-state.sh), offline: no earlier block gives the caller's first kind, any earlier block gives the kind that is not its own; lane.sh's block and its hand-off on_error name that kind and a first block is unchanged; the lane and the verifier both call the one rule; a mutant is seen
+lane/a-second-lane-hold-stays-blocked-on-real-hermes  real kernel: a lane block, an unblock and a second and third lane block each land blocked; with the rule removed the second lands in triage
 lane/lane-sh-reads-no-scrubbed-variable  fenced, with wrong values planted for exactly the scrubbed names; it reads its own card and nothing mentions the planted id
 lane/lane-sh-is-reached-through-forge-repo  skill and SOUL call ~/.forge/repo/scripts/lane.sh; it calls its helpers beside itself and names the hand-off as a kanban_request_review call
 lane/a-live-resume-record-lets-the-lane-continue-a-stopped-attempt  executed: with a live <task>.resume or park record for this card and workspace a dirty tree and a red check pass setup, the stopped session is resumed and the card hands off; with no record, another workspace's, or one past the adoption window, the same worktree still blocks failing-prereq
@@ -3436,6 +3438,8 @@ prejudge/implementer-model-blank-fields-render-honestly  whitespace-only codex_m
 prejudge/implementer-model-blank-gate-mutation-is-caught  a gate with no trim/length check renders whitespace as evidence and manufactures the F22 alarm
 prejudge/review-refuses-without-a-board  no board, or no hermes, is substrate before the gate — never a routed outcome with rc 0 that transitioned nothing
 prejudge/review-uses-the-guarded-stamp    the caller cannot truncate the verdict with a raw mv
+verifier/github-reads-retry-without-partial-output  transient read failures recover; exhausted or hung reads fail with no stdout; merge and browser commands never execute
+verifier/review-history-keeps-earlier-rounds  original verdict and merged-tree payloads survive later rounds; applied bounce counts come from board events including repeated and open-card returns
 verifier/claude-token-reaches-the-claude-child  P36: with CLAUDE_CODE_OAUTH_TOKEN unset the helper hands the claude child the root .env token (profile HERMES_HOME resolves to the root; bare/export/quoted/CRLF parse, the last wins; a set token wins, an empty one does not; no file is no token, no crash; nothing leaks to the caller or an xtrace)
 verifier/claude-token-reaches-every-claude-call-site  P36: every script that calls claude -p sources claude-token.sh before it; no SOUL/skill/adapter calls it directly; the scan finds prejudge-review.sh, so it cannot go blind
 verifier/claude-token-mutation-is-caught  P36: no fallback, a clobbered token, the profile .env read, first-line-wins, a token left in the caller, xtrace left on, an unsourced call site and a missing helper each turn the two checks above red
@@ -3470,6 +3474,7 @@ verifier/merge-mode-merges-and-completes  squash + delete-branch, card done, chi
 verifier/a-red-ci-pr-never-merges  merge mode on and an ungatable repo: the gate blocks on ci-state before any model, merged-tree check or merge
 verifier/bounce-returns-the-same-card  request-changes with the reasons on the card, no card created; a red union bounces before the scorer, an unrunnable one is substrate
 verifier/bounce-budget-becomes-an-exception  FL6: two rounds, then a completable decision-first block; the window restarts on an operator decision
+verifier/a-second-fault-block-is-never-triage  real kernel: a judge fault, an unblock and a second fault land blocked, the first with no kind and the second with needs_input; with term_block's default removed the second lands in triage
 verifier/a-hold-is-never-triage  recommend, disagree, repair, recommend again: the second hold rotates kind, stays blocked and still completes
 verifier/hold-kind-mutation-is-caught  a pinned block kind reaches triage on the real kernel, cannot be completed, and is reported as stranded
 verifier/disagree-path-parks-before-it-unblocks  bounce.sh's own events show the sentinel park before the unblock; a dispatch pass in the window spawns nothing (smoke, with its control stated); the implementer returns
@@ -3728,6 +3733,7 @@ front/a-review-waiting-on-the-usage-limit-is-not-a-stall  a running card with a 
 front/run-watch-not-starting-needs-nothing-running-anywhere  a ready card or one in review with no open run, idle past the limit, is said only when nothing runs on ANY board (its clock starts when nothing runs), once per entry into the status; a card the dispatcher holds says why; a human chunk sent back and a queued card never
 front/run-watch-is-read-only-and-never-silent-about-an-unreadable-board  boards byte-identical and no snapshot left; --dry-run prints and writes nothing and does not consume the event; a corrupt board is named once with exit 0, its old state kept, NOT STARTING held back; a bad argument or knob is exit 2
 front/run-watch-says-when-an-armed-gate-has-no-cron-job  a gate armed while the forge-checkpoint cron job is paused or missing is said on the first tick and once per change, with the command to resume or create it; nothing is said without an armed gate
+front/run-watch-says-a-chunk-in-triage-and-the-way-out  a CHUNK card in triage is said once as IN TRIAGE with its last hold's reason and the specify command; a card born in triage that is not a chunk keeps the WAITING wording; the mutant is seen
 front/run-watch-says-the-watchdog-fell-silent-and-came-back  with the watchdog's LaunchAgent installed, a log not written for over 30 min (forge status's limit, from forge-state.sh, to the second) is said once, on the first tick too, and its return once; a missing log is said; a host with no watchdog installed is told nothing; four mutants are each seen
 metrics/milestone-cost-vs-estimate        a gate's chunks against its '<n> chunks' estimate; absent and malformed estimates are named, never read as zero (MS4)
 metrics/gate-completions-row              a gate done by the checkpoint or by the operator is its own row and leaves the north star byte-identical; the overseer's comments are not touches (P14)
@@ -4756,7 +4762,7 @@ LCODEX
         FORGE_LANE_TICK=1 FORGE_QUOTA_PAD=1 FORGE_QUOTA_POLL=1 FORGE_QUOTA_TICK=1 \
         HERMES_KANBAN_WORKSPACE="$lwt" HERMES_PROFILE=forge-codex-lane \
         HERMES_KANBAN_BOARD=vlane HERMES_KANBAN_BRANCH=chunk/7-sync-engine \
-        "$@" "$REPO_ROOT/$lsh" --task "${LSH_TASK-t_lane}" > "$lroot/out.json" 2> "$lroot/err"
+        "$@" "${LSH_BIN:-$REPO_ROOT/$lsh}" --task "${LSH_TASK-t_lane}" > "$lroot/out.json" 2> "$lroot/err"
     echo $?
   }
   _lsh_env() { jq -r "$1" "$lroot/out.json" 2>/dev/null; }
@@ -5360,6 +5366,147 @@ LPLOG
     fi
   else
     skip "lane-sh-reads-no-scrubbed-variable" "hermes (and its venv python) not installed"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # THE KIND OF A LANE BLOCK. The kernel sends a card to `triage` on its second block of one kind, blocks with
+  # no kind all match, and the counter survives `unblock` (docs/hermes-field-notes.md). The verifier's hold has
+  # dodged that since FL4; every lane block named no kind, so an operator's unblock worked once per card. The
+  # rule is ONE function (forge-state.sh, forge_next_block_kind), read from the card's own events.
+  # Offline first, so it runs in CI: the rule's table, then lane.sh's own envelopes over the stubbed card.
+  # ---------------------------------------------------------------------------
+  local bk_d="" bk_got bk_row bk_mut="$TMPROOT/lane-kind-mutant"
+  _bk_rule() { # <first kind> ; the card's JSON on stdin -> the kind
+    bash -c '. "$1" && forge_next_block_kind "$2"' _ "${BK_STATE:-$REPO_ROOT/scripts/forge-state.sh}" "$1" 2>/dev/null
+  }
+  _bk_ev() { # "<event kind>:<block kind|null>" ... -> a card with those events, in order
+    local e out='[]'
+    for e in "$@"; do
+      out="$(printf '%s' "$out" | jq -c --arg k "${e%%:*}" --arg b "${e#*:}" \
+               '. + [{kind: $k, payload: (if $k == "claimed" then {} else {reason: "r", kind: (if $b == "null" then null else $b end)} end)}]')"
+    done
+    jq -nc --argjson e "$out" '{task: {id: "t_lane"}, events: $e}'
+  }
+  # events | the caller's first kind | the kind wanted
+  while IFS='|' read -r bk_row bk_first bk_want; do
+    [ -n "$bk_row" ] || continue
+    # shellcheck disable=SC2086
+    bk_got="$(_bk_ev $bk_row | _bk_rule "$bk_first")"
+    [ "$bk_got" = "$bk_want" ] || bk_d="$bk_d rule[$bk_row|first=$bk_first]=$bk_got,want=$bk_want"
+  done <<'BKT'
+claimed:x||
+claimed:x|needs_input|needs_input
+blocked:null||needs_input
+blocked:null|needs_input|needs_input
+blocked:needs_input||capability
+blocked:needs_input|needs_input|capability
+blocked:capability||needs_input
+blocked:transient||needs_input
+blocked:needs_input blocked:capability||needs_input
+blocked:capability block_loop_detected:needs_input||capability
+blocked:needs_input claimed:x||capability
+BKT
+  [ "$(printf 'not json' | _bk_rule needs_input)" = needs_input ] && [ -z "$(: | _bk_rule "")" ] \
+    || bk_d="$bk_d a-card-that-cannot-be-read-did-not-get-the-first-kind"
+  # ONE rule, two callers, and no second reader of a block's kind in either
+  { [ "$(grep -c 'forge_next_block_kind' "$lsh")" -ge 1 ] && [ "$(grep -c 'forge_next_block_kind' scripts/prejudge-review.sh)" -ge 2 ] \
+    && ! grep -q 'payload\.kind' "$lsh" scripts/prejudge-review.sh; } || bk_d="$bk_d the-lane-and-the-verifier-do-not-share-the-one-rule"
+  _bk_lane() { # <events...> -> lane.sh's block envelope for a card with an empty body and those events (rc on stdout)
+    _bk_ev "$@" | jq -c '.events' > "$lstub/ev.json"
+    jq --slurpfile e "$lstub/ev.json" '.task.body = "" | .events = $e[0]' "$lstub/cards/t_lane.json" > "$lstub/t.json" \
+      && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
+    _lsh_run
+  }
+  _bk_lane_checks() { # -> what is wrong with the lane's envelopes; LSH_BIN aims it at a copy
+    local d="" rc
+    rc="$(_bk_lane claimed:x)"
+    { [ "$rc" = 3 ] && _lsh_env '.terminate.tool == "kanban_block" and (.terminate.args | keys == ["reason","task_id"])
+          and (.terminate.args.reason | startswith("stale-spec: "))' | grep -q true; } \
+      || d="$d a-first-block-is-not-what-it-was(rc=$rc,$(_lsh_env '.terminate.args | keys | join(",")'))"
+    rc="$(_bk_lane blocked:null claimed:x)"
+    [ "$(_lsh_env '.terminate.args.kind')" = needs_input ] || d="$d after-a-kindless-block:$(_lsh_env '.terminate.args.kind')"
+    rc="$(_bk_lane blocked:null blocked:needs_input claimed:x)"
+    [ "$(_lsh_env '.terminate.args.kind')" = capability ] || d="$d after-needs_input:$(_lsh_env '.terminate.args.kind')"
+    rc="$(_bk_lane blocked:capability claimed:x)"
+    [ "$(_lsh_env '.terminate.args.kind')" = needs_input ] || d="$d after-capability:$(_lsh_env '.terminate.args.kind')"
+    printf '%s' "$d"
+  }
+  if [ ! -x "$lsh" ]; then
+    bad "a-lane-block-never-takes-the-last-blocks-kind" "$lsh is missing"
+  else
+    _lsh_fixture kind
+    bk_d="$bk_d$(_bk_lane_checks)"
+    # the hand-off's on_error is a block too: after an earlier hold it names a kind, and the hand-off itself is unchanged
+    _lsh_fixture kindho
+    jq '.events = [{kind: "blocked", payload: {reason: "env: earlier", kind: "needs_input"}}, {kind: "unblocked", payload: {}}]' \
+      "$lstub/cards/t_lane.json" > "$lstub/t.json" && mv "$lstub/t.json" "$lstub/cards/t_lane.json"
+    bk_got="$(_lsh_run)"
+    { [ "$bk_got" = 4 ] && _lsh_env '.terminate.tool == "kanban_request_review" and .on_error.tool == "kanban_block"
+          and .on_error.args.kind == "capability" and .on_error.args.task_id == "t_lane"' | grep -q true; } \
+      || bk_d="$bk_d the-hand-off-on_error-names-no-kind(rc=$bk_got,$(_lsh_env '.on_error.args.kind // .reason'))"
+    # the mutant: the rule answers needs_input after needs_input, and the lane's envelope shows it
+    if [ -z "$bk_d" ]; then
+      rm -rf "$bk_mut"; mkdir -p "$bk_mut"; cp -R scripts/. "$bk_mut/" 2>/dev/null
+      sed -e 's/^    last:needs_input) echo capability;;$/    last:needs_input) echo needs_input;;/' scripts/forge-state.sh > "$bk_mut/forge-state.sh"
+      if cmp -s scripts/forge-state.sh "$bk_mut/forge-state.sh"; then bk_d="$bk_d the-mutation-changed-nothing"; else
+        _lsh_fixture kind
+        [ -n "$(LSH_BIN="$bk_mut/lane.sh" _bk_lane_checks)" ] || bk_d="$bk_d the-mutant-stayed-green"
+        [ "$(_bk_ev blocked:needs_input | BK_STATE="$bk_mut/forge-state.sh" _bk_rule "")" = needs_input ] || bk_d="$bk_d the-mutant-is-not-the-mutant"
+      fi
+    fi
+    [ -z "$bk_d" ] \
+      && ok "a-lane-block-never-takes-the-last-blocks-kind (forge_next_block_kind over eleven event histories: no earlier block gives the caller's first kind, an earlier block with no kind or any other kind gives needs_input, an earlier needs_input gives capability, a block_loop_detected counts as the last block, a card that cannot be read gets the first kind; lane.sh's first block still names task_id and reason only, and after an earlier hold its block and its hand-off's on_error name the kind that is not the last one's; lane.sh and prejudge-review.sh both call the one function and neither reads a block's kind itself; the rule broken in a copy is seen in the lane's envelope)" \
+      || bad "a-lane-block-never-takes-the-last-blocks-kind" "a block Forge names must never take the kind of the card's last block —$bk_d"
+  fi
+
+  # The same, on the REAL kernel: what the driver's call does to the card. An empty body keeps each run short.
+  local lk_home="$TMPROOT/lane-kind-home" lk_task lk_d="" lk_n lk_mdir="$TMPROOT/lane-kind-real-mutant"
+  if command -v hermes >/dev/null 2>&1 && [ -x "$WCTX_PY" ] && [ -x "$lsh" ]; then
+    _lsh_fixture kindreal
+    rm -rf "$lk_home"; mkdir -p "$lk_home"
+    HERMES_HOME="$lk_home" hermes kanban boards create lanekind >/dev/null 2>&1
+    _lk() { HERMES_HOME="$lk_home" hermes kanban --board lanekind "$@"; }
+    _lk_st() { _lk show "$1" --json 2>/dev/null | jq -r '.task.status'; }
+    _lk_last() { _lk show "$1" --json 2>/dev/null | jq -r '[.events[] | select(.kind == "blocked" or .kind == "block_loop_detected")] | last | "\(.kind)/\(.payload.kind // "none")"'; }
+    _lk_hold() { # <task> -> the lane, fenced, blocks the card (an empty body) and the driver makes the call; the envelope's kind on stdout
+      local snip rc
+      _lk claim "$1" >/dev/null 2>&1
+      snip="$(_wsnip "$lk_home" lanekind "$1" forge-codex-lane)" || { echo snippet-failed; return; }
+      ( . "$snip"; env TMPDIR="$lroot/tmp" FORGE_LANE_SESSION_ROOT="$lroot/sessions" \
+          "${LK_BIN:-$REPO_ROOT/$lsh}" --task "$1" ) > "$lroot/out.json" 2> "$lroot/err"; rc=$?
+      rm -f "$snip" "$snip.err"
+      [ "$rc" = 3 ] || { echo "rc=$rc"; return; }
+      _wperform "$lk_home" lanekind "$1" forge-codex-lane "$lroot/out.json" > "$lroot/drv.json" 2>&1
+      _lsh_env '.terminate.args.kind // "none"'
+    }
+    lk_task="$(_lk create "CHUNK-7: no body" --assignee forge-codex-lane --workspace "dir:$lwt" --json 2>/dev/null | jq -r '.id // empty')"
+    lk_n="$(_lk_hold "$lk_task")"
+    { [ "$lk_n" = none ] && [ "$(_lk_st "$lk_task")" = blocked ]; } || lk_d="$lk_d first-hold(kind=$lk_n,$(_lk_st "$lk_task"))"
+    _lk unblock "$lk_task" >/dev/null 2>&1
+    lk_n="$(_lk_hold "$lk_task")"
+    { [ "$lk_n" = needs_input ] && [ "$(_lk_st "$lk_task")" = blocked ] && [ "$(_lk_last "$lk_task")" = blocked/needs_input ]; } \
+      || lk_d="$lk_d second-hold(kind=$lk_n,$(_lk_st "$lk_task"),$(_lk_last "$lk_task"))"
+    _lk unblock "$lk_task" >/dev/null 2>&1
+    lk_n="$(_lk_hold "$lk_task")"
+    { [ "$lk_n" = capability ] && [ "$(_lk_st "$lk_task")" = blocked ]; } || lk_d="$lk_d third-hold(kind=$lk_n,$(_lk_st "$lk_task"))"
+    _lk unblock "$lk_task" >/dev/null 2>&1
+    [ "$(_lk_st "$lk_task")" = ready ] || lk_d="$lk_d the-third-unblock-did-not-return-the-card($(_lk_st "$lk_task"))"
+    # the mutant: the rule always answers "no kind", which is every lane block before this, and the kernel does what its source says
+    rm -rf "$lk_mdir"; mkdir -p "$lk_mdir"; cp -R scripts/. "$lk_mdir/" 2>/dev/null
+    sed -e 's/^    last:needs_input) echo capability;;$/    last:needs_input) echo;;/' -e 's/^    last:\*)           echo needs_input;;$/    last:*)           echo;;/' \
+      scripts/forge-state.sh > "$lk_mdir/forge-state.sh"
+    if cmp -s scripts/forge-state.sh "$lk_mdir/forge-state.sh"; then lk_d="$lk_d the-mutation-changed-nothing"; else
+      lk_task="$(_lk create "CHUNK-8: no body, no rule" --assignee forge-codex-lane --workspace "dir:$lwt" --json 2>/dev/null | jq -r '.id // empty')"
+      LK_BIN="$lk_mdir/lane.sh" _lk_hold "$lk_task" >/dev/null
+      _lk unblock "$lk_task" >/dev/null 2>&1
+      LK_BIN="$lk_mdir/lane.sh" _lk_hold "$lk_task" >/dev/null
+      [ "$(_lk_st "$lk_task")" = triage ] || lk_d="$lk_d without-the-rule-the-second-hold-did-not-reach-triage($(_lk_st "$lk_task"))"
+    fi
+    [ -z "$lk_d" ] \
+      && ok "a-second-lane-hold-stays-blocked-on-real-hermes (a fenced lane blocks its card, the driver makes the call, the operator unblocks, three times over: the first block names no kind, the second needs_input, the third capability, each lands blocked and each unblock returns the card; with the rule answering no kind, the second hold lands in triage)" \
+      || bad "a-second-lane-hold-stays-blocked-on-real-hermes" "an operator's unblock must work more than once per card —$lk_d"
+  else
+    skip "a-second-lane-hold-stays-blocked-on-real-hermes" "hermes (and its venv python) not installed"
   fi
 
   # lane-handoff.sh on its own: the three promises end-chunk §5 makes for it.
@@ -10976,6 +11123,16 @@ wants prejudge  && run_prejudge_group
 # ===========================================================================
 run_verifier_group() {
   group verifier
+  if python3 scripts/fixtures/github-read-check.py > "$TMPROOT/github-read-check.log" 2>&1; then
+    ok "github-reads-retry-without-partial-output"
+  else
+    bad "github-reads-retry-without-partial-output" "$(tail -12 "$TMPROOT/github-read-check.log")"
+  fi
+  if python3 scripts/fixtures/review-evidence-test.py > "$TMPROOT/review-evidence-test.log" 2>&1; then
+    ok "review-history-keeps-earlier-rounds"
+  else
+    bad "review-history-keeps-earlier-rounds" "$(tail -12 "$TMPROOT/review-evidence-test.log")"
+  fi
   local review=scripts/prejudge-review.sh mc=scripts/merge-check.sh
   local mw=scripts/merge-watcher.sh bo=scripts/bounce.sh
   local prs=scripts/fixtures/prejudge-prs
@@ -12602,14 +12759,45 @@ VLOGH
     fi
     vdetail="$vdetail$(_vq_kind "$REPO_ROOT/$review")"
     if [ -z "$vdetail" ]; then
-      _vq_mut prejudge-review.sh 's/hold_call "\$reason"/term_block "$reason"/' || vq_notmoved="$vq_notmoved kindless"
+      # term_block now asks the same rule when no kind is named, so naming none is no longer the defect;
+      # the rule answering "no kind" is (scripts/forge-state.sh), and the hold then lands in triage
+      _vq_mut forge-state.sh 's/^    last:\*)           echo needs_input;;$/    last:*)           echo;;/' || vq_notmoved="$vq_notmoved kindless"
       [ -n "$(_vq_kind "$vqm/prejudge-review.sh")" ] || vq_red="$vq_red kindless-stayed-green"
-      cp -p "$REPO_ROOT/scripts/prejudge-review.sh" "$vqm/prejudge-review.sh"
+      cp -p "$REPO_ROOT/scripts/forge-state.sh" "$vqm/forge-state.sh"
     fi
     [ -z "$vdetail$vq_red" ] \
       && ok "a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold (the judge is asked 11 times in a 1 s allowance and no more; the hold is an env: block that passes blocked_reason_pattern, is decision-first, says nothing was found wrong, names the unblock command and no fix, carries a kind, lands blocked on the real kernel, and so does one on a card that was held before with no kind; a wait with no bound, a Reply that says fix it and a hold with no kind are each seen)" \
       || bad "a-judge-usage-limit-that-never-lifts-ends-in-an-honest-hold" \
           "when the allowance is spent the review must hold with a reason that says what is true, and the hold must not be the kernel's second same-kind block —$vdetail$vq_red"
+
+    # A FAULT BLOCK IS A BLOCK TOO. `substrate` named no kind, so a second fault on one card (a dead token, the
+    # operator's unblock, a dead token again) was the kernel's second kind-less block: triage. term_block now asks
+    # the shared rule when its caller names no kind, and a card's first fault block is what it was.
+    _vq_fault() {   # $1 = the review program -> what is wrong with two fault blocks on one card
+      local d="" rc
+      _vboard; : > "$vbin/claude.log"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always VF_JUDGE_STATUS=401)"
+      { [ "$rc" = 3 ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
+        && jq -e '.terminate.tool == "kanban_block" and (.terminate.args | has("kind") | not)' "$vbin/out.json" >/dev/null 2>&1; } \
+        || d="$d the-first-fault-block-is-not-what-it-was(rc=$rc,$(_vst "$vP"),kind=$(jq -r '.terminate.args.kind // "none"' "$vbin/out.json" 2>/dev/null))"
+      _v unblock "$vP" >/dev/null 2>&1
+      rm -f "$vbin/claude.n"
+      rc="$(VREVIEW="$1" _vrun VF_JUDGE_FAILS=always VF_JUDGE_STATUS=401)"
+      { [ "$rc" = 3 ] && [ "$(_vst "$vP" | cut -d/ -f1)" = blocked ] \
+        && [ "$(jq -r '.terminate.args.kind // "none"' "$vbin/out.json" 2>/dev/null)" = needs_input ]; } \
+        || d="$d the-second-fault-block-landed-$(_vst "$vP" | cut -d/ -f1)(rc=$rc,kind=$(jq -r '.terminate.args.kind // "none"' "$vbin/out.json" 2>/dev/null))"
+      printf '%s' "$d"
+    }
+    vdetail="$(_vq_fault "$REPO_ROOT/$review")"; vq_red=""
+    if [ -z "$vdetail" ]; then
+      _vq_mut prejudge-review.sh 's/^  if \[ -z "\$kind" \] && \[ "\$CHUNK_TRUSTED" = 1 \]; then$/  if false; then/' || vq_red="$vq_red the-mutation-changed-nothing"
+      [ -n "$(_vq_fault "$vqm/prejudge-review.sh")" ] || vq_red="$vq_red no-default-kind-stayed-green"
+      cp -p "$REPO_ROOT/scripts/prejudge-review.sh" "$vqm/prejudge-review.sh"
+    fi
+    [ -z "$vdetail$vq_red" ] \
+      && ok "a-second-fault-block-is-never-triage (a judge call refused with 401 blocks the card with no kind, as before; unblocked and refused again, the block names needs_input and lands blocked on the real kernel; with term_block's default removed the second lands in triage and is seen)" \
+      || bad "a-second-fault-block-is-never-triage" \
+          "a fault after an earlier hold must be a block the operator can unblock, not triage —$vdetail$vq_red"
 
     vdetail="$(_vq_other "$REPO_ROOT/$review")"
     if [ -z "$vdetail" ]; then
@@ -24100,9 +24288,10 @@ WD_CFGS
   ipl="$(python3 -I - "$W/plist.xml" "$H" <<'WD_PLIST' 2>&1
 import plistlib, sys
 d = plistlib.load(open(sys.argv[1], "rb")); home = sys.argv[2]
-want = {"Label": "ai.forge.watchdog", "StartInterval": 600, "RunAtLoad": True,
+want = {"Label": "ai.forge.watchdog", "StartCalendarInterval": [{"Minute": n} for n in range(0, 60, 10)], "RunAtLoad": True,
         "ProgramArguments": ["/bin/bash", home + "/.forge/repo/scripts/watchdog.sh"]}
 bad = [k for k, v in want.items() if d.get(k) != v]
+if "StartInterval" in d: bad.append("unexpected StartInterval")
 logs = {d.get("StandardOutPath"), d.get("StandardErrorPath")}
 if logs != {home + "/.forge/watchdog/watchdog.log"}: bad.append("logs=%r" % sorted(map(str, logs)))
 print(" ".join(bad))
@@ -24123,7 +24312,7 @@ WD_PLIST
   { [ "$wdrc" = 0 ] && [ ! -e "$H/Library/LaunchAgents/ai.forge.watchdog.plist" ] && [ -d "$H/.forge/watchdog" ] && [ "$(tail -n 1 "$lc")" = "bootout gui/$uid/ai.forge.watchdog" ]; } || d="$d uninstall(exit=$wdrc)"
   echo bad > "$W/stub/launchctl.bootstrap"; _wd_inst
   [ "$wdrc" = 1 ] || d="$d a-refused-bootstrap-was-not-exit-1($wdrc)"
-  [ -z "$d" ] && ok "install-prints-the-runtime-plist-and-touches-nothing (--print: a plist naming ai.forge.watchdog, StartInterval 600, RunAtLoad and /bin/bash <home>/.forge/repo/scripts/watchdog.sh with its log under the watchdog root, creating nothing and calling no launchctl; install refuses without the runtime script, then writes the plist and the log directory and calls bootout then bootstrap, again on a reinstall; --uninstall unloads, removes the plist and keeps the state; a refused bootstrap is exit 1)" \
+  [ -z "$d" ] && ok "install-prints-the-runtime-plist-and-touches-nothing (--print: a plist naming ai.forge.watchdog, six calendar minute boundaries, RunAtLoad and /bin/bash <home>/.forge/repo/scripts/watchdog.sh with its log under the watchdog root, creating nothing and calling no launchctl; install refuses without the runtime script, then writes the plist and the log directory and calls bootout then bootstrap, again on a reinstall; --uninstall unloads, removes the plist and keeps the state; a refused bootstrap is exit 1)" \
     || bad "install-prints-the-runtime-plist-and-touches-nothing" "the installer must render the runtime path form and only act when asked —$d"
 
   # --- git: both scripts are executable in the index and the new function sits beside its siblings ----------------------
@@ -24144,7 +24333,7 @@ wants watchdog  && run_watchdog_group
 # ---------------------------------------------------------------------------
 # front/ — the operator's front door (scripts/forge.sh): `forge status`, `forge stop`, `forge rehearse`, `forge go`, `forge start` and `forge new`.
 #
-# Twenty-seven cases (the first six are status and stop; then eight for scripts/run-watch.sh, the push half; then rehearse and go; then `go --ahead`, `forge start` and `forge new`, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
+# Twenty-eight cases (the first six are status and stop; then nine for scripts/run-watch.sh, the push half; then rehearse and go; then `go --ahead`, `forge start` and `forge new`, built further down), each against the REAL script, in a temp HERMES_HOME and a temp state root, offline. The boards are built
 # from scripts/fixtures/digest-board.sql's schema (the digest and checkpoint fixtures' own), the grant and the armed
 # gates are made by the real merge-authority.sh and checkpoint-arm.sh, and the script is reached through a relative
 # symlink that points at an absolute one, in another directory: the way the operator runs it (~/.local/bin/forge).
@@ -24448,7 +24637,7 @@ SQL
   o1="$(_rw "$t0" 2>"$root/err")"; rc=$?
   [ "$rc" = 0 ] || d="$d first-tick(exit=$rc)"
   _fr_want "$o1" 'WAITING ON YOU: t_a1 on rwa'
-  _fr_want "$o1" 'WAITING ON YOU: t_a2 on rwa'
+  _fr_want "$o1" 'IN TRIAGE: t_a2 on rwa'
   _fr_want "$o1" 'WAITING ON YOU: t_a5 on rwa'
   [ "$(_rw_count "$o1" '^[A-Z][A-Z ]*:')" = 3 ] || d="$d the-first-tick-said-something-besides-the-three-holds[$(printf '%s' "$o1" | grep '^[A-Z][A-Z ]*:' | cut -c1-30 | tr '\n' '|')]"
   _fr_not "$o1" 'LANDED'
@@ -24502,7 +24691,7 @@ SQL
   o1="$(_rw $((t0 + 6600)) 2>>"$root/err")"
   FR_X="HERMES_HOME=$RH"; out="$(_fr status rwa2 2>/dev/null)"; FR_X=""
   local rids fids2
-  rids="$(printf '%s\n' "$o1" | sed -n 's/^WAITING ON YOU: \([A-Za-z0-9_]*\) on rwa2$/\1/p' | sort | tr '\n' ' ')"
+  rids="$(printf '%s\n' "$o1" | sed -n -e 's/^WAITING ON YOU: \([A-Za-z0-9_]*\) on rwa2$/\1/p' -e 's/^IN TRIAGE: \([A-Za-z0-9_]*\) on rwa2$/\1/p' | sort | tr '\n' ' ')"
   fids2="$(printf '%s\n' "$out" | awk '/^  waiting on you:/{f=1; next} /^  [^ ]|^[^ ]|^$/{f=0} f{print $1}' | sort | tr '\n' ' ')"
   [ -n "$fids2" ] || d="$d forge-status-named-no-waiting-card(the-comparison-went-blind)"
   [ "$rids" = "$fids2" ] || d="$d run-watch-waiting[$rids]!=forge-status-waiting[$fids2]"
@@ -24915,6 +25104,40 @@ SQL
   done
   [ -z "$d" ] && ok "run-watch-says-the-watchdog-fell-silent-and-came-back (with the LaunchAgent plist in place: a reading 29 min old says nothing; ten minutes later WATCHDOG SILENT is said once, with the age, the limit and the kickstart command, and not on the next two ticks; a new reading says WATCHDOG BACK once with the length of the gap; a first tick over a silent watchdog and an installed watchdog with no log are said at once; 1800 s is a reading and 1801 s is not, for run-watch and forge status alike; a host with no plist is told nothing about a log three hours old; seen broken:$wd_seen)" \
     || bad "run-watch-says-the-watchdog-fell-silent-and-came-back" "the watchdog watches the cron, and something must watch the watchdog —$d"
+
+  # --- run-watch 9. a chunk in triage is not a hold: it is said as what it is, with the one way out ------------------------
+  _rw_world
+  _rw_board rwt <<SQL
+INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+  ('t_t0', 'CHUNK-0: quiet', 'forge-codex-lane', 'todo', $((t0 - 900)));
+SQL
+  local tr_mut="$root/tr-mut" tr_m
+  o1="$(_rw "$t0" 2>"$root/err")"
+  _rw_sql rwt "INSERT INTO tasks (id, title, assignee, status, created_at) VALUES
+                 ('t_t1', 'CHUNK-1: held twice', 'forge-codex-lane', 'triage', $((t0 - 800))),
+                 ('t_t2', 'follow-up: born in triage', NULL, 'triage', $((t0 - 700)));
+               INSERT INTO task_events (task_id, kind, payload, created_at) VALUES
+                 ('t_t1', 'blocked', json_object('reason', 'env: the first hold'), $((t0 + 60))),
+                 ('t_t1', 'block_loop_detected', json_object('reason', 'ci-red: make check is red on the branch' || char(10) || 'second line', 'recurrences', 2), $((t0 + 120)));"
+  o2="$(_rw $((t0 + 600)) 2>>"$root/err")"; o3="$(_rw $((t0 + 1200)) 2>>"$root/err")"
+  [ -z "$o1" ] || d="$d the-baseline-said-something"
+  _fr_want "$o2" 'IN TRIAGE: t_t1 on rwt'
+  _fr_want "$o2" 'Last hold: ci-red: make check is red on the branch'
+  _fr_want "$o2" 'Do: hermes kanban --board rwt specify t_t1'
+  _fr_not "$o2" 'second line'
+  _fr_not "$o2" 'WAITING ON YOU: t_t1'
+  _fr_not "$o2" 'unblock t_t1'
+  _fr_want "$o2" 'WAITING ON YOU: t_t2 on rwt'
+  [ -z "$o3" ] || d="$d said-twice[$(printf '%s' "$o3" | head -c 80)]"
+  rm -rf "$tr_mut"; mkdir -p "$tr_mut"; cp -R "$fs/." "$tr_mut/" 2>/dev/null
+  sed -e 's/^def stranded: \.status == "triage" and /def stranded: false and /' "$fs/run-watch.sh" > "$tr_mut/run-watch.sh"; chmod +x "$tr_mut/run-watch.sh"
+  if cmp -s "$fs/run-watch.sh" "$tr_mut/run-watch.sh"; then d="$d the-mutation-changed-nothing"; else
+    rm -rf "$S/run-watch"
+    tr_m="$(RW_BIN="$tr_mut/run-watch.sh" _rw $((t0 + 600)) 2>>"$root/err")"
+    case "$tr_m" in *'IN TRIAGE'*) d="$d the-mutant-stayed-green";; *'WAITING ON YOU: t_t1 on rwt'*) ;; *) d="$d the-mutant-said-nothing-of-the-card";; esac
+  fi
+  [ -z "$d" ] && ok "run-watch-says-a-chunk-in-triage-and-the-way-out (a CHUNK card that reaches triage is said once as IN TRIAGE with the first line of its last hold's reason and the specify command, never as a hold with an unblock; a card born in triage that is not a chunk keeps the WAITING ON YOU wording; with the branch removed the card reads as a hold again and that is seen)" \
+    || bad "run-watch-says-a-chunk-in-triage-and-the-way-out" "a chunk in triage is not a hold, and the hold's own reply does not work on it —$d :: $(printf '%s' "$o2" | head -6 | tr '\n' '|')"
 
   # ==============================================================================================================
   # `forge rehearse` and `forge go`. Offline: `hermes`, `gh` and `launchctl` are STATEFUL STUBS on PATH, the hello repo is

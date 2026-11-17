@@ -3,7 +3,7 @@
 # forge watchdog-install — run scripts/watchdog.sh every 10 minutes under launchd, outside Hermes.
 #
 # Renders a per-user LaunchAgent, label ai.forge.watchdog, into ~/Library/LaunchAgents and loads it:
-#   /bin/bash ~/.forge/repo/scripts/watchdog.sh   StartInterval 600, RunAtLoad true,
+#   /bin/bash ~/.forge/repo/scripts/watchdog.sh   every ten-minute calendar boundary, RunAtLoad true,
 #   stdout and stderr to <forge state root>/watchdog/watchdog.log
 # The program path is the runtime form ~/.forge/repo/scripts/..., expanded for this user: it is the only
 # path that resolves from anywhere, and it follows the runtime when the runtime is redeployed. Run this
@@ -61,8 +61,15 @@ render() {
     <string>/bin/bash</string>
     <string>$(xml "$PROGRAM")</string>
   </array>
-  <key>StartInterval</key>
-  <integer>600</integer>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Minute</key><integer>50</integer></dict>
+  </array>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
@@ -104,7 +111,7 @@ if ! _err="$("$LAUNCHCTL" bootstrap "$DOMAIN" "$PLIST" 2>&1)"; then
   echo "watchdog-install: launchctl bootstrap $DOMAIN $PLIST failed: $_err" >&2
   exit 1
 fi
-echo "installed $LABEL: $PLIST loaded in $DOMAIN; it runs now and every 10 minutes"
+echo "installed $LABEL: $PLIST loaded in $DOMAIN; scheduled at load and at ten-minute clock boundaries"
 echo "log: $LOG"
-echo "the first pass is already running; read the log, or run: /bin/bash $PROGRAM --no-alert"
+echo "check the log for a pass, or run: /bin/bash $PROGRAM --no-alert"
 exit 0

@@ -223,10 +223,13 @@ comment linking an open PR.
 ## Liveness
 
 Nothing Hermes runs can report that Hermes is down, so a plain script does: a LaunchAgent,
-`ai.forge.watchdog`, runs `/bin/bash ~/.forge/repo/scripts/watchdog.sh` every 10 minutes, with
+`ai.forge.watchdog`, runs `/bin/bash ~/.forge/repo/scripts/watchdog.sh` at minutes
+00, 10, 20, 30, 40 and 50 using `StartCalendarInterval`, with
 no gateway, no Hermes cron and no `hermes` binary. Install it from the runtime (after a deploy that has the
 script) with `~/.forge/repo/scripts/watchdog-install.sh`; `--print` shows the plist and `--uninstall`
-removes it. Read what it sees at any time, changing nothing, with `scripts/watchdog.sh --no-alert`.
+removes it. Reinstall after deploying the calendar-schedule change; an existing loaded plist
+keeps its old schedule until reinstalled. Confirm a timestamp advances on a scheduled boundary.
+Read what it sees at any time, changing nothing, with `scripts/watchdog.sh --no-alert`.
 
 **Five checks**, one `OK` or `FAIL` line each: the `ai.hermes.gateway` job is running (`launchctl print`);
 the newest output of the `forge-merge-watcher` cron job is under `FORGE_WATCHDOG_TICK_MAX_MIN` (30)

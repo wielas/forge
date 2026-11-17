@@ -1,5 +1,8 @@
 # Roadmap — Forge test-drive readiness
 
+This completed August plan is historical. Current priorities are in
+[`docs/path-to-utility.md`](path-to-utility.md); delivery history is in the hands-free epic.
+
 Derived from `docs/first-run-readiness-2026-08-09.md`. Milestones are ordered by
 integration risk: establish the control-plane root, build observability, freeze
 acceptance, commission the staged launch, then reconcile documentation.

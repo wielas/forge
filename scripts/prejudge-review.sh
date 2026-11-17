@@ -298,14 +298,22 @@ call_json() {   # tool, args-json -> {tool, args}
 # it to the driver's own: naming a card that failed the identity check would make
 # the kernel refuse the very `kanban_block` that reports the failure.
 CHUNK_TRUSTED=0
+CARD0=""  # the identity-checked snapshot, retained if a later board read fails
 task_args() {   # jq filter over {task_id: $t}, then --arg pairs -> args-json
   local filter="$1"; shift
   jq -nc --arg t "$([ "$CHUNK_TRUSTED" = 1 ] && printf '%s' "$CHUNK")" "$@" \
     "(if \$t == \"\" then {} else {task_id: \$t} end) + ($filter)"
 }
 term_block() {   # reason [kind] -> the kanban_block call
-  if [ -n "${2:-}" ]; then
-    call_json kanban_block "$(task_args '{reason: $r, kind: $k}' --arg r "$1" --arg k "$2")"
+  local kind="${2:-}"
+  # No kind named: a fault block, which carried none. On its first block the card still gets none; after
+  # that it gets the kind that is not the last block's (forge-state.sh), so a fault after any earlier hold
+  # is a block and not `triage`. Only for a card proven to be this worker's: no other card is read.
+  if [ -z "$kind" ] && [ "$CHUNK_TRUSTED" = 1 ]; then
+    kind="$(printf '%s' "$CARD0" | forge_next_block_kind "")"
+  fi
+  if [ -n "$kind" ]; then
+    call_json kanban_block "$(task_args '{reason: $r, kind: $k}' --arg r "$1" --arg k "$kind")"
   else
     call_json kanban_block "$(task_args '{reason: $r}' --arg r "$1")"
   fi
@@ -591,13 +599,11 @@ card_json() { kanban show "$CHUNK" --json 2>/dev/null; }
 # exists to stop a WORKER looping unblock/re-block by itself; a re-block that
 # follows the operator's own `reopen-review` is not that loop, and the
 # alternative is a chunk nothing can finish.
-last_block_kind() {
-  card_json | jq -r '
-    [ .events[]? | select(.kind == "blocked" or .kind == "block_loop_detected") ]
-    | last | .payload.kind // empty' 2>/dev/null
-}
+#
+# THE RULE ITSELF IS forge-state.sh's (`forge_next_block_kind`), which the lane asks too: one
+# definition, so the two workers of one card cannot each pick the kind the other just used.
 next_block_kind() {
-  if [ "$(last_block_kind)" = needs_input ]; then echo capability; else echo needs_input; fi
+  printf '%s' "$CARD0" | forge_next_block_kind needs_input
 }
 
 # FL6's budget, counted from the card's own events and WINDOWED.
@@ -655,6 +661,13 @@ changes_call() {  # $1=reasons body
 # verdict that was reached must not be destroyed by a disk that would not take a
 # file. A failed write is said out loud instead: the watcher then completes the
 # card with "NO stored verdict envelope", which names the absence.
+archive_envelope() {  # original payload, intended action; board events prove the actual transition
+  [ "$DRY_RUN" != 1 ] || return 0
+  board_live || return 0
+  python3 "$HERE/verdict-archive.py" "$(forge_verdict_root)" "$BOARD" "$CHUNK" "$2" "$1" \
+    || echo "verdict archive: review history could not be saved; latest verdict handling continues" >&2
+}
+
 stash_envelope() {  # $1=metadata file
   board_live || return 0
   [ -s "$1" ] || return 0
@@ -764,17 +777,14 @@ merge_mode() {
   return 0
 }
 # Three answers, never two: `merged`, `unmerged` (GitHub answered, and the PR is not merged) and
-# `unreadable` (it did not answer, twice). A read that fails once is retried once.
+# `unreadable` (it did not answer after the shared helper's bounded retries).
 pr_merge_state() {
-  local try out
-  for try in 1 2; do
-    out="$(gh pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null)" \
-      && printf '%s' "$out" | jq -e 'has("state")' >/dev/null 2>&1 && {
-        printf '%s' "$out" | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null \
-          && echo merged || echo unmerged
-        return 0; }
-    [ "$try" = 1 ] && sleep 1
-  done
+  local out
+  out="$(python3 "$HERE/github-read.py" pr view "$PR_URL" --json state,mergedAt < /dev/null 2>/dev/null)" \
+    && printf '%s' "$out" | jq -e 'has("state")' >/dev/null 2>&1 && {
+      printf '%s' "$out" | jq -e '.state == "MERGED" and (.mergedAt | type) == "string"' >/dev/null \
+        && echo merged || echo unmerged
+      return 0; }
   echo unreadable
 }
 # Return 1: nothing was merged. Return 4: the merge LANDED, or `gh pr merge`
@@ -802,7 +812,7 @@ route_merge() {
   # is flagged by the merge-watcher as a head drift, never counted as verified.
   local verdict_head live_head
   verdict_head="$(jq -r '.head // empty' "$GATE" 2>/dev/null)"
-  live_head="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
+  live_head="$(python3 "$HERE/github-read.py" pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
   [ -n "$verdict_head" ] && [ -n "$live_head" ] || return 1
   if [ "$verdict_head" != "$VERIFIED_HEAD" ] || [ "$live_head" != "$VERIFIED_HEAD" ]; then
     MERGE_REFUSAL="head-drift — the verdict is about ${verdict_head:0:12} (pinned ${VERIFIED_HEAD:0:12}) and $PR_URL is now at ${live_head:0:12}, so nothing was merged"
@@ -915,6 +925,11 @@ implementer_model_line() {
 bounce_or_except() {  # $1=reasons  $2=one-line why  $3=metadata file  $4=action [bounce]
   local rounds budget="${FORGE_VERIFIER_BOUNCE_BUDGET:-2}" action="${4:-bounce}"
   rounds="$(bounce_rounds)"
+  if [ "$rounds" -lt "$budget" ]; then
+    archive_envelope "$3" "$action"
+  else
+    archive_envelope "$3" exception
+  fi
   stash_envelope "$3"
   if [ "$rounds" -lt "$budget" ]; then
     envelope "$action" "$2 (round $((rounds + 1)) of $budget)" "$3" "" 4 \
@@ -964,7 +979,7 @@ VERIFIED_HEAD=""
 if [ -n "$FIXTURE" ]; then
   [ -f "$FIXTURE/pr.json" ] && VERIFIED_HEAD="$(jq -r '.headRefOid // empty' "$FIXTURE/pr.json" 2>/dev/null)"
 else
-  VERIFIED_HEAD="$(gh pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
+  VERIFIED_HEAD="$(python3 "$HERE/github-read.py" pr view "$PR_URL" --json headRefOid < /dev/null 2>/dev/null | jq -r '.headRefOid // empty')"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1054,7 +1069,7 @@ printf '\n## Diff under review\n\n' >> "$prompt_file"
 if [ -n "$FIXTURE" ]; then
   [ -f "$FIXTURE/diff.patch" ] && cat "$FIXTURE/diff.patch" >> "$prompt_file"
 else
-  gh pr diff "$PR_URL" >> "$prompt_file" < /dev/null \
+  python3 "$HERE/github-read.py" pr diff "$PR_URL" >> "$prompt_file" < /dev/null \
     || substrate "env: diff-unavailable — the diff fetch returned nothing usable"
   # A brief plus a contract is ~2 KB before any diff at all, so a prompt that
   # small means the fetch succeeded and returned nothing.
@@ -1121,10 +1136,10 @@ else
   # (every card blocked as a substrate fault), and a stacked PR was tested against
   # a base it will never merge into. An unreadable base fails closed — falling
   # back to `main` would be that bug again.
-  pr_refs="$(gh pr view "$PR_URL" --json headRefName,baseRefName < /dev/null 2>/dev/null)"
+  pr_refs="$(python3 "$HERE/github-read.py" pr view "$PR_URL" --json headRefName,baseRefName < /dev/null 2>/dev/null)"
   head_ref="$(printf '%s' "$pr_refs" | jq -r '.headRefName // empty' 2>/dev/null)"
   base_ref="$(printf '%s' "$pr_refs" | jq -r '.baseRefName // empty' 2>/dev/null)"
-  clone_url="$(gh repo view "$merge_repo" --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
+  clone_url="$(python3 "$HERE/github-read.py" repo view "$merge_repo" --json url < /dev/null 2>/dev/null | jq -r '.url // empty')"
   [ -n "$head_ref" ] && [ -n "$base_ref" ] && [ -n "$clone_url" ] \
     || substrate "env: merge-check-unrunnable — cannot read the PR's head branch, its base branch, or the repository URL for '$merge_repo', from gh (this must not depend on the cwd: the verifier's workspace holds no clone)"
   # --head-sha pins the union to Stage 0's commit: without it this clones "the
@@ -1848,6 +1863,7 @@ case "$VERDICT" in
     # carries the verdict; if the merge lands and the completion does not, the
     # merge-watcher finishes the card and this file is the only copy of the
     # verdict it can attach.
+    archive_envelope "$TMP/verdict.json" approval
     stash_envelope "$TMP/verdict.json"
     if merge_mode; then
       route_merge; merge_rc=$?

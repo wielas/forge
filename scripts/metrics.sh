@@ -820,6 +820,13 @@ SELECT json_object(
                'chunks', chunks, 'done', done, 'archived', archived)), json_array())
              FROM (SELECT * FROM gt ORDER BY title)),
   'chunk_cards', (SELECT COUNT(*) FROM cc),
+  'applied_bounces', (SELECT json_object(
+     'events', COUNT(*), 'chunks', COUNT(DISTINCT e.task_id),
+     'method', 'changes_requested events on CHUNK cards in the period; includes open cards and all causes, without inferred tier')
+     FROM task_events e JOIN tasks t ON t.id = e.task_id
+     WHERE e.kind = 'changes_requested' AND e.created_at >= :since AND e.created_at < :until
+       AND t.title GLOB 'CHUNK-[A-Za-z0-9]*' AND instr(t.title, ': ') > 7
+       AND substr(t.title, 7, instr(t.title, ': ') - 7) NOT GLOB '*[^A-Za-z0-9._-]*'),
   'verdicts', json_object(
      'total', (SELECT COUNT(*) FROM va),
      'unattributed', (SELECT COUNT(*) FROM va WHERE chunk_card IS NULL),
@@ -977,7 +984,7 @@ markdown-row)
       end;
     "| " + ([ (now | strflocaltime("%Y-%m-%d")),
               "\(.board), \(period)",
-              "\(gate) · \(br(1)) · \(br(2))",
+              "\(gate) · applied bounces \(.applied_bounces.events) on \(.applied_bounces.chunks) chunks · verdict recommendations \(br(1)) · \(br(2))",
               (if .mean_d13_all == null then "n/a — 0 canonical verdicts in period"
                else "\(.mean_d13_all) (\(.verdicts.total) verdicts)" end),
               (if (.reason_class | length) == 0 then "empty (0 blocked cards)"
@@ -1028,7 +1035,10 @@ text)
           + "\n  by check    " + ([.gate.by_check | to_entries[] | "\(.key) ×\(.value)"]
                                   | if length == 0 then "nothing blocked" else join(" · ") end) end),
     "",
-    "bounce rate — a chunk counts as bounced if ANY verdict against it bounced",
+    "applied bounces — board changes_requested events on chunk cards, including open cards and all causes",
+    "  \(.applied_bounces.events) events on \(.applied_bounces.chunks) chunks",
+    "",
+    "bounce recommendations — canonical verdicts, which do not prove a bounce was applied",
     (if (.tiers | length) == 0 then "  no canonical forge.judge.v1 verdicts in period"
      else ([.tiers[] | "  tier \(.tier)  \(.bounce_rate // "n/a") (\(.chunks_bounced)/\(.chunks_judged) chunk cards)"
                        + "   from \(.bounce_verdicts)/\(.verdicts) verdicts"
