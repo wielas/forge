@@ -91,18 +91,19 @@ fi
 # topped up with the usual macOS install dirs. §7 still checks the gateway's own
 # PATH separately — that check must not be affected by what we do here.
 # ---------------------------------------------------------------------------
-# Several processes match: since Hermes 0.21.5 the launchd job execs the gateway
-# through `osascript -e 'do shell script …'`, and that wrapper is the lowest PID
-# with an env that carries no PATH. Taking `head -1` turned the five §7 "gateway
-# PATH can reach" PASSes into one WARN without anything failing. Take the first
-# match whose env ps can actually read; keep the first match only as a fallback.
+# Ask Hermes to verify the gateway identity (home, start time and command), then
+# read its environment separately. `pgrep -f` also matches verification fixtures
+# and `ps eww` can mistake PATH= text embedded in a launcher's argv for its env.
 GWPID=""
 GWPATH=""
-for p in $(pgrep -f 'hermes.*gateway' 2>/dev/null); do
-  [ -n "$GWPID" ] || GWPID="$p"
-  pth="$(ps eww -p "$p" 2>/dev/null | tr ' ' '\n' | grep '^PATH=' | head -1 | cut -d= -f2-)"
-  if [ -n "$pth" ]; then GWPID="$p"; GWPATH="$pth"; break; fi
-done
+GWENV=""
+GW_PY="$(python3 "$PF_OV_REPO/scripts/hermes-python.py" 2>/dev/null)"
+if [ -x "$GW_PY" ]; then
+  GW_RECORD="$("$GW_PY" -I "$PF_OV_REPO/scripts/gateway-process-probe.py" 2>/dev/null)"
+  GWPID="$(printf '%s\n' "$GW_RECORD" | sed -n '1p')"
+  GWPATH="$(printf '%s\n' "$GW_RECORD" | sed -n '2p')"
+  GWENV="$(printf '%s\n' "$GW_RECORD" | sed -n '3,$p')"
+fi
 PROBE_PATH="$PATH"
 [ -n "$GWPATH" ] && PROBE_PATH="$GWPATH:$PROBE_PATH"
 for d in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/.codex/bin" \
@@ -720,8 +721,6 @@ sect "7. Dispatcher liveness and the env it will hand workers"
 # GWPID / GWPATH were resolved in section 0 so the binary probes could use them.
 if [ -n "$GWPID" ]; then
   pass "gateway running (pid $GWPID) — dispatcher should be ticking"
-  GWENV="$(ps eww -p "$GWPID" 2>/dev/null | tr ' ' '\n' \
-    | grep -E '^(PATH|HOME|TERMINAL_CWD|MESSAGING_CWD|HERMES_)' )"
   # DO NOT ask ps whether the gateway has CLAUDE_CODE_OAUTH_TOKEN. On macOS
   # `ps eww` reports the env a process was EXEC'd with; hermes loads
   # ~/.hermes/.env at import via load_hermes_dotenv(), i.e. after exec, so the
@@ -764,7 +763,7 @@ if [ -n "$GWPID" ]; then
         || fail "gateway PATH CANNOT reach $b — lane cards will fail 'command not found'"
     done
   else
-    warn "could not read the gateway's PATH from ps"
+    warn "could not read the verified gateway's PATH"
   fi
   launchctl list 2>/dev/null | grep -qi hermes \
     && pass "a hermes launchd job exists (survives logout/reboot)" \

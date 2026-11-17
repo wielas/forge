@@ -24,6 +24,12 @@ interpreter; a broken selection is an error, never permission to use the old ven
 Conformance fixtures borrow that interpreter with lazy installs disabled, so
 each throwaway `HERMES_HOME` does not provision another managed installation.
 Production preflight still asks the installed launcher and live configuration.
+Gateway inspection asks Hermes' `live_gateway_pid_for_home` identity API before
+reading the process environment. An argv substring scan also matched concurrent
+verification fixtures; parsing `ps eww` then adopted embedded `PATH=` text from
+their commands and falsely reported that even `/usr/bin/git` was unreachable.
+The verified process environment preserves paths containing spaces and prints
+only the small allowlist needed by preflight.
 
 The CLI's YAML value display can indent lists and wrap the hook matcher onto
 another line. Bootstrap now asks `config get --json` and compares structured

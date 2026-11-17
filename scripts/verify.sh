@@ -769,7 +769,7 @@ suite_registry_diff() {
 run_cli_group() {
   group cli
   local hp_out hp_rc
-  hp_out="$(python3 - "$REPO_ROOT/scripts/hermes-python.py" "$REPO_ROOT/scripts/fixtures/hermes-pm-cli.py" <<'PY'
+  hp_out="$(python3 - "$REPO_ROOT/scripts/hermes-python.py" "$REPO_ROOT/scripts/fixtures/hermes-pm-cli.py" "$REPO_ROOT/scripts/gateway-process-probe.py" <<'PY'
 from pathlib import Path
 import json
 import os
@@ -777,7 +777,7 @@ import subprocess
 import sys
 import tempfile
 
-resolver, runner = sys.argv[1:]
+resolver, runner, gateway_probe = sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix="forge-python-selection-") as temp:
     root = Path(temp).resolve()
     legacy = root / "venv/bin/python3"
@@ -815,7 +815,21 @@ with tempfile.TemporaryDirectory(prefix="forge-python-selection-") as temp:
                             capture_output=True, text=True, env=env)
     assert result.returncode == 0, result
     assert json.loads(result.stdout) == {"args": ["--fixture-argument"], "lazy": "1"}, result
-print("legacy and managed selection; broken PM refuses stale fallback; fixture uses selected source with lazy installs off")
+    gateway = root / "gateway"
+    gateway.mkdir()
+    (gateway / "__init__.py").write_text("")
+    status = gateway / "status.py"
+    status.write_text('def live_gateway_pid_for_home(home):\n    return 12345\n')
+    (root / "psutil.py").write_text('class Process:\n'
+        '    def __init__(self, pid):\n        assert pid == 12345\n'
+        '    def environ(self):\n'
+        '        return {"PATH": "/real path/bin:/usr/bin", "HOME": "/test", "SECRET_TOKEN": "never-print"}\n')
+    result = subprocess.run([sys.executable, "-I", gateway_probe], env=env, capture_output=True, text=True)
+    assert result.returncode == 0 and result.stdout.splitlines() == ["12345", "/real path/bin:/usr/bin", "HOME=/test"], result
+    status.write_text('def live_gateway_pid_for_home(home):\n    return None\n')
+    result = subprocess.run([sys.executable, "-I", gateway_probe], env=env, capture_output=True, text=True)
+    assert result.returncode == 0 and not result.stdout, result
+print("legacy/managed selection; broken PM refuses; isolated fixture; verified gateway environment preserves spaces and excludes secrets; absent gateway stays absent")
 PY
 )"; hp_rc=$?
   if [ "$hp_rc" = 0 ]; then ok "hermes-python-selection ($hp_out)"
