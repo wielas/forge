@@ -94,3 +94,14 @@ forge go <board> --project /absolute/path/to/project --branch-suffix <s>
 - `~/.forge`: host grants, latest verdicts, review history and watcher state.
 - `~/forge-evidence`: private run evidence; do not commit private product contents.
 - [Operator guide](operator-guide.md): detailed setup and recovery commands.
+
+## Checked-in model defaults
+
+This block is maintained by `scripts/set-model.sh` and checked against
+`scripts/model-pins.sh`; its exact shape is part of that command's current interface.
+Per-card overrides and actual run metadata take precedence over these defaults.
+
+```
+profiles: forge-orchestrator, forge-codex-lane, forge-verifier,
+          forge-digest (glm-5.3-flash) · codex pinned gpt-5.6-luna xhigh
+```
