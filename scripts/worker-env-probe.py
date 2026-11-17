@@ -52,6 +52,7 @@ caller's. Usage:  <python3> -I scripts/worker-env-probe.py <path to scripts/clau
 """
 
 import hashlib
+import inspect
 import os
 import shutil
 import subprocess
@@ -114,6 +115,12 @@ def main():
         from agent.secret_scope import is_multiplex_active, load_env_file
         from tools.environments.local import _is_routed_home, build_subprocess_env, strip_launch_profile_env
         from hermes_cli.kanban_db_dispatch import _worker_profile_scope
+        try:
+            from hermes_cli.kanban_worker_env import worker_client_env
+        except ModuleNotFoundError as exc:
+            if exc.name != "hermes_cli.kanban_worker_env":
+                raise
+            worker_client_env = None
     except Exception as exc:   # ImportError, or a module that no longer exports a name
         return cannot_run(f"Hermes moved something this probe imports: {type(exc).__name__}: {exc}")
 
@@ -146,10 +153,15 @@ def main():
             try:
                 ph = resolve_profile_env(normalize_profile_name(prof))
                 routed = bool(ph) and _is_routed_home(ph)
-                with _worker_profile_scope(ph, bind_home=False):
+                # 0.23 binds the whole runtime scope and no longer accepts bind_home.
+                scope_options = ({"bind_home": False}
+                                 if "bind_home" in inspect.signature(_worker_profile_scope).parameters else {})
+                with _worker_profile_scope(ph, **scope_options):
                     env = build_subprocess_env(scrub_secrets=is_multiplex_active() or routed,
                                                inherit_profile_home=True)
                 before = KEY in env
+                if routed and worker_client_env is not None:
+                    env = worker_client_env(env, ph)
                 env["HERMES_HOME"] = ph
                 strip_launch_profile_env(env, ph)
                 after = KEY in env

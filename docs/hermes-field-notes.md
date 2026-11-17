@@ -17,6 +17,32 @@ Decisions live in `docs/adr/`. This file is evidence, not intent.
 
 ## The traps: documented-but-untrue, or silent
 
+**0.23.2 changes the dependency and config-display boundaries.** Measured against
+stable `v0.23.2` (`ae2a81ccc00`): PM selects a dependency generation outside
+`hermes-agent/venv/`. `scripts/hermes-python.py` asks its selection API for the
+interpreter; a broken selection is an error, never permission to use the old venv.
+Conformance fixtures borrow that interpreter with lazy installs disabled, so
+each throwaway `HERMES_HOME` does not provision another managed installation.
+Production preflight still asks the installed launcher and live configuration.
+Gateway inspection asks Hermes' `live_gateway_pid_for_home` identity API before
+reading the process environment. An argv substring scan also matched concurrent
+verification fixtures; parsing `ps eww` then adopted embedded `PATH=` text from
+their commands and falsely reported that even `/usr/bin/git` was unreachable.
+The verified process environment preserves paths containing spaces and prints
+only the small allowlist needed by preflight.
+
+The CLI's YAML value display can indent lists and wrap the hook matcher onto
+another line. Bootstrap now asks `config get --json` and compares structured
+values. A display change must not masquerade as a bad installed configuration.
+The routed-worker scope also lost its `bind_home` argument and now filters the
+worker client through `worker_client_env`; the auth probe follows both versions.
+
+Upstream still fails the explicit-unblock respawn contract. The ported fix and
+its application procedure live under [hermes/patches](../hermes/patches/README.md).
+The probe also exercises manual promotion, automatic retry events and timestamp
+ties. The newly exposed `kanban_schedule` is explicitly forbidden in both drivers;
+their programs still decide the one transition the driver makes.
+
 **`custom_toolsets:` does nothing.** It is documented in
 `website/docs/reference/toolsets-reference.md`, and no code in 0.20.4 reads it —
 re-measured on the upgrade: `custom_toolsets` still appears in no `.py` file. A

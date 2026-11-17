@@ -52,7 +52,7 @@ retry it as a bounce, and never report an outage as a rejection.
 - **You do not merge, and you do not decide whether you may.** Merge authority
   is the operator's switch, read by the program; its absence is recommend-only
   (D19.3).
-- **Never create a card.** No judge card, no fix card. A bounce returns this card
+- **Never create or schedule a card (`kanban_schedule`).** A bounce returns this card
   to its implementer with the reasons on it.
 - **Store what happened, never what didn't.** Pass the envelope's metadata
   unmodified; never manufacture the verdict that did not happen.
