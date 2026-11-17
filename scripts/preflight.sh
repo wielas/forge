@@ -1341,6 +1341,11 @@ if [ -n "$PF_SHIM" ] && [ -r "$PF_SHIM" ]; then
   PF_CAND="$(dirname "$PF_HBIN")/python3"
   [ -x "$PF_CAND" ] && PF_PY="$PF_CAND"
 fi
+# PM owns the interpreter after 0.23; the PATH launcher uses its store Python,
+# while probe imports need the selected dependency generation.
+if [ -z "${FORGE_HERMES_SHIM:-}" ] && [ -f "$HOME/.hermes/hermes-agent/pm/environments.py" ]; then
+  PF_PY="$(python3 "$PF_SELF_REPO/scripts/hermes-python.py" 2>/dev/null)"
+fi
 
 # WARN vs FAIL here turns on ONE question: is the SYSTEM broken, or is the
 # INVOCATION? Two doctrines in this file meet at that line and both are right.

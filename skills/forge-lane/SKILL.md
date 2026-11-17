@@ -115,7 +115,7 @@ this lane to review itself). A `pre_tool_call` hook in this profile
 (`~/.forge/repo/scripts/driver-call-hook.sh`) rewrites the call to the arguments the
 program recorded, so a slip is repaired — a backstop, not a licence to retype. The set is closed: `kanban_request_review` is yours
 **only** as the call the envelope names; `kanban_request_changes`,
-`kanban_complete` and `kanban_create` are **forbidden** here — a card in `review`
+`kanban_complete`, `kanban_create` and `kanban_schedule` are **forbidden** here — a card in `review`
 is not `done`, which is exactly what holds its dependents until the PR merges.
 
 ## Hard rules

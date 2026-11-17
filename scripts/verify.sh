@@ -309,7 +309,24 @@ trap cleanup EXIT
 # All three refuse a HERMES_HOME that is not an isolated directory.
 # ---------------------------------------------------------------------------
 WCTX="$REPO_ROOT/scripts/fixtures/worker-ctx.py"
-WCTX_PY="$HOME/.hermes/hermes-agent/venv/bin/python"
+WCTX_PY="$(python3 "$REPO_ROOT/scripts/hermes-python.py" 2>/dev/null)"
+# A PM launcher boots a bare store Python and provisions dependencies per data
+# root. Isolated fixture homes borrow the installed dependency interpreter
+# instead; they must not install plugins, rewrite launchers, or start an update.
+if command -v hermes >/dev/null 2>&1 && [ -x "$WCTX_PY" ] \
+   && [ -f "$HOME/.hermes/hermes-agent/pm/environments.py" ]; then
+  mkdir -p "$TMPROOT/hermes-cli"
+  python3 - "$TMPROOT/hermes-cli/hermes" "$WCTX_PY" \
+    "$REPO_ROOT/scripts/fixtures/hermes-pm-cli.py" "$HOME/.hermes/hermes-agent" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+target = Path(sys.argv[1])
+target.write_text('#!/bin/sh\nexec ' + shlex.join(sys.argv[2:]) + ' "$@"\n')
+target.chmod(0o755)
+PY
+  export PATH="$TMPROOT/hermes-cli:$PATH"
+fi
 _wsnip() {   # home board task profile [flags] -> path of a snippet (or fails)
   local out; out="$(mktemp "$TMPROOT/wsnip.XXXXXX")" || return 1
   HERMES_HOME="$1" "$WCTX_PY" "$WCTX" fenced-env "$2" "$3" "$4" "${@:5}" > "$out" 2>"$out.err" \
@@ -751,6 +768,58 @@ suite_registry_diff() {
 
 run_cli_group() {
   group cli
+  local hp_out hp_rc
+  hp_out="$(python3 - "$REPO_ROOT/scripts/hermes-python.py" "$REPO_ROOT/scripts/fixtures/hermes-pm-cli.py" <<'PY'
+from pathlib import Path
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+resolver, runner = sys.argv[1:]
+with tempfile.TemporaryDirectory(prefix="forge-python-selection-") as temp:
+    root = Path(temp).resolve()
+    legacy = root / "venv/bin/python3"
+    legacy.parent.mkdir(parents=True)
+    legacy.symlink_to(sys.executable)
+    env = {**os.environ, "HERMES_AGENT_DIR": str(root)}
+
+    def resolve():
+        return subprocess.run([sys.executable, resolver], env=env, capture_output=True, text=True)
+
+    result = resolve()
+    assert result.returncode == 0 and result.stdout.strip() == str(legacy), result
+    selected = root / "managed/bin/python"
+    selected.parent.mkdir(parents=True)
+    selected.symlink_to(sys.executable)
+    pm = root / "pm"
+    pm.mkdir()
+    (pm / "__init__.py").write_text("")
+    selection = pm / "environments.py"
+    selection.write_text('def selected_venv(root):\n    return root / "managed"\n'
+                         'def venv_python(root):\n    return root / "bin/python"\n')
+    result = resolve()
+    assert result.returncode == 0 and result.stdout.strip() == str(selected), result
+    selection.write_text('def selected_venv(root):\n    raise RuntimeError("broken selection")\n'
+                         'def venv_python(root):\n    return root\n')
+    result = resolve()
+    assert result.returncode == 2 and not result.stdout and "broken selection" in result.stderr, result
+
+    source = root / "hermes_cli"
+    source.mkdir()
+    (source / "__init__.py").write_text("")
+    (source / "main.py").write_text('import json, os, sys\ndef main():\n'
+        '    print(json.dumps({"args": sys.argv[1:], "lazy": os.environ.get("HERMES_DISABLE_LAZY_INSTALLS")}))\n')
+    result = subprocess.run([sys.executable, runner, str(root), "--fixture-argument"],
+                            capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result
+    assert json.loads(result.stdout) == {"args": ["--fixture-argument"], "lazy": "1"}, result
+print("legacy and managed selection; broken PM refuses stale fallback; fixture uses selected source with lazy installs off")
+PY
+)"; hp_rc=$?
+  if [ "$hp_rc" = 0 ]; then ok "hermes-python-selection ($hp_out)"
+  else bad "hermes-python-selection" "$hp_out"; fi
   # Help is a contract header, not a line interval. Grow each header before
   # asking for help so this case fails against a range that merely happens to
   # fit today's prose.
@@ -1537,7 +1606,24 @@ awk -v want="$key" '
   /^  [a-z_]+:$/          { nest=$0; sub(/^  /,"",nest); sub(/:$/,"",nest); next }
   /^    - /               { if (want == top "." nest) { gsub(/"/,""); sub(/^    /,""); print } next }
   /^      [a-z_]+: /      { if (want == top "." nest) { gsub(/"/,""); sub(/^    /,""); print } next }
-' "$cfg"
+' "$cfg" | python3 -c '
+import json, sys
+key = sys.argv[1]
+text = sys.stdin.read().strip()
+if key == "hooks.pre_tool_call" and text:
+    item = {}
+    for line in text.splitlines():
+        name, value = line.strip().removeprefix("- ").split(": ", 1)
+        item[name] = int(value) if name == "timeout" else value
+    value = [item]
+elif text.startswith("- "):
+    value = [line.removeprefix("- ") for line in text.splitlines()]
+elif text in ("true", "false", "[]") or text.isdigit():
+    value = json.loads(text)
+else:
+    value = text or None
+print(json.dumps(value))
+' "$key"
 PBHERMES
     chmod +x "$1/hermes"
   }
@@ -2292,10 +2378,9 @@ run_config_group() {
     rm -rf "$hc_home"; mkdir -p "$hc_home"
     HERMES_HOME="$hc_home" bash ./hermes/profiles-bootstrap.sh >"$hc_home.log" 2>&1 \
       || hc_detail="$hc_detail bootstrap-failed($(tail -1 "$hc_home.log"))"
-    hc_want="$(printf -- '- matcher: %s\n  command: %s\n  timeout: 20' \
-        'kanban_request_review|kanban_block|kanban_request_changes|kanban_complete' '~/.forge/repo/scripts/driver-call-hook.sh')"
+    hc_want='[{"command":"~/.forge/repo/scripts/driver-call-hook.sh","matcher":"kanban_request_review|kanban_block|kanban_request_changes|kanban_complete","timeout":20}]'
     for hc_p in forge-codex-lane forge-verifier forge-orchestrator forge-digest forge-overseer; do
-      hc_got="$(HERMES_HOME="$hc_home" hermes -p "$hc_p" config get hooks.pre_tool_call 2>/dev/null)"
+      hc_got="$(HERMES_HOME="$hc_home" hermes -p "$hc_p" config get hooks.pre_tool_call --json 2>/dev/null | jq -Scr 'if . == null then empty else . end')"
       case "$hc_p" in
         forge-codex-lane|forge-verifier)
           [ "$hc_got" = "$hc_want" ] || hc_detail="$hc_detail $hc_p-hook-not-read-back(got '$(printf '%s' "$hc_got" | tr '\n' ' ')')"
@@ -3124,6 +3209,7 @@ if [ "$LIST_ONLY" = 1 ]; then
 cli/flags-exist                   every long flag named beside a tracked command exists in its --help
 cli/flags-exist/<command>         one tracked command could not be judged: absent, or its --help lists no flags
 cli/verify-help-grows-with-the-group-header  appended groups remain visible without numeric line pins
+cli/hermes-python-selection       managed dependencies supersede the stale venv; a broken selection refuses; isolated fixtures use the selected source without lazy installs
 cli/default-suites-mutation-is-caught  a group registered but not defaulted, and one defaulted but not registered, both report
 cli/default-suites-names-every-registered-group  the case-arm registry and DEFAULT_SUITES name the same groups (F65)
 cli/preflight-help-grows-with-the-header  Usage and Exit remain visible after the header grows
@@ -4151,6 +4237,8 @@ run_lane_group() {
     || { term_ok=0; term_detail="$term_detail request_review-unnamed"; }
   printf '%s' "$sec7_flat" | grep -Fq 'kanban_request_changes' \
     || { term_ok=0; term_detail="$term_detail request_changes-unnamed"; }
+  printf '%s' "$sec7_flat" | grep -Fq 'kanban_schedule' \
+    || { term_ok=0; term_detail="$term_detail schedule-unnamed"; }
   printf '%s' "$sec7_flat" | grep -Fq 'forbidden' \
     || { term_ok=0; term_detail="$term_detail no-prohibition-word"; }
   # P24 INVERTED ONE HALF OF THIS. The lane's terminal is fenced, so the lane's hand-off is
@@ -5154,7 +5242,7 @@ LCODEX
   #   5 lane.sh re-enters on a red baseline and hands P off again
   #   6 the reviewer completes P: P done, the child released
   # ---------------------------------------------------------------------------
-  local rh_home="$TMPROOT/lane-real-home" rh_py="$HOME/.hermes/hermes-agent/venv/bin/python"
+  local rh_home="$TMPROOT/lane-real-home" rh_py="$WCTX_PY"
   local rh_src="$HOME/.hermes/hermes-agent" rh_detail="" rh_p rh_c rh_run rh_rc rh_bin
   if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$rh_py" ]; then
     skip "bounce-round-trip-on-real-hermes" "hermes (and its venv python) not installed"
@@ -12019,7 +12107,7 @@ MAMV
   # what an outcome means is what it does to the child (D19.5's native gate).
   # -------------------------------------------------------------------------
   local vhome="$TMPROOT/verifier-home" vbin="$TMPROOT/verifier-bin" vstate="$TMPROOT/verifier-state"
-  local vpy="$HOME/.hermes/hermes-agent/venv/bin/python" vsrc="$HOME/.hermes/hermes-agent"
+  local vpy="$WCTX_PY" vsrc="$HOME/.hermes/hermes-agent"
   local vP vC vdetail vrc vout vfx="$TMPROOT/verifier-fx"
   if ! command -v hermes >/dev/null 2>&1 || [ ! -x "$vpy" ]; then
     for c in chunk-is-the-running-card the-contract-comes-from-the-card the-envelope-lands-on-the-real-kernel \
@@ -18225,8 +18313,13 @@ TR_DSQL
     local k_hs="${HERMES_KANBAN_HOME+set}" k_hv="${HERMES_KANBAN_HOME-}" k_bs="${HERMES_KANBAN_BOARD+set}" k_bv="${HERMES_KANBAN_BOARD-}"
     export HERMES_KANBAN_HOME="$root/ambient-kanban-home" HERMES_KANBAN_BOARD=ambient-board
     rm -rf "$kh"; mkdir -p "$kh"
+    # Current kernels require board.json as the board identity; a bare DB is
+    # deliberately insufficient. Register the board before loading its fixture.
+    "${kenv[@]}" hermes kanban boards create tr >/dev/null 2>&1 \
+      || detail="$detail kernel-board-create-failed"
     kdb="$kh/kanban/boards/tr/kanban.db"
     mkdir -p "$(dirname "$kdb")"
+    rm -f "$kdb" "$kdb-wal" "$kdb-shm"
     sqlite3 "$kdb" < "$fixsql" >/dev/null 2>&1
     # The kernel reads the fixture as its own board.
     n="$("${kenv[@]}" hermes kanban --board tr list --status triage --json 2>/dev/null | jq 'length' 2>/dev/null)"
@@ -18461,7 +18554,7 @@ run_gateway_group() {
   local plug="$REPO_ROOT/hermes/plugins/forge-gateway" drive="$REPO_ROOT/scripts/fixtures/gateway-drive.py"
   local hdrive="$REPO_ROOT/scripts/fixtures/gateway-hermes-drive.py"
   local fixsql="$REPO_ROOT/scripts/fixtures/checkpoint-board.sql"
-  local hpy="$HOME/.hermes/hermes-agent/venv/bin/python"
+  local hpy="$WCTX_PY"
   local gw_cases="plugin-registers-three-commands unpaired-chat-refused malformed-command-refused replay-is-a-noop unlisted-verb-refused each-verb-maps-to-one-script bad-args-refused accept-needs-a-recorded-block handler-never-raises guard-reads-the-text guard-spares-workers guard-covers-the-other-routes guard-never-raises-or-blocks-the-innocent guard-forge-gate-blocks-everything forge-gate-soul-says-what-the-plugin-does park-and-redirect-disarm-before-they-write real-hermes-loads-the-plugin-and-routes-only-three-verbs busy-text-never-writes-a-gate forge-gate-profile-has-no-tools deployed-forge-gate-has-no-tools unarmed-gate-never-completes cron-silent-and-exit-0 cron-probes-what-was-merged arming-is-explicit every-hermes-kanban-call-carries-board state-root-agrees-with-forge-state gate-scripts-run-under-the-minis-bash a-decision-during-the-probe-wins preflight-asks-the-gateway"
   local tool n
   for tool in sqlite3 jq python3 shasum; do

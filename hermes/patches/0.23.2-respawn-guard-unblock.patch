@@ -1,0 +1,12 @@
+diff --git a/hermes_cli/kanban_db_dispatch.py b/hermes_cli/kanban_db_dispatch.py
+index aef2866f91..16479e0f2a 100644
+--- a/hermes_cli/kanban_db_dispatch.py
++++ b/hermes_cli/kanban_db_dispatch.py
+@@ -1653,3 +1653,6 @@ def check_respawn_guard(
+                 conn, "task_events", task_id, max(pr_times),
+-                "AND kind IN ('assigned', 'changes_requested', 'review_reopened')", cols=", kind, payload", strict=True)):
++                # Forge's explicit operator continuations supersede stale PR evidence.
++                # Automatic promotion/reclaim still keeps the duplicate-work guard.
++                "AND kind IN ('assigned', 'changes_requested', 'review_reopened', "
++                "'unblocked', 'promoted_manual')", cols=", kind, payload", strict=True)):
+             return None
