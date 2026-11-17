@@ -22,10 +22,11 @@ probe the integrated product. The digest and run watcher report progress and hol
 
 **Local Hermes upgrade, November 17:** the host now runs stable v0.23.2 plus the
 carried explicit-unblock/manual-promotion fix (`d19edc8340`). Forge compatibility
-is installed on runtime branch `codex/hermes-0.23.2-local`, with source on
-`slice/hermes-0.23.2`. The source changes have not been published or tested by
-GitHub CI. This local rollout is an exception to the normal merged-PR deployment
-flow below. The private backup and validation logs are under
+was installed at `3b27150` on runtime branch `codex/hermes-0.23.2-local`, with
+source on `slice/hermes-0.23.2`. This local rollout preceded PR/CI validation and
+is an exception to the normal merged-PR deployment flow below. Consult the
+compatibility PR's checks for public CI evidence; the local rollout report is
+host evidence. The private backup and validation logs are under
 `~/.hermes/forge-upgrade-2026-11-17/`; retain the old source and environment for
 rollback. The five existing boards retain their card counts, and the gateway,
 dashboard, embedded dispatcher and no-agent crons have resumed.
