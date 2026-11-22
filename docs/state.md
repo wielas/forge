@@ -20,6 +20,17 @@ probe the integrated product. The digest and run watcher report progress and hol
 
 ## Current implementation
 
+**Local Hermes upgrade, November 17:** the host now runs stable v0.23.2 plus the
+carried explicit-unblock/manual-promotion fix (`d19edc8340`). Forge compatibility
+was installed at `3b27150` on runtime branch `codex/hermes-0.23.2-local`, with
+source on `slice/hermes-0.23.2`. This local rollout preceded PR/CI validation and
+is an exception to the normal merged-PR deployment flow below. Consult the
+compatibility PR's checks for public CI evidence; the local rollout report is
+host evidence. The private backup and validation logs are under
+`~/.hermes/forge-upgrade-2026-11-17/`; retain the old source and environment for
+rollback. The five existing boards retain their card counts, and the gateway,
+dashboard, embedded dispatcher and no-agent crons have resumed.
+
 Recovery [#130](https://github.com/wielas/forge/pull/130) is merged and deployed at
 `7b842ec`. Required CI passed; runtime preflight reads 145 PASS, 6 WARN, 0 FAIL:
 
@@ -39,7 +50,7 @@ Recovery [#130](https://github.com/wielas/forge/pull/130) is merged and deployed
 - Metrics report actual `changes_requested` events, including repeat bounces and open
   cards. Legacy verdict recommendation rates are labeled separately.
 
-The runtime changes only after a green PR is merged and deliberately deployed. Read
+Normal runtime changes follow a green PR that is merged and deliberately deployed. Read
 `git -C ~/dev/forge-runtime log -1` for the installed revision; the source checkout is not
 proof of deployment. Validation and rollout evidence are recorded in the recovery epic row.
 

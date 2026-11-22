@@ -256,10 +256,11 @@ disabled_skills_for() {  # $1=profile
 cfg_get() {  # $1=profile $2=key -> the value on stdout; stderr surfaced, never compared
   local err out
   err="$(mktemp "${TMPDIR:-/tmp}/forge-cfgget.XXXXXX")"
-  out="$(hermes -p "$1" config get "$2" 2>"$err")" || true
+  out="$(hermes -p "$1" config get "$2" --json 2>"$err")" || true
   [ -s "$err" ] && sed "s|^|  note ($1 $2): |" "$err" >&2
   rm -f "$err"
-  printf '%s' "$out"
+  # Structured output survives YAML indentation and line-wrapping changes.
+  printf '%s\n' "$out" | jq -Scr 'if . == null then empty else . end'
 }
 
 verify_config() {  # $1=name $2=model $3=comma-separated toolsets $4=provider (optional)
@@ -271,7 +272,7 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets $4=provider (o
     [ "$got" = "$provider" ] || { echo "  FAIL model.provider: got '$got' want '$provider'" >&2; rc=1; }
   fi
 
-  if [ -z "$tools" ]; then want='[]'; else want=$(printf -- '- %s\n' ${tools//,/ }); fi
+  if [ -z "$tools" ]; then want='[]'; else want=$(jq -cn --args '$ARGS.positional' ${tools//,/ }); fi
   got=$(cfg_get "$name" toolsets)
   [ "$got" = "$want" ] || { echo "  FAIL toolsets: got '$got' want '$want'" >&2; rc=1; }
 
@@ -280,15 +281,15 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets $4=provider (o
     got=$(cfg_get "$name" platform_toolsets.telegram)
     [ "$got" = "[]" ] || { echo "  FAIL platform_toolsets.telegram: got '$got' want '[]'" >&2; rc=1; }
     got=$(cfg_get "$name" plugins.enabled)
-    [ "$got" = "- forge-gateway" ] || { echo "  FAIL plugins.enabled: got '$got' want '- forge-gateway'" >&2; rc=1; }
+    [ "$got" = '["forge-gateway"]' ] || { echo "  FAIL plugins.enabled: got '$got' want '[\"forge-gateway\"]'" >&2; rc=1; }
     got=$(cfg_get "$name" unauthorized_dm_behavior)
     [ "$got" = "ignore" ] || { echo "  FAIL unauthorized_dm_behavior: got '$got' want 'ignore'" >&2; rc=1; }
   else
   got=$(cfg_get "$name" skills.external_dirs)
-  [ "$got" = "- $FORGE_DIR/skills" ] || { echo "  FAIL skills.external_dirs: got '$got'" >&2; rc=1; }
+  [ "$got" = "$(jq -cn --arg p "$FORGE_DIR/skills" '[$p]')" ] || { echo "  FAIL skills.external_dirs: got '$got'" >&2; rc=1; }
   fi
 
-  want=$(printf -- '- %s\n' $(disabled_skills_for "$name"))
+  want=$(jq -cn --args '$ARGS.positional' $(disabled_skills_for "$name"))
   got=$(cfg_get "$name" skills.disabled)
   [ "$got" = "$want" ] || { echo "  FAIL skills.disabled: got '$got' want '$want'" >&2; rc=1; }
 
@@ -304,7 +305,8 @@ verify_config() {  # $1=name $2=model $3=comma-separated toolsets $4=provider (o
   # missing one — and a profile that must NOT carry it is checked too.
   got=$(cfg_get "$name" hooks.pre_tool_call)
   if hook_profile "$name"; then
-    want=$(printf -- '- matcher: %s\n  command: %s\n  timeout: %s' "$HOOK_MATCHER" "$HOOK_COMMAND" "$HOOK_TIMEOUT")
+    want=$(jq -Scn --arg matcher "$HOOK_MATCHER" --arg command "$HOOK_COMMAND" --argjson timeout "$HOOK_TIMEOUT" \
+      '[{matcher:$matcher,command:$command,timeout:$timeout}]')
     [ "$got" = "$want" ] || { echo "  FAIL hooks.pre_tool_call: got '$got' want '$want'" >&2; rc=1; }
   else
     [ -z "$got" ] || { echo "  FAIL hooks.pre_tool_call: '$name' must carry no hook, got '$got'" >&2; rc=1; }

@@ -26,12 +26,13 @@ any implementation that behaves correctly, and fail for any that does not —
 including a fresh upstream release that never carried the patch at all.
 
 The four contracts:
-  1. active_pr fires when a PR-evidence comment is the newest thing on the task.
-  2. CARRIED FIX: an explicit re-queue event (`unblocked`) AFTER that comment
+  1. active_pr fires when a PR-evidence comment is newest, including a tie.
+  2. CARRIED FIX: an explicit re-queue (`unblocked` or `promoted_manual`) AFTER that comment
      supersedes it, so the guard clears. Upstream applies exactly this
      requeue-supersedes rule to its own `recent_success` step and never to
      `active_pr`; contract 2 is the gap upstream's own code argues against.
-  3. UPSTREAM: without a re-queue, the ready lane still defers on active_pr.
+  3. UPSTREAM: the ready lane still defers without an explicit continuation;
+     automatic `promoted`, `reclaimed`, and `status` events do not clear it.
   4. UPSTREAM: the review lane bypasses active_pr entirely — a fresh PR comment
      is the *precondition* of a review handoff, not duplicate-work evidence.
 
@@ -105,6 +106,7 @@ def _run(tmp):
     os.environ["HERMES_HOME"] = home
     for var in _ENV_OVERRIDES:
         os.environ.pop(var, None)
+    sys.path.insert(0, os.environ.get("HERMES_AGENT_DIR", os.path.expanduser("~/.hermes/hermes-agent")))
 
     try:
         from hermes_cli import kanban_db as kb
@@ -178,6 +180,23 @@ def _run(tmp):
             )
             ready_lane = check_respawn_guard(conn, t2)
             review_lane = check_respawn_guard(conn, t2, lane="review")
+
+            def after_event(kind, timestamp):
+                task = kb.create_task(conn, title="continuation-" + kind, assignee="alice")
+                conn.execute(
+                    "INSERT INTO task_comments (task_id, author, body, created_at) "
+                    "VALUES (?, 'worker', 'https://github.com/example/repo/pull/42', ?)",
+                    (task, now - 10),
+                )
+                conn.execute(
+                    "INSERT INTO task_events (task_id, kind, created_at) VALUES (?, ?, ?)",
+                    (task, kind, timestamp),
+                )
+                return check_respawn_guard(conn, task)
+
+            promoted = after_event("promoted_manual", now)
+            automatic = [after_event(kind, now) for kind in ("promoted", "reclaimed", "status")]
+            tied = after_event("unblocked", now - 10)
         finally:
             conn.close()
     except Exception as exc:  # noqa: BLE001 — fixture build failed: no verdict
@@ -189,9 +208,10 @@ def _run(tmp):
         )
 
     # Only past this point can a verdict exist. Everything below is comparison.
-    check("active_pr fires before unblock", before == "active_pr")
-    check("CARRIED FIX: unblock supersedes active_pr", after is None)
-    check("UPSTREAM: ready lane still defers on active_pr", ready_lane == "active_pr")
+    check("active_pr fires before unblock", before == "active_pr" and tied == "active_pr")
+    check("CARRIED FIX: unblock supersedes active_pr", after is None and promoted is None)
+    check("UPSTREAM: ready lane still defers on active_pr",
+          ready_lane == "active_pr" and all(result == "active_pr" for result in automatic))
     check("UPSTREAM: review lane bypasses active_pr", review_lane is None)
 
     print()
